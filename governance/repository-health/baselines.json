@@ -16,9 +16,9 @@
   "conformance": {
     "passed": 6495,
     "skipped": 211,
-    "total": 6706,
+    "total": 6712,
     "vectorFiles": 78,
-    "run": "Local: pnpm --filter @bsv/conformance-runner-ts test (2026-09-28); 6495 vector cases plus 2 metadata/wire tests passed, 211 unchanged governed skips; retains current-main BRC100 display metadata and six independent Python-verified BRC-118 vectors."
+    "run": "Historical pre-combination runs only: Local: pnpm --filter @bsv/conformance-runner-ts test (2026-09-28); 6495 vector cases plus 2 metadata/wire tests passed, 211 unchanged governed skips; retains current-main BRC100 display metadata and six independent Python-verified BRC-118 vectors. Upstream: Local: pnpm --filter @bsv/conformance-runner-ts test (2026-10-07); 6495 vector cases plus 2 metadata/wire tests, 211 unchanged governed skips; adds six required SV Node v1.2.3 checked int64 splice-operand script evaluation vectors. Combined branch corpus contains 78 files / 6712 vectors; qualification is pending. Passed/skipped counts above are retained historical outcomes, not a new combined-corpus result."
   },
   "testExceptions": {
     "explicitSkipDeclarations": 60,
