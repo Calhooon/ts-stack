@@ -38,7 +38,7 @@ import { recoverUncommittedBrc38NativeSource } from './Brc38UncommittedNativeRec
 import { readBrc38ComposedDatabaseImage } from './Brc38ComposedDatabaseImageNode'
 
 const executable = '/work/native-contract'
-const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
+const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 interface RetiredReadTransport {
   NativeProfileSqlite: {
     startRetiredForReadClaim(
@@ -64,7 +64,7 @@ describe('authenticated native DELETE activation and forward backend record', ()
   let cleanup: Array<() => Promise<void>>
   async function completedSource() {
     const proof = restoreProofFixture()
-    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
     const restore = await Brc38PrivateNativeRestoreNode.open(staged.value.reservation.store, {
       receiptPolicy: previewReceiptPolicy,
       maximumStepRows: 16,
@@ -173,7 +173,7 @@ describe('authenticated native DELETE activation and forward backend record', ()
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     await profile.close()
     expect(profile.ownershipReleased).toBe(true)

@@ -1466,3 +1466,23 @@ allowance, resource formula and product deadline preserved. This bounded
 headroom accommodates the complete declared workload without speculative
 implementation changes for a 30-second ceiling. Normal current-source gates,
 complete native cases, coverage and system qualification remain required.
+
+The normal source276 native suite passes all 32 cases in 234.887 seconds, with
+no diagnostic wrapper, and all four full root gates pass (374 root controls).
+The broader coverage attempt preserves its failures and was deliberately stopped
+for a corrective batch. A full completed-profile fixture still selected the
+small 4 MiB physical allowance: the journal schema exceeded its recovery-reserved
+main-page capacity while the host retained over 22 GB free. Those four full
+publication/activation/transfer/reopen fixtures now explicitly admit 8 MiB and
+retain the matching inventory accounting; the shared default and 4 MiB exhaustion
+controls remain. No product/native memory formula or deadline changes follow.
+
+Shutdown during a delayed archive source open now rechecks cancellation before
+the service-closed state, preserving the accepted capture's cancellation error
+while cleanup retains its quota. Ordinary source-opening cleanup again retains
+the concrete destruction error as its cause; native owners retain aggregate
+opening/cleanup evidence and the same retry operations. The SyncState fixture
+accepts its original date input after the existing in-place timestamp conversion,
+and the archive migration test checks the actual later journal migration and
+ordering. Complete affected suites and broader system qualification remain
+required; no interrupted coverage attempt counts as complete.

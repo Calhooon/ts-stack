@@ -174,6 +174,7 @@ export class KnexSnapshotArchiveService {
         { signal: controller.signal, lifetimeMs: Math.min(300000, remaining) },
         owner
       )
+      assertSnapshotArchiveCaptureActive(controller.signal)
       this.assertOpen()
       if (source === undefined) throw new WERR_NOT_IMPLEMENTED('Snapshot archive capture requires SQLite WAL or MySQL')
       await captureSnapshotArchiveSource(

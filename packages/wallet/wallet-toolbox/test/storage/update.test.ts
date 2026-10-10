@@ -1026,7 +1026,9 @@ describe('update tests', () => {
           }
           if (actualValue instanceof Date) {
             const actualDate = new Date(actualValue)
-            if (!(value instanceof Date)) throw new Error('Stored fixture date must match its Date input')
+            // updateSyncState normalizes this input in place for the database.
+            if (!(value instanceof Date) && typeof value !== 'number' && typeof value !== 'string')
+              throw new Error('Stored fixture date must match its Date or normalized timestamp input')
             const expectedDate = new Date(value)
             expect(actualDate.getTime()).toBe(expectedDate.getTime())
             continue

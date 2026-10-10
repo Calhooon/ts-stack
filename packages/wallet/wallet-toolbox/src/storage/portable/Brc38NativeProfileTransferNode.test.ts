@@ -10,7 +10,7 @@ import { Brc38PrivateNativeRestoreNode } from './Brc38PrivateNativeRestoreNode'
 import { Brc38PublishedProfileNode, type Brc38NativeProfileTransferClaim } from './Brc38PublishedProfileNode'
 import { Brc38ProfileInventoryNode } from './Brc38ProfileInventoryNode'
 
-const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
+const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 interface OwnedClient {
   config: { connection: unknown }
   destroy(): Promise<void>
@@ -22,7 +22,7 @@ describe('actual original profile and inventory certificate before native handof
   let cleanup: Array<() => Promise<void>>
   async function completedSource() {
     const proof = restoreProofFixture()
-    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
     const restore = await Brc38PrivateNativeRestoreNode.open(staged.value.reservation.store, {
       receiptPolicy: previewReceiptPolicy,
       maximumStepRows: 16,
@@ -181,7 +181,7 @@ describe('actual original profile and inventory certificate before native handof
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
   })
   test('fresh durable retiring state refuses handoff despite the previous cached publication acknowledgement', async () => {
@@ -267,7 +267,7 @@ describe('actual original profile and inventory certificate before native handof
       expect(await root.usage()).toEqual({
         profiles: 1,
         published: 1,
-        reservedPhysicalBytes: 7340032
+        reservedPhysicalBytes: 11534336
       })
       await expect(Brc38PublishedProfileNode.open(profile.directory, source.store.binding!.digest)).rejects.toThrow()
     } finally {
@@ -307,7 +307,7 @@ describe('actual original profile and inventory certificate before native handof
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
   })
   test('fresh durable ACTIVE reopen can transfer without exposing the old manager', async () => {

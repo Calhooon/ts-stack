@@ -713,7 +713,14 @@ test('only acknowledged sequence positions are readable, even if an unacknowledg
 
 test('the auxiliary migration is registered after the durable sync schema', async () => {
   const migrations = new KnexMigrations('test', 'source', 'source', 1024)
-  expect(await migrations.getLatestMigration()).toBe('2026-10-02-001 repair snapshot SQLite conflict maintenance')
+  const registered = await migrations.getMigrations()
+  const sync = registered.indexOf('2026-09-30-001 add durable snapshot sync')
+  const archive = registered.indexOf('2026-09-30-002 add snapshot archive staging')
+  const journal = registered.indexOf('2026-10-06-002 add native snapshot journal')
+  expect(sync).toBeGreaterThanOrEqual(0)
+  expect(archive).toBeGreaterThan(sync)
+  expect(journal).toBeGreaterThan(archive)
+  expect(await migrations.getLatestMigration()).toBe('2026-10-06-002 add native snapshot journal')
 })
 
 test('MySQL DDL accommodates the declared metadata and page byte ceilings', async () => {

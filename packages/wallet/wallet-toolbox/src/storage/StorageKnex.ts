@@ -981,11 +981,13 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
         await this.releaseConcurrentSource(reader)
       } catch (cleanup) {
         throw new SnapshotArchiveSourceCleanupError(
-          new AggregateError(
-            [error, cleanup],
-            'Concurrent snapshot opening failed with retained native reader cleanup',
-            { cause: error }
-          ),
+          origin === undefined
+            ? cleanup
+            : new AggregateError(
+                [error, cleanup],
+                'Concurrent snapshot opening failed with retained native reader cleanup',
+                { cause: error }
+              ),
           async () => {
             if (error instanceof SnapshotArchiveSourceCleanupError) await error.retryCleanup()
             if (cleanup instanceof SnapshotArchiveSourceCleanupError && cleanup !== error) await cleanup.retryCleanup()

@@ -14,7 +14,7 @@ import { readBrc38NativeBackend } from './Brc38NativeBackendNode'
 import { Brc38ProfileInventoryNode, type Brc38NativeProfileReopenGrant } from './Brc38ProfileInventoryNode'
 
 const executable = '/work/native-contract'
-const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
+const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 function nativeStore(store: StorageProvider): StorageKnex {
   if (!(store instanceof StorageKnex)) throw new Error('Expected the actual native StorageKnex provider')
   return store
@@ -25,7 +25,7 @@ describe('actual inventory native reopen and recoverable WAL transition', () => 
   let cleanup: Array<() => Promise<void>>
   async function completedSource() {
     const proof = restoreProofFixture()
-    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
     const restore = await Brc38PrivateNativeRestoreNode.open(staged.value.reservation.store, {
       receiptPolicy: previewReceiptPolicy,
       maximumStepRows: 16,
@@ -117,7 +117,7 @@ describe('actual inventory native reopen and recoverable WAL transition', () => 
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     expect(
       await (await root.open(source.admission.scope.importId, source.store.binding!.digest)).status()
@@ -146,7 +146,7 @@ describe('actual inventory native reopen and recoverable WAL transition', () => 
     expect(await reopenedRoot.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     await expect(
       reopenedRoot.openNative(source.admission.scope.importId, source.store.binding!.digest, executable)

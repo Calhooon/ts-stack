@@ -43,7 +43,7 @@ describe('actual durable single-profile publication and explicit native activati
   async function fixture(complete = true) {
     const proof = restoreProofFixture(),
       parent = await mkdtemp(join(tmpdir(), 'brc38-published-'))
-    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
     const opened: Brc38PublishedProfileNode[] = []
     cleanup.push(async () => {
       await runInSeries(opened, async profile => await profile.close())
@@ -350,7 +350,7 @@ describe('actual durable single-profile publication and explicit native activati
     `
     const args = {
       source: staged.directory,
-      capacity: { maximumImports: 1, maximumPhysicalBytes: 7340032, maximumLogicalBytes: 1048576 },
+      capacity: { maximumImports: 1, maximumPhysicalBytes: 11534336, maximumLogicalBytes: 1048576 },
       id: staged.value.reservation.id,
       limits: staged.selected.limits,
       binding: staged.selected.binding,
