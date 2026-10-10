@@ -1741,3 +1741,16 @@ implementations, memory quotas and physical cleanup. It reports only synthetic
 stage names and timing, never archive contents. Its complete result is pending;
 other recovery cases and the helper default180-second lifetime remain unchanged.
 No production deadline or resource recommendation follows from this allowance.
+
+The first complete customer case reached real fixture readiness in230.576s,
+then failed in the independent prior-import oracle: the native compact import
+journal had no physical rowid. The production prior-import page and point
+readers require that same key. The source297 correction retains rowid tables
+for fresh unpublished native import metadata families whose custody copies
+need original physical identity, avoiding a new surrogate-key protocol solely
+for compact-index savings. Exact verification of existing rowid and compact
+families remains; no existing data is rewritten. Field/payload layouts,
+public legacy schemas, quotas, deadlines and all original recovery assertions
+are unchanged. Fresh-layout complete customer qualification is pending;
+recovery of earlier compact candidate profiles is still unqualified. This
+unpublished correction is not a deployed migration or a full-system claim.

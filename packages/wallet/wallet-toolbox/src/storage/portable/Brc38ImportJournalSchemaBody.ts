@@ -2,6 +2,7 @@ import type { Knex } from 'knex'
 import { isOwnedNativeSqlite } from '../schema/ownedNativeSqliteRuntimeNode'
 import { isBrc38PublishedCopyInspection } from './Brc38PublishedProfileNode'
 import { runInSeries } from '../../utility/runInSeries'
+import { brc38NativePriorImportTables } from './Brc38NativePriorImportTables'
 
 const journalSql = `CREATE TABLE brc38_import_journal (
   importId TEXT NOT NULL PRIMARY KEY,
@@ -87,7 +88,15 @@ export async function readBrc38ImportSchemaFamily(
   const total = await k('main.sqlite_schema').whereIn('tbl_name', tables).count({ count: '*' }).first()
   const native = isOwnedNativeSqlite(k),
     copy = isBrc38PublishedCopyInspection(k)
-  let compact = native
+  // Prior-import custody preserves the original physical row identity. A
+  // clustered metadata tree has no rowid and cannot supply that key. Fresh
+  // unpublished families therefore retain rowid tables instead of requiring
+  // another surrogate-key protocol just to save an index. Existing layouts
+  // below are still selected only from their exact actual definitions.
+  const requiresPhysicalRowIds = compactTables.some(table =>
+    brc38NativePriorImportTables.some(prior => prior === table)
+  )
+  let compact = native && !requiresPhysicalRowIds
   if (total?.count !== 0) {
     const anchor = compactTables[0],
       definition = legacy.get(anchor)
