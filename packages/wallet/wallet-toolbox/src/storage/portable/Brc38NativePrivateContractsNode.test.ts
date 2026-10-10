@@ -1,3 +1,5 @@
+import { brc38PrivateRequestPostimageMetadata } from './Brc38PrivateRequestInventoryNode'
+import { brc38ImportRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
 import { insertBrc38PackedRestoreMetadata, updateBrc38PackedPrivateMetadata } from './Brc38PackedRestoreMetadataNode'
 import { writeBrc38NativePackedBytes } from './Brc38NativePackedFieldsNode'
@@ -147,6 +149,27 @@ test.each([
               [id]
             )
           ).toEqual([{ broadcastType: 'integer', retriesType: 'integer' }])
+          // Compare the actual SQL postimage to the complete reconstruction,
+          // using genuine parsed legacy omissions rather than assuming NULL.
+          const parsed = brc38ImportRequestMetadata(
+              { ...metadata, provenTxReqId: id },
+              {
+                rawTx: { kind: 'binary', bytes: bytes.length },
+                history: { kind: 'utf8', bytes: 2 },
+                notify: { kind: 'utf8', bytes: 2 }
+              }
+            ),
+            reconstructed = brc38PrivateRequestPostimageMetadata({
+              ...parsed,
+              rawTx: { origin: 'inline', value: bytes },
+              history: { origin: 'inline', value: '{}' },
+              notify: { origin: 'inline', value: '{}' }
+            }),
+            stored = await trx('proven_tx_reqs')
+              .where({ provenTxReqId: id })
+              .select(Object.keys(reconstructed))
+              .options({ safeIntegers: true })
+          expect(stored).toEqual([reconstructed])
           return id
         },
         rollback = new Error('Independent complete request metadata rollback')

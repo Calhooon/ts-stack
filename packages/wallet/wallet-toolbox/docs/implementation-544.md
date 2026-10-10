@@ -1963,3 +1963,5 @@ coordinate, schema/pointer, owner, allocation and cross-user checks are unchange
 The same full composed-source regression, including wrong-ID/cross-user negative
 controls, must pass before credit. Full customer/current restart/repeat remains
 required after this functional correction; a larger allowance is not its fix.
+
+The complete occupied customer case on source318 committed all14 incoming rows, then refused request inventory publication because reconstructed omitted nonnull broadcast counters were represented as NULL while the actual SQL row used its existing false/zero defaults. The exact native SQL regression now compares all reconstructed scalar columns against the real parsed request postimage for omitted, own-undefined and explicit counter variants; the reconstruction is otherwise unchanged pending before/after qualification. This does not qualify the whole workflow or change HEX spelling/matching, product defaults, original expiry, quotas, ownership, or cleanup.

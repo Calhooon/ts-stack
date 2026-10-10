@@ -105,7 +105,7 @@ function model(data: Readonly<Record<string, unknown>>, fields: Readonly<Record<
   if (fields.rawTx === undefined || fields.history === undefined || fields.notify === undefined) invalid()
   return { ...parsed, rawTx: fields.rawTx, inputBEEF: fields.inputBEEF, history: fields.history, notify: fields.notify }
 }
-function metadata(row: Model): Readonly<Record<string, unknown>> {
+export function brc38PrivateRequestPostimageMetadata(row: Model): Readonly<Record<string, unknown>> {
   const result: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(row)) {
     if ((payloads as readonly string[]).includes(name)) continue
@@ -476,7 +476,7 @@ export async function inspectBrc38PrivateRequestInventory(
                 retained = allocation
                 retainedBuffers = buffers
                 keepAllocation = true
-                expectedMetadata = metadata(current)
+                expectedMetadata = brc38PrivateRequestPostimageMetadata(current)
               } else {
                 if (current.txid !== incoming.row.txid) invalid()
                 const selectedRow = planProvenTxReqMergeMetadata(current, incoming.row),
@@ -533,7 +533,7 @@ export async function inspectBrc38PrivateRequestInventory(
                     notify: { origin: 'version', ...notify.output },
                     notified: notify.notifiedReset ? false : selectedRow.notified
                   }
-                  expectedMetadata = metadata(current)
+                  expectedMetadata = brc38PrivateRequestPostimageMetadata(current)
                 }
               }
               // Keep at most two selected versions. Digest deduplication can
