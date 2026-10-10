@@ -1812,9 +1812,18 @@ current complete qualification is required.
 
 
 Source301 root/build, seventeen whole component suites429 and the original TEXT
-reader suite13 pass. The raw native regression correctly refused an unestablished
+reader suite18 pass. The raw native regression correctly refused an unestablished
 read view: BEGIN alone leaves SQLite at SQLITE_TXN_NONE. Source302 independently
 selects and asserts its original raw row keys inside the genuine READ transaction
 before invoking extent metadata. The retained-view C guard and production readers
 remain unchanged; all complete-byte and negative controls remain. The corrected
 regression requires fresh execution and does not qualify full customer recovery.
+
+
+Current source302 qualification passes all four original root gates and the
+wallet build. Seventeen complete metadata/affected suites pass429 cases, the
+complete original TEXT reader suite passes18 (including five signed-rowid
+controls), and the actual raw native regression passes one:448 component cases
+in total. Thirty-two other native cases are unselected and unqualified. The
+source299 complete customer run failed at the now-corrected raw coordinate ABI;
+current complete import/restart/repeat/recovery qualification remains required.
