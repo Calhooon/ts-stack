@@ -37,7 +37,15 @@ import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import { captureComposedPriorImports, assertComposedPriorImports } from './Brc38ComposedPriorImportFixture'
 
-// Authored UNRUN. This is the first genuine occupied structured controller /
+// The complete first customer attempt ran for 1057s before a functional refusal,
+// and genuine fixture setup alone measured 74-231s. Recovery tests must reach
+// real retirement before exercising expiry. Reuse the existing one-hour
+// workflow envelope; recovery has its own finite deadline without renewing the
+// original authenticated packet. These are test allowances, not product SLOs.
+const composedWorkflowLifetimeMs = 3600000
+const composedRecoveryCaseTimeoutMs = 2 * composedWorkflowLifetimeMs + 30000
+
+// Authored UNQUALIFIED. This is the first genuine occupied structured controller /
 // current restart integration with nonempty all47 coverage and independent
 // auxiliary metadata/byte oracles. Full imported semantics/custody/clocks
 // and fault/resource campaigns remain separately required.
@@ -263,7 +271,7 @@ test('actual occupied import, current restart and repeat import preserve a later
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',
   async phase => {
-    const fixture = await composedNativeFixture(nativeTestExecutable()),
+    const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, composedWorkflowLifetimeMs),
       cancel = new AbortController(),
       stopped = new Error('Independent customer cancellation at a drained operation')
     try {
@@ -300,114 +308,118 @@ test.each(['AUTHENTICATED', 'IMPORT'] as const)(
       await fixture.close()
     }
   },
-  30000
+  composedRecoveryCaseTimeoutMs
 )
 
-test('failed READY target cleanup retains its concrete owner until retry, then named recovery completes', async () => {
-  const fixture = await composedNativeFixture(nativeTestExecutable()),
-    stopped = new Error('Actual target admission interrupted'),
-    teardown = new Error('Independent first physical target-close failure'),
-    close = Brc38PublishedProfileNode.prototype.close
-  let target: Brc38PublishedProfileNode | undefined,
-    targetImportId: string | undefined,
-    reservationId: string | undefined,
-    cleanup: Brc38StagingCleanupError | undefined,
-    refuseClose = true
-  let restoreSpies: () => void = () => {}
-  try {
-    const address = jest
-      .spyOn(Brc38ProfileInventoryNode, 'admitAndReplaceRetiredComposedTarget')
-      .mockImplementationOnce(async (_root, profile, merge) => {
-        target = profile
-        targetImportId = (await merge.status()).admission?.scope.importId
-        expect(fixture.sourceProfile.ownershipReleased).toBe(true)
-        expect(fixture.manager.isActiveEnabled).toBe(false)
-        throw stopped
+test(
+  'failed READY target cleanup retains its concrete owner until retry, then named recovery completes',
+  async () => {
+    const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, composedWorkflowLifetimeMs),
+      stopped = new Error('Actual target admission interrupted'),
+      teardown = new Error('Independent first physical target-close failure'),
+      close = Brc38PublishedProfileNode.prototype.close
+    let target: Brc38PublishedProfileNode | undefined,
+      targetImportId: string | undefined,
+      reservationId: string | undefined,
+      cleanup: Brc38StagingCleanupError | undefined,
+      refuseClose = true
+    let restoreSpies: () => void = () => {}
+    try {
+      const address = jest
+        .spyOn(Brc38ProfileInventoryNode, 'admitAndReplaceRetiredComposedTarget')
+        .mockImplementationOnce(async (_root, profile, merge) => {
+          target = profile
+          targetImportId = (await merge.status()).admission?.scope.importId
+          expect(fixture.sourceProfile.ownershipReleased).toBe(true)
+          expect(fixture.manager.isActiveEnabled).toBe(false)
+          throw stopped
+        })
+      restoreSpies = () => address.mockRestore()
+      const interrupt = jest.spyOn(Brc38PublishedProfileNode.prototype, 'close').mockImplementation(async function (
+        this: Brc38PublishedProfileNode
+      ) {
+        if (this === target && refuseClose) {
+          refuseClose = false
+          throw teardown
+        }
+        await close.call(this)
       })
-    restoreSpies = () => address.mockRestore()
-    const interrupt = jest.spyOn(Brc38PublishedProfileNode.prototype, 'close').mockImplementation(async function (
-      this: Brc38PublishedProfileNode
-    ) {
-      if (this === target && refuseClose) {
-        refuseClose = false
-        throw teardown
+      restoreSpies = () => {
+        address.mockRestore()
+        interrupt.mockRestore()
       }
-      await close.call(this)
-    })
-    restoreSpies = () => {
-      address.mockRestore()
-      interrupt.mockRestore()
-    }
-    const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager),
-      expected = composedArchivePostimage(await captureComposedSemanticFixture(fixture.manager), fixture.incomingData)
-    try {
-      await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, fixture.importOptions())
-      throw new Error('Actual target close fault was not reached')
-    } catch (cause) {
-      if (
-        !(cause instanceof Brc38AuthenticatedNativeMergeInterruptedError) ||
-        !(cause.cause instanceof Brc38StagingCleanupError)
-      )
-        throw cause
-      reservationId = cause.reservationId
-      cleanup = cause.cause
-      expect(cleanup.errors).toEqual([stopped, teardown])
-    }
-    restoreSpies()
-    if (target === undefined || targetImportId === undefined || reservationId === undefined || cleanup === undefined)
-      throw new Error('Actual target cleanup did not retain its original owner and addresses')
-    expect(target.ownershipReleased).toBe(false)
-    await cleanup.retryCleanup()
-    expect(target.ownershipReleased).toBe(true)
-    await cleanup.retryCleanup() // Concrete successful drainage is idempotent.
-    const result = await recoverBrc39ComposedNativeImport(fixture.chunks(), authenticatedStagePassword, {
-      admission: fixture.admission,
-      source: { ...fixture.source, reservationId },
-      merge: fixture.merge,
-      sourceInventory: fixture.sourceInventory,
-      sourceImportId: fixture.sourceImportId,
-      sourceBindingSha256: fixture.sourceBindingSha256,
-      targetInventory: fixture.targetInventory,
-      targetImportId,
-      executable: fixture.executable,
-      services: fixture.proof.services,
-      recovery: {
-        privateParent: fixture.directory,
-        expiresAt: fixture.expiresAt,
-        temporaryQuota: fixture.temporaryQuota
+      const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager),
+        expected = composedArchivePostimage(await captureComposedSemanticFixture(fixture.manager), fixture.incomingData)
+      try {
+        await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, fixture.importOptions())
+        throw new Error('Actual target close fault was not reached')
+      } catch (cause) {
+        if (
+          !(cause instanceof Brc38AuthenticatedNativeMergeInterruptedError) ||
+          !(cause.cause instanceof Brc38StagingCleanupError)
+        )
+          throw cause
+        reservationId = cause.reservationId
+        cleanup = cause.cause
+        expect(cleanup.errors).toEqual([stopped, teardown])
       }
-    })
-    expect(result.recovered).toBe('LIVE_PENDING')
-    await assertComposedAuxiliaryFixture(result.manager, auxiliary)
-    await assertComposedSemanticFixture(result.manager, expected)
-    await assertComposedIncomingOriginals(result.manager, targetImportId, fixture.incomingData)
-    expect(fixture.merge.workingAllocation.used).toBe(0)
-    expect(fixture.temporaryQuota.used).toBe(0)
-  } finally {
-    restoreSpies()
-    try {
-      if (cleanup !== undefined) await cleanup.retryCleanup()
+      restoreSpies()
+      if (target === undefined || targetImportId === undefined || reservationId === undefined || cleanup === undefined)
+        throw new Error('Actual target cleanup did not retain its original owner and addresses')
+      expect(target.ownershipReleased).toBe(false)
+      await cleanup.retryCleanup()
+      expect(target.ownershipReleased).toBe(true)
+      await cleanup.retryCleanup() // Concrete successful drainage is idempotent.
+      const result = await recoverBrc39ComposedNativeImport(fixture.chunks(), authenticatedStagePassword, {
+        admission: fixture.admission,
+        source: { ...fixture.source, reservationId },
+        merge: fixture.merge,
+        sourceInventory: fixture.sourceInventory,
+        sourceImportId: fixture.sourceImportId,
+        sourceBindingSha256: fixture.sourceBindingSha256,
+        targetInventory: fixture.targetInventory,
+        targetImportId,
+        executable: fixture.executable,
+        services: fixture.proof.services,
+        recovery: {
+          privateParent: fixture.directory,
+          expiresAt: fixture.expiresAt,
+          temporaryQuota: fixture.temporaryQuota
+        }
+      })
+      expect(result.recovered).toBe('LIVE_PENDING')
+      await assertComposedAuxiliaryFixture(result.manager, auxiliary)
+      await assertComposedSemanticFixture(result.manager, expected)
+      await assertComposedIncomingOriginals(result.manager, targetImportId, fixture.incomingData)
+      expect(fixture.merge.workingAllocation.used).toBe(0)
+      expect(fixture.temporaryQuota.used).toBe(0)
     } finally {
-      await fixture.close()
+      restoreSpies()
+      try {
+        if (cleanup !== undefined) await cleanup.retryCleanup()
+      } finally {
+        await fixture.close()
+      }
     }
-  }
-}, 30000)
+  },
+  composedRecoveryCaseTimeoutMs
+)
 
 test.each([
   ...(['READY', 'DELETE_ACTIVATING', 'DELETE_ACTIVE', 'WAL_ACTIVATING', 'WAL', 'COMPLETED'] as const).map(phase => ({
     phase,
     recovered: phase === 'COMPLETED' ? ('COMPLETED_CURRENT' as const) : ('LIVE_PENDING' as const),
-    lifetimeMs: 180000
+    expired: false
   })),
   ...(['READY', 'DELETE_ACTIVATING', 'DELETE_ACTIVE', 'WAL_ACTIVATING', 'WAL', 'COMPLETED'] as const).map(phase => ({
     phase,
     recovered: phase === 'COMPLETED' ? ('COMPLETED_CURRENT' as const) : ('EXPIRED_PENDING' as const),
-    lifetimeMs: 20000
+    expired: true
   }))
 ])(
   'actual retired $phase target resumes through $recovered without changing original limits',
   async scenario => {
-    const fixture = await composedNativeFixture(nativeTestExecutable(), () => {}, scenario.lifetimeMs),
+    const fixture = await composedNativeFixture(nativeTestExecutable(), () => {}, composedWorkflowLifetimeMs),
       stopped = new Error('Actual final retirement committed; target admission ACK interrupted'),
       originalLimits = { ...fixture.source.limits },
       binding = brc38StagingBinding(fixture.source.binding, originalLimits)
@@ -516,7 +528,7 @@ test.each([
       }
       if (targetImportId === undefined || reservationId === undefined)
         throw new Error('Actual pending fixture did not retain original addresses')
-      if (scenario.lifetimeMs === 20000) {
+      if (scenario.expired) {
         // Real UTC expiry, never a mocked clock, changed original packet, kernel
         // argument rewrite or admission renewal. All first-attempt owners drained.
         await new Promise<void>(resolve => setTimeout(resolve, Math.max(1, fixture.expiresAt - Date.now() + 1)))
@@ -535,7 +547,7 @@ test.each([
         services: fixture.proof.services,
         recovery: {
           privateParent: fixture.directory,
-          expiresAt: Date.now() + 60000,
+          expiresAt: Date.now() + composedWorkflowLifetimeMs,
           temporaryQuota: fixture.temporaryQuota
         }
       })
@@ -557,162 +569,174 @@ test.each([
       await fixture.close()
     }
   },
-  30000
+  composedRecoveryCaseTimeoutMs
 )
 
 // Actual inactive target + original serving source + SAME private reservation.
 // Only the final transition is interrupted; all earlier authentication, row
 // composition and physical copy actors execute their ordinary implementation.
-test('inactive composed retry withdraws the original copy and preserves its reservation, limits and semantic postimage', async () => {
-  const fixture = await composedNativeFixture(nativeTestExecutable()),
-    stopped = new Error('Stop before original source retirement'),
-    originalLimits = { ...fixture.source.limits },
-    originalBinding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
-  let reservationId: string | undefined, targetImportId: string | undefined
-  const receive = Brc38ProfileInventoryNode.receiveComparedComposition,
-    observeTarget = jest
-      .spyOn(Brc38ProfileInventoryNode, 'receiveComparedComposition')
-      .mockImplementationOnce(async (...args) => {
-        targetImportId = (await args[3].status()).admission?.scope.importId
-        return await receive(...args)
-      })
-  const interrupt = jest.spyOn(cutover, 'cutoverBrc38ComposedNativeProfile').mockImplementationOnce(async options => {
-    expect(options.sourceProfile.ownershipReleased).toBe(false)
-    expect(fixture.manager.getActive()).toBe(fixture.storage)
-    expect(targetImportId).toBeDefined()
-    throw stopped
-  })
-  try {
-    const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager),
-      before = await captureComposedSemanticFixture(fixture.manager),
-      expected = composedArchivePostimage(before, fixture.incomingData)
+test(
+  'inactive composed retry withdraws the original copy and preserves its reservation, limits and semantic postimage',
+  async () => {
+    const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, composedWorkflowLifetimeMs),
+      stopped = new Error('Stop before original source retirement'),
+      originalLimits = { ...fixture.source.limits },
+      originalBinding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
+    let reservationId: string | undefined, targetImportId: string | undefined
+    const receive = Brc38ProfileInventoryNode.receiveComparedComposition,
+      observeTarget = jest
+        .spyOn(Brc38ProfileInventoryNode, 'receiveComparedComposition')
+        .mockImplementationOnce(async (...args) => {
+          targetImportId = (await args[3].status()).admission?.scope.importId
+          return await receive(...args)
+        })
+    const interrupt = jest.spyOn(cutover, 'cutoverBrc38ComposedNativeProfile').mockImplementationOnce(async options => {
+      expect(options.sourceProfile.ownershipReleased).toBe(false)
+      expect(fixture.manager.getActive()).toBe(fixture.storage)
+      expect(targetImportId).toBeDefined()
+      throw stopped
+    })
     try {
-      await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, fixture.importOptions())
-    } catch (cause) {
-      if (!(cause instanceof Brc38AuthenticatedNativeMergeInterruptedError) || cause.cause !== stopped) throw cause
-      reservationId = cause.reservationId
+      const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager),
+        before = await captureComposedSemanticFixture(fixture.manager),
+        expected = composedArchivePostimage(before, fixture.incomingData)
+      try {
+        await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, fixture.importOptions())
+      } catch (cause) {
+        if (!(cause instanceof Brc38AuthenticatedNativeMergeInterruptedError) || cause.cause !== stopped) throw cause
+        reservationId = cause.reservationId
+      }
+      interrupt.mockRestore()
+      observeTarget.mockRestore()
+      if (reservationId === undefined || targetImportId === undefined)
+        throw new Error('Actual inactive retry addresses were not retained')
+      expect(fixture.sourceProfile.ownershipReleased).toBe(false)
+      expect(fixture.manager.isActiveEnabled).toBe(true)
+      await assertComposedSemanticFixture(fixture.manager, before)
+      await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
+      const result = await retryInactiveBrc39ComposedNativeImport(fixture.chunks(), authenticatedStagePassword, {
+        ...fixture.importOptions(),
+        inactiveTargetImportId: targetImportId,
+        source: { ...fixture.source, reservationId }
+      })
+      expect(result.reservationId).toBe(reservationId)
+      expect(result.inventory.importId).toBe(targetImportId)
+      expect(fixture.source.limits).toEqual(originalLimits)
+      expect(brc38StagingBinding(fixture.source.binding, fixture.source.limits).digest).toBe(originalBinding.digest)
+      expect(fixture.manager.getActive()).toBe(result.provider)
+      expect(fixture.sourceProfile.ownershipReleased).toBe(true)
+      await assertComposedSemanticFixture(fixture.manager, expected)
+      await assertComposedIncomingOriginals(fixture.manager, result.inventory.importId, fixture.incomingData)
+      await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
+      expect(fixture.merge.workingAllocation.used).toBe(0)
+      expect(fixture.temporaryQuota.used).toBe(0)
+    } finally {
+      interrupt.mockRestore()
+      observeTarget.mockRestore()
+      await fixture.close()
     }
-    interrupt.mockRestore()
-    observeTarget.mockRestore()
-    if (reservationId === undefined || targetImportId === undefined)
-      throw new Error('Actual inactive retry addresses were not retained')
-    expect(fixture.sourceProfile.ownershipReleased).toBe(false)
-    expect(fixture.manager.isActiveEnabled).toBe(true)
-    await assertComposedSemanticFixture(fixture.manager, before)
-    await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
-    const result = await retryInactiveBrc39ComposedNativeImport(fixture.chunks(), authenticatedStagePassword, {
-      ...fixture.importOptions(),
-      inactiveTargetImportId: targetImportId,
-      source: { ...fixture.source, reservationId }
-    })
-    expect(result.reservationId).toBe(reservationId)
-    expect(result.inventory.importId).toBe(targetImportId)
-    expect(fixture.source.limits).toEqual(originalLimits)
-    expect(brc38StagingBinding(fixture.source.binding, fixture.source.limits).digest).toBe(originalBinding.digest)
-    expect(fixture.manager.getActive()).toBe(result.provider)
-    expect(fixture.sourceProfile.ownershipReleased).toBe(true)
-    await assertComposedSemanticFixture(fixture.manager, expected)
-    await assertComposedIncomingOriginals(fixture.manager, result.inventory.importId, fixture.incomingData)
-    await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
-    expect(fixture.merge.workingAllocation.used).toBe(0)
-    expect(fixture.temporaryQuota.used).toBe(0)
-  } finally {
-    interrupt.mockRestore()
-    observeTarget.mockRestore()
-    await fixture.close()
-  }
-}, 30000)
+  },
+  composedRecoveryCaseTimeoutMs
+)
 
-test('retained occupied history callback replays independent legacy bytes and revokes escaped readers', async () => {
-  const fixture = await composedNativeFixture(nativeTestExecutable(), (source, incoming) => {
-      source.tables.provenTxReqs[0].history = {
-        notes: [{ when: source.exportedAt, what: 'original', detail: 'A'.repeat(33000) }]
-      }
-      incoming.tables.provenTxReqs[0].history = {
-        notes: [{ when: incoming.exportedAt, what: 'incoming', detail: 'B'.repeat(33000) }],
-        ignored: true
-      }
-    }),
-    prepare = occupiedHistoryText.prepareBrc38PrivateOccupiedHistoryText
-  let legacyHistory = ''
-  let retained: Readonly<Brc38PrivateOccupiedHistory> | undefined,
-    observed = false
-  const intercept = jest
-    .spyOn(occupiedHistoryText, 'prepareBrc38PrivateOccupiedHistoryText')
-    .mockImplementationOnce(async (...args) => {
-      const entity = new EntityProvenTxReq({
-        history: legacyHistory,
-        notify: '{}',
-        created_at: new Date(fixture.sourceData.exportedAt),
-        updated_at: new Date(fixture.sourceData.exportedAt)
-      } as TableProvenTxReq)
-      entity.mergeHistory({
-        history: JSON.stringify(fixture.incomingData.tables.provenTxReqs[0].history),
-        notify: '{}',
-        created_at: new Date(fixture.incomingData.exportedAt),
-        updated_at: new Date(fixture.incomingData.exportedAt)
-      } as TableProvenTxReq)
-      const expected = Buffer.from(JSON.stringify(entity.history), 'utf8')
-      await withBrc38PrivateOccupiedHistory(
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5],
-        args[6],
-        async history => {
-          retained = history
-          const measured: Uint8Array[] = [],
-            replayed: Uint8Array[] = []
-          for await (const bytes of history.measureChunks(4096)) {
-            expect(bytes.byteLength).toBeLessThanOrEqual(4096)
-            measured.push(bytes.slice())
+test(
+  'retained occupied history callback replays independent legacy bytes and revokes escaped readers',
+  async () => {
+    const fixture = await composedNativeFixture(
+        nativeTestExecutable(),
+        (source, incoming) => {
+          source.tables.provenTxReqs[0].history = {
+            notes: [{ when: source.exportedAt, what: 'original', detail: 'A'.repeat(33000) }]
           }
-          for await (const bytes of history.chunks(4096)) {
-            expect(bytes.byteLength).toBeLessThanOrEqual(4096)
-            replayed.push(bytes.slice())
+          incoming.tables.provenTxReqs[0].history = {
+            notes: [{ when: incoming.exportedAt, what: 'incoming', detail: 'B'.repeat(33000) }],
+            ignored: true
           }
-          expect(Buffer.concat(measured)).toEqual(expected)
-          expect(Buffer.concat(replayed)).toEqual(expected)
-          expect(history.addedNotes).toBe(1)
-          observed = true
-        }
+        },
+        composedWorkflowLifetimeMs
+      ),
+      prepare = occupiedHistoryText.prepareBrc38PrivateOccupiedHistoryText
+    let legacyHistory = ''
+    let retained: Readonly<Brc38PrivateOccupiedHistory> | undefined,
+      observed = false
+    const intercept = jest
+      .spyOn(occupiedHistoryText, 'prepareBrc38PrivateOccupiedHistoryText')
+      .mockImplementationOnce(async (...args) => {
+        const entity = new EntityProvenTxReq({
+          history: legacyHistory,
+          notify: '{}',
+          created_at: new Date(fixture.sourceData.exportedAt),
+          updated_at: new Date(fixture.sourceData.exportedAt)
+        } as TableProvenTxReq)
+        entity.mergeHistory({
+          history: JSON.stringify(fixture.incomingData.tables.provenTxReqs[0].history),
+          notify: '{}',
+          created_at: new Date(fixture.incomingData.exportedAt),
+          updated_at: new Date(fixture.incomingData.exportedAt)
+        } as TableProvenTxReq)
+        const expected = Buffer.from(JSON.stringify(entity.history), 'utf8')
+        await withBrc38PrivateOccupiedHistory(
+          args[0],
+          args[1],
+          args[2],
+          args[3],
+          args[4],
+          args[5],
+          args[6],
+          async history => {
+            retained = history
+            const measured: Uint8Array[] = [],
+              replayed: Uint8Array[] = []
+            for await (const bytes of history.measureChunks(4096)) {
+              expect(bytes.byteLength).toBeLessThanOrEqual(4096)
+              measured.push(bytes.slice())
+            }
+            for await (const bytes of history.chunks(4096)) {
+              expect(bytes.byteLength).toBeLessThanOrEqual(4096)
+              replayed.push(bytes.slice())
+            }
+            expect(Buffer.concat(measured)).toEqual(expected)
+            expect(Buffer.concat(replayed)).toEqual(expected)
+            expect(history.addedNotes).toBe(1)
+            observed = true
+          }
+        )
+        expect(() => retained!.chunks(4096)).toThrow()
+        return await prepare(...args)
+      })
+    try {
+      const capturedHistory = fixture.sourceData.tables.provenTxReqs[0].history
+      if (capturedHistory === null || typeof capturedHistory !== 'object' || Array.isArray(capturedHistory))
+        throw new Error('Independent legacy history fixture requires its original object')
+      legacyHistory = JSON.stringify({ ...capturedHistory, localOnly: null })
+      // Nullable legacy current SQL properties are persisted through the actual
+      // writer after restoring a canonical archive; the archive itself omits them.
+      await fixture.manager.runAsStorageProvider(async active => {
+        if (active !== fixture.storage) throw new Error('Legacy history fixture selected another provider')
+        const rows = await active.findProvenTxReqs({ partial: { txid: fixture.proof.txid.toUpperCase() } })
+        if (rows.length !== 1) throw new Error('Legacy history fixture requires one actual request')
+        expect(await active.updateProvenTxReq(rows[0].provenTxReqId, { history: legacyHistory })).toBe(1)
+      })
+      const expected = composedArchivePostimage(
+        await captureComposedSemanticFixture(fixture.manager),
+        fixture.incomingData
       )
-      expect(() => retained!.chunks(4096)).toThrow()
-      return await prepare(...args)
-    })
-  try {
-    const capturedHistory = fixture.sourceData.tables.provenTxReqs[0].history
-    if (capturedHistory === null || typeof capturedHistory !== 'object' || Array.isArray(capturedHistory))
-      throw new Error('Independent legacy history fixture requires its original object')
-    legacyHistory = JSON.stringify({ ...capturedHistory, localOnly: null })
-    // Nullable legacy current SQL properties are persisted through the actual
-    // writer after restoring a canonical archive; the archive itself omits them.
-    await fixture.manager.runAsStorageProvider(async active => {
-      if (active !== fixture.storage) throw new Error('Legacy history fixture selected another provider')
-      const rows = await active.findProvenTxReqs({ partial: { txid: fixture.proof.txid.toUpperCase() } })
-      if (rows.length !== 1) throw new Error('Legacy history fixture requires one actual request')
-      expect(await active.updateProvenTxReq(rows[0].provenTxReqId, { history: legacyHistory })).toBe(1)
-    })
-    const expected = composedArchivePostimage(
-      await captureComposedSemanticFixture(fixture.manager),
-      fixture.incomingData
-    )
-    const result = await importBrc39ComposedNativeProfile(
-      fixture.chunks(),
-      authenticatedStagePassword,
-      fixture.importOptions()
-    )
-    expect(observed).toBe(true)
-    expect(result.provider).toBe(fixture.manager.getActive())
-    await assertComposedSemanticFixture(fixture.manager, expected)
-    expect(fixture.merge.workingAllocation.used).toBe(0)
-  } finally {
-    intercept.mockRestore()
-    await fixture.close()
-  }
-}, 30000)
+      const result = await importBrc39ComposedNativeProfile(
+        fixture.chunks(),
+        authenticatedStagePassword,
+        fixture.importOptions()
+      )
+      expect(observed).toBe(true)
+      expect(result.provider).toBe(fixture.manager.getActive())
+      await assertComposedSemanticFixture(fixture.manager, expected)
+      expect(fixture.merge.workingAllocation.used).toBe(0)
+    } finally {
+      intercept.mockRestore()
+      await fixture.close()
+    }
+  },
+  composedRecoveryCaseTimeoutMs
+)
 
 test('actual native request writer preserves omitted legacy broadcast counters', async () => {
   const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, 300000)

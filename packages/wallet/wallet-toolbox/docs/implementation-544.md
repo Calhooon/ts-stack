@@ -2025,3 +2025,25 @@ Delivery now supplies a private 64 MiB tmpfs there, owned by the selected
 worker UID/GID, with no executable access. The original C fixture paths,
 assertions and executable hash remain unchanged. All thirteen modes and the
 configured-path application contracts still require a complete passing run.
+
+### Finite composed recovery test admission
+
+The source332 delivery script passes all thirteen original native modes and
+writes the configured test path through the actual CI environment file. The
+configured-path campaign passes all48 private native contracts, seven path
+cases and the original counterfeit-actor refusal. Full CI wiring and complete
+system qualification remain pending.
+
+The seventeen original cancellation, committed-phase recovery, failed physical
+cleanup, inactive retry and retained-history scenarios explicitly select the
+existing one-hour composed workflow allowance. Measured genuine setup took
+74–231 seconds; a first whole customer attempt reached1057 seconds before a
+functional refusal. The old30-second test and20-second expiry allowances
+could not reach the actual committed phase. Recovery now has a separate finite
+one-hour deadline, and each case has at most two hours plus30 seconds for
+drainage. The six expired scenarios wait for actual UTC expiry of the original
+packet; their immutable limits, binding, reservation and semantic assertions
+remain. The fixture's three-minute default and one-hour maximum, original
+production defaults, native enforcement and all data/fault oracles are unchanged.
+These deliberately bounded test allowances require complete runtime validation
+and measured review; they are not production latency targets or qualification.

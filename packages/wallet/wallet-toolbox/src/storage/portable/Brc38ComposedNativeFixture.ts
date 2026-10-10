@@ -71,8 +71,12 @@ export async function composedNativeFixture(
   // Full setup measured 230.8s; a twelve-minute customer workflow lease
   // expired during the first baseline after 46 drained operations. A selected
   // whole-workflow measurement may admit at most one hour, including
-  // both complete imports and current recovery. It is not a production SLO.
-  // Every actual UTC/monotonic check remains; the default stays three minutes.
+  // both complete imports and current recovery. Recovery/cancellation cases
+  // explicitly select that same envelope: setup alone measured 74-231s and the
+  // first full attempt reached 1057s before a functional refusal. Real-expiry
+  // recovery waits out the original packet; it never renews its admission.
+  // This is not a production SLO. Every actual UTC/monotonic check remains;
+  // the default stays three minutes.
   if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 3600000)
     throw new RangeError('Composed fixture requires one finite original lifetime')
   const targetStorageIdentityKey = selected.targetStorageIdentityKey ?? 'synthetic target'
