@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { previewPrivateFixture } from './Brc38ImportPreviewFixture'
 import { verifyBrc38PrivateNativeCandidateSchemaOrder } from './Brc38PrivateNativeCandidateSchemaNode.case'
 import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestoreFixture'
@@ -14,7 +15,7 @@ test.each([false, true])(
         fixture.value.reservation.id,
         fixture.selected.limits,
         fixture.selected.binding,
-        '/work/native-contract'
+        nativeTestExecutable()
       )
       fixture.held.push(reservation)
       const check = (): void => {

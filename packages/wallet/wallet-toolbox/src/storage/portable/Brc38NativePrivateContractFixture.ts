@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import type { Knex } from 'knex'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
@@ -50,7 +51,7 @@ export async function withBrc38NativePrivateContractFixture(
       value.reservation.id,
       selected.limits,
       selected.binding,
-      '/work/native-contract'
+      nativeTestExecutable()
     )
     fixture.held.push(reservation)
     const store = reservation.store,

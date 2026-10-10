@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import {
   brc38PrivateRequestTxidAccepted,
   withBrc38PrivateOccupiedRequestSources
@@ -1661,7 +1662,7 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
       value.reservation.id,
       selected.limits,
       selected.binding,
-      '/work/native-contract'
+      nativeTestExecutable()
     )
     fixture.held.push(reservation)
     const store = reservation.store,

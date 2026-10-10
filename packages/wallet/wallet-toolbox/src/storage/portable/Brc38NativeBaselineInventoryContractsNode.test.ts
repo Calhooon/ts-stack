@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { composedFixtureChain, withComposedNativeFixture } from './Brc38ComposedNativeFixture'
 import { seedComposedAuxiliaryFixture, assertComposedAuxiliaryFixture } from './Brc38ComposedAuxiliaryFixture'
 import { withComposedFixtureRead } from './Brc38ComposedSemanticFixture'
@@ -43,7 +44,7 @@ test('all47 native local source tables retain independently read typed metadata 
     } finally {
       wipeIndependentNativeInventory(expected)
     }
-  }, '/work/native-contract')
+  }, nativeTestExecutable())
 }, 30000)
 
 test('all18 native prior-import families retain complete independent raw bytes and explicit empty inventories', async () => {
@@ -79,5 +80,5 @@ test('all18 native prior-import families retain complete independent raw bytes a
           for (const value of Object.values(row.metadata)) if (value instanceof Uint8Array) value.fill(0)
         }
     }
-  }, '/work/native-contract')
+  }, nativeTestExecutable())
 }, 30000)

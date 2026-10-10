@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { previewPrivateFixture } from './Brc38ImportPreviewFixture'
 
 // UNRUN actual factory/kernel lifecycle cases. This small synthetic SQL table
@@ -17,7 +18,7 @@ describe('actual private native comparison phase', () => {
       value.reservation.id,
       selected.limits,
       selected.binding,
-      '/work/native-contract'
+      nativeTestExecutable()
     )
     fixture.held.push(reservation)
     const store = reservation.store
@@ -59,7 +60,7 @@ describe('actual private native comparison phase', () => {
     await store.beginPrivateNativeComparison()
     await store.close()
     await expect(store.beginPrivateNativeComparison()).rejects.toThrow()
-    const resumed = await root.resumeNative(id, selected.limits, selected.binding, '/work/native-contract')
+    const resumed = await root.resumeNative(id, selected.limits, selected.binding, nativeTestExecutable())
     fixture!.held.push(resumed)
     expect(resumed.id).toBe(id)
     expect(resumed.store.limits).toEqual(selected.limits)

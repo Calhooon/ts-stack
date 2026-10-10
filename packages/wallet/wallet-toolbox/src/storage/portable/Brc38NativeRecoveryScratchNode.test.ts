@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import createKnex, { type Knex } from 'knex'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -76,7 +77,7 @@ describe('new native recovery scratch lifetime', () => {
       value.reservation.id,
       selected.limits,
       selected.binding,
-      '/work/native-contract'
+      nativeTestExecutable()
     )
     fixture.held.push(reservation)
     const store = reservation.store,

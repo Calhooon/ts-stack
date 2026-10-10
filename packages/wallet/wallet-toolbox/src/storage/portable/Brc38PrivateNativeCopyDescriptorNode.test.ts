@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { open, rename, copyFile, unlink, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { previewPrivateFixture } from './Brc38ImportPreviewFixture'
@@ -36,7 +37,7 @@ describe('private copy retains its actual claimed source file identity', () => {
         original.directory,
         original.limits,
         original.binding!,
-        '/work/native-contract'
+        nativeTestExecutable()
       )
       const database = claim.database,
         owner = claim.owner
@@ -123,7 +124,7 @@ describe('private copy retains its actual claimed source file identity', () => {
         original.directory,
         original.limits,
         original.binding!,
-        '/work/native-contract'
+        nativeTestExecutable()
       )
       const { owner } = claim
       source = await open(filename, 'r')

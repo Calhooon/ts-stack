@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { withComposedNativeFixture } from './Brc38ComposedNativeFixture'
 import { withComposedFixtureRead } from './Brc38ComposedSemanticFixture'
 import {
@@ -33,7 +34,7 @@ test('actual native export preserves all13 tables, all22 TEXT cells and legacy r
         wipeIndependentNativeInventory(preimage)
       }
     },
-    '/work/native-contract',
+    nativeTestExecutable(),
     (source, incoming) => {
       for (const data of [source, incoming]) {
         Object.assign(data.tables.transactions[0], {

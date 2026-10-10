@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { composedFixtureChain, withComposedNativeFixture } from './Brc38ComposedNativeFixture'
 import { verifyBrc38NativeLocalCurrentSource } from './Brc38NativeLocalBaselineSourceNode.case'
 import { brc38DestinationSelection } from './Brc38KnexDestinationFence'
@@ -69,7 +70,7 @@ test.each(['transaction', 'request-field', 'auxiliary', 'primary'] as const)(
         }
       )
       expect(fixture.merge.workingAllocation.used).toBe(0)
-    }, '/work/native-contract')
+    }, nativeTestExecutable())
   },
   30000
 )

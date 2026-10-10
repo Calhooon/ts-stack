@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import createKnex, { type Knex } from 'knex'
 import type { ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -30,7 +31,7 @@ interface RawDriver {
   drainStartedNativeSession(session: RawSession): Promise<unknown>
 }
 const raw: RawDriver = require('./NativeProfileSqlite.cjs')
-const executable = '/work/native-contract'
+const executable = nativeTestExecutable()
 const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
 
 describe('authenticated original Root and Profile native reacquisition', () => {

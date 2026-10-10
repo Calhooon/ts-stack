@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import createKnex, { type Knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,7 +14,7 @@ import { readRow } from './Brc38PublishedProfileReceiptNode'
 import { readBrc38NativeBackend } from './Brc38NativeBackendNode'
 import { Brc38ProfileInventoryNode, type Brc38NativeProfileReopenGrant } from './Brc38ProfileInventoryNode'
 
-const executable = '/work/native-contract'
+const executable = nativeTestExecutable()
 const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 function nativeStore(store: StorageProvider): StorageKnex {
   if (!(store instanceof StorageKnex)) throw new Error('Expected the actual native StorageKnex provider')

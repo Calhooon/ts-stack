@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -53,7 +54,7 @@ describe('new BRC39 recovery authentication purpose', () => {
       admission,
       temporaryQuota: new Brc38NativeRecoveryTemporaryQuota(7340032),
       expiresAt: Date.now() + 60000,
-      executable: '/work/native-contract'
+      executable: nativeTestExecutable()
     }
     return { bytes, options }
   }

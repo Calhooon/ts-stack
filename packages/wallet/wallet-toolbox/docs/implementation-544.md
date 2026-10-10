@@ -1985,3 +1985,26 @@ The focused occupied-source test also needs genuine streamed structured capture,
 The bounded occupied-source regression reproduced a separate staging defect before native handoff: selecting a1KiB transfer window made ordinary original structured staging invoke a published-native-only range guard. Source328 chooses provisional reads from the actual exclusive staging owner, borrows the existing verified query-only transaction with retained read-mode cleanup, and uses the existing full-chunk hashing visitor. Native callers keep the original packed actor guards, and all source/binding/schema/descriptor/hash/expiry/allocation checks remain. Transfer width is resource DATA rather than a transaction-role verdict. Same actual-source regression and original counterfeit-native refusals must pass before credit.
 
 Bounded original structured staging now completes authentication/semantic validation and native reopening. The explicit structured fixture then correctly refused its legacy destination adapter. It now selects the existing authenticated structured destination scope for the opt-in case, preserving the legacy default and all missing-payload fences. The full focused source case still requires qualification.
+
+### Native test executable provisioning
+
+Native test fixtures accept `TS_STACK_NATIVE_TEST_EXECUTABLE`, a normalized
+absolute test-only path; the existing isolated `/work/native-contract` fixture
+remains the default. All original native loader checks still apply, including
+qualified platform, exact executable bytes and immutable file identity. This
+setting never enrolls a build or activates a profile.
+
+After the frozen installation and ordinary wallet build, Linux ARM64 CI can
+run `bash scripts/provision-wallet-native-tests.sh`. It uses the pinned Node
+24.18.0 Debian compiler image, captures the exact SQLite 3.53.4 source, and
+invokes the existing qualification tool. Delivery requires the static build
+and all thirteen standalone native modes to pass. Local offline workers can
+supply that same source with `TS_STACK_NATIVE_SQLITE_SOURCE`. The emitted test
+path is added to `GITHUB_ENV` in CI. Failed worker evidence remains in its
+private temporary directory; the worker removes its own container at exit.
+
+This is delivery implementation, not a passing CI campaign. Workflow/cohort
+wiring, realistic recovery admission, complete original customer workflows
+and full affected qualification remain unfinished until demonstrated. Other
+platforms still require independent qualification; x64 is not silently
+substituted for the qualified ARM64 component.

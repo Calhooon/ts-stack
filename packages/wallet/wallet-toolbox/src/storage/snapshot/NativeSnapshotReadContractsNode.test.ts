@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from '../portable/Brc38NativeTestPath'
 import { Brc38CleanupScope } from '../portable/Brc38StagingCleanupError'
 import { composedNativeFixture, withComposedNativeFixture } from '../portable/Brc38ComposedNativeFixture'
 import { snapshotMeasurementCases } from '../../../benchmarks/snapshot-measurement-cases'
@@ -68,13 +69,13 @@ test('actual native WAL source retains original large history while foreground w
     const current = await storage.findProvenTxReqs({ partial: { provenTxReqId: requests[0].provenTxReqId } })
     expect(current).toHaveLength(1)
     expect(current[0].history).toBe(changedHistory)
-  }, '/work/native-contract')
+  }, nativeTestExecutable())
 }, 30000)
 
 test('actual DELETE publication reaches WAL snapshot admission only through its original profile', async () => {
   let observed = false
   const fixture = await composedNativeFixture(
-    '/work/native-contract',
+    nativeTestExecutable(),
     undefined,
     180000,
     undefined,
@@ -116,7 +117,7 @@ test('actual native field metadata and packed hash windows preserve independent 
       notes: [{ when: '2026-10-08T00:00:00.000Z', what: 'independent native window', detail: 'x'.repeat(70000) }]
     }),
     fixture = await composedNativeFixture(
-      '/work/native-contract',
+      nativeTestExecutable(),
       (source, incoming) => {
         for (const document of [source, incoming]) document.tables.provenTxReqs[0].history = JSON.parse(history)
       },
@@ -232,7 +233,7 @@ test('all seventeen native scalar TEXT fields use exact bounded source windows',
         Math.min(fixture.expiresAt, Date.now() + 120000)
       )
     },
-    '/work/native-contract',
+    nativeTestExecutable(),
     (source, incoming) => {
       for (const document of [source, incoming])
         for (const fixture of fixtures) {

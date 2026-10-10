@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import createKnex, { type Knex } from 'knex'
 import { join } from 'node:path'
 import { withComposedNativeFixture } from './Brc38ComposedNativeFixture'
@@ -260,7 +261,7 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
           wipeIndependentNativeInventory(expected)
         }
       },
-      '/work/native-contract',
+      nativeTestExecutable(),
       (_source, incoming) => {
         incoming.tables.transactions[0].description = 'independent public import\u0000雪😀'.repeat(1000)
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'

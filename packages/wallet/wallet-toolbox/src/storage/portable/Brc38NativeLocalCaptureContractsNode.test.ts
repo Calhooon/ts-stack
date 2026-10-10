@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import {
   composedFixtureChain,
   composedNativeFixture,
@@ -47,7 +48,7 @@ test('native local capture installs through the real source migration and resume
       expect(fixture.manager.getActive()).toBe(fixture.storage)
       expect(fixture.merge.workingAllocation.used).toBe(0)
     },
-    '/work/native-contract',
+    nativeTestExecutable(),
     undefined,
     180000,
     undefined,
@@ -74,7 +75,7 @@ test('a real unexpired capture receipt prevents local observer migration without
     failure: unknown
   try {
     returned = await composedNativeFixture(
-      '/work/native-contract',
+      nativeTestExecutable(),
       undefined,
       180000,
       undefined,

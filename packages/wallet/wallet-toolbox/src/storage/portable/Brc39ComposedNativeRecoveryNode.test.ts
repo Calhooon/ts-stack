@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { brc38ImportRequestIdentity, snapshotSyncRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { readNativeSnapshotSyncRequestCurrent } from '../snapshot/NativeSnapshotSyncRequestsCurrentNode'
 import { createSyncMap } from '../schema/entities/EntityBase'
@@ -75,7 +76,7 @@ test('actual occupied import, current restart and repeat import preserve a later
   const incomingDescription = 'imported \u0000雪😀"\\\n'.repeat(9000),
     customerDescription = 'customer \u0000雪😀"\\\n'.repeat(10000),
     fixture = await composedNativeFixture(
-      '/work/native-contract',
+      nativeTestExecutable(),
       (_source, incoming) => {
         incoming.tables.transactions[0].description = incomingDescription
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
@@ -262,7 +263,7 @@ test('actual occupied import, current restart and repeat import preserve a later
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',
   async phase => {
-    const fixture = await composedNativeFixture('/work/native-contract'),
+    const fixture = await composedNativeFixture(nativeTestExecutable()),
       cancel = new AbortController(),
       stopped = new Error('Independent customer cancellation at a drained operation')
     try {
@@ -303,7 +304,7 @@ test.each(['AUTHENTICATED', 'IMPORT'] as const)(
 )
 
 test('failed READY target cleanup retains its concrete owner until retry, then named recovery completes', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract'),
+  const fixture = await composedNativeFixture(nativeTestExecutable()),
     stopped = new Error('Actual target admission interrupted'),
     teardown = new Error('Independent first physical target-close failure'),
     close = Brc38PublishedProfileNode.prototype.close
@@ -406,7 +407,7 @@ test.each([
 ])(
   'actual retired $phase target resumes through $recovered without changing original limits',
   async scenario => {
-    const fixture = await composedNativeFixture('/work/native-contract', () => {}, scenario.lifetimeMs),
+    const fixture = await composedNativeFixture(nativeTestExecutable(), () => {}, scenario.lifetimeMs),
       stopped = new Error('Actual final retirement committed; target admission ACK interrupted'),
       originalLimits = { ...fixture.source.limits },
       binding = brc38StagingBinding(fixture.source.binding, originalLimits)
@@ -563,7 +564,7 @@ test.each([
 // Only the final transition is interrupted; all earlier authentication, row
 // composition and physical copy actors execute their ordinary implementation.
 test('inactive composed retry withdraws the original copy and preserves its reservation, limits and semantic postimage', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract'),
+  const fixture = await composedNativeFixture(nativeTestExecutable()),
     stopped = new Error('Stop before original source retirement'),
     originalLimits = { ...fixture.source.limits },
     originalBinding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
@@ -623,7 +624,7 @@ test('inactive composed retry withdraws the original copy and preserves its rese
 }, 30000)
 
 test('retained occupied history callback replays independent legacy bytes and revokes escaped readers', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract', (source, incoming) => {
+  const fixture = await composedNativeFixture(nativeTestExecutable(), (source, incoming) => {
       source.tables.provenTxReqs[0].history = {
         notes: [{ when: source.exportedAt, what: 'original', detail: 'A'.repeat(33000) }]
       }
@@ -714,7 +715,7 @@ test('retained occupied history callback replays independent legacy bytes and re
 }, 30000)
 
 test('actual native request writer preserves omitted legacy broadcast counters', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, 300000)
   try {
     await fixture.manager.runAsStorageProvider(async () => {
       await fixture.storage.toDb().transaction(async trx => {
@@ -792,7 +793,7 @@ test('actual native request writer preserves omitted legacy broadcast counters',
 }, 330000)
 
 test('actual composed current transaction field selection preserves its physical coordinate', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, 300000)
   try {
     const userId = fixture.manager.getActiveUser().userId,
       txid = fixture.sourceData.tables.transactions[0].txid
@@ -858,7 +859,7 @@ test('actual composed current transaction field selection preserves its physical
 }, 330000)
 
 test('actual occupied native request identity reuses the original legacy archive spelling', async () => {
-  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, 300000)
   try {
     const userId = fixture.manager.getActiveUser().userId,
       archivedTxid = fixture.incomingData.tables.provenTxReqs[0].txid

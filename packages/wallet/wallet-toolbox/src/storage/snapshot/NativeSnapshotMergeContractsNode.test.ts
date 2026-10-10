@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from '../portable/Brc38NativeTestPath'
 import { composedNativeFixture } from '../portable/Brc38ComposedNativeFixture'
 import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestoreFixture'
 import { KnexSnapshotSyncDestination } from './KnexSnapshotSyncDestination'
@@ -74,7 +75,7 @@ async function withPair(
     failure: unknown
   try {
     const origin = await composedNativeFixture(
-      '/work/native-contract',
+      nativeTestExecutable(),
       customize(false),
       180000,
       undefined,
@@ -84,7 +85,7 @@ async function withPair(
     )
     closes.push(async () => await origin.close())
     const target = await composedNativeFixture(
-      '/work/native-contract',
+      nativeTestExecutable(),
       customize(true),
       180000,
       undefined,

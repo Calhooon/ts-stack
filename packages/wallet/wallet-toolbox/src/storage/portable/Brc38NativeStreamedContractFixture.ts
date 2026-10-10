@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -118,7 +119,7 @@ export async function withBrc38NativeStreamedContractFixture(
         staged.reservation.id,
         selected.limits,
         selected.binding,
-        '/work/native-contract'
+        nativeTestExecutable()
       ),
       store = native.store
     closes.push(async () => await store.close())

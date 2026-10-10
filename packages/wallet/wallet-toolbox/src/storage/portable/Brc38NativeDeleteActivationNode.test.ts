@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import createKnex, { type Knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -37,7 +38,7 @@ import { bootstrapCurrentBrc38NativeObserver } from './Brc38CurrentNativeObserve
 import { recoverUncommittedBrc38NativeSource } from './Brc38UncommittedNativeRecoveryNode'
 import { readBrc38ComposedDatabaseImage } from './Brc38ComposedDatabaseImageNode'
 
-const executable = '/work/native-contract'
+const executable = nativeTestExecutable()
 const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 interface RetiredReadTransport {
   NativeProfileSqlite: {

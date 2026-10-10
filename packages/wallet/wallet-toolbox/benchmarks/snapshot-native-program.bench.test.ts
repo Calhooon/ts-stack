@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from '../src/storage/portable/Brc38NativeTestPath'
 import { performance } from 'node:perf_hooks'
 import type { Knex } from 'knex'
 // All operational actors use one ordinary compiled module graph, including
@@ -53,7 +54,7 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
       const native = observeNativeProfileMeasurement()
       let fixture: Awaited<ReturnType<typeof composedNativeFixture>>
       try {
-        fixture = await composedNativeFixture('/work/native-contract', () => {}, 180000, shape)
+        fixture = await composedNativeFixture(nativeTestExecutable(), () => {}, 180000, shape)
       } catch (cause) {
         try {
           native.close()

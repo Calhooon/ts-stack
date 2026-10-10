@@ -1,3 +1,4 @@
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import type { Knex } from 'knex'
 import { composedNativeFixture } from './Brc38ComposedNativeFixture'
 import { seedComposedAuxiliaryFixture, assertComposedAuxiliaryFixture } from './Brc38ComposedAuxiliaryFixture'
@@ -49,7 +50,7 @@ export async function withBrc38NativeCandidateContractFixture(
     customize?: Parameters<typeof composedNativeFixture>[1]
   }> = {}
 ): Promise<void> {
-  const source = await composedNativeFixture('/work/native-contract', selected.customize, selected.lifetimeMs)
+  const source = await composedNativeFixture(nativeTestExecutable(), selected.customize, selected.lifetimeMs)
   let initial: Awaited<ReturnType<typeof readIndependentNativeInventory>> | undefined,
     failed = false,
     failure: unknown
