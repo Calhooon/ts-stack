@@ -81,13 +81,20 @@ export async function installBrc38SqlStructuredPrefixGuards(
 /** Fresh exact definitions in this actual view, including empty families. Old
  * unpublished staging layouts are refused; this is not a released migration. */
 export async function verifyBrc38SqlStructuredPrefixGuards(k: Knex, family: Brc38StructuredPrefixFamily): Promise<6> {
-  for (const value of definitions(family)) {
-    const actual = (await k('sqlite_schema')
-      .where({ name: value.name, type: 'trigger', tbl_name: value.table })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [value.sql])
+  // The six distinct catalog names allow one fresh bounded scalar query;
+  // every match still compares its complete definition in this actual view.
+  const expected = definitions(family),
+    actual = (await k('sqlite_schema')
+      .where(query => {
+        for (const value of expected)
+          void query.orWhere(match => {
+            void match
+              .where({ name: value.name, type: 'trigger', tbl_name: value.table })
+              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [value.sql])
+          })
+      })
       .count({ count: '*' })
       .first()) as { count: unknown } | undefined
-    if (actual?.count !== 1) throw new Error('Private structured immutable prefix definitions differ')
-  }
+  if (actual?.count !== expected.length) throw new Error('Private structured immutable prefix definitions differ')
   return 6
 }

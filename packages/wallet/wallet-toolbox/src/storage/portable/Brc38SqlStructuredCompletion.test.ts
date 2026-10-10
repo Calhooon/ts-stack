@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Knex } from 'knex'
+import createKnex, { type Knex } from 'knex'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import {
   beginBrc38SqlCanonicalStructuredField,
@@ -10,7 +10,63 @@ import {
   completeBrc38SqlCanonicalStructuredField
 } from './Brc38SqlCanonicalStructuredStaging'
 import { completeBrc38SqlStructuredField } from './Brc38SqlStructuredStaging'
-import { verifyBrc38SqlStructuredPrefixGuards } from './Brc38SqlStructuredPrefixGuards'
+import {
+  installBrc38SqlStructuredPrefixGuards,
+  verifyBrc38SqlStructuredPrefixGuards
+} from './Brc38SqlStructuredPrefixGuards'
+
+test.each(['binary', 'structured', 'canonical', 'text'] as const)(
+  '%s exact prefix checks use one bounded round trip and refuse each changed or missing definition freshly',
+  async family => {
+    const db = createKnex({
+        client: 'better-sqlite3',
+        connection: { filename: ':memory:' },
+        useNullAsDefault: true,
+        pool: { min: 1, max: 1 }
+      }),
+      fields = family === 'canonical' ? 'private_canonical_structured_fields' : `private_${family}_fields`,
+      chunks = fields.replace(/fields$/, 'chunks')
+    try {
+      await db.raw(
+        'CREATE TABLE ??(tableName,position,field,encoding,maximumBytes,sourceBytes,sourceSha256,state,bytes,chunks,sha256)',
+        [fields]
+      )
+      await db.raw('CREATE TABLE ??(tableName,position,field,offset,bytes,payload)', [chunks])
+      await db.transaction(async trx => await installBrc38SqlStructuredPrefixGuards(trx, family))
+      let queries = 0,
+        requestBytes = 0
+      const observe = (query: { sql: string; bindings: unknown[] }): void => {
+        queries++
+        requestBytes = Math.max(requestBytes, Buffer.byteLength(JSON.stringify(query)))
+      }
+      db.on('query', observe)
+      try {
+        expect(await verifyBrc38SqlStructuredPrefixGuards(db, family)).toBe(6)
+      } finally {
+        db.off('query', observe)
+      }
+      expect(queries).toBe(1)
+      expect(requestBytes).toBeLessThan(65536)
+      for (const table of [fields, chunks])
+        for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+          const name = `${table}_prefix_${operation.toLowerCase()}`,
+            original = await db('sqlite_schema').where({ name }).first('sql')
+          await db.raw('DROP TRIGGER ??', [name])
+          await expect(verifyBrc38SqlStructuredPrefixGuards(db, family)).rejects.toThrow('definitions differ')
+          await db.raw(`CREATE TRIGGER ?? BEFORE ${operation} ON ?? BEGIN SELECT 1; END`, [name, table])
+          expect(await db('sqlite_schema').where({ type: 'trigger' }).count({ count: '*' }).first()).toEqual({
+            count: 6
+          })
+          await expect(verifyBrc38SqlStructuredPrefixGuards(db, family)).rejects.toThrow('definitions differ')
+          await db.raw('DROP TRIGGER ??', [name])
+          await db.raw(original.sql)
+          expect(await verifyBrc38SqlStructuredPrefixGuards(db, family)).toBe(6)
+        }
+    } finally {
+      await db.destroy()
+    }
+  }
+)
 
 /** Authored UNRUN. Provisional SQLite source checks, not native qualification. */
 async function fixture() {
