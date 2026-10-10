@@ -1754,3 +1754,15 @@ public legacy schemas, quotas, deadlines and all original recovery assertions
 are unchanged. Fresh-layout complete customer qualification is pending;
 recovery of earlier compact candidate profiles is still unqualified. This
 unpublished correction is not a deployed migration or a full-system claim.
+
+The source297 full customer case passed its fresh physical-row prior-import
+capture, then failed actual incoming-ID reservation because the current-profile
+observer bootstrap had not installed the required ledger. The source298
+correction installs a missing ledger through the same explicit atomic
+source-addition migration as baseline observation. Live capture receipts still
+refuse schema addition, ordinary source reads/import allocation still cannot
+install persistence, and the ledger uses the actual generation's original
+maximumRows rather than silently increasing capacity. Existing generation,
+disabled-epoch recovery, quotas, expiry and custody checks remain. All original
+customer assertions and720/750-second integration allowance are unchanged;
+complete runtime qualification remains pending.

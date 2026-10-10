@@ -1,3 +1,7 @@
+import {
+  hasBrc38NativeIncomingIdReservationSchema,
+  installBrc38NativeIncomingIdReservationSchema
+} from './Brc38NativeIncomingIdReservationSchemaNode'
 import { migrateSnapshotJournalSqliteSourceAddition } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import type { StorageKnex } from '../StorageKnex'
 import { WalletStorageManager } from '../WalletStorageManager'
@@ -102,8 +106,10 @@ export function bootstrapCurrentBrc38NativeObserver(
           check()
           const state = await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(provider, async writer => {
             check()
-            if (!(await hasBrc38NativeLocalBaselineGenerationSchema(writer))) {
-              if (options.recoverDisabledEpoch !== undefined)
+            const local = await hasBrc38NativeLocalBaselineGenerationSchema(writer),
+              reservations = await hasBrc38NativeIncomingIdReservationSchema(writer)
+            if (!local || !reservations) {
+              if (!local && options.recoverDisabledEpoch !== undefined)
                 throw new Error('Disabled observer recovery requires its existing epoch')
               // These observers extend the already-bound operational source.
               // Use its existing atomic migration protocol: live receipts must
@@ -112,7 +118,12 @@ export function bootstrapCurrentBrc38NativeObserver(
                 writer,
                 async () => {
                   check()
-                  await installBrc38NativeLocalBaselineGeneration(writer, options)
+                  if (!local) await installBrc38NativeLocalBaselineGeneration(writer, options)
+                  // Incoming counter ranges are part of explicit source setup,
+                  // never DDL hidden in an ordinary import/read. Reuse the
+                  // actual generation's original capacity, including recovery.
+                  const generation = await readBrc38NativeLocalBaselineGeneration(writer)
+                  if (!reservations) await installBrc38NativeIncomingIdReservationSchema(writer, generation.maximumRows)
                   check()
                 },
                 writer.client.config.migrations
