@@ -1842,10 +1842,13 @@ The incoming-ID reservation regression now independently checks SQLite's
 `typeof(seq)` as well as exact deleted-high counters, retry stability, foreground
 allocation and stale-primary refusal. Its selected fixture admits900 seconds
 with a930-second test deadline because native setup alone measured230 seconds;
-the helper default180 seconds and other cases are retained. Source307 first
-runs this strengthened actual native test against the unchanged reservation
-writer. A suspected REAL binding must be demonstrated before applying an
-explicit INTEGER cast. No allocation-history integrity or expiry check is
+the helper default180 seconds and other cases are retained. The source307 regression against the unchanged writer failed at the independent
+source-counter predicate after237.141 seconds, before its900-second expiry.
+Source308 explicitly casts the already validated safe reservation floor to
+SQLite INTEGER for both insertion and update of sqlite_sequence. Its untyped
+column otherwise retains the native driver's REAL number binding. The same
+strengthened regression must pass before this correction receives qualification
+credit; the complete customer workflow remains separately required. No allocation-history integrity or expiry check is
 relaxed. Limits should protect supported workloads and resource use with
 measured headroom; reducing feature scope or adding complex representations
 solely to fit an arbitrary cap is not the objective.

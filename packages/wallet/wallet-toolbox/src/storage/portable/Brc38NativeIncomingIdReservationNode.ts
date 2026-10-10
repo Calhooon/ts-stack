@@ -199,8 +199,17 @@ export async function reserveBrc38NativeIncomingIds(
           if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last)) invalid()
           const counters = await k('sqlite_sequence').where({ name: sql }).select('seq').limit(2)
           if (counters.length > 1) invalid()
-          if (counters.length === 0) await k('sqlite_sequence').insert({ name: sql, seq: last })
-          else if ((await k('sqlite_sequence').where({ name: sql }).update({ seq: last })) !== 1) invalid()
+          // sqlite_sequence has no column affinity. The native driver binds
+          // Number as REAL; preserve the validated safe allocation floor as
+          // INTEGER for the original coherent-source history reader.
+          if (counters.length === 0)
+            await k('sqlite_sequence').insert({ name: sql, seq: k.raw('CAST(? AS INTEGER)', [last]) })
+          else if (
+            (await k('sqlite_sequence')
+              .where({ name: sql })
+              .update({ seq: k.raw('CAST(? AS INTEGER)', [last]) })) !== 1
+          )
+            invalid()
           await k(ranges).insert({
             ...key,
             sourceEpoch: generation.epoch,
