@@ -2084,3 +2084,12 @@ original selection. Wallet dependency changes require the coverage aggregate and
 its complete native case union. The real workflow scope Bash is exercised for
 direct, dependent, mixed and absent wallet selections. Full runtime qualification
 remains pending.
+
+Mutation execution now selects the qualified LinuxARM64 platform from the target
+package directory, including every source partition, and provisions the same
+pinned native executable after restoring current build outputs. Every original
+mutation source, range, test selection, property setting and score gate remains.
+Native compiler/delivery evidence is retained even when a mutation job fails.
+This provides executable delivery; the repeated full real-expiry baselines and
+finite campaign bounds still need measured qualification and a cost review before
+a complete campaign. It does not establish successful mutation qualification.

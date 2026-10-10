@@ -573,3 +573,26 @@ test('actual pinned inventory runs as a required installed-tool regression befor
   assert.equal(selected.length, 1)
   assert.ok(!selected[0].includes('if:') && !selected[0].includes('continue-on-error'))
 })
+
+test('both mutation workflows provision the qualified native executable before wallet mutation', () => {
+  for (const filename of [CI_PATH, MUTATION_PATH]) {
+    const source = workflowJobBlocks(readFileSync(filename, 'utf8')).find(
+      job => job.name === 'mutation-tests'
+    ).source
+    assert.match(
+      source,
+      /runs-on: \$\{\{ matrix\.wallet_native && 'ubuntu-24.04-arm' \|\| 'ubuntu-latest' \}\}/
+    )
+    const restore = source.indexOf('- name: Restore build outputs')
+    const provision = source.indexOf(
+      '- name: Provision the qualified native wallet test executable'
+    )
+    const execute = source.indexOf('run: node scripts/mutation-testing.mjs')
+    assert.ok(restore >= 0 && provision > restore && execute > provision)
+    assert.match(
+      source,
+      /if: matrix\.wallet_native\n        run: bash scripts\/provision-wallet-native-tests\.sh/
+    )
+    assert.match(source, /name: mutation-native-\$\{\{ github\.run_id \}\}/)
+  }
+})

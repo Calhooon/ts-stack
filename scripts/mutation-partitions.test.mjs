@@ -372,3 +372,31 @@ for (const [id, expected, fallback] of [
     assert.throws(() => selectedMutationPartition(id, canonical, 'missing'))
   })
 }
+
+test('native platform routing follows the actual package, including every canonical partition', () => {
+  const wallet = { ...target, packageDirectory: 'packages/wallet/wallet-toolbox' }
+  const values = mutationExecutionMatrix(
+    ['ordinary-name', 'wallet-snapshot-sync', 'wallet-looking-name'],
+    {
+      'ordinary-name': wallet,
+      'wallet-snapshot-sync': wallet,
+      'wallet-looking-name': { ...target, packageDirectory: 'packages/sdk' }
+    }
+  ).include
+  assert.ok(
+    values
+      .filter(value => value.target !== 'wallet-looking-name')
+      .every(value => value.wallet_native === true)
+  )
+  assert.equal(
+    values.find(value => value.target === 'wallet-looking-name').wallet_native,
+    undefined
+  )
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  for (const value of mutationExecutionMatrix(Object.keys(targets), targets).include) {
+    assert.equal(
+      value.wallet_native === true,
+      targets[value.target].packageDirectory === 'packages/wallet/wallet-toolbox'
+    )
+  }
+})

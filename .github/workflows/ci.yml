@@ -505,7 +505,7 @@ jobs:
     needs:
       - prepare
       - sonar-zero-findings
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.wallet_native && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     # The governed air-gap codec target currently instruments 352 mutants and
     # legitimately exceeds 20 minutes on a hosted runner.
     # Complete snapshot source-guard service qualification took 58m35s locally,
@@ -532,6 +532,21 @@ jobs:
           path: .ci-artifacts
       - name: Restore build outputs
         run: tar --extract --gzip --file .ci-artifacts/build-outputs.tar.gz
+
+      - name: Provision the qualified native wallet test executable
+        if: matrix.wallet_native
+        run: bash scripts/provision-wallet-native-tests.sh
+
+      - name: Preserve native component delivery evidence
+        if: always() && matrix.wallet_native
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mutation-native-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}-${{ matrix.partition }}
+          path: |
+            ${{ runner.temp }}/ts-wallet-native-tests.*/component-delivery.json
+            ${{ runner.temp }}/ts-wallet-native-tests.*/brc38-qualification-*/component-delivery-failure.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Enforce the affected mutation-quality ratchet
         run: node scripts/mutation-testing.mjs --target "${{ matrix.target }}" --partition "${{ matrix.partition }}"
       - name: Capture complete execution-partition evidence

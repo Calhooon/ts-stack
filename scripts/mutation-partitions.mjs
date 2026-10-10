@@ -180,7 +180,10 @@ export function mutationExecutionMatrix(selected, targets) {
       if (!Object.hasOwn(targets, targetId)) throw new Error('Unknown canonical mutation target')
       return partitionMutationTarget(targetId, targets[targetId]).map(({ id }) => ({
         target: targetId,
-        partition: id
+        partition: id,
+        ...(targets[targetId].packageDirectory === 'packages/wallet/wallet-toolbox'
+          ? { wallet_native: true }
+          : {})
       }))
     })
   }
