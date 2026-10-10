@@ -2128,3 +2128,24 @@ implementation and qualification are complete. The explicit complete-fixture
 requires actual workflow measurements. A permission refusal does not justify
 raising time, memory or storage allowances. Authentication, atomicity and physical
 ownership remain correctness contracts while operational budgets are reviewed.
+
+### Workload-specific complete-fixture chunk admission
+
+The source343 customer measurement imported all14 rows and reached
+INVENTORY_REQUIRED after1147.503s of controller work. It was deliberately stopped
+after1862.399s of test-command runtime; no complete-case or system qualification
+is credited. Its source still used1KiB stored field/crypto chunks and137-byte
+ciphertext input fragments. The observed repeated whole-field validation and
+individual stored-chunk reads are cost candidates, not an isolated causal
+performance result. Memory peaked near1.2GiB with no OOM/limit events or CPU
+throttling.
+
+The complete original21 cases now explicitly select existing supported16KiB
+streamed field/crypto/cipher-input chunks, alongside their16KiB read allowance.
+The helper retains its1KiB field/crypto and137-byte normal input defaults;
+existing small-buffer controls remain. The canonical plaintext, ciphertext format,
+NFC/KDF strength, all records/assertions/fault coordinates and real clocks remain.
+Native, working, physical, logical, row, IPC, FD and deadline ceilings are unchanged.
+This is test workload admission, not a production default or throughput claim.
+Actual complete workflow/resource/cleanup and compatibility evidence are required
+before accepting its benefit. #569 remains held, and full qualification is open.
