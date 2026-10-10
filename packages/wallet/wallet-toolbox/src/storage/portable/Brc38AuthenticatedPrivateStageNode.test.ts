@@ -27,14 +27,18 @@ import { inspectBrc38AuthenticatedRawTransaction } from './Brc38AuthenticatedRaw
  * Restore the exact guard in the same transaction before testing read integrity. */
 async function corruptSealedBinaryChunk(store: KnexBrc38StagingStore, payload: Buffer): Promise<void> {
   const coordinate = { tableName: 'transactions', position: 0, field: 'rawTx', offset: 0 },
-    guardName = 'brc38_source_seal_private_binary_chunks_update'
+    guardNames = ['brc38_source_seal_private_binary_chunks_update', 'private_binary_chunks_prefix_update']
   await expect(store.knex('private_binary_chunks').where(coordinate).update({ payload })).rejects.toThrow('immutable')
   await store.knex.transaction(async trx => {
-    const guard = await trx('sqlite_schema').where({ name: guardName, type: 'trigger' }).first('sql')
-    expect(typeof guard?.sql).toBe('string')
-    await trx.raw('DROP TRIGGER ??', [guardName])
+    const guards: Array<{ name: string; sql: string }> = []
+    for (const name of guardNames) {
+      const guard = await trx('sqlite_schema').where({ name, type: 'trigger' }).first('name', 'sql')
+      expect(typeof guard?.sql).toBe('string')
+      guards.push(guard)
+      await trx.raw('DROP TRIGGER ??', [name])
+    }
     await trx('private_binary_chunks').where(coordinate).update({ payload })
-    await trx.raw(guard.sql)
+    for (const guard of guards) await trx.raw(guard.sql)
   })
   await verifyBrc38AuthenticatedSourceSeal(store.knex)
 }

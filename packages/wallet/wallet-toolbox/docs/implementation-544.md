@@ -1636,3 +1636,10 @@ physical guard before exercising digest or SQL-extent refusal. The preview's
 fifteen occupancy queries retain their no-count/no-offset assertion; independent
 schema ownership checks can use metadata counts. Closed binary references name
 the actual source-closed error while the row-advance lifetime check remains.
+
+The synthetic binary corruption helper retains and restores both independent
+physical UPDATE guards: the whole-envelope authenticated source seal and the
+provisional immutable-prefix guard. Their ordinary refusal is asserted before
+corruption and the complete fresh seal/prefix definition checks run afterward.
+Production write protections are unchanged. Earlier single-guard fixture
+attempts stopped at the second protection and did not qualify read integrity.
