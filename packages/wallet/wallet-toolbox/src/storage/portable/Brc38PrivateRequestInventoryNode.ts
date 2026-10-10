@@ -31,7 +31,11 @@ import type { Brc38StreamedHistoryProjectionPolicy } from './Brc38StreamedHistor
 import { collectBrc38NativePackedContent } from './Brc38NativePackedTextFieldsNode'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation, type Brc38WorkingCharge } from './Brc38WorkingAllocation'
-import { brc38ImportRequestMetadata, snapshotSyncRequestColumns } from '../snapshot/SnapshotSyncRequestMetadata'
+import {
+  brc38ImportRequestIdentity,
+  brc38ImportRequestMetadata,
+  snapshotSyncRequestColumns
+} from '../snapshot/SnapshotSyncRequestMetadata'
 import { planProvenTxReqMergeMetadata, type ProvenTxReqMergeRow } from '../schema/entities/EntityProvenTxReq'
 import type { WalletSnapshotFieldDescriptor } from '../snapshot/WalletReadSnapshot'
 import { readSnapshotJournalSqliteGeneration } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
@@ -452,7 +456,7 @@ export async function inspectBrc38PrivateRequestInventory(
                 ])
                 if (integer(loaded.map.provenTxReq.idMap[parsed.provenTxReqId]) !== rowId) invalid()
                 return Object.freeze({
-                  row: { ...parsed, txid: parsed.txid.toLowerCase() },
+                  row: brc38ImportRequestIdentity(parsed),
                   mappedProof:
                     parsed.provenTxId === undefined ? undefined : integer(loaded.map.provenTx.idMap[parsed.provenTxId])
                 })

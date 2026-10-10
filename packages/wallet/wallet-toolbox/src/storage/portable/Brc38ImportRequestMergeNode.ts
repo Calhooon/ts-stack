@@ -8,7 +8,7 @@ import {
   readNativeSnapshotTransactionMembershipRevision,
   type NativeSnapshotSyncRequestCurrent
 } from '../snapshot/NativeSnapshotSyncRequestsCurrentNode'
-import type { SnapshotSyncRequestRow } from '../snapshot/SnapshotSyncRequestMetadata'
+import { brc38ImportRequestIdentity, type SnapshotSyncRequestRow } from '../snapshot/SnapshotSyncRequestMetadata'
 import type {
   KnexBrc38StagingStore,
   Brc38AuthenticatedImportReader,
@@ -470,9 +470,10 @@ async function prepareBrc38RequestMerge(
               budget
             )
             if (policy.table !== 'provenTxReqs' || !/^[0-9a-f]{64}$/i.test(policy.value.txid)) invalid()
-            const incoming = Object.freeze({ ...policy.value, txid: policy.value.txid.toLowerCase() })
-            if (keys.has(incoming.txid)) throw new Brc38ImportAliasPageError(index)
-            keys.add(incoming.txid)
+            const incoming = brc38ImportRequestIdentity(policy.value),
+              naturalIdentity = incoming.txid.toLowerCase()
+            if (keys.has(naturalIdentity)) throw new Brc38ImportAliasPageError(index)
+            keys.add(naturalIdentity)
             chargeBrc38ImportDecodedBudget(budget, 1114112)
             const current = await readNativeSnapshotSyncRequestCurrent(
               storage,

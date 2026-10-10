@@ -1,3 +1,6 @@
+import { brc38ImportRequestIdentity, snapshotSyncRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
+import { readNativeSnapshotSyncRequestCurrent } from '../snapshot/NativeSnapshotSyncRequestsCurrentNode'
+import { createSyncMap } from '../schema/entities/EntityBase'
 import { readBrc38NativeCurrentFieldTargets } from './Brc38ImportExistingRows'
 import { writeNativeSnapshotSyncRow } from '../snapshot/writeNativeSnapshotSyncRowNode'
 import * as occupiedHistoryText from './Brc38PrivateOccupiedHistoryTextNode'
@@ -846,6 +849,58 @@ test('actual composed current transaction field selection preserves its physical
             65536
           )
         ).rejects.toThrow('prepared indexed identity')
+      })
+    })
+  } finally {
+    await fixture.close()
+  }
+  expect(fixture.merge.workingAllocation.used).toBe(0)
+}, 330000)
+
+test('actual occupied native request identity reuses the original legacy archive spelling', async () => {
+  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  try {
+    const userId = fixture.manager.getActiveUser().userId,
+      archivedTxid = fixture.incomingData.tables.provenTxReqs[0].txid
+    expect(archivedTxid).toMatch(/^[0-9A-F]{64}$/)
+    await fixture.manager.runAsStorageProvider(async () => {
+      await fixture.storage.toDb().transaction(async trx => {
+        const stored = await trx('proven_tx_reqs').select('provenTxReqId', 'txid')
+        expect(stored).toHaveLength(1)
+        expect(stored[0].txid).toBe(archivedTxid)
+        const target = {
+            table: 'provenTxReqs' as const,
+            index: 'provenTxReqs' as const,
+            key: { txid: archivedTxid },
+            found: true,
+            localId: stored[0].provenTxReqId as number
+          },
+          fields = await readBrc38NativeCurrentFieldTargets(
+            trx,
+            fixture.storage,
+            userId,
+            'provenTxReqs',
+            [target],
+            65536
+          )
+        expect(fields).toHaveLength(1)
+        if (fields[0].metadata === undefined) throw new Error('Actual request metadata is missing')
+        const extents: Record<string, import('../snapshot/WalletReadSnapshot').WalletSnapshotFieldDescriptor> = {}
+        for (const [name, value] of Object.entries(fields[0].binaries)) extents[name] = { kind: 'binary', ...value }
+        for (const [name, value] of Object.entries(fields[0].texts ?? {})) extents[name] = { kind: 'utf8', ...value }
+        const original = snapshotSyncRequestMetadata(fields[0].metadata, extents),
+          incoming = brc38ImportRequestIdentity(original),
+          map = createSyncMap()
+        if (incoming.provenTxId !== undefined) map.provenTx.idMap[incoming.provenTxId] = incoming.provenTxId
+        const current = await readNativeSnapshotSyncRequestCurrent(fixture.storage, trx, userId, incoming, map)
+        expect(current.target).toMatchObject({ found: true, localId: target.localId, key: target.key })
+        expect(current.row?.provenTxReqId).toBe(target.localId)
+        expect(current.row?.txid).toBe(archivedTxid)
+        expect(current.field.binaryRowId).toBe(fields[0].binaryRowId)
+        expect(current.revision).toMatch(/^[0-9]+$/)
+        expect(current.generation).toMatch(/^[1-9][0-9]*$/)
+        expect(current.parents).toHaveLength(incoming.provenTxId === undefined ? 0 : 1)
+        expect(await trx('proven_tx_reqs').count({ count: '*' }).first()).toEqual({ count: 1 })
       })
     })
   } finally {

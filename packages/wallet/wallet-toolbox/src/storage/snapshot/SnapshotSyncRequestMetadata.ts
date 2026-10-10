@@ -139,3 +139,8 @@ function requestMetadata(
     rebroadcastAttempts: number(fields.rebroadcastAttempts, true)
   }
 }
+
+/** Shared private request identity preparation; caller validates archived metadata. */
+export function brc38ImportRequestIdentity<Row extends { readonly txid: string }>(row: Row): Readonly<Row> {
+  return Object.freeze({ ...row, txid: row.txid.toLowerCase() })
+}
