@@ -966,7 +966,7 @@ describe('authenticated native DELETE activation and forward backend record', ()
     )
     expect(workingAllocation.used).toBe(0)
     if (failed) throw failure
-  })
+  }, 60000)
   test('a real ACTIVE source cannot enter the separate retired read mode after physical close', async () => {
     const { profile, claim, retainedCleanup } = await fixture(),
       catalog = await stock(profile.directory, 'profile.sqlite')

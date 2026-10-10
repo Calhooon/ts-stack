@@ -1543,3 +1543,20 @@ must retain the original SQL_FULL cause. The new quota regression removes its
 actual declared trigger/view types rather than assuming both are views. Previous
 failed diagnostic and ordinary runs remain retained; no full qualification or
 new deadline allowance is claimed.
+
+On the corrected source280, the full retirement case completes in 34.836 seconds
+under a private 90-second observer. Its actual outer harness now allows 60
+seconds, leaving 25.164 seconds of measured headroom. Original bodies,
+assertions, 60-second observer inputs, fixture lifetime and native/product
+limits remain. The same diagnostic runs five of six DELETE cases successfully;
+that partial diagnostic is not normal branch qualification.
+
+The no-decision recovery case exposes a stale receiving receipt in the original
+publication instance: durable READY already includes the wallet's physical
+identity, while its cached identity still omitted that copied file. Publication
+now retains the exact proven complete identity after its READY commit and
+physical syncs. Recovery keeps its complete receipt comparison and committed
+retirement refusal. The four-MiB control independently verifies rollback and
+requires the exact original stop error plus the concrete FK restoration fence
+failure, which retains SQL_FULL. Normal whole-suite and broader qualification
+remain required; previous failed runs remain evidence.

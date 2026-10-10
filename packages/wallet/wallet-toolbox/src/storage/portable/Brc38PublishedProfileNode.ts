@@ -709,6 +709,9 @@ export class Brc38PublishedProfileNode {
       })
       await syncDirectory(directory)
       await syncDirectory(parent)
+      // Keep this original instance aligned with the complete durable receipt;
+      // its receiving identity did not yet include the copied wallet.
+      if (publishedFixed.physicalIdentity !== undefined) this.#fixed.physicalIdentity = publishedFixed.physicalIdentity
       await this.#verifyWallet()
     } finally {
       this.#busy = false

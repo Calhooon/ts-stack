@@ -186,7 +186,9 @@ test('the original four-MiB native allowance refuses the complete layout and ret
   expect(migrationFailure.message).toBe('Private native migration retains foreign-key restoration failure')
   expect(migrationFailure.errors).toHaveLength(2)
   expect(nativeOrigin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13, nativeAutocommit: true })
-  for (const failure of migrationFailure.errors) {
+  expect(migrationFailure.cause).toBe(stopped)
+  expect(migrationFailure.errors[0]).toBe(stopped)
+  for (const failure of migrationFailure.errors.slice(1)) {
     expect(failure).toMatchObject({
       code: 'SQLITE_ABORT',
       nativeCode: 4,
