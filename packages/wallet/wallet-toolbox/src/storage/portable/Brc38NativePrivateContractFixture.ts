@@ -28,7 +28,8 @@ export async function withBrc38NativePrivateContractFixture(
   maximumPhysicalBytes = 16777216,
   afterJournal?: (fixture: Brc38NativePrivateContractFixture) => Promise<void>,
   maximumRowAllocationBytes = 16777216,
-  transform?: Parameters<typeof previewPrivateFixture>[1]
+  transform?: Parameters<typeof previewPrivateFixture>[1],
+  streamedStructured = false
 ): Promise<void> {
   if (phase !== 'before-journal' && phase !== 'after-journal')
     throw new RangeError('Explicit native fixture phase required')
@@ -37,7 +38,8 @@ export async function withBrc38NativePrivateContractFixture(
     transform,
     65536,
     maximumPhysicalBytes,
-    maximumRowAllocationBytes
+    maximumRowAllocationBytes,
+    streamedStructured
   )
   let failed = false,
     failure: unknown

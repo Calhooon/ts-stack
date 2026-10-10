@@ -1,3 +1,4 @@
+import { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
 import { runInSeries } from '../../utility/runInSeries'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -99,7 +100,8 @@ export async function previewPrivateFixture(
   transform?: (data: ReturnType<typeof semanticStageFixture>) => void,
   maximumRowBytes = 65536,
   maximumPhysicalBytes = 4194304,
-  maximumRowAllocationBytes = maximumRowBytes
+  maximumRowAllocationBytes = maximumRowBytes,
+  streamedStructured = false
 ) {
   if (!Number.isSafeInteger(maximumPhysicalBytes) || maximumPhysicalBytes < 1048576 || maximumPhysicalBytes > 16777216)
     throw new RangeError('Preview fixture requires an explicit bounded physical allowance')
@@ -131,6 +133,20 @@ export async function previewPrivateFixture(
       maximumRowBytes,
       maximumRowAllocationBytes,
       expiresAt: Date.now() + 180000
+    }
+    if (streamedStructured) {
+      selected.streamedStructuredFields = {
+        fields: { maximumStructuredBytes: 65536, maximumChunkBytes: 1024 },
+        staging: {
+          privateIndexParent: directory,
+          maximumTemporaryIndexBytes: 2097152,
+          maximumIndexMembers: 10000,
+          maximumStructuredBytes: 65536,
+          maximumCanonicalBytes: 65536,
+          maximumReadBytes: 1024,
+          workingAllocation: new Brc38WorkingAllocation(maximumRowAllocationBytes)
+        }
+      }
     }
     async function* chunks() {
       for (let offset = 0; offset < bytes.length; offset += 137) yield bytes.slice(offset, offset + 137)
