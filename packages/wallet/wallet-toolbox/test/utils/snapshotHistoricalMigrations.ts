@@ -8,7 +8,9 @@ export async function migrateBeforeSqliteGeneration(
   storageIdentityKey: string
 ): Promise<string> {
   const migrationSource = new KnexMigrations(source.chain, storageName, storageIdentityKey, 1024)
-  delete migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION]
+  migrationSource.migrations = Object.fromEntries(
+    Object.entries(migrationSource.migrations).filter(([name]) => name < SNAPSHOT_SQLITE_INDEX_MIGRATION)
+  )
   const config = { migrationSource, disableTransactions: false }
   const sqlite = String(source.knex.client.config.client).includes('sqlite')
   if (sqlite) await source.knex.raw('PRAGMA foreign_keys=OFF')

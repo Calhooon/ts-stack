@@ -619,7 +619,7 @@ describe('ProvenTx class method tests', () => {
     transaction.addOutput({ satoshis: 1, lockingScript: bsv.Script.fromHex('51') })
     const stale = makeServerVerifiedProof(transaction, 104, 5)
     const active = makeServerVerifiedProof(transaction, 105, 6)
-    const storage = makeProofStorage(active.header) as StorageProvider & {
+    const storage = makeProofStorage(active.header) as unknown as StorageProvider & {
       transaction: jest.Mock
       findProvenTxs: jest.Mock
     }
@@ -644,12 +644,12 @@ describe('ProvenTx class method tests', () => {
     proof.txid = proof.txid.toUpperCase()
     proof.blockHash = proof.blockHash.toUpperCase()
     proof.merkleRoot = proof.merkleRoot.toUpperCase()
-    const storage = makeProofStorage(header) as StorageProvider & {
+    const storage = makeProofStorage(header) as unknown as StorageProvider & {
       transaction: jest.Mock
       findProvenTxs: jest.Mock
     }
     const merged = { done: true, maxUpdated_at: undefined, updates: 0, inserts: 1 }
-    storage.transaction = jest.fn(async () => merged)
+    storage.transaction = jest.fn(async () => merged) as unknown as StorageProvider['transaction'] & jest.Mock
     storage.findProvenTxs = jest.fn(async () => [])
 
     await expect(

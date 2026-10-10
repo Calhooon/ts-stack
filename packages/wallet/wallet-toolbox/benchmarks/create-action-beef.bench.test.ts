@@ -89,7 +89,7 @@ async function createBenchmarkContext(): Promise<BenchmarkContext> {
     ctx.activeStorage,
     'telemetry',
     new Telemetry({
-      sink: { capture: event => storageEvents.push({ ...event }) }
+      sink: { capture: event => void storageEvents.push({ ...event }) }
     })
   )
   ctx.activeStorage.feeModel = { model: 'sat/kb', value: 100 }
@@ -217,7 +217,7 @@ async function replaceFundingCandidatesWithDistinctProvenSources(
         vout: 0,
         txid,
         lockingScript: lockingScript.toBinary(),
-        scriptLength: lockingScript.length,
+        scriptLength: lockingScript.toBinary().length,
         derivationPrefix,
         derivationSuffix,
         outputDescription: 'proof-bearing funding candidate',
@@ -292,7 +292,10 @@ async function measureStorageCreateAction(setup: BenchmarkContext, candidateCoun
   const firstEvent = setup.storageEvents.length
   const probe = startQueryProbe(setup)
   const start = performance.now()
-  const result = await setup.ctx.activeStorage.createAction({ userId: setup.ctx.userId }, createActionArgs())
+  const result = await setup.ctx.activeStorage.createAction(
+    { userId: setup.ctx.userId, identityKey: setup.ctx.identityKey },
+    createActionArgs()
+  )
   const elapsedMs = performance.now() - start
   const query = probe.stop()
   return {
@@ -316,9 +319,9 @@ async function createRemoteClient(setup: BenchmarkContext): Promise<{
 }> {
   const events: TelemetryEvent[] = []
   const serverEvents: TelemetryEvent[] = []
-  const telemetry = { sink: { capture: (event: Readonly<TelemetryEvent>) => events.push({ ...event }) } }
+  const telemetry = { sink: { capture: (event: Readonly<TelemetryEvent>) => void events.push({ ...event }) } }
   const serverTelemetry = {
-    sink: { capture: (event: Readonly<TelemetryEvent>) => serverEvents.push({ ...event }) }
+    sink: { capture: (event: Readonly<TelemetryEvent>) => void serverEvents.push({ ...event }) }
   }
   // Jest VM modules create a separate typed-array realm for worker replies;
   // use the same packed WASM batch lane without worker fan-out here.
@@ -578,18 +581,24 @@ describe('createAction proof-bearing fragmented funding benchmark', () => {
       ...StorageKnex.defaultOptions(),
       knex: _tu.createLocalMySQL(databaseName),
       chain: 'main',
-      telemetry: { sink: { capture: event => events.push({ ...event }) } }
+      telemetry: { sink: { capture: event => void events.push({ ...event }) } }
     })
     try {
       await storage.makeAvailable()
       storage.feeModel = { model: 'sat/kb', value: 100 }
-      const user = await storage.knex('users').select('userId').first()
+      const user = await storage.knex('users').select('userId', 'identityKey').first()
       const basket = await storage.knex('output_baskets').select('basketId').where({ name: 'default' }).first()
-      if (user?.userId == null || basket?.basketId == null) throw new Error('production-shaped fixture is incomplete')
+      if (
+        user?.userId == null ||
+        typeof user.identityKey !== 'string' ||
+        user.identityKey.length === 0 ||
+        basket?.basketId == null
+      )
+        throw new Error('production-shaped fixture is incomplete')
       const samples = Number(process.env.WALLET_TOOLBOX_BENCH_EXISTING_SAMPLES ?? 5)
       const measurements: Measurement[] = []
       for (let sample = 0; sample < samples; sample++) {
-        const available = await storage.findAvailableManagedChangeInputCandidates(user.userId, basket.basketId)
+        const available = await storage.findAvailableManagedChangeInputCandidates(user.userId, basket.basketId, false)
         // Keep enough headroom for a large-input transaction fee while still
         // forcing the fragmented cohort to contribute well over 100 inputs.
         const target = Math.max(1, Math.floor(available.reduce((sum, output) => sum + output.satoshis, 0) * 0.7))
@@ -597,7 +606,10 @@ describe('createAction proof-bearing fragmented funding benchmark', () => {
         events.length = 0
         const probe = startQueryProbe(setup)
         const start = performance.now()
-        const result = await storage.createAction({ userId: user.userId }, createActionArgs(target))
+        const result = await storage.createAction(
+          { userId: user.userId, identityKey: user.identityKey },
+          createActionArgs(target)
+        )
         const elapsedMs = performance.now() - start
         const query = probe.stop()
         const phaseMs: Record<string, number> = {}
@@ -614,7 +626,9 @@ describe('createAction proof-bearing fragmented funding benchmark', () => {
           resultBeefBytes: result.inputBeef?.length ?? 0,
           phaseMs
         })
-        await expect(storage.abortAction({ userId: user.userId }, { reference: result.reference })).resolves.toEqual({
+        await expect(
+          storage.abortAction({ userId: user.userId, identityKey: user.identityKey }, { reference: result.reference })
+        ).resolves.toEqual({
           aborted: true
         })
       }

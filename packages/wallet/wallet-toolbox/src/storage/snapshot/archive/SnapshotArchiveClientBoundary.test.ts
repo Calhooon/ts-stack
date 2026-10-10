@@ -1,4 +1,4 @@
-import { AuthFetch, PrivateKey, ProtoWallet } from '@bsv/sdk'
+import { AuthFetch, PrivateKey } from '@bsv/sdk'
 import { StorageClient } from '../../remoting/StorageClient'
 import { BINARY_ENCODING, BINARY_ENCODING_HEADER } from '../../remoting/BinaryJson'
 import {
@@ -6,9 +6,21 @@ import {
   snapshotArchiveRequestBytes,
   snapshotArchiveResponseBytes
 } from './SnapshotArchiveProtocol'
-import { snapshotHttpFixture } from '../../../../test/utils/snapshotArchiveHttpFixtures'
+import { snapshotHttpFixture, snapshotAuthenticationWallet } from '../../../../test/utils/snapshotArchiveHttpFixtures'
 
-afterEach(() => jest.restoreAllMocks())
+const ownedWallets: Array<ReturnType<typeof snapshotAuthenticationWallet>> = []
+const authenticationWallet = (chain: 'main' | 'test' = 'test') => {
+  const wallet = snapshotAuthenticationWallet(PrivateKey.fromRandom(), chain)
+  ownedWallets.push(wallet)
+  return wallet
+}
+afterEach(async () => {
+  jest.restoreAllMocks()
+  while (ownedWallets.length !== 0) {
+    await ownedWallets[ownedWallets.length - 1].destroy()
+    ownedWallets.pop()
+  }
+})
 
 test('server requires bounded compact framing and refuses its own oversized snapshot result', async () => {
   const fixture = await snapshotHttpFixture()
@@ -92,24 +104,22 @@ test.each(['no-auth', 'changed-server', 'no-binary', 'wrong-id', 'non-ok'] as co
         ...(variant === 'no-auth' ? {} : { 'x-bsv-auth-identity-key': identity }),
         ...(variant === 'no-binary' ? {} : { [BINARY_ENCODING_HEADER]: BINARY_ENCODING })
       }
-      jest
-        .spyOn(AuthFetch.prototype, 'fetch')
-        .mockResolvedValue(
-          new Response(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              id: variant === 'wrong-id' ? expectedId + 1 : expectedId,
-              result: {
-                version: 1,
-                serverTime: Date.now(),
-                sourceStorageIdentityKey: 'http-snapshot-source',
-                sourceSchema: 'schema',
-                chain: 'test'
-              }
-            }),
-            { headers, status: variant === 'non-ok' ? 503 : 200 }
-          )
+      jest.spyOn(AuthFetch.prototype, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: variant === 'wrong-id' ? expectedId + 1 : expectedId,
+            result: {
+              version: 1,
+              serverTime: Date.now(),
+              sourceStorageIdentityKey: 'http-snapshot-source',
+              sourceSchema: 'schema',
+              chain: 'test'
+            }
+          }),
+          { headers, status: variant === 'non-ok' ? 503 : 200 }
         )
+      )
       const reason = {
         'no-auth': /not mutually authenticated/,
         'changed-server': /identity changed/,
@@ -147,7 +157,7 @@ test('oversized snapshot envelopes reject before transport and advertised settin
 })
 
 test('legacy settings decline the capability and malformed advertisements fail rather than fall back', async () => {
-  const wallet = new ProtoWallet(PrivateKey.fromRandom())
+  const wallet = authenticationWallet()
   for (const value of [undefined, null, { ...snapshotArchiveCapabilities, version: 2 }, snapshotArchiveCapabilities]) {
     const client = new StorageClient(wallet, 'http://localhost:1')
     jest.spyOn(client as never, 'rpcCall' as never).mockResolvedValue({
@@ -185,7 +195,7 @@ test.each([
 
 test('main-chain client advertises a usable transport and admits an exactly bounded request', async () => {
   const key = PrivateKey.fromRandom().toPublicKey().toString()
-  const client = new StorageClient(new ProtoWallet(PrivateKey.fromRandom()), 'http://localhost:1')
+  const client = new StorageClient(authenticationWallet('main'), 'http://localhost:1')
   jest.spyOn(client as never, 'rpcCall' as never).mockResolvedValue({
     storageIdentityKey: 'main-source',
     chain: 'main',

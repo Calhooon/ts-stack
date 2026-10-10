@@ -1,4 +1,6 @@
 import type { SnapshotSyncCheckpoint } from '../snapshot/SnapshotSync'
+import type { SnapshotJournalDestinationCheckpoint } from '../snapshot/journal/SnapshotJournalTypes'
+import type { SnapshotJournalReconciliationProgress } from '../snapshot/journal/runSnapshotJournalReconciliation'
 import type {
   ProcessSyncChunkResult,
   RequestSyncChunkArgs,
@@ -11,6 +13,7 @@ import { WERR_INVALID_PARAMETER } from '../../sdk/WERR_errors'
 import { SyncPageBudget } from './SyncPageBudget'
 import { validateSyncCheckpoint } from './syncCheckpoint'
 import { assertSyncProgress, throwSyncResultError } from './syncFailure'
+import { commitSyncAdmission } from './commitSyncAdmission'
 
 export interface SyncSessionOptions {
   /** Cancellation waits for an in-flight commit acknowledgement; it never rolls back an acknowledged page. */
@@ -22,6 +25,8 @@ export interface SyncSessionOptions {
   maxRoughSize?: number
   /** Called outside page ownership in paged mode. Checkpoints are independent copies. */
   onProgress?: (progress: SyncSessionProgress) => void
+  /** Actual durable journal custody, reported outside ownership for negotiated journal providers. */
+  onJournalProgress?: (progress: SnapshotJournalReconciliationProgress) => void
 }
 
 export interface SyncSessionProgress {
@@ -32,9 +37,13 @@ export interface SyncSessionProgress {
   updates: number
   /** Present for negotiated local snapshot sync; legacy offsets remain separate. */
   snapshotCheckpoint?: SnapshotSyncCheckpoint
+  journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
   readMs?: number
   prepareMs?: number
+  /** Actual returned source extent bytes, including verification/replay.
+   * This is local transfer telemetry, not encoded wire size or allocation. */
+  fieldBytesRead?: number
   queueMs?: number
   commitMs?: number
 }
@@ -47,6 +56,7 @@ export interface SyncSessionResult {
   updates: number
   /** Present for negotiated local snapshot sync; legacy offsets remain separate. */
   snapshotCheckpoint?: SnapshotSyncCheckpoint
+  journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
 }
 
@@ -142,7 +152,11 @@ export async function runPullSession(session: PullSession, options: SyncSessionO
     return true
   }
   if (cancelled()) return result
-  let args = await session.commit(session.loadRequest)
+  let args = await commitSyncAdmission(session.commit, session.loadRequest, signal)
+  if (args === undefined) {
+    cancelled()
+    return result
+  }
   result.checkpoint = requestCheckpoint(args)
   args = {
     ...args,
@@ -152,8 +166,9 @@ export async function runPullSession(session: PullSession, options: SyncSessionO
   const budget = new SyncPageBudget()
   for (;;) {
     if (cancelled()) return result
+    const admittedArgs = args
     const pageArgs = {
-      ...budget.apply(args),
+      ...budget.apply(admittedArgs),
       includeNextCheckpoint: true,
       requireMatchingCheckpoint: session.atomicCheckpoint
     }
@@ -163,15 +178,19 @@ export async function runPullSession(session: PullSession, options: SyncSessionO
     notify('committing', { readMs })
     const queuedAt = Date.now()
     let commitAt = queuedAt
-    const committed = await session.commit(async () => {
-      // A cancellation requested while queued must not start a destination write.
-      if (signal?.aborted === true) return undefined
-      commitAt = Date.now()
-      const reply = await apply()
-      throwSyncResultError(reply)
-      const checkpoint = await committedCheckpoint(session, args, reply)
-      return { reply, checkpoint }
-    })
+    const committed = await commitSyncAdmission(
+      session.commit,
+      async () => {
+        // A cancellation requested while queued must not start a destination write.
+        if (signal?.aborted === true) return undefined
+        commitAt = Date.now()
+        const reply = await apply()
+        throwSyncResultError(reply)
+        const checkpoint = await committedCheckpoint(session, admittedArgs, reply)
+        return { reply, checkpoint }
+      },
+      signal
+    )
     if (committed == null) {
       cancelled()
       return result

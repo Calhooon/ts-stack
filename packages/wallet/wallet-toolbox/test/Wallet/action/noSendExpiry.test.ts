@@ -1,6 +1,7 @@
 import {
   Beef,
   CachedKeyDeriver,
+  type CreateActionArgs,
   PrivateKey,
   Script,
   Transaction,
@@ -189,7 +190,7 @@ describe('BRC-177 noSend expiry reference implementation', () => {
     }
   }
 
-  function protectedArgs(seconds: number, signAndProcess = true) {
+  function protectedArgs(seconds: number, signAndProcess = true): CreateActionArgs {
     return {
       description: 'BRC-177 protected payment',
       labels: [`p nosend expiry seconds ${seconds}`],
@@ -205,7 +206,7 @@ describe('BRC-177 noSend expiry reference implementation', () => {
         randomizeOutputs: false,
         signAndProcess
       }
-    } as const
+    }
   }
 
   test.each([false, true])('binary BRC-100 returns the protected action (signAndProcess=%s)', async signAndProcess => {
@@ -1291,7 +1292,7 @@ describe('BRC-177 noSend expiry reference implementation', () => {
         await expect(
           ctx.wallet.createAction({
             ...protectedArgs(3600),
-            options
+            options: options as NonNullable<CreateActionArgs['options']>
           })
         ).rejects.toThrow()
       }
@@ -1366,6 +1367,7 @@ describe('BRC-177 noSend expiry reference implementation', () => {
       )
 
       const knownSpy = jest.spyOn(services, 'getStatusForTxids').mockResolvedValueOnce({
+        name: 'independent lifecycle status fixture',
         status: 'success',
         results: [{ txid: created.txid!, status: 'known', depth: 0 }]
       })

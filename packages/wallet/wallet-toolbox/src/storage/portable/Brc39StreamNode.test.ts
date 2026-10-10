@@ -1,4 +1,5 @@
 import { createCipheriv } from 'node:crypto'
+import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import {
   decryptBrc39StreamToQuarantine,
   encryptBrc39StreamToQuarantine,
@@ -16,6 +17,11 @@ import {
   type AsyncArgon2idBackend,
   type Argon2idOptions
 } from '../../utility/Argon2idBackend'
+
+// Real worker cases consume the ordinary compiled package entry. A TS test
+// transpiler cannot execute a .ts worker as a production Node worker entry.
+const compiledStream =
+  require('../../../out/src/storage/portable/Brc39StreamNode.js') as typeof import('./Brc39StreamNode')
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({
@@ -201,7 +207,7 @@ test.each([1, 15, 16, 17, 31, 33, 65, 97, 128])(
 test('bounded encryption uses real canonical Argon2id strength and NFC with legacy decryption', async () => {
   unregisterArgon2idBackend(backend!)
   const output = stage()
-  await encryptBrc39StreamToQuarantine(plaintextSource(), 'Cafe\u0301', output, options)
+  await compiledStream.encryptBrc39StreamToQuarantine(plaintextSource(), 'Cafe\u0301', output, options)
   expect(await decryptBRC39(new Uint8Array(Buffer.concat(output.parts)), 'Caf\u00e9')).toEqual(document())
 }, 30000)
 test('each new encryption owns fresh secure salt/nonce and exact canonical parameters', async () => {
@@ -415,13 +421,18 @@ test('existing materialized canonical export decrypts with real Argon2id/NFC and
   unregisterArgon2idBackend(backend!)
   const bytes = new Uint8Array(await encryptBRC39(document(), 'Cafe\u0301'))
   const quarantine = stage()
-  const result = await decryptBrc39StreamToQuarantine(chunks(bytes, 97), 'Caf\u00e9', quarantine, options)
+  const result = await compiledStream.decryptBrc39StreamToQuarantine(
+    chunks(bytes, 97),
+    'Caf\u00e9',
+    quarantine,
+    options
+  )
   expect(result.fileBytes).toBe(bytes.length)
   expect(quarantine.validated).toBe(1)
   expect(parseBRC38Json(Buffer.concat(quarantine.parts).toString())).toEqual(document())
   const rejected = stage()
   await expect(
-    decryptBrc39StreamToQuarantine(chunks(bytes, 97), 'different password', rejected, options)
+    compiledStream.decryptBrc39StreamToQuarantine(chunks(bytes, 97), 'different password', rejected, options)
   ).rejects.toThrow()
   expect(rejected.validated).toBe(0)
   expect(rejected.discarded).toBe(1)
@@ -609,4 +620,36 @@ test('source and quarantine cleanup failures retain both exact causes', async ()
   expect(caught).toBeInstanceOf(AggregateError)
   expect((caught as AggregateError).errors).toEqual([sourceFailure, cleanupFailure])
   expect((caught as Error).cause).toBe(sourceFailure)
+})
+
+test('combined KDF and quarantine cleanup failure retains concrete original retry owners in order', async () => {
+  const order: string[] = [],
+    keyFailure = new Brc38StagingCleanupError([new Error('key remains owned')], 'key cleanup', async () => {
+      order.push('key')
+    }),
+    quarantineFailure = new Brc38StagingCleanupError([new Error('stage remains owned')], 'stage cleanup', async () => {
+      order.push('stage')
+    })
+  backend!.deriveKey = async () => {
+    throw keyFailure
+  }
+  const quarantine = stage()
+  let first = true
+  quarantine.discard = async () => {
+    if (first) {
+      first = false
+      throw quarantineFailure
+    }
+    order.push('discard')
+  }
+  let caught: unknown
+  try {
+    await decryptBrc39StreamToQuarantine(chunks(encrypted()), 'private', quarantine, options)
+  } catch (cause) {
+    caught = cause
+  }
+  expect(caught).toBeInstanceOf(Brc38StagingCleanupError)
+  expect((caught as Brc38StagingCleanupError).cause).toBe(keyFailure)
+  await (caught as Brc38StagingCleanupError).retryCleanup()
+  expect(order).toEqual(['key', 'stage', 'discard'])
 })

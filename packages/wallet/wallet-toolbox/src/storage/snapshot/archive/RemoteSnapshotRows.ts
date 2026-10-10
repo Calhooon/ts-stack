@@ -285,6 +285,17 @@ function row(input: unknown, schema: Schema, userId: number): RemoteSnapshotRow 
   return result
 }
 
+/** Validate complete raw rows received by the authenticated destination RPC.
+ * The RPC owns its ingress and allocation bounds before calling this helper. */
+export function validateRemoteSnapshotRows(
+  input: readonly unknown[],
+  table: WalletSnapshotTable,
+  userId: number
+): readonly RemoteSnapshotRow[] {
+  remoteSnapshotKeys(table)
+  return input.map(value => row(value, schemas[table], userId))
+}
+
 export interface RemoteSnapshotFrame {
   readonly rows: readonly RemoteSnapshotRow[]
   readonly charges: readonly number[]

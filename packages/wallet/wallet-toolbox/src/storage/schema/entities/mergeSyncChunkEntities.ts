@@ -24,11 +24,21 @@ export async function mergeSyncChunkEntities(
   since: Date | undefined,
   chunk: SyncChunk,
   syncMap: SyncMap,
-  trx?: TrxToken
+  trx?: TrxToken,
+  options?: { preserveManagedChangePolicy?: true }
 ): Promise<{ done: boolean; maxUpdated_at: Date | undefined; updates: number; inserts: number }> {
+  const findBasket: typeof EntityOutputBasket.mergeFind = async (storage, identity, incoming, map, token) =>
+    await EntityOutputBasket.mergeFind(
+      storage,
+      identity,
+      incoming,
+      map,
+      token,
+      options?.preserveManagedChangePolicy === true
+    )
   const mes = [
     new MergeEntity(chunk.provenTxs, EntityProvenTx.mergeFind, syncMap.provenTx),
-    new MergeEntity(chunk.outputBaskets, EntityOutputBasket.mergeFind, syncMap.outputBasket),
+    new MergeEntity(chunk.outputBaskets, findBasket, syncMap.outputBasket),
     new MergeEntity(chunk.outputTags, EntityOutputTag.mergeFind, syncMap.outputTag),
     new MergeEntity(chunk.txLabels, EntityTxLabel.mergeFind, syncMap.txLabel),
     new MergeEntity(chunk.transactions, EntityTransaction.mergeFind, syncMap.transaction),

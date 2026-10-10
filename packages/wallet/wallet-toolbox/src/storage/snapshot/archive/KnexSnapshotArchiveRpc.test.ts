@@ -64,6 +64,7 @@ test.each([Error, WERR_INVALID_OPERATION])(
 test.each([
   'snapshot_archive_requests',
   'snapshot_archive_owners',
+  'snapshot_archive_owner_slots',
   'snapshot_archives',
   'snapshot_archive_pages',
   'snapshot_archive_capacity'
@@ -77,6 +78,31 @@ test.each([
     await expect(
       rpc.dispatch('getSnapshotArchiveOffer', [{ version: 1, identityKey: fixture.identityKey }], fixture.identityKey)
     ).rejects.toThrow('unavailable')
+  } finally {
+    await rpc.close()
+    await fixture.close()
+  }
+})
+
+test.each([
+  ['snapshot_archive_owners', 'guardVersion'],
+  ['snapshot_archive_owner_slots', 'bindingJson']
+])('declines an incomplete guard layout %s.%s before opening a source', async (table, column) => {
+  const fixture = await snapshotHttpFixture()
+  const rpc = new KnexSnapshotArchiveRpc(fixture.storage)
+  try {
+    expect(await rpc.capabilities()).toEqual(snapshotArchiveCapabilities)
+    const open = jest.spyOn(fixture.storage, 'openSnapshotArchiveSource')
+    await fixture.storage.knex.schema.alterTable(table, definition => definition.dropColumn(column))
+    expect(await rpc.capabilities()).toBeUndefined()
+    await expect(
+      rpc.dispatch(
+        'getSnapshotArchiveReaderOffer',
+        [{ version: 1, identityKey: fixture.identityKey, options: { lifetimeMs: 300000, maxBytes: 32768 } }],
+        fixture.identityKey
+      )
+    ).rejects.toThrow('unavailable')
+    expect(open).not.toHaveBeenCalled()
   } finally {
     await rpc.close()
     await fixture.close()
@@ -105,6 +131,25 @@ test('unsupported source and a close during capability probing never advertise o
     expect(await rpc.capabilities()).toBeUndefined()
     expect(open).not.toHaveBeenCalled()
   } finally {
+    await rpc.close()
+    await fixture.close()
+  }
+})
+
+test('provider replacement during capability probing refuses the original controller', async () => {
+  const fixture = await snapshotHttpFixture()
+  const rpc = new KnexSnapshotArchiveRpc(fixture.storage)
+  const database = fixture.storage.knex
+  try {
+    const open = jest.spyOn(fixture.storage, 'openSnapshotArchiveSource')
+    jest.spyOn(fixture.storage, 'supportsSnapshotArchiveSource').mockImplementation(async () => {
+      fixture.storage.knex = {} as typeof database
+      return true
+    })
+    expect(await rpc.capabilities()).toBeUndefined()
+    expect(open).not.toHaveBeenCalled()
+  } finally {
+    fixture.storage.knex = database
     await rpc.close()
     await fixture.close()
   }

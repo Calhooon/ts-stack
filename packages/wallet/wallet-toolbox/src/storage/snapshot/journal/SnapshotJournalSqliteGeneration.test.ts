@@ -1,3 +1,4 @@
+import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import * as observers from './SnapshotJournalSqliteObservers'
 import { knex, type Knex } from 'knex'
 import { StorageKnex } from '../../StorageKnex'
@@ -7,12 +8,71 @@ import {
   installSnapshotJournalSqliteGeneration,
   readSnapshotJournalSqliteGeneration,
   completeSnapshotJournalSqliteGeneration,
+  readBoundedSnapshotJournalSqliteSchema,
   SNAPSHOT_JOURNAL_SQLITE_GENERATION as metadata
 } from './SnapshotJournalSqliteGeneration'
 import { copySnapshotJournalBootstrapPage } from './SnapshotJournalBootstrap'
 import { snapshotJournalRevision, type SnapshotJournalRevision } from './SnapshotJournalRevision'
 
 const journalReceiptPolicy = { receiptLimit: 128, receiptLifetimeMs: 2592000000 }
+
+test('bounded schema reads preserve complete UTF-8, literal whitespace, null SQL and order', async () => {
+  const k = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  try {
+    await k.raw('CREATE TABLE users(id INTEGER PRIMARY KEY, identityKey TEXT UNIQUE)')
+    for (let index = 0; index < 3; index++) {
+      const prefix = `CREATE TRIGGER unicode_${index} AFTER INSERT ON users BEGIN SELECT '`
+      await k.raw(
+        prefix + 'a'.repeat(16383 - Buffer.byteLength(prefix, 'utf8')) + `🙂\n a  b ${'é'.repeat(21000)}'; END`
+      )
+    }
+    const expected = await k('sqlite_master')
+      .where('tbl_name', 'users')
+      .select('type', 'name', 'tbl_name', 'sql')
+      .orderBy(['type', 'name'])
+    expect(Buffer.byteLength(JSON.stringify(expected), 'utf8')).toBeGreaterThan(131072)
+    expect(expected.some(row => row.sql === null)).toBe(true)
+    await k.transaction(async trx => {
+      expect(await readBoundedSnapshotJournalSqliteSchema(trx, ['users'])).toEqual(expected)
+      const rollback = new Error('independent schema rollback')
+      await expect(
+        trx.transaction(async nested => {
+          await nested.raw('DROP TRIGGER unicode_1')
+          expect(await readBoundedSnapshotJournalSqliteSchema(nested, ['users'])).toEqual(
+            expected.filter(row => row.name !== 'unicode_1')
+          )
+          throw rollback
+        })
+      ).rejects.toBe(rollback)
+      expect(await readBoundedSnapshotJournalSqliteSchema(trx, ['users'])).toEqual(expected)
+    })
+    await expect(readBoundedSnapshotJournalSqliteSchema(k as Knex.Transaction, ['users'])).rejects.toThrow(
+      'Invalid or unowned'
+    )
+  } finally {
+    await k.destroy()
+  }
+})
+
+test.each([65536, 65537])('bounded schema retains the original %i-byte definition boundary', async bytes => {
+  const k = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  try {
+    await k.raw('CREATE TABLE users(id INTEGER)')
+    const prefix = "CREATE TRIGGER byte_boundary AFTER INSERT ON users BEGIN SELECT '🙂",
+      suffix = "'; END",
+      sql = prefix + 'x'.repeat(bytes - Buffer.byteLength(prefix + suffix, 'utf8')) + suffix
+    await k.raw(sql)
+    await k.transaction(async trx => {
+      if (bytes === 65536)
+        expect(
+          (await readBoundedSnapshotJournalSqliteSchema(trx, ['users'])).find(row => row.name === 'byte_boundary')?.sql
+        ).toBe(sql)
+      else await expect(readBoundedSnapshotJournalSqliteSchema(trx, ['users'])).rejects.toThrow('Invalid or unowned')
+    })
+  } finally {
+    await k.destroy()
+  }
+})
 
 let ceiling: SnapshotJournalRevision
 beforeEach(() => {
@@ -27,7 +87,7 @@ async function fixture() {
   })
   const source = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
   try {
-    await source.migrate('journal lifecycle', 'synthetic-journal-lifecycle')
+    await migrateBeforeSnapshotJournal(source, 'journal lifecycle', 'synthetic-journal-lifecycle')
     await source.makeAvailable()
     const { user } = await source.findOrInsertUser('02' + '11'.repeat(32)),
       { user: foreign } = await source.findOrInsertUser('03' + '22'.repeat(32))
@@ -281,6 +341,9 @@ test.each(['rows', 'definition', 'aggregate'])('source binding refuses an oversi
     await expect(installSnapshotJournalSqliteGeneration(k, ceiling, journalReceiptPolicy)).rejects.toThrow(
       'Invalid or unowned'
     )
+    await k.transaction(async trx => {
+      await expect(readBoundedSnapshotJournalSqliteSchema(trx, ['users'])).rejects.toThrow('Invalid or unowned')
+    })
     expect(await k('sqlite_master').select('type', 'name', 'sql').orderBy(['type', 'name'])).toEqual(before)
   } finally {
     await source.destroy()
@@ -478,6 +541,322 @@ test('generation validates the receipt floor and capacity with bounded metadata 
     await k('snapshot_journal_receipts').where('requestId', '3'.padStart(64, '0')).delete()
     expect((await readSnapshotJournalSqliteGeneration(k, policy)).enabled).toBe(true)
     expect(await k('transactions')).toEqual(baseline)
+  } finally {
+    await source.destroy()
+  }
+})
+
+test.each(['clock-shared', 'effects-shared', 'events-shared', 'sources-shared'] as const)(
+  '%s journal SQL preserves all thirteen physical streams, owner moves, clock exhaustion and rollback',
+  async layout => {
+    const legacy = await fixture()
+    let compact: Awaited<ReturnType<typeof fixture>> | undefined
+    const { SNAPSHOT_JOURNAL_SQLITE_CLOCK_DDL } = await import('./SnapshotJournalSqliteClock')
+    const tables = [
+      'transactions',
+      'outputs',
+      'certificates',
+      'tx_labels',
+      'output_baskets',
+      'output_tags',
+      'commissions',
+      'sync_states',
+      'proven_txs',
+      'proven_tx_reqs',
+      'tx_labels_map',
+      'output_tags_map',
+      'certificate_fields'
+    ]
+    const snapshot = async (k: Knex) => ({
+      clock: await k('snapshot_journal_clock').first(),
+      physical: await k('snapshot_journal_physical').orderBy(['tableId', 'id1', 'id2', 'exactText']),
+      scope: await k('snapshot_journal_scope').orderBy(['tableId', 'userId', 'id1', 'id2', 'exactText'])
+    })
+    try {
+      compact = await fixture()
+      const databases = [legacy.k, compact.k]
+      for (const [index, k] of databases.entries()) {
+        // SQL event inputs only: these ordinary tables do not model packed
+        // payload/quota/lifetime storage or grant owned-native admission.
+        for (const table of ['brc38_native_binary_fields', 'brc38_native_text_fields'])
+          await k.raw(
+            `CREATE TABLE ${table}(tableId INTEGER NOT NULL,rowId INTEGER NOT NULL,fieldId INTEGER NOT NULL,PRIMARY KEY(tableId,rowId,fieldId))`
+          )
+        await k.raw(SNAPSHOT_JOURNAL_SQLITE_CLOCK_DDL)
+        await k('snapshot_journal_clock').insert({ id: 1, revision: 0, ceiling: 1000000, enabled: 1, reason: null })
+        for (const ddl of index === 0
+          ? observers.SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL
+          : observers.SNAPSHOT_JOURNAL_SQLITE_COMPACT_METADATA_DDL)
+          await k.raw(ddl)
+        const shared = index !== 0 && layout !== 'clock-shared',
+          events = index !== 0 && (layout === 'events-shared' || layout === 'sources-shared'),
+          projectedSources = index !== 0 && layout === 'sources-shared',
+          original = [
+            ...(await observers.snapshotJournalSqliteObserverSql(k, shared, events)),
+            ...observers.snapshotJournalPackedPointerObserverSql(false, shared, events),
+            ...observers.snapshotJournalPackedPointerObserverSql(true, shared, events)
+          ]
+        if (shared) for (const ddl of observers.SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL) await k.raw(ddl)
+        const installed =
+          index === 0 ? original : observers.snapshotJournalSharedClockObserverSql(original, events, projectedSources)
+        if (events) {
+          for (const ddl of projectedSources
+            ? observers.SNAPSHOT_JOURNAL_SQLITE_SHARED_SOURCE_EVENT_DDL
+            : observers.SNAPSHOT_JOURNAL_SQLITE_SHARED_EVENT_DDL)
+            expect(Buffer.byteLength(ddl, 'utf8')).toBeLessThanOrEqual(16384)
+          const previous = observers.snapshotJournalSharedClockObserverSql([
+            ...(await observers.snapshotJournalSqliteObserverSql(k, true)),
+            ...observers.snapshotJournalPackedPointerObserverSql(false, true),
+            ...observers.snapshotJournalPackedPointerObserverSql(true, true)
+          ])
+          const bytes = (definitions: readonly string[]) =>
+            definitions.reduce((total, sql) => total + Buffer.byteLength(sql, 'utf8'), 0)
+          expect(bytes(installed)).toBeLessThan(bytes(previous))
+        }
+        if (projectedSources) {
+          const previous = observers.snapshotJournalSharedClockObserverSql(original, true)
+          expect(installed.reduce((sum, ddl) => sum + Buffer.byteLength(ddl), 0)).toBeLessThan(
+            previous.reduce((sum, ddl) => sum + Buffer.byteLength(ddl), 0)
+          )
+        }
+        for (const ddl of installed) await k.raw(ddl)
+        if (projectedSources) {
+          // Every UNION branch retains a SEARCH point path. The certificate
+          // field branch stays in its original collation-bearing statement.
+          for (const tableId of [0, 10, 11]) {
+            const steps: Array<{ detail: string }> = await k.raw(
+              'EXPLAIN QUERY PLAN SELECT 1 FROM snapshot_journal_source_rows s WHERE s.tableId=? AND s.id1=? AND s.id2=? AND s.exactText=? AND CAST(s.id1 AS BLOB)=CAST(? AS BLOB) AND CAST(s.id2 AS BLOB)=CAST(? AS BLOB) AND CAST(s.exactText AS BLOB)=CAST(? AS BLOB)',
+              [tableId, 1, 0, '', 1, 0, '']
+            )
+            expect(
+              steps.some(step =>
+                /SCAN (?:transactions|outputs|certificates|tx_labels|output_baskets|output_tags|commissions|sync_states|proven_txs|proven_tx_reqs|tx_labels_map|output_tags_map)(?:\b|$)/.test(
+                  step.detail
+                )
+              )
+            ).toBe(false)
+            expect(steps.filter(step => step.detail.startsWith('SEARCH '))).toHaveLength(12)
+          }
+          expect(
+            await k('sqlite_schema').where('name', 'snapshot_journal_source_rows').first('type', 'rootpage')
+          ).toEqual({ type: 'view', rootpage: 0 })
+        }
+      }
+      for (const table of tables) {
+        for (const k of databases) await k(table).update({ updated_at: '2026-01-02 03:04:05.000' })
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+      }
+      const sourceKeys = [
+        ['transactionId'],
+        ['outputId'],
+        ['certificateId'],
+        ['txLabelId'],
+        ['basketId'],
+        ['outputTagId'],
+        ['commissionId'],
+        ['syncStateId'],
+        ['provenTxId'],
+        ['provenTxReqId'],
+        ['txLabelId', 'transactionId'],
+        ['outputTagId', 'outputId'],
+        ['certificateId', 'fieldName']
+      ]
+      for (const [tableId, table] of tables.entries()) {
+        const before = await snapshot(legacy.k)
+        for (const k of databases) {
+          await k.raw('SAVEPOINT independent_source_key_move')
+          await k.raw('PRAGMA defer_foreign_keys=ON')
+          const row = await k(table).first(),
+            key = Object.fromEntries(sourceKeys[tableId].map(column => [column, row[column]])),
+            next = Object.fromEntries(
+              sourceKeys[tableId].map(column => [
+                column,
+                typeof row[column] === 'string' ? 'independent-journal-key-move' : row[column] + 100000
+              ])
+            )
+          await k(table).where(key).update(next)
+        }
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+        for (const k of databases) {
+          await k.raw('ROLLBACK TO independent_source_key_move')
+          await k.raw('RELEASE independent_source_key_move')
+          expect(await snapshot(k)).toEqual(before)
+          expect(await k.raw('PRAGMA foreign_key_check')).toEqual([])
+        }
+      }
+      expect((await snapshot(compact.k)).physical.map(row => row.tableId)).toEqual(
+        expect.arrayContaining(tables.map((_, i) => i))
+      )
+      for (const k of databases) {
+        const transaction = await k('transactions').first(),
+          users = await k('users').orderBy('userId')
+        await k('transactions')
+          .where('transactionId', transaction.transactionId)
+          .update({ userId: users.find(row => row.userId !== transaction.userId)!.userId })
+      }
+      expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+      for (const k of databases) {
+        const before = await snapshot(k)
+        await k.raw('SAVEPOINT independent_clock_rollback')
+        await k('outputs').update({ updated_at: '2026-02-03 04:05:06.000' })
+        expect((await snapshot(k)).clock.revision).toBeGreaterThan(before.clock.revision)
+        await k.raw('ROLLBACK TO independent_clock_rollback')
+        await k.raw('RELEASE independent_clock_rollback')
+        expect(await snapshot(k)).toEqual(before)
+      }
+      for (const table of ['snapshot_journal_physical', 'snapshot_journal_scope']) {
+        expect(
+          (await compact.k.raw('PRAGMA table_list(??)', [table])).find(
+            (row: { name: string; wr: number }) => row.name === table
+          ).wr
+        ).toBe(1)
+        expect(
+          (await legacy.k.raw('PRAGMA table_list(??)', [table])).find(
+            (row: { name: string; wr: number }) => row.name === table
+          ).wr
+        ).toBe(0)
+        await expect(compact.k.raw('SELECT _rowid_ FROM ?? LIMIT 1', [table])).rejects.toThrow('no such column')
+        const plan = await compact.k.raw(
+          `EXPLAIN QUERY PLAN SELECT * FROM ${table} INDEXED BY sqlite_autoindex_${table}_1 WHERE tableId=?`,
+          [0]
+        )
+        expect(plan[0].detail.startsWith(`SEARCH ${table} USING PRIMARY KEY`)).toBe(true)
+      }
+      for (const table of tables) {
+        const before = await snapshot(legacy.k)
+        for (const k of databases) {
+          await k.raw('SAVEPOINT independent_source_delete_reinsert')
+          await k.raw('PRAGMA defer_foreign_keys=ON')
+          const rows = await k(table)
+          expect(rows.length).toBeGreaterThan(0)
+          await k(table).delete()
+          // Real source DELETE followed by fresh INSERT at the same physical
+          // keys must replace generations and preserve independent tombstones.
+          for (const row of rows) await k(table).insert(row)
+          expect(await k.raw('PRAGMA foreign_key_check')).toEqual([])
+        }
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+        for (const k of databases) {
+          await k.raw('ROLLBACK TO independent_source_delete_reinsert')
+          await k.raw('RELEASE independent_source_delete_reinsert')
+          expect(await snapshot(k)).toEqual(before)
+        }
+      }
+      if (layout !== 'clock-shared') {
+        for (const helper of ['guard', 'scope', 'physical'])
+          expect(await compact.k('snapshot_journal_' + helper + '_event')).toEqual([])
+        if (layout === 'events-shared' || layout === 'sources-shared') {
+          for (const helper of ['member', 'source', 'pointer'])
+            expect(await compact.k('snapshot_journal_' + helper + '_event')).toEqual([])
+          const before = await snapshot(compact.k)
+          await expect(
+            compact.k.raw('INSERT INTO snapshot_journal_source_event(event,tableId) VALUES(4,0)')
+          ).rejects.toThrow('Invalid snapshot journal source event')
+          expect(await snapshot(compact.k)).toEqual(before)
+        }
+        const before = await snapshot(compact.k)
+        // The original guard uses three-valued NOT: NULL does not disable it.
+        await compact.k.raw('INSERT INTO snapshot_journal_guard_event(valid) VALUES(NULL)')
+        expect(await snapshot(compact.k)).toEqual(before)
+        await compact.k.raw('SAVEPOINT independent_shared_guard_rollback')
+        await compact.k.raw('INSERT INTO snapshot_journal_guard_event(valid) VALUES(0)')
+        expect((await snapshot(compact.k)).clock).toMatchObject({ enabled: 0, reason: 'key-out-of-range' })
+        await compact.k.raw('ROLLBACK TO independent_shared_guard_rollback')
+        await compact.k.raw('RELEASE independent_shared_guard_rollback')
+        expect(await snapshot(compact.k)).toEqual(before)
+      }
+      const pointers = [
+        ['brc38_native_binary_fields', 0, 'transactions', 'transactionId', 0],
+        ['brc38_native_binary_fields', 1, 'proven_txs', 'provenTxId', 0],
+        ['brc38_native_binary_fields', 2, 'proven_tx_reqs', 'provenTxReqId', 0],
+        ['brc38_native_binary_fields', 3, 'outputs', 'outputId', 0],
+        ['brc38_native_binary_fields', 4, 'commissions', 'commissionId', 0],
+        ['brc38_native_text_fields', 0, 'transactions', 'transactionId', 3],
+        ['brc38_native_text_fields', 2, 'proven_tx_reqs', 'provenTxReqId', 2],
+        ['brc38_native_text_fields', 3, 'outputs', 'outputId', 1],
+        ['brc38_native_text_fields', 4, 'commissions', 'commissionId', 1],
+        ['brc38_native_text_fields', 5, 'sync_states', 'syncStateId', 0],
+        ['brc38_native_text_fields', 6, 'certificates', 'certificateId', 0],
+        ['brc38_native_text_fields', 7, 'certificate_fields', 'rowid', 0]
+      ] as const
+      for (const [pointer, tableId, source, key, fieldId] of pointers) {
+        const before = await snapshot(legacy.k)
+        for (const k of databases) {
+          await k.raw('SAVEPOINT independent_pointer_events')
+          await k.raw('PRAGMA defer_foreign_keys=ON')
+          const unchanged = await snapshot(k)
+          await k(pointer).insert({ tableId, rowId: 999999, fieldId })
+          expect(await snapshot(k)).toEqual(unchanged)
+          await k(pointer).delete()
+          expect(await snapshot(k)).toEqual(unchanged)
+          const row = await k(source).select('*', k.raw('rowid AS independentRowId')).first()
+          await k(pointer).insert({ tableId, rowId: key === 'rowid' ? row.independentRowId : row[key], fieldId })
+        }
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+        for (const k of databases) {
+          await k(pointer).delete()
+        }
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+        for (const k of databases) {
+          const row = await k(source).select('*', k.raw('rowid AS independentRowId')).first(),
+            rowId = key === 'rowid' ? row.independentRowId : row[key]
+          await k(pointer).insert({ tableId, rowId, fieldId })
+          await k(source).whereRaw('rowid=?', [row.independentRowId]).delete()
+          const tombstone = await snapshot(k)
+          await k(pointer).delete()
+          // Deleting a pointer after its main source is gone cannot revive the
+          // physical tombstone or advance the original journal clock again.
+          expect(await snapshot(k)).toEqual(tombstone)
+        }
+        expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+        for (const k of databases) {
+          await k.raw('ROLLBACK TO independent_pointer_events')
+          await k.raw('RELEASE independent_pointer_events')
+          expect(await snapshot(k)).toEqual(before)
+          expect(await k.raw('PRAGMA foreign_key_check')).toEqual([])
+        }
+      }
+      const unchanged = await snapshot(compact.k)
+      await expect(compact.k.raw('INSERT INTO snapshot_journal_advance_event(event) VALUES(2)')).rejects.toThrow(
+        'Invalid snapshot journal advance event'
+      )
+      expect(await snapshot(compact.k)).toEqual(unchanged)
+      expect(await compact.k('snapshot_journal_advance_event')).toEqual([])
+      for (const k of databases) {
+        const clock = (await snapshot(k)).clock
+        await k('snapshot_journal_clock')
+          .where('id', 1)
+          .update({ ceiling: clock.revision + 1 })
+        await k('outputs').update({ updated_at: '2026-03-04 05:06:07.000' })
+      }
+      expect(await snapshot(compact.k)).toEqual(await snapshot(legacy.k))
+      expect((await snapshot(compact.k)).clock).toMatchObject({ enabled: 0, reason: 'capacity-exhausted' })
+      for (const k of databases)
+        expect(await k('outputs').where('updated_at', '2026-03-04 05:06:07.000')).not.toHaveLength(0)
+      // Authored compact SQL in an ordinary engine proves semantics only; it
+      // cannot make that database an admitted native installation.
+      await expect(readSnapshotJournalSqliteGeneration(compact.k, journalReceiptPolicy)).rejects.toThrow(
+        'Invalid or unowned'
+      )
+    } finally {
+      try {
+        await compact?.source.destroy()
+      } finally {
+        await legacy.source.destroy()
+      }
+    }
+  },
+  30000
+)
+
+test('journal inventory refuses attached foreign handlers even when their name resembles an autoindex', async () => {
+  const { k, source } = await fixture()
+  try {
+    const installed = await installSnapshotJournalSqliteGeneration(k, ceiling, journalReceiptPolicy)
+    await k.raw('CREATE TRIGGER sqliteXautoindex_foreign AFTER INSERT ON snapshot_journal_physical BEGIN SELECT 1; END')
+    await expect(readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)).rejects.toThrow('Invalid or unowned')
+    await k.raw('DROP TRIGGER sqliteXautoindex_foreign')
+    expect(await readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)).toEqual(installed)
   } finally {
     await source.destroy()
   }

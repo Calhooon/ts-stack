@@ -61,18 +61,31 @@ export async function validateLegacy(k: Knex, config?: Knex.MigratorConfig): Pro
     }
   )
   const names = legacyTriggerNames()
-  const foreign: Array<{
-    type: string
-    name: string
-    tbl_name: string
-    sql: string
-  }> = await k('sqlite_master').whereIn('type', ['trigger', 'view']).select('type', 'name', 'tbl_name', 'sql')
-  for (const object of foreign)
+  let cursor: Pick<SchemaObject, 'type' | 'name'> | undefined
+  for (;;) {
+    // Keep every complete definition, but read one at a time so a large
+    // collection of ordinary triggers cannot exhaust the native reply budget.
+    const query = k('sqlite_master').whereIn('type', ['trigger', 'view'])
+    if (cursor !== undefined) {
+      const prior = cursor
+      void query.andWhere(after => {
+        void after.where('type', '>', prior.type).orWhere(sameType => {
+          void sameType.where('type', prior.type).andWhere('name', '>', prior.name)
+        })
+      })
+    }
+    const object: SchemaObject | undefined = await query
+      .select('type', 'name', 'tbl_name', 'sql')
+      .orderBy(['type', 'name'])
+      .first()
+    if (object === undefined) break
     if (
       !(object.type === 'trigger' && names.has(object.name)) &&
       (retiredTables.includes(object.tbl_name) ||
-        retiredTables.some(table => new RegExp(String.raw`\b${table}\b`, 'i').test(object.sql)))
+        retiredTables.some(table => new RegExp(String.raw`\b${table}\b`, 'i').test(String(object.sql))))
     )
       throw new WERR_INVALID_OPERATION('Unowned object references legacy auxiliary data')
+    cursor = { type: object.type, name: object.name }
+  }
   return names
 }

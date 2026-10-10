@@ -1,11 +1,12 @@
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
+import { createSnapshotArchiveTable } from './snapshotNativeArchiveSchema'
 
 export const SNAPSHOT_ARCHIVE_REQUEST_MIGRATION = '2026-09-30-003 add snapshot archive requests'
 
 export async function addSnapshotArchiveRequestTable(knex: Knex): Promise<void> {
   if (!(await knex.schema.hasTable('snapshot_archive_requests'))) {
-    await knex.schema.createTable('snapshot_archive_requests', table => {
+    const builder = knex.schema.createTable('snapshot_archive_requests', table => {
       table.string('identityKey', 130).notNullable()
       table.string('requestId', 64).notNullable()
       table.string('claimToken', 64).notNullable()
@@ -17,6 +18,7 @@ export async function addSnapshotArchiveRequestTable(knex: Knex): Promise<void> 
       table.boolean('released').notNullable()
       table.primary(['identityKey', 'requestId'])
     })
+    await createSnapshotArchiveTable(knex, 'snapshot_archive_requests', builder)
   }
 }
 

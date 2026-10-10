@@ -1,6 +1,7 @@
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
 import { parseBRC38Json, type BRC38Tables, type BRC38WalletData } from './index'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
+import { encodeBrc38StreamedRow, type Brc38StreamedRow, type Brc38StreamedRowPolicy } from './Brc38StreamedRow'
 
 type Table = keyof BRC38Tables
 type Row = BRC38Tables[Table][number]
@@ -11,6 +12,9 @@ export interface Brc38StreamSource {
    * order. Normalize dates, native binary and historical optional JSON fields
    * before yielding. No replica checkpoint or staging metadata belongs here. */
   rows: (table: Table) => AsyncIterable<Row>
+  /** Optional host-owned native metadata/binary extents. Requires explicit
+   * streamedRows policy and the same independent coherent source validation. */
+  streamedRows?: (table: Table) => AsyncIterable<Brc38StreamedRow>
   /** Independently verify complete schema, relational closure and original
    * source provenance in the owned coherent view. The encoder checks JSON
    * spelling and bounds; it cannot prove those source guarantees itself. */
@@ -21,10 +25,15 @@ export interface Brc38StreamSource {
 export interface Brc38StreamOptions {
   exportedAt: string
   maximumArchiveBytes: number
+  /** Encoded row ceiling. Materialized rows retain the 16 MiB limit; explicitly
+   * streamed field rows may use the separately bounded archive byte ceiling. */
   maximumRowBytes: number
   /** Metadata alone may be materialized within this fixed bound, <=65,536. */
   maximumMetadataBytes?: number
   maximumChunkBytes?: number
+  /** Additive binary/structured/scalar-TEXT extent path. Legacy row allocation and wire
+   * spelling stay unchanged; large JSON uses a host-owned temporary key index. */
+  streamedRows?: Omit<Brc38StreamedRowPolicy, 'maximumChunkBytes' | 'signal'>
   signal?: AbortSignal
 }
 export interface Brc38Stream {
@@ -112,16 +121,29 @@ export async function createBrc38Stream(source: Brc38StreamSource, selected: Brc
     return released
   }
   try {
-    const options = Object.freeze({ ...selected })
+    const options = Object.freeze({
+      ...selected,
+      ...(selected.streamedRows === undefined ? {} : { streamedRows: Object.freeze({ ...selected.streamedRows }) })
+    })
     const { signal, maximumArchiveBytes, maximumRowBytes, maximumChunkBytes = 65536 } = options
     boundedInteger(maximumArchiveBytes, Number.MAX_SAFE_INTEGER, 'maximumArchiveBytes')
-    boundedInteger(maximumRowBytes, 16777216, 'maximumRowBytes')
+    // Materialized rows retain their original allocation ceiling. An explicit
+    // field stream bounds the encoded row separately from its small metadata
+    // and exact extent loans; no whole large value reaches the row serializer.
+    boundedInteger(
+      maximumRowBytes,
+      options.streamedRows === undefined ? 16777216 : maximumArchiveBytes,
+      'maximumRowBytes'
+    )
     boundedInteger(options.maximumMetadataBytes ?? 65536, 65536, 'maximumMetadataBytes')
     if (!Number.isSafeInteger(maximumChunkBytes) || maximumChunkBytes < 64 || maximumChunkBytes > 65536)
       throw new RangeError('maximumChunkBytes must be an integer from 64 to 65536')
     signal?.throwIfAborted()
     const header = metadata(source, options)
     const rows = source.rows.bind(source)
+    const streamedRows = source.streamedRows?.bind(source)
+    if ((streamedRows === undefined) !== (options.streamedRows === undefined))
+      throw new TypeError('BRC-38 streamed rows require a source adapter and explicit byte policy together')
     const validate = source.validateCompleted.bind(source)
     const encoder = new TextEncoder()
     const rowPolicy = { maximumValueBytes: maximumRowBytes, maximumChunkBytes, signal }
@@ -137,6 +159,16 @@ export async function createBrc38Stream(source: Brc38StreamSource, selected: Brc
     async function* tableChunks(index: number, table: Table) {
       yield* literal(`${index === 0 ? '' : ','}${JSON.stringify(table)}:[`)
       let first = true
+      if (streamedRows !== undefined && options.streamedRows !== undefined) {
+        for await (const row of streamedRows(table)) {
+          signal?.throwIfAborted()
+          if (!first) yield* literal(',')
+          first = false
+          yield* encodeBrc38StreamedRow(table, row, { ...options.streamedRows, maximumChunkBytes, signal })
+        }
+        yield* literal(']')
+        return
+      }
       for await (const row of rows(table)) {
         signal?.throwIfAborted()
         objectRow(row)

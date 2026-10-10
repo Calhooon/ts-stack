@@ -1,3 +1,4 @@
+import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import fc from 'fast-check'
 import { knex, type Knex } from 'knex'
 import {
@@ -787,7 +788,7 @@ describe('SnapshotJournalSqliteObservers', () => {
       let view: Knex.Transaction | undefined
       try {
         await k.raw('PRAGMA journal_mode=WAL')
-        await source.migrate('candidate journal fixture', 'synthetic-candidate-journal')
+        await migrateBeforeSnapshotJournal(source, 'candidate journal fixture', 'synthetic-candidate-journal')
         await source.makeAvailable()
         await k.raw('PRAGMA recursive_triggers=' + Number(recursive))
         const users = []

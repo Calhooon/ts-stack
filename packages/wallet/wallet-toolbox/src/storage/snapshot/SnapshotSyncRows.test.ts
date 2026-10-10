@@ -172,7 +172,7 @@ test('archive positions are bounded before persistence while legacy cursor bytes
   const page = { ...boundedPage([{ txLabelId: 1 }]), done: false }
   expect(detachSnapshotSyncPage(boundedCheckpoint, page).nextCursor).toBe(JSON.stringify(page.cursor))
   const position = { version: 1 as const, archiveId: 'c'.repeat(64), sequence: 3, rowOffset: 1 }
-  page.cursor!.archivePosition = position
+  Reflect.set(page.cursor!, 'archivePosition', position)
   const persisted = detachSnapshotSyncPage(boundedCheckpoint, page).nextCursor!
   position.rowOffset = 2
   expect(JSON.parse(persisted).archivePosition.rowOffset).toBe(1)
@@ -181,7 +181,7 @@ test('archive positions are bounded before persistence while legacy cursor bytes
     { ...position, sequence: 4096 },
     { ...position, extra: 1 }
   ]) {
-    page.cursor!.archivePosition = invalid
+    Reflect.set(page.cursor!, 'archivePosition', invalid)
     expect(() => detachSnapshotSyncPage(boundedCheckpoint, page)).toThrow('cursor.archivePosition')
   }
 })

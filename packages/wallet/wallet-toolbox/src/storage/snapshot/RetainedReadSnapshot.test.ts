@@ -303,16 +303,21 @@ test.each([1, 3_600_000, undefined])(
   }
 )
 
-test('monotonic expiry includes its exact boundary despite a backward wall-clock adjustment', async () => {
-  const start = performance.now()
-  jest.spyOn(performance, 'now').mockReturnValue(start)
-  const f = fixture({ lifetimeMs: 100 })
-  const view = await f.lifetime.opened
-  jest.spyOn(Date, 'now').mockReturnValue(view.expiresAt - 500)
-  jest.spyOn(performance, 'now').mockReturnValue(start + 100)
-  await expect(view.read(async () => 1)).rejects.toThrow('expired')
-  await view.closed
-})
+test.each([28.2, 1000])(
+  'monotonic expiry includes its exact boundary from %s despite a backward wall-clock adjustment',
+  async start => {
+    // 28.2 + 100 - 28.2 rounds below 100; compare against the captured deadline.
+    jest.spyOn(performance, 'now').mockReturnValue(start)
+    const f = fixture({ lifetimeMs: 100 })
+    const view = await f.lifetime.opened
+    jest.spyOn(Date, 'now').mockReturnValue(view.expiresAt - 500)
+    jest.spyOn(performance, 'now').mockReturnValue(start + 100)
+    const read = jest.fn(async () => 1)
+    await expect(view.read(read)).rejects.toThrow('expired')
+    expect(read).not.toHaveBeenCalled()
+    await view.closed
+  }
+)
 
 test('keeps the first stop reason across repeated cancellation and close, and removes its signal listener', async () => {
   const controller = new AbortController()

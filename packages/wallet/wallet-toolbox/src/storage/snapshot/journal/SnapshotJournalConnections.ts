@@ -11,6 +11,7 @@ export class SnapshotJournalConnectionCleanupError extends Error {
 interface ReservedConnection {
   owner: Knex
   connection: unknown
+  released: boolean
 }
 
 /** Reserve both dedicated pools before any caller can obtain a writer barrier.
@@ -25,7 +26,7 @@ export async function withSnapshotJournalConnections<T>(
   writer: Knex,
   reader: Knex,
   assertActive: () => void,
-  run: (writerConnection: unknown, readerConnection: unknown) => Promise<T>,
+  run: (writerConnection: unknown, readerConnection: unknown, releaseWriter: () => Promise<void>) => Promise<T>,
   release: (owner: Knex, connection: unknown) => Promise<void> = async (owner, connection) => {
     await owner.client.releaseConnection(connection)
   }
@@ -36,7 +37,7 @@ export async function withSnapshotJournalConnections<T>(
   const reserved: ReservedConnection[] = []
   async function reserve(owner: Knex): Promise<unknown> {
     const connection: unknown = await owner.client.acquireConnection()
-    reserved.push({ owner, connection })
+    reserved.push({ owner, connection, released: false })
     return connection
   }
   let result: { ok: true; value: T } | { ok: false; error: unknown }
@@ -50,14 +51,26 @@ export async function withSnapshotJournalConnections<T>(
     if (write.value === read.value)
       throw new WERR_INVALID_OPERATION('Snapshot pools returned the same native connection')
     assertActive()
-    result = { ok: true, value: await run(write.value, read.value) }
+    // The capture may release a borrowed native writer only AFTER its actual
+    // barrier commit and pinned reader. The dedicated read pool remains owned
+    // until the retained view settles. Failure keeps cleanup retry ownership.
+    const releaseWriter = async (): Promise<void> => {
+      const owned = reserved.find(value => value.owner === writer)
+      if (owned === undefined || owned.released) return
+      await release(owned.owner, owned.connection)
+      owned.released = true
+    }
+    result = { ok: true, value: await run(write.value, read.value, releaseWriter) }
   } catch (error) {
     result = { ok: false, error }
   }
   const cleanup = await Promise.allSettled(
-    reserved.map(async ({ owner, connection }) => {
-      await release(owner, connection)
-    })
+    reserved
+      .filter(value => !value.released)
+      .map(async value => {
+        await release(value.owner, value.connection)
+        value.released = true
+      })
   )
   const failedCleanup = cleanup.filter(value => value.status === 'rejected')
   if (failedCleanup.length) {

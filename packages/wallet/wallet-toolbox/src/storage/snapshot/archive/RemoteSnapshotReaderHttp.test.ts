@@ -16,19 +16,12 @@ import { KnexSnapshotArchiveRpc } from './KnexSnapshotArchiveRpc'
 
 afterEach(() => jest.restoreAllMocks())
 
-// Opt this controlled HTTP fixture into the in-progress capability. Production
-// advertisement stays disabled until the complete lifecycle qualification passes.
+// Exercise the server's actual authenticated capability advertisement.
 async function serveReader(
   fixture: Awaited<ReturnType<typeof snapshotHttpFixture>>,
   options: Partial<WalletStorageServerOptions> = {}
 ) {
-  const result = await fixture.serve(options)
-  const advertise = Reflect.get(result.server, 'snapshotArchiveSettings').bind(result.server)
-  jest.spyOn(result.server as never, 'snapshotArchiveSettings' as never).mockImplementation((async () => {
-    const settings = await advertise()
-    return settings.snapshotArchive === undefined ? settings : { ...settings, snapshotArchiveReaderVersion: 1 }
-  }) as never)
-  return result
+  return await fixture.serve(options)
 }
 
 function rpcBody(init: RequestInit | undefined): { method: string; params: unknown[] } | undefined {
@@ -142,6 +135,8 @@ test.each([StorageClient, StorageMobile])(
       expect(client.isAvailable()).toBe(false)
       const opening = jest.spyOn(fixture.storage, 'openSnapshotArchiveSource')
       view = (await source.openSource(fixture.identityKey))!
+      expect((await client.makeAvailable()).snapshotArchiveReaderVersion).toBe(1)
+      expect(fixture.storage.getSettings()).not.toHaveProperty('snapshotArchiveReaderVersion')
       expect(view.sourceStorage.storageIdentityKey).toBe('http-snapshot-source')
       expect(view.user.identityKey).toBe(fixture.identityKey)
       expect(view.user.created_at).toBeInstanceOf(Date)

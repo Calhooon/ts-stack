@@ -220,7 +220,14 @@ test('an unproved native close never rolls back the guard or releases source cap
   const { owner } = await f.requests.claim(identity(), input)
   let connection: { open: boolean; close: () => void } | undefined
   jest.spyOn(source.client, 'destroyRawConnection').mockImplementation(async value => {
-    connection = value
+    if (
+      value === null ||
+      typeof value !== 'object' ||
+      typeof Reflect.get(value, 'open') !== 'boolean' ||
+      typeof Reflect.get(value, 'close') !== 'function'
+    )
+      throw new Error('Actual guard fixture connection differs')
+    connection = value as { open: boolean; close: () => void }
   })
   try {
     await expect(

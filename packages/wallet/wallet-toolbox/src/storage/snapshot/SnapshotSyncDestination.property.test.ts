@@ -24,7 +24,7 @@ test('random profile bindings reject same-view drift without changing durable ch
     await storage.migrate('destination', 'destination')
     await storage.makeAvailable()
     const writer = storage.getSnapshotSync()!
-    const users = []
+    const users: Array<import('../schema/tables').TableUser> = []
     for (const identity of identities) users.push((await storage.findOrInsertUser(identity)).user)
     await fc.assert(
       fc.asyncProperty(

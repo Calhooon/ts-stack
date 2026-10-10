@@ -2,6 +2,56 @@ import type { Knex } from 'knex'
 import { runInSeries } from '../../utility/runInSeries'
 
 export const SNAPSHOT_SYNC_MIGRATION = '2026-09-30-001 add durable snapshot sync'
+export const snapshotSyncPrimaryChangeSqlite = `CREATE TRIGGER IF NOT EXISTS snapshot_sync_primary_change AFTER UPDATE OF activeStorage ON users
+      WHEN OLD.activeStorage IS NOT NEW.activeStorage BEGIN
+        INSERT INTO snapshot_sync_primary_epochs (userId, epoch) VALUES (NEW.userId, 1)
+        ON CONFLICT(userId) DO UPDATE SET epoch = epoch + 1;
+      END`
+
+export const snapshotSyncPrimaryChangeMysqlBody = `BEGIN IF NOT (OLD.activeStorage <=> NEW.activeStorage) THEN
+        INSERT INTO snapshot_sync_primary_epochs (userId, epoch) VALUES (NEW.userId, 1)
+        ON DUPLICATE KEY UPDATE epoch = epoch + 1;
+      END IF; END`
+
+/** Fresh database-owned ABA fence inspection. A migration history row alone
+ * cannot establish that the current primary trigger is still installed. */
+export async function verifySnapshotSyncPrimaryFence(knex: Knex): Promise<void> {
+  const mysql = String(knex.client.config.client).includes('mysql')
+  if (mysql) {
+    const [rows]: Array<
+      Array<{
+        ACTION_STATEMENT: string
+        EVENT_OBJECT_TABLE: string
+        ACTION_TIMING: string
+        EVENT_MANIPULATION: string
+        ACTION_ORIENTATION: string
+      }>
+    > = await knex.raw(
+      `SELECT ACTION_STATEMENT, EVENT_OBJECT_TABLE, ACTION_TIMING, EVENT_MANIPULATION, ACTION_ORIENTATION
+       FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=?
+       AND OCTET_LENGTH(ACTION_STATEMENT)<=4096 LIMIT 2`,
+      ['snapshot_sync_primary_change']
+    )
+    const row = rows[0],
+      normalize = (value: string): string => value.replace(/\s+/g, ' ').trim()
+    if (
+      rows.length !== 1 ||
+      row.EVENT_OBJECT_TABLE !== 'users' ||
+      row.ACTION_TIMING !== 'AFTER' ||
+      row.EVENT_MANIPULATION !== 'UPDATE' ||
+      row.ACTION_ORIENTATION !== 'ROW' ||
+      normalize(row.ACTION_STATEMENT) !== normalize(snapshotSyncPrimaryChangeMysqlBody)
+    )
+      throw new Error('Snapshot sync destination primary fence is incomplete or changed')
+  } else {
+    const rows = await knex('sqlite_master')
+      .where({ name: 'snapshot_sync_primary_change', type: 'trigger', tbl_name: 'users' })
+      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [snapshotSyncPrimaryChangeSqlite.replace(' IF NOT EXISTS', '')])
+      .select('name')
+      .limit(2)
+    if (rows.length !== 1) throw new Error('Snapshot sync destination primary fence is incomplete or changed')
+  }
+}
 
 /** Auxiliary tables only: preserve standard-table traversal and legacy sync-map JSON. */
 export async function addSnapshotSyncTables(knex: Knex): Promise<void> {
@@ -72,16 +122,9 @@ export async function addSnapshotSyncTables(knex: Knex): Promise<void> {
     )
     if (triggers.length === 0)
       await knex.raw(`CREATE TRIGGER snapshot_sync_primary_change AFTER UPDATE ON users
-      FOR EACH ROW BEGIN IF NOT (OLD.activeStorage <=> NEW.activeStorage) THEN
-        INSERT INTO snapshot_sync_primary_epochs (userId, epoch) VALUES (NEW.userId, 1)
-        ON DUPLICATE KEY UPDATE epoch = epoch + 1;
-      END IF; END`)
+      FOR EACH ROW ${snapshotSyncPrimaryChangeMysqlBody}`)
   } else {
-    await knex.raw(`CREATE TRIGGER IF NOT EXISTS snapshot_sync_primary_change AFTER UPDATE OF activeStorage ON users
-      WHEN OLD.activeStorage IS NOT NEW.activeStorage BEGIN
-        INSERT INTO snapshot_sync_primary_epochs (userId, epoch) VALUES (NEW.userId, 1)
-        ON CONFLICT(userId) DO UPDATE SET epoch = epoch + 1;
-      END`)
+    await knex.raw(snapshotSyncPrimaryChangeSqlite)
   }
 }
 

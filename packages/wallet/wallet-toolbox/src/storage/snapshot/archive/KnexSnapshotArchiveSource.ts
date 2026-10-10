@@ -7,16 +7,46 @@ import { Random, Utils } from '@bsv/sdk'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION, WERR_INVALID_PARAMETER } from '../../../sdk/WERR_errors'
 import type { StorageKnex } from '../../StorageKnex'
-import { createKnexWalletSnapshotPageReader } from '../KnexWalletReadSnapshot'
-import type { WalletReadSnapshot, WalletReadSnapshotOptions } from '../WalletReadSnapshot'
+import {
+  createKnexWalletSnapshotPageReader,
+  createKnexWalletSnapshotBinaryReader,
+  createKnexWalletSnapshotFieldReader
+} from '../KnexWalletReadSnapshot'
+import { isBrc38NativeBinaryReadTransaction } from '../../portable/Brc38NativeBinaryReadNode'
+import type { WalletReadSnapshot, WalletReadSnapshotOptions, WalletSnapshotBinaryReader } from '../WalletReadSnapshot'
 import { assertKnexSnapshotArchiveClosure } from './KnexSnapshotArchiveClosure'
 import type { RetainedReadSnapshot } from '../RetainedReadSnapshot'
 
 /** Internal ownership failure; no caller may release its admission as cleaned up. */
 export class SnapshotArchiveSourceCleanupError extends Error {
-  constructor(override readonly cause: unknown) {
+  private cleaned = false
+  private cleaning?: Promise<void>
+  constructor(
+    override readonly cause: unknown,
+    private readonly cleanup?: () => Promise<void>
+  ) {
     super('Snapshot archive source cleanup failed')
     this.name = 'SnapshotArchiveSourceCleanupError'
+  }
+  async retryCleanup(): Promise<void> {
+    if (this.cleanup === undefined) throw this
+    if (this.cleaned) return
+    if (this.cleaning === undefined) {
+      const attempt = Promise.resolve()
+        .then(this.cleanup)
+        .then(() => {
+          this.cleaned = true
+        })
+      this.cleaning = attempt
+      void attempt.catch(() => {
+        if (this.cleaning === attempt) this.cleaning = undefined
+      })
+    }
+    await this.cleaning
+  }
+  /** Completion of this concrete retained cleanup only; never source admission. */
+  get cleanupCompleted(): boolean {
+    return this.cleaned
   }
 }
 
@@ -24,10 +54,16 @@ export interface SnapshotArchiveSource extends WalletReadSnapshot {
   readonly sourceSchema: string
   /** Verify profile relations using the same read view as the header and pages. */
   validateClosure: () => Promise<void>
+  /** Optional local native metadata/extent path. No RPC capability follows. */
+  binaryReader?: WalletSnapshotBinaryReader
 }
 
 export async function readSnapshotArchiveSourceSchema(storage: StorageKnex, k: Knex): Promise<string> {
-  const config = storage.knex.client.config.migrations
+  return await readKnexSnapshotSourceSchema(k, storage.knex.client.config.migrations)
+}
+/** Source version DATA from this actual retained view, without constructing or
+ * enrolling a StorageProvider for a readonly historical recovery database. */
+export async function readKnexSnapshotSourceSchema(k: Knex, config?: Knex.MigratorConfig): Promise<string> {
   const query = k(config?.tableName ?? 'knex_migrations')
     .select('name')
     .orderBy('id', 'desc')
@@ -46,6 +82,9 @@ export async function readKnexSnapshotArchiveHeader(storage: StorageKnex, identi
   const user = await storage.findUserByIdentityKey(identityKey, k)
   if (user === undefined) throw new WERR_INVALID_PARAMETER('identityKey', 'an existing wallet profile')
   return {
+    // This records the actual producer of THIS retained view. Every field
+    // operation still checks its live native transaction before reading.
+    nativeFields: isBrc38NativeBinaryReadTransaction(k),
     header: {
       sourceStorage,
       user,
@@ -65,7 +104,14 @@ export type KnexSnapshotArchiveHeader = Awaited<ReturnType<typeof readKnexSnapsh
 export function createKnexSnapshotArchiveSource(
   storage: StorageKnex,
   view: RetainedReadSnapshot,
-  { header, profileIndexes, relationIndexes, certificateIndexes, globalIndexes }: KnexSnapshotArchiveHeader
+  {
+    header,
+    profileIndexes,
+    relationIndexes,
+    certificateIndexes,
+    globalIndexes,
+    nativeFields
+  }: KnexSnapshotArchiveHeader
 ): SnapshotArchiveSource {
   const userId = header.user.userId
   const snapshotId = Utils.toHex(Random(32))
@@ -79,6 +125,30 @@ export function createKnexSnapshotArchiveSource(
     },
     closed: view.closed,
     close: view.close,
+    binaryReader: createKnexWalletSnapshotBinaryReader(
+      storage,
+      userId,
+      snapshotId,
+      view,
+      profileIndexes,
+      relationIndexes,
+      certificateIndexes,
+      globalIndexes
+    ),
+    ...(nativeFields
+      ? {
+          fieldReader: createKnexWalletSnapshotFieldReader(
+            storage,
+            userId,
+            snapshotId,
+            view,
+            profileIndexes,
+            relationIndexes,
+            certificateIndexes,
+            globalIndexes
+          )
+        }
+      : {}),
     readPage: createKnexWalletSnapshotPageReader(
       storage,
       userId,
@@ -123,7 +193,16 @@ export async function openKnexSnapshotArchiveSource(
     const header = await view.read(trx => readKnexSnapshotArchiveHeader(storage, identityKey, storage.toDb(trx)))
     return createKnexSnapshotArchiveSource(storage, view, header)
   } catch (error) {
-    await view.close().catch(() => undefined)
+    try {
+      await view.close()
+    } catch (cleanup) {
+      throw new SnapshotArchiveSourceCleanupError(
+        new AggregateError([error, cleanup], 'Snapshot archive opening failed with retained source cleanup', {
+          cause: error
+        }),
+        () => view.close()
+      )
+    }
     throw error
   }
 }

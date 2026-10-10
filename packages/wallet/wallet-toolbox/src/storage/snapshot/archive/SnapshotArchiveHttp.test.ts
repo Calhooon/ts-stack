@@ -1,4 +1,5 @@
-import { PrivateKey, ProtoWallet } from '@bsv/sdk'
+import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from '../journal/SnapshotJournalLifecycle'
+import { PrivateKey } from '@bsv/sdk'
 import { StorageClient } from '../../remoting/StorageClient'
 import { StorageClient as StorageMobile } from '../../remoting/StorageMobile'
 import { KnexSnapshotArchiveService } from './KnexSnapshotArchiveService'
@@ -23,17 +24,21 @@ test.each([StorageClient, StorageMobile])(
       })
       const settings = await client.makeAvailable()
       const ordinaryRpc = Reflect.get(client, 'rpcCall').bind(client)
-      await expect(ordinaryRpc('releaseSyncTransfer', [{ identityKey, transferId: 'e'.repeat(64) }])).rejects.toThrow(
-        'Wallet sync transfer expired'
-      )
+      // Release is authenticated, expiry-tolerant and idempotent; reading an
+      // absent transfer still refuses and cannot renew its admission.
+      for (let repeat = 0; repeat < 2; repeat++)
+        await expect(ordinaryRpc('releaseSyncTransfer', [{ identityKey, transferId: 'e'.repeat(64) }])).resolves.toBe(
+          true
+        )
       await expect(
         ordinaryRpc('readSyncTransferPart', [{ identityKey, transferId: 'e'.repeat(64), offset: 0 }])
       ).rejects.toThrow('Wallet sync transfer expired')
       expect(settings.snapshotArchive).toEqual(snapshotArchiveCapabilities)
+      expect(settings.snapshotArchiveReaderVersion).toBe(1)
       expect(storage.getSettings()).not.toHaveProperty('snapshotArchive')
       let transport = (await client.getSnapshotArchiveTransport(identityKey))!
       const offer = await transport.offer()
-      expect(offer.sourceSchema).toBe('2026-10-02-001 repair snapshot SQLite conflict maintenance')
+      expect(offer.sourceSchema).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
       expect(Math.abs(offer.serverTime - Date.now())).toBeLessThan(5000)
       const fields = {
         version: 1 as const,
@@ -84,7 +89,7 @@ test.each([StorageClient, StorageMobile])(
       expect(JSON.stringify(verified)).not.toMatch(/claimToken|writerToken/)
 
       const strangerKey = PrivateKey.fromRandom()
-      const stranger = new Client(new ProtoWallet(strangerKey), url)
+      const stranger = new Client(fixture.createWallet(strangerKey), url)
       const foreignTransport = (await stranger.getSnapshotArchiveTransport(identityKey))!
       await expect(foreignTransport.offer()).rejects.toThrow('match authentication')
       await expect(foreignTransport.start(request)).rejects.toThrow('match authentication')
@@ -128,6 +133,7 @@ test.each(['server-disabled', 'provider-disabled', 'small-response', 'old-schema
       })
       const client = new StorageClient(fixture.wallet, url)
       expect((await client.makeAvailable()).snapshotArchive).toBeUndefined()
+      expect((await client.makeAvailable()).snapshotArchiveReaderVersion).toBeUndefined()
       expect(await client.getSnapshotArchiveTransport(fixture.identityKey)).toBeUndefined()
       expect((await client.findOrInsertUser(fixture.identityKey)).user.identityKey).toBe(fixture.identityKey)
       const rpc = Reflect.get(client, 'rpcCall').bind(client)

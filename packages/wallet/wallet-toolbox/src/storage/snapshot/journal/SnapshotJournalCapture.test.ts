@@ -1,3 +1,4 @@
+import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import { knex, type Knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -54,7 +55,7 @@ async function fixture(complete = true) {
   })
   const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
   try {
-    await storage.migrate('capture controller', 'synthetic-capture-controller')
+    await migrateBeforeSnapshotJournal(storage, 'capture controller', 'synthetic-capture-controller')
     await storage.makeAvailable()
     await k.raw('PRAGMA journal_mode = WAL')
     const { user } = await storage.findOrInsertUser(identity)
@@ -84,6 +85,79 @@ async function fixture(complete = true) {
 }
 
 afterEach(() => jest.restoreAllMocks())
+
+test('a source primary fence blocks selection only through one physically owned destination flight', async () => {
+  const f = await fixture(),
+    entered = gate(),
+    release = gate()
+  const view = await f.storage.openSnapshotJournalSource(identity, request)
+  await f.k.raw('PRAGMA busy_timeout = 0')
+  try {
+    const commit = view.withCommitFence(async () => {
+      entered.resolve()
+      await release.promise
+      return 7
+    })
+    await entered.promise
+    await expect(
+      f.k('users').where({ userId: view.user.userId }).update({ activeStorage: 'new-selection' })
+    ).rejects.toThrow()
+    release.resolve()
+    expect(await commit).toBe(7)
+    expect(await f.k('users').where({ userId: view.user.userId }).update({ activeStorage: 'new-selection' })).toBe(1)
+    const stale = jest.fn(async () => undefined)
+    await expect(view.withCommitFence(stale)).rejects.toThrow('generation or profile')
+    expect(stale).not.toHaveBeenCalled()
+    await expect(view.closed).rejects.toThrow('generation or profile')
+  } finally {
+    release.resolve()
+    try {
+      await view.close()
+    } catch (error) {
+      expect(error).toMatchObject({ message: 'Snapshot journal capture generation or profile is unavailable' })
+    }
+    await f.close()
+  }
+})
+
+test('cancellation cannot release a source primary fence before the destination flight drains', async () => {
+  const f = await fixture(),
+    entered = gate(),
+    release = gate(),
+    controller = new AbortController()
+  const view = await f.storage.openSnapshotJournalSource(identity, request, { signal: controller.signal })
+  await f.k.raw('PRAGMA busy_timeout = 0')
+  try {
+    const commit = view.withCommitFence(async () => {
+      entered.resolve()
+      await release.promise
+    })
+    const rejected = expect(commit).rejects.toThrow('cancelled')
+    await entered.promise
+    let closed = false
+    void view.closed.then(
+      () => {
+        closed = true
+      },
+      () => undefined
+    )
+    controller.abort()
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    await expect(
+      f.k('users').where({ userId: view.user.userId }).update({ activeStorage: 'new-selection' })
+    ).rejects.toThrow()
+    release.resolve()
+    await rejected
+    await view.closed
+    expect(closed).toBe(true)
+    expect(await f.k('users').where({ userId: view.user.userId }).update({ activeStorage: 'new-selection' })).toBe(1)
+  } finally {
+    release.resolve()
+    await view.close()
+    await f.close()
+  }
+})
 
 test('all thirteen tables retain their pinned values while independent writers modify every table', async () => {
   const f = await fixture()
@@ -762,24 +836,56 @@ test('MySQL capture configures both reserved pools before transactions, commits 
       sequence.push('begin ' + role)
       const completion = gate()
       let completed = false
-      return {
-        client: owner.client,
-        isTransaction: true,
-        isCompleted: () => completed,
-        executionPromise: completion.promise,
-        commit: async () => {
-          expect(completed).toBe(false)
-          sequence.push('commit ' + role)
-          completed = true
-          completion.resolve()
+      interface PrimaryEpochQuery {
+        where: (field: string, userId: number) => PrimaryEpochQuery
+        select: (fragment: { sql: string }) => PrimaryEpochQuery
+        limit: (limit: number) => Promise<never[]>
+      }
+      const primaryQuery: PrimaryEpochQuery = {
+        where: jest.fn((field: string, userId: number) => {
+          expect(field).toBe('userId')
+          expect(userId).toBe(header.header.user.userId)
+          return primaryQuery
+        }),
+        select: jest.fn((fragment: { sql: string }) => {
+          expect(fragment).toEqual({ sql: 'CAST(epoch AS CHAR) AS epoch' })
+          return primaryQuery
+        }),
+        limit: jest.fn(async (limit: number) => {
+          expect(limit).toBe(2)
+          sequence.push('primary epoch')
+          return []
+        })
+      }
+      return Object.assign(
+        (table: string) => {
+          expect(role).toBe('reader')
+          expect(table).toBe('snapshot_sync_primary_epochs')
+          return primaryQuery
         },
-        rollback: async () => {
-          expect(completed).toBe(false)
-          sequence.push('rollback ' + role)
-          completed = true
-          completion.resolve()
+        {
+          client: owner.client,
+          isTransaction: true,
+          raw: jest.fn((sql: string) => {
+            expect(sql).toBe('CAST(epoch AS CHAR) AS epoch')
+            return { sql }
+          }),
+          isCompleted: () => completed,
+          executionPromise: completion.promise,
+          commit: async () => {
+            expect(completed).toBe(false)
+            sequence.push('commit ' + role)
+            completed = true
+            completion.resolve()
+          },
+          rollback: async () => {
+            expect(completed).toBe(false)
+            sequence.push('rollback ' + role)
+            completed = true
+            completion.resolve()
+          }
         }
-      } as unknown as Knex.Transaction
+      ) as unknown as Knex.Transaction
     })
     return owner
   })
@@ -845,6 +951,7 @@ test('MySQL capture configures both reserved pools before transactions, commits 
       'begin reader',
       'generation',
       'header',
+      'primary epoch',
       'receipt',
       'commit writer',
       'verify'

@@ -38,7 +38,13 @@ export async function retireGenerationPage(
     if (JSON.stringify(await legacySchema(trx)) !== JSON.stringify(remaining))
       throw new WERR_INVALID_OPERATION('Legacy retirement schema changed')
     const table = retiredTables[state.retireTable]
-    if (table === undefined) return { complete: true, removed: 0, table }
+    if (table === undefined) {
+      // Old generations may retain the complete legacy inventory after every
+      // table has gone. Its remaining inventory was freshly verified above;
+      // keep the same array format, retaining only definitions still needed.
+      if (state.legacy !== '[]') await trx(metadata).where('id', 0).update({ legacy: '[]' })
+      return { complete: true, removed: 0, table }
+    }
     const removed = await trx(table)
       .whereIn('_rowid_', trx(table).select('_rowid_').orderBy('_rowid_').limit(256))
       .delete()
@@ -48,7 +54,12 @@ export async function retireGenerationPage(
       await trx.schema.dropTable(table)
       await trx(metadata)
         .where('id', 0)
-        .update({ retireTable: state.retireTable + 1 })
+        .update({
+          retireTable: state.retireTable + 1,
+          // The drop and its receipt shrink commit together. A restarted or
+          // older reader still checks every surviving complete definition.
+          legacy: JSON.stringify(remaining.filter(row => row.tbl_name !== table))
+        })
     }
     return {
       complete: removed === 0 && state.retireTable + 1 === retiredTables.length,

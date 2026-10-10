@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -40,6 +41,7 @@ function sqlite(k: Knex): boolean {
   const client = k.client.config.client
   if (client === 'better-sqlite3' || client === 'sqlite3') return true
   if (client === 'mysql' || client === 'mysql2') return false
+  if (isOwnedNativeSqlite(k)) return true
   return invalid()
 }
 function physicalKeys(table: string, key: string | undefined): string[] {

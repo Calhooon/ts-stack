@@ -1,8 +1,17 @@
+import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from './journal/SnapshotJournalLifecycle'
 import { knex, type Knex } from 'knex'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
 import { KnexMigrations, SNAPSHOT_SQLITE_INDEX_MIGRATION } from '../schema/KnexMigrations'
-import { installGeneration, metadata, progress, names } from '../schema/snapshotSqliteIndexGeneration'
+import {
+  installGeneration,
+  metadata,
+  progress,
+  names,
+  addSnapshotSqliteSourceIndexes,
+  readPlan,
+  validateInstalled
+} from '../schema/snapshotSqliteIndexGeneration'
 import { copyGenerationPage } from '../schema/snapshotSqliteIndexBootstrap'
 import { readGenerationIndexState } from '../schema/snapshotSqliteIndexState'
 import {
@@ -64,13 +73,13 @@ test.each(['knex_migrations', 'custom_snapshot_journal'])(
       expect(await k(tableName).where('name', SNAPSHOT_SQLITE_INDEX_MIGRATION)).toEqual([])
       expect(await readGenerationIndexState(k, { tableName })).toBe(false)
       expect((await k.raw('PRAGMA foreign_keys'))[0].foreign_keys).toBe(1)
-      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_SQLITE_INDEX_MIGRATION)
+      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
       expect(await readGenerationIndexState(k, { tableName })).toBe('v2')
       expect(await k('tx_labels').orderBy('txLabelId')).toEqual(before)
       expect(await k(names.profile).where('snapshotTableId', 3)).toHaveLength(600)
       for (const table of retiredTables) expect(await k.schema.hasTable(table)).toBe(false)
       expect(await k(tableName).where('name', SNAPSHOT_SQLITE_INDEX_MIGRATION)).toHaveLength(1)
-      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_SQLITE_INDEX_MIGRATION)
+      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
       const migrationSource = new KnexMigrations('test', 'registry', 'synthetic-registry', 1024)
       expect(migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION].config).toEqual({ transaction: false })
       await expect(k.migrate.down({ migrationSource, name: SNAPSHOT_SQLITE_INDEX_MIGRATION })).rejects.toThrow(
@@ -120,9 +129,80 @@ test('empty migration adapters without a dialect label do not issue SQLite clean
   const down = jest.fn(),
     raw = jest.fn()
   const database = { client: { config: {} }, migrate: { currentVersion, down }, raw } as unknown as Knex
-  await StorageKnex.prototype.dropAllData.call({ knex: database } as StorageKnex)
+  // Use the actual provider's lifecycle methods instead of a partial prototype receiver.
+  const source = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: database })
+  await source.dropAllData()
   expect(currentVersion).toHaveBeenCalledTimes(1)
   expect(currentVersion.mock.calls[0][0].disableTransactions).toBe(false)
   expect(down).not.toHaveBeenCalled()
   expect(raw).not.toHaveBeenCalled()
 })
+
+// Additive source ownership includes auxiliary indexes outside the thirteen
+// source tables, while exact definitions and the old source inventory remain guarded.
+test('owned source and auxiliary index additions preserve rows and rebind only the source inventory', async () => {
+  const { k, source } = fixture()
+  try {
+    await source.migrate('additive-indexes', 'synthetic-additive-indexes')
+    await seed(source, 1)
+    const rows = await k('tx_labels').orderBy('txLabelId'),
+      before = await readPlan(k)
+    const statements = [
+      'CREATE INDEX test_source_added ON tx_labels (label)',
+      'CREATE INDEX test_auxiliary_added ON prepared_beefs (state)'
+    ]
+    await k.transaction(async trx => {
+      await addSnapshotSqliteSourceIndexes(trx, statements, async () => {
+        for (const sql of statements) await trx.raw(sql)
+      })
+      const after = await readPlan(trx)
+      await validateInstalled(trx, after)
+      expect(JSON.parse(after.source)).toEqual(
+        [
+          ...JSON.parse(before.source),
+          { type: 'index', name: 'test_source_added', tbl_name: 'tx_labels', sql: statements[0] }
+        ].sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      )
+      expect(await trx('sqlite_master').where('name', 'test_auxiliary_added').first('sql')).toEqual({
+        sql: statements[1]
+      })
+    })
+    expect(await k('tx_labels').orderBy('txLabelId')).toEqual(rows)
+  } finally {
+    await source.destroy()
+  }
+})
+
+test.each(['wrong auxiliary definition', 'unlisted source index', 'removed existing source index'] as const)(
+  'additive source migration refuses %s and rolls back every change',
+  async fault => {
+    const { k, source } = fixture()
+    try {
+      await source.migrate('additive-refusal', 'synthetic-additive-refusal')
+      const before = await k('sqlite_master').orderBy(['type', 'name']),
+        metadataBefore = await k(metadata)
+      const statements = [
+        'CREATE INDEX test_source_added ON tx_labels (label)',
+        'CREATE INDEX test_auxiliary_added ON prepared_beefs (state)'
+      ]
+      await expect(
+        k.transaction(async trx => {
+          await addSnapshotSqliteSourceIndexes(trx, statements, async () => {
+            await trx.raw(statements[0])
+            await trx.raw(
+              fault === 'wrong auxiliary definition'
+                ? 'CREATE INDEX test_auxiliary_added ON prepared_beefs (preparedBeefId)'
+                : statements[1]
+            )
+            if (fault === 'unlisted source index') await trx.raw('CREATE INDEX test_unlisted ON tx_labels (userId)')
+            if (fault === 'removed existing source index') await trx.raw('DROP INDEX brc38_import_target_txLabels')
+          })
+        })
+      ).rejects.toThrow(fault === 'wrong auxiliary definition' ? 'definition mismatch' : 'unowned schema object')
+      expect(await k('sqlite_master').orderBy(['type', 'name'])).toEqual(before)
+      expect(await k(metadata)).toEqual(metadataBefore)
+    } finally {
+      await source.destroy()
+    }
+  }
+)

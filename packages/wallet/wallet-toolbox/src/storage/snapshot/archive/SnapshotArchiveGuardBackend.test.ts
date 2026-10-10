@@ -43,7 +43,8 @@ function fixture() {
   const client = {
     config: { client: 'mysql2' },
     acquireConnection: jest.fn(async () => connection),
-    releaseConnection: jest.fn(async () => undefined)
+    releaseConnection: jest.fn(async () => undefined),
+    destroyRawConnection: jest.fn(async () => close())
   }
   const transaction = jest.fn(async () => trx)
   const k = { raw, client, transaction, destroy } as unknown as Knex
@@ -216,6 +217,55 @@ test.each(['destroy', 'release'] as const)(
       expect(f.stream.listenerCount('close')).toBe(0)
     } finally {
       f.close()
+    }
+  }
+)
+
+test.each(['destroy', 'release', 'unclosed'] as const)(
+  'concrete %s cleanup retry closes the original connection before settling its transaction',
+  async phase => {
+    const f = fixture()
+    const binding = await prepareSnapshotArchiveGuardBackend(f.k, 0, null)
+    const readFailure = new Error('original read failed'),
+      cleanupFailure = new Error('original physical close failed')
+    f.destroy.mockImplementation(async () => undefined)
+    if (phase === 'destroy') f.destroy.mockRejectedValueOnce(cleanupFailure)
+    if (phase === 'release') f.client.releaseConnection.mockRejectedValueOnce(cleanupFailure)
+    const read = jest.fn(async () => {
+      throw readFailure
+    })
+    let retained: SnapshotArchiveSourceCleanupError | undefined
+    try {
+      try {
+        await withSnapshotArchiveBackendGuard(f.k, binding, read)
+      } catch (error) {
+        if (!(error instanceof SnapshotArchiveSourceCleanupError)) throw error
+        retained = error
+      }
+      if (retained === undefined) throw new Error('Expected concrete cleanup owner')
+      expect(retained.cause).toBeInstanceOf(AggregateError)
+      expect((retained.cause as AggregateError).errors[0]).toBe(readFailure)
+      expect(retained.cleanupCompleted).toBe(false)
+      expect(f.trx.rollback).not.toHaveBeenCalled()
+      expect(f.stream.closed).toBe(false)
+      // The first retry also fails. The same physical owner must remain usable.
+      const retryFailure = new Error('retry physical close failed')
+      f.client.destroyRawConnection.mockRejectedValueOnce(retryFailure)
+      await expect(retained.retryCleanup()).rejects.toMatchObject({ cause: retryFailure })
+      expect(retained.cleanupCompleted).toBe(false)
+      expect(f.trx.rollback).not.toHaveBeenCalled()
+      await Promise.all([retained.retryCleanup(), retained.retryCleanup()])
+      expect(retained.cleanupCompleted).toBe(true)
+      expect(f.stream.closed).toBe(true)
+      expect(f.trx.rollback).toHaveBeenCalledTimes(1)
+      expect(f.client.acquireConnection).toHaveBeenCalledTimes(1)
+      expect(f.client.destroyRawConnection.mock.calls).toEqual([[f.connection], [f.connection]])
+      expect(read).toHaveBeenCalledTimes(1)
+      await retained.retryCleanup()
+      expect(f.trx.rollback).toHaveBeenCalledTimes(1)
+      expect(f.stream.listenerCount('close')).toBe(0)
+    } finally {
+      if (!f.stream.closed) f.close()
     }
   }
 )

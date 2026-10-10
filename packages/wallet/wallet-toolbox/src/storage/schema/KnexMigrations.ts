@@ -1,4 +1,12 @@
 import { forSnapshotSqlDialect } from './snapshotSqlMigration'
+import {
+  addSnapshotJournalDestinationSchema,
+  SNAPSHOT_JOURNAL_DESTINATION_MIGRATION
+} from '../snapshot/journal/SnapshotJournalDestinationSchema'
+import {
+  migrateSnapshotJournalSource,
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+} from '../snapshot/journal/SnapshotJournalLifecycle'
 import { migrateGeneration, refuseGenerationDowngrade } from './snapshotSqliteIndexMigration'
 import { migration as SNAPSHOT_SQLITE_INDEX_MIGRATION } from './snapshotSqliteIndexState'
 import {
@@ -65,6 +73,8 @@ export { SNAPSHOT_ARCHIVE_GUARD_MIGRATION } from './snapshotArchiveGuardMigratio
 export { SNAPSHOT_ARCHIVE_REQUEST_MIGRATION } from './snapshotArchiveRequestMigration'
 export { SNAPSHOT_ARCHIVE_MIGRATION } from './snapshotArchiveMigration'
 export { SNAPSHOT_SYNC_MIGRATION } from './snapshotSyncMigration'
+export { SNAPSHOT_JOURNAL_DESTINATION_MIGRATION } from '../snapshot/journal/SnapshotJournalDestinationSchema'
+export { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from '../snapshot/journal/SnapshotJournalLifecycle'
 
 export const SYNC_TRANSFER_MIGRATION = '2026-09-09-001 add bounded sync transfers'
 
@@ -208,6 +218,33 @@ export class KnexMigrations implements MigrationSource<string> {
       config: { transaction: true },
       up: forSnapshotSqlDialect(addSnapshotSyncTables),
       down: forSnapshotSqlDialect(removeSnapshotSyncTables)
+    }
+
+    migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION] = {
+      // MySQL DDL commits implicitly. SQLite still owns one atomic writer below.
+      config: { transaction: false },
+      up: forSnapshotSqlDialect(async knex => {
+        if (String(knex.client.config.client).includes('mysql')) await addSnapshotJournalDestinationSchema(knex)
+        else
+          await knex.transaction(async trx => {
+            await addSnapshotJournalDestinationSchema(trx)
+          })
+      }),
+      down: forSnapshotSqlDialect(async () => {
+        throw new WERR_NOT_IMPLEMENTED(
+          'Journal reconciliation schema requires a forward migration; preserve wallet and recovery data'
+        )
+      })
+    }
+
+    migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION] = {
+      config: { transaction: false },
+      up: forSnapshotSqlDialect(migrateSnapshotJournalSource),
+      down: forSnapshotSqlDialect(async () => {
+        throw new WERR_NOT_IMPLEMENTED(
+          'Native journal downgrade is unsupported; preserve wallet and retained-source data'
+        )
+      })
     }
 
     migrations[SYNC_TRANSFER_MIGRATION] = {

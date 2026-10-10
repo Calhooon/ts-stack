@@ -2,6 +2,9 @@ import {
   canonicalPortableChunks,
   createBrc38Stream,
   readBrc38JsonStream,
+  encryptBrc39BrowserStreamToQuarantine,
+  type Brc39BrowserEncryptOptions,
+  type Brc39BrowserStreamOutput,
   type Brc38StreamSource,
   type Brc38StreamOptions,
   type Brc38JsonStagingSink,
@@ -59,4 +62,15 @@ export async function validatePrivateArchive(
   } finally {
     await quarantine.discard()
   }
+}
+
+export async function encryptBrowserPortableSource(
+  source: Brc38StreamSource,
+  sourceOptions: Brc38StreamOptions,
+  password: string,
+  output: Brc39BrowserStreamOutput,
+  options: Brc39BrowserEncryptOptions
+) {
+  const plaintext = await createBrc38Stream(source, sourceOptions)
+  return await encryptBrc39BrowserStreamToQuarantine(plaintext, password, output, options)
 }

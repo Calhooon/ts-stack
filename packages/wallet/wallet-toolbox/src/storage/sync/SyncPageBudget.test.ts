@@ -22,6 +22,26 @@ test('starts conservatively, grows cheap pages and preserves byte bounds and off
   expect(args.maxItems).toBe(1000)
 })
 
+test('separate metadata counts preserve cost fitting without fabricating wallet rows', () => {
+  const budget = new SyncPageBudget()
+  const legacy = new SyncPageBudget()
+  budget.beginTable('provenTxs')
+  budget.committedSnapshot('provenTxs', 64, 100)
+  legacy.committed(chunk(64, true), 100)
+  expect(budget.apply(args).maxItems).toBe(128)
+  budget.committedSnapshot('provenTxs', 128, 20000)
+  legacy.committed(chunk(128, true), 20000)
+  // Two differently sized observations fit a 310.9375-ms marginal cost.
+  // The five-second target therefore admits 16 rows, not the unfitted 32.
+  const marginalMilliseconds = (20000 - 100) / (128 - 64)
+  expect(budget.apply(args).maxItems).toBe(Math.floor(5000 / marginalMilliseconds))
+  expect(budget.apply(args)).toEqual(legacy.apply(args))
+  budget.beginTable('transactions')
+  expect(budget.apply(args).maxItems).toBe(64)
+  budget.committedSnapshot('transactions', 64, 100, 50, 1000000)
+  expect(budget.apply({ ...args, maxRoughSize: 250000 }).maxItems).toBe(16)
+})
+
 test('limits proof-heavy pages by work and shrinks after slow committed pages', () => {
   const budget = new SyncPageBudget()
   budget.committed(chunk(64, true), 100)

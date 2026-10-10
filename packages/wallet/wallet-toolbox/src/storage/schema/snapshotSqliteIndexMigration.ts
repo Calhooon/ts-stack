@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from './ownedNativeSqliteRuntimeNode'
 import { runInSeries } from '../../utility/runInSeries'
 import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
 import type { Knex } from 'knex'
@@ -35,7 +36,7 @@ export function refuseGenerationDowngrade(k: Knex): Promise<void> {
 }
 /** Only StorageKnex.dropAllData may remove this generation without rebuilding legacy indexes. */
 export async function dropGenerationForDataDeletion(k: Knex): Promise<void> {
-  if (!String(k.client.config.client).includes('sqlite')) return
+  if (!String(k.client.config.client).includes('sqlite') && !isOwnedNativeSqlite(k)) return
   await k.transaction(async trx => {
     if (!(await trx.schema.hasTable(metadata))) return
     await trx(metadata)
@@ -44,8 +45,10 @@ export async function dropGenerationForDataDeletion(k: Knex): Promise<void> {
     const plan = await readPlan(trx)
     await validateInstalled(trx, plan)
     await runInSeries([...plan.triggers].reverse(), async sql => {
-      const name = /^CREATE TRIGGER ("[^"]+"|\w+)/.exec(sql)![1].replaceAll('"', '')
-      await trx.raw('DROP TRIGGER ??', [name])
+      const match = /^CREATE (TRIGGER|VIEW) ("[^"]+"|\w+)/.exec(sql)
+      if (match === null) throw new WERR_INVALID_OPERATION('Invalid generated observer definition')
+      const name = match[2].replaceAll('"', '')
+      await trx.raw(`DROP ${match[1]} ??`, [name])
     })
     await runInSeries([...plan.ddl].reverse(), async sql => {
       const match = /^CREATE TABLE "([^"]+)"/.exec(sql)

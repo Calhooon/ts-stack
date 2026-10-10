@@ -31,7 +31,7 @@ import { Options as RateLimitOptions, rateLimit } from 'express-rate-limit'
 import { Wallet } from '../../Wallet'
 import { StorageProvider } from '../StorageProvider'
 import { WERR_INTERNAL, WERR_INVALID_OPERATION, WERR_NOT_ACTIVE, WERR_UNAUTHORIZED } from '../../sdk/WERR_errors'
-import { AuthId, SyncChunk } from '../../sdk/WalletStorage.interfaces'
+import { AuthId, SyncChunk, type RequestSyncChunkArgs } from '../../sdk/WalletStorage.interfaces'
 import { EntityTimeStamp } from '../../sdk/types'
 import { validateDate, validateEntity, validateEntities, validateSyncChunkEntities } from './entityValidationHelpers'
 import { WalletError } from '../../sdk/WalletError'
@@ -68,6 +68,13 @@ import {
 import { ACTION_BATCH_MAX_PACK_BYTES, ACTION_BATCH_MAX_PACK_ITEMS } from '../methods/actionBatchBlobs'
 import { validateSyncProofs } from './validateRpcSyncProofs'
 import { KnexSnapshotArchiveRpc } from '../snapshot/archive/KnexSnapshotArchiveRpc'
+import { KnexRemoteSnapshotSyncRpc } from '../snapshot/KnexRemoteSnapshotSyncRpc'
+import {
+  remoteSnapshotSyncMethods,
+  remoteSnapshotSyncRequestBytes,
+  remoteSnapshotSyncResponseBytes,
+  type RemoteSnapshotSyncMethod
+} from '../snapshot/RemoteSnapshotSyncProtocol'
 import {
   snapshotArchiveMethods,
   snapshotArchiveRequestBytes,
@@ -287,6 +294,8 @@ export class StorageServer {
   private readonly syncTransfers?: KnexSyncTransferStore
   private readonly snapshotArchivesEnabled: boolean
   private snapshotArchives?: KnexSnapshotArchiveRpc
+  private readonly remoteSnapshotSyncEnabled: boolean
+  private remoteSnapshotSync?: KnexRemoteSnapshotSyncRpc
   private closing?: Promise<void>
   private closed = false
   private readonly app = express()
@@ -414,6 +423,12 @@ export class StorageServer {
       jsonBodyLimit >= snapshotArchiveRequestBytes &&
       (this.maxRpcResponseBytes === -1 || this.maxRpcResponseBytes >= snapshotArchiveResponseBytes)
     this.snapshotArchives = this.createSnapshotArchiveRpc()
+    this.remoteSnapshotSyncEnabled =
+      options.snapshotArchives !== false &&
+      options.syncTransfers !== false &&
+      jsonBodyLimit >= remoteSnapshotSyncRequestBytes &&
+      (this.maxRpcResponseBytes === -1 || this.maxRpcResponseBytes >= remoteSnapshotSyncResponseBytes)
+    this.remoteSnapshotSync = this.createRemoteSnapshotSyncRpc()
     // Keep legacy configurations working when their envelopes cannot fit even a minimum part.
     if (
       options.syncTransfers !== false &&
@@ -650,6 +665,23 @@ export class StorageServer {
     if (useBinary) res.set(BINARY_ENCODING_HEADER, BINARY_ENCODING)
 
     const { jsonrpc, method, id } = req.body
+    // Compact decoding mutates nested request values. Measure the encoded
+    // envelope before decoding; serializing decoded byte buffers would create
+    // number-key JSON amplification and reject legitimate bounded parts.
+    const snapshotRequestBytes = remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)
+      ? Buffer.byteLength(JSON.stringify(req.body), 'utf8')
+      : undefined
+    if (snapshotRequestBytes !== undefined && snapshotRequestBytes > remoteSnapshotSyncRequestBytes)
+      return this.sendRpc(
+        res,
+        useBinary,
+        {
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32600, message: 'Remote snapshot request exceeds its encoded transport bound' }
+        },
+        400
+      )
     const params = (requestUsesBinary ? decodeBinaryJsonValue(req.body.params) : req.body.params) as any[]
     if (jsonrpc !== '2.0' || !method || typeof method !== 'string' || !Array.isArray(params)) {
       return this.sendRpc(res, useBinary, { error: { code: -32600, message: 'Invalid Request' } }, 400)
@@ -661,6 +693,15 @@ export class StorageServer {
       let dispatch: RpcDispatchResult
       if (snapshotArchiveMethods.includes(method as SnapshotArchiveMethod)) {
         dispatch = await this.dispatchSnapshotArchive(method as SnapshotArchiveMethod, params, req, useBinary, id)
+      } else if (remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)) {
+        dispatch = await this.dispatchRemoteSnapshotSync(
+          method as RemoteSnapshotSyncMethod,
+          params,
+          req,
+          useBinary,
+          id,
+          snapshotRequestBytes
+        )
       } else if (method.endsWith('SyncTransfer') || method.endsWith('SyncTransferPart')) {
         dispatch = await this.dispatchSyncTransfer(method, params, req)
       } else {
@@ -691,6 +732,11 @@ export class StorageServer {
       ) {
         throw new WERR_INVALID_OPERATION('Snapshot archive response exceeds its transport limit')
       }
+      if (
+        remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) &&
+        Buffer.byteLength(serialized, 'utf8') > remoteSnapshotSyncResponseBytes
+      )
+        throw new WERR_INVALID_OPERATION('Remote snapshot destination response exceeds its transport limit')
       // Apply the response bound before consulting any client transport preference.
       if (this.maxRpcResponseBytes !== -1 && Buffer.byteLength(serialized, 'utf8') > this.maxRpcResponseBytes) {
         return await this.sendOversizedSyncResponse(req, res, useBinary, method, params, payload)
@@ -975,7 +1021,11 @@ export class StorageServer {
 
   private async snapshotArchiveSettings(): Promise<Record<string, unknown>> {
     const snapshotArchive = await this.snapshotArchives?.capabilities()
-    return snapshotArchive === undefined ? {} : { snapshotArchive }
+    const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
+    return {
+      ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
+      ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination })
+    }
   }
 
   private async dispatchSyncTransfer(method: string, params: any[], req: Request): Promise<RpcDispatchResult> {
@@ -1030,9 +1080,31 @@ export class StorageServer {
         // Mark only the reconstructed request: old peers retain their existing wire contract.
         payload.args.requireMatchingCheckpoint = true
         this.enforceRpcRequestBudgets('processSyncChunk', [payload.args, payload.chunk])
-        const dispatch = await this.dispatchRpcCall('processSyncChunk', [payload.args, payload.chunk], req)
-        result = dispatch.result
-        await transfers.complete(identityKey, input.transferId, result)
+        // Authenticate and finish active-chain proof preparation before opening
+        // the destination writer. Transfer staging uses this same Knex store.
+        if (!(this.storage instanceof StorageKnex))
+          throw new WERR_INVALID_OPERATION('Atomic sync transfer requires its actual Knex provider')
+        await this.authorizeRpcCall('processSyncChunk', [payload.args, payload.chunk], req)
+        const logger = this.createRpcLogger('processSyncChunk', [payload.args, payload.chunk])
+        try {
+          const apply = await this.storage.prepareSyncChunk(
+            payload.args as unknown as RequestSyncChunkArgs,
+            payload.chunk
+          )
+          result = await transfers.commitPreparedWrite(
+            identityKey,
+            input.transferId,
+            syncTransferDigest(staged.bytes),
+            apply
+          )
+          // Logger sinks run after the native writer settles. The durable ACK
+          // contains wallet outcome/checkpoint data, independently of logging.
+          this.finishRpcLogging(logger, result)
+        } catch (error) {
+          logWalletError(error, logger, 'error executing requested method')
+          logger?.flush?.()
+          throw error
+        }
         break
       }
       case 'releaseSyncTransfer':
@@ -1049,6 +1121,36 @@ export class StorageServer {
     return this.snapshotArchivesEnabled && this.storage instanceof StorageKnex
       ? new KnexSnapshotArchiveRpc(this.storage)
       : undefined
+  }
+
+  private createRemoteSnapshotSyncRpc(): KnexRemoteSnapshotSyncRpc | undefined {
+    return this.remoteSnapshotSyncEnabled && this.storage instanceof StorageKnex
+      ? new KnexRemoteSnapshotSyncRpc(this.storage)
+      : undefined
+  }
+
+  private async dispatchRemoteSnapshotSync(
+    method: RemoteSnapshotSyncMethod,
+    params: unknown[],
+    req: Request,
+    useBinary: boolean,
+    id: unknown,
+    encodedRequestBytes: number | undefined
+  ): Promise<RpcDispatchResult> {
+    if (this.remoteSnapshotSync === undefined) return { found: false }
+    if (
+      !useBinary ||
+      req.header(BINARY_REQUEST_ENCODING_HEADER) !== BINARY_ENCODING ||
+      !Number.isSafeInteger(id) ||
+      Number(id) < 1 ||
+      encodedRequestBytes === undefined ||
+      encodedRequestBytes > remoteSnapshotSyncRequestBytes
+    )
+      throw new WERR_INVALID_OPERATION('Remote snapshot commits require bounded compact-binary authenticated RPC')
+    return {
+      found: true,
+      result: await this.remoteSnapshotSync.dispatch(method, params, requiredAuthenticatedIdentityKey(req))
+    }
   }
 
   private async dispatchSnapshotArchive(
@@ -1234,6 +1336,7 @@ export class StorageServer {
       this.closing = undefined
       this.closed = false
       this.snapshotArchives = this.createSnapshotArchiveRpc()
+      this.remoteSnapshotSync = this.createRemoteSnapshotSyncRpc()
     }
     const listening = (): void => {
       console.log(`WalletStorageServer listening at http://${this.host ?? 'localhost'}:${this.port}`)
@@ -1247,6 +1350,7 @@ export class StorageServer {
     if (this.closing !== undefined) return this.closing
     // Fence capture admission synchronously, then await BOTH physical drains.
     const captures = this.snapshotArchives?.close() ?? Promise.resolve()
+    const commits = this.remoteSnapshotSync?.close() ?? Promise.resolve()
     const http = new Promise<void>((resolve, reject) => {
       if (!this.server) {
         resolve()
@@ -1257,7 +1361,7 @@ export class StorageServer {
         else resolve()
       })
     })
-    this.closing = Promise.allSettled([captures, http]).then(results => {
+    this.closing = Promise.allSettled([captures, commits, http]).then(results => {
       for (const result of results) if (result.status === 'rejected') throw result.reason
       this.closed = true
     })

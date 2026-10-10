@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 
 function invalid(): never {
@@ -16,7 +17,7 @@ function invalid(): never {
  */
 export async function lockSnapshotJournalMaintenanceOwner(k: Knex, config?: Knex.MigratorConfig): Promise<void> {
   const driver = k.client.config.client
-  const sqlite = driver === 'better-sqlite3' || driver === 'sqlite3'
+  const sqlite = driver === 'better-sqlite3' || driver === 'sqlite3' || isOwnedNativeSqlite(k)
   if (!k.isTransaction || (!sqlite && driver !== 'mysql' && driver !== 'mysql2')) return invalid()
   const table = config?.tableName ?? 'knex_migrations',
     schema = config?.schemaName

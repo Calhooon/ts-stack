@@ -1,7 +1,12 @@
 import { knex as createKnex, type Knex } from 'knex'
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
+import { createOwnedNativeReadDatabase, ownedNativeRootIdentity } from '../../schema/ownedNativeSqliteConnectionsNode'
+import { hasBrc38NativePackedSchema } from '../../portable/Brc38NativePackedSchemaNode'
+import { collectBrc38NativePackedContent } from '../../portable/Brc38NativePackedTextFieldsNode'
 import { WERR_INVALID_OPERATION, WERR_NOT_IMPLEMENTED } from '../../../sdk/WERR_errors'
 import {
   advanceSnapshotJournalFloor,
+  retainSnapshotJournalEvents,
   snapshotJournalReceiptPolicy,
   type SnapshotJournalReceiptPolicy
 } from './SnapshotJournalReceipt'
@@ -27,7 +32,9 @@ import {
 } from './SnapshotJournalMaintenanceTask'
 
 type Operation =
-  { kind: 'floor'; floor: SnapshotJournalRevision } | { kind: 'collect'; page: SnapshotJournalCollectionRequest }
+  | { kind: 'floor'; floor: SnapshotJournalRevision }
+  | { kind: 'collect'; page: SnapshotJournalCollectionRequest }
+  | { kind: 'retention'; events: SnapshotJournalRevision }
 export interface SnapshotJournalMaintenanceRequest {
   epoch: string
   ceiling: SnapshotJournalRevision
@@ -35,6 +42,7 @@ export interface SnapshotJournalMaintenanceRequest {
   operation: Operation
 }
 export type SnapshotJournalMaintenanceResult =
+  | { kind: 'retention'; value: Awaited<ReturnType<typeof retainSnapshotJournalEvents>> }
   | {
       kind: 'floor'
       value: Awaited<ReturnType<typeof advanceSnapshotJournalFloor>>
@@ -68,6 +76,13 @@ function request(input: SnapshotJournalMaintenanceRequest): SnapshotJournalMaint
         floor: snapshotJournalRevision(operation.floor)
       }
     }
+  if (operation.kind === 'retention')
+    return {
+      epoch,
+      ceiling,
+      receiptPolicy,
+      operation: { kind: 'retention', events: snapshotJournalRevision(operation.events) }
+    }
   if (operation.kind !== 'collect') return invalid()
   const page = snapshotJournalCollectionRequest(operation.page)
   if (page.epoch !== epoch) return invalid()
@@ -88,6 +103,8 @@ function ownedConfig(config: Knex.Config): Knex.Config {
   }
 }
 async function operation(k: Knex, input: SnapshotJournalMaintenanceRequest): Promise<SnapshotJournalMaintenanceResult> {
+  if (input.operation.kind === 'retention')
+    return { kind: 'retention', value: await retainSnapshotJournalEvents(k, input.operation.events) }
   if (input.operation.kind === 'floor')
     return {
       kind: 'floor',
@@ -108,21 +125,32 @@ async function operation(k: Knex, input: SnapshotJournalMaintenanceRequest): Pro
 export function maintainSnapshotJournal(
   resolveConfig: () => Promise<Knex.Config | undefined>,
   input: SnapshotJournalMaintenanceRequest,
-  options: SnapshotJournalMaintenanceOptions = {}
+  options: SnapshotJournalMaintenanceOptions = {},
+  actualNativeRoot?: Knex
 ): SnapshotJournalMaintenanceTask<SnapshotJournalMaintenanceResult> {
   const detached = request(input)
   return runSnapshotJournalMaintenanceTask(async assertActive => {
-    let writer: Knex | undefined, verifier: Knex | undefined, result: SnapshotJournalMaintenanceResult | undefined
+    let writer: Knex | undefined,
+      verifier: Knex | undefined,
+      result: SnapshotJournalMaintenanceResult | undefined,
+      borrowedWriter = false
     let failure: { error: unknown } | undefined
     try {
       const config = await resolveConfig()
       assertActive()
       if (config === undefined)
         throw new WERR_NOT_IMPLEMENTED('Snapshot journal maintenance requires file-backed SQLite WAL or static MySQL')
-      const expected = await prepareSnapshotJournalCaptureBackend(config)
+      const expected = await prepareSnapshotJournalCaptureBackend(config, actualNativeRoot)
       assertActive()
-      writer = createKnex(ownedConfig(config))
-      verifier = createKnex(ownedConfig(config))
+      if (actualNativeRoot !== undefined && isOwnedNativeSqlite(actualNativeRoot)) {
+        if (actualNativeRoot.isTransaction || ownedNativeRootIdentity(actualNativeRoot)?.slot !== 0) return invalid()
+        writer = actualNativeRoot
+        borrowedWriter = true
+        verifier = createOwnedNativeReadDatabase(writer)
+      } else {
+        writer = createKnex(ownedConfig(config))
+        verifier = createKnex(ownedConfig(config))
+      }
       result = await withSnapshotJournalConnections(
         writer,
         verifier,
@@ -152,6 +180,18 @@ export function maintainSnapshotJournal(
               return invalid()
             assertActive()
             value = await operation(trx, detached)
+            // A source-owned generation collection page also advances one
+            // indexed packed-content retirement page, under the same current
+            // writer. It never scans every retained version or removes bytes
+            // still referenced by a current field.
+            if (
+              detached.operation.kind === 'collect' &&
+              isOwnedNativeSqlite(trx) &&
+              (await hasBrc38NativePackedSchema(trx))
+            ) {
+              assertActive()
+              await collectBrc38NativePackedContent(trx, 256, options.signal)
+            }
             assertActive()
             await trx.commit()
             await trx.executionPromise
@@ -174,12 +214,15 @@ export function maintainSnapshotJournal(
           if (operationFailure !== undefined) throw operationFailure.error
           return value
         },
-        closeSnapshotJournalCapturePool
+        async (owner, connection) => {
+          if (borrowedWriter && owner === writer) await owner.client.releaseConnection(connection)
+          else await closeSnapshotJournalCapturePool(owner, connection)
+        }
       )
     } catch (error) {
       failure = { error }
     }
-    const settled = await Promise.allSettled([writer?.destroy(), verifier?.destroy()])
+    const settled = await Promise.allSettled([borrowedWriter ? undefined : writer?.destroy(), verifier?.destroy()])
     const failed = settled.filter(value => value.status === 'rejected')
     if (failed.length)
       throw new SnapshotJournalConnectionCleanupError(

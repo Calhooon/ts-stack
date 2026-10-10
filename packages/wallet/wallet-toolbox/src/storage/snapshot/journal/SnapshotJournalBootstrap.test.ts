@@ -1,3 +1,4 @@
+import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import { copySnapshotJournalBootstrapPage, SNAPSHOT_JOURNAL_BOOTSTRAP_DDL } from './SnapshotJournalBootstrap'
 import {
   snapshotJournalSqliteObserverSql,
@@ -107,7 +108,7 @@ test('exact bootstrap copies bounded pages, resumes and preserves newer low-key 
   })
   try {
     await k.raw('PRAGMA journal_mode=WAL')
-    await source.migrate('exact bootstrap fixture', 'synthetic-exact-bootstrap')
+    await migrateBeforeSnapshotJournal(source, 'exact bootstrap fixture', 'synthetic-exact-bootstrap')
     await source.makeAvailable()
     const { user } = await source.findOrInsertUser('02' + '11'.repeat(32)),
       { user: other } = await source.findOrInsertUser('03' + '22'.repeat(32))

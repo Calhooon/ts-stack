@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { createSnapshotArchiveTable } from './snapshotNativeArchiveSchema'
 
 export const SNAPSHOT_ARCHIVE_MIGRATION = '2026-09-30-002 add snapshot archive staging'
 
@@ -29,7 +30,7 @@ export async function addSnapshotArchiveTables(knex: Knex): Promise<void> {
     })
   }
   if (!(await knex.schema.hasTable('snapshot_archive_pages'))) {
-    await knex.schema.createTable('snapshot_archive_pages', table => {
+    const builder = knex.schema.createTable('snapshot_archive_pages', table => {
       table.string('archiveId', 64).notNullable()
       table.integer('sequence').notNullable()
       table.string('tableName', 32).notNullable()
@@ -40,6 +41,7 @@ export async function addSnapshotArchiveTables(knex: Knex): Promise<void> {
       table.specificType('payload', mysql ? 'MEDIUMBLOB' : 'BLOB').notNullable()
       table.primary(['archiveId', 'sequence'])
     })
+    await createSnapshotArchiveTable(knex, 'snapshot_archive_pages', builder)
   }
 }
 

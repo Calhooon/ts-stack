@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from './ownedNativeSqliteRuntimeNode'
 import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
 import type { Knex } from 'knex'
 import { readPlan, validateInstalled, metadata, progress } from './snapshotSqliteIndexGeneration'
@@ -9,7 +10,11 @@ export async function readGenerationIndexState(
   k: Knex,
   config?: Knex.MigratorConfig
 ): Promise<false | 'v2' | undefined> {
-  if (!String(k.client.config.client).includes('sqlite') || !(await k.schema.hasTable(metadata))) return undefined
+  if (
+    (!String(k.client.config.client).includes('sqlite') && !isOwnedNativeSqlite(k)) ||
+    !(await k.schema.hasTable(metadata))
+  )
+    return undefined
   const plan = await readPlan(k)
   await validateInstalled(k, plan)
   const rows: Position[] = await k(progress).select('*').orderBy('stream').limit(13)

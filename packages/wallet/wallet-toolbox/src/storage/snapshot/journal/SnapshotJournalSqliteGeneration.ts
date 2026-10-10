@@ -1,3 +1,6 @@
+import { hasSnapshotSqliteCellComparison } from '../../schema/snapshotSqliteCellComparison'
+import { snapshotJournalNativePointerDefinitions } from './SnapshotJournalPackedPointerGroup'
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import {
   snapshotJournalReceiptDdl,
   snapshotJournalReceiptPolicy,
@@ -7,13 +10,21 @@ import type { Knex } from 'knex'
 import { createHash, randomUUID } from 'node:crypto'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
+import { snapshotArchiveDatabaseNow } from '../archive/SnapshotArchiveSql'
 import { numeric } from '../../schema/snapshotSqliteMembership'
 import { names, metadata as indexMetadata } from '../../schema/snapshotSqliteIndexGeneration'
 import { readGenerationIndexState } from '../../schema/snapshotSqliteIndexState'
 import { SNAPSHOT_JOURNAL_SQLITE_CLOCK_DDL } from './SnapshotJournalSqliteClock'
 import {
   snapshotJournalSqliteObserverSql,
-  SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL
+  SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL,
+  SNAPSHOT_JOURNAL_SQLITE_COMPACT_METADATA_DDL,
+  SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
+  SNAPSHOT_JOURNAL_SQLITE_SHARED_EVENT_DDL,
+  SNAPSHOT_JOURNAL_SQLITE_SHARED_SOURCE_EVENT_DDL,
+  SNAPSHOT_JOURNAL_SQLITE_POSITIONAL_SOURCE_EVENT_DDL,
+  snapshotJournalPositionalEventSql,
+  snapshotJournalSharedClockObserverSql
 } from './SnapshotJournalSqliteObservers'
 import { SNAPSHOT_JOURNAL_BOOTSTRAP_DDL, validSnapshotJournalBootstrapBudget } from './SnapshotJournalBootstrap'
 import {
@@ -50,19 +61,298 @@ export interface SnapshotJournalSqliteGeneration {
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Invalid or unowned SQLite snapshot journal generation')
 }
-const local = (k: Knex) => k.client.config.client === 'sqlite3' || k.client.config.client === 'better-sqlite3'
+const local = (k: Knex) =>
+  k.client.config.client === 'sqlite3' || k.client.config.client === 'better-sqlite3' || isOwnedNativeSqlite(k)
+/** Read the complete schema in one retained view without putting all DDL in a
+ * native IPC response. Small rows share one at-most-16KiB BLOB response; larger
+ * rows retain individual byte chunks. Positions and lengths are DATA, never
+ * admission or ownership. Literal whitespace and UTF-8 boundaries are exact. */
+export async function readBoundedSnapshotJournalSqliteSchema(
+  k: Knex.Transaction,
+  sources: readonly string[] | null,
+  excludedSourceNames: ReadonlySet<string> = new Set()
+): Promise<SchemaObject[]> {
+  const check = (): void => {
+    if (!k.isTransaction || !local(k)) invalid()
+  }
+  check()
+  const selection = k('sqlite_master')
+  if (sources === null)
+    selection
+      .where(function () {
+        void this.whereRaw('lower(substr(name,1,17))=?', ['snapshot_journal_']).orWhereRaw(
+          'lower(substr(tbl_name,1,17))=?',
+          ['snapshot_journal_']
+        )
+      })
+      .whereRaw('substr(name,1,17)<>?', ['sqlite_autoindex_'])
+  else selection.whereIn('tbl_name', [...sources])
+  const positions: Array<{ position: string }> = await selection
+    .select(k.raw('CAST(rowid AS TEXT) AS position'))
+    .orderBy(['type', 'name'])
+    .limit(513)
+  if (positions.length > 512) invalid()
+  const rows: SchemaObject[] = []
+  let sourceBytes = 2
+  type Lengths = Record<'type' | 'name' | 'tbl_name' | 'sql', number | null> &
+    Record<'type_bytes' | 'name_bytes' | 'tbl_name_bytes' | 'sql_bytes', unknown>
+  const columns = ['type', 'name', 'tbl_name', 'sql'] as const
+  let nativeBatch = new Map<string, Lengths>()
+  const prepareNativeBatch = async (selected: readonly { position: string }[]): Promise<Map<string, Lengths>> => {
+    check()
+    const coordinates = selected.map(row => row.position)
+    if (coordinates.some(value => typeof value !== 'string' || !/^-?(0|[1-9][0-9]{0,18})$/.test(value))) invalid()
+    const metadata = (await k('sqlite_master')
+      .whereIn('rowid', coordinates)
+      .select(
+        k.raw('CAST(rowid AS TEXT) AS position'),
+        ...columns.map(column => k.raw('length(CAST(?? AS BLOB)) AS ??', [column, column]))
+      )
+      .limit(9)) as Array<Lengths & { position: string }>
+    check()
+    const values = new Map<string, Lengths>()
+    if (metadata.length !== coordinates.length) invalid()
+    for (const row of metadata) {
+      if (!coordinates.includes(row.position) || values.has(row.position)) invalid()
+      for (const column of columns) {
+        const length = row[column]
+        if (length === null) {
+          if (column !== 'sql') invalid()
+        } else if (!Number.isSafeInteger(length) || length < 0 || length > (column === 'sql' ? 65536 : 1048576))
+          invalid()
+      }
+      values.set(row.position, row)
+    }
+    let group: string[] = [],
+      bytes = 0
+    const transfer = async (): Promise<void> => {
+      if (group.length === 0) return
+      check()
+      // Recheck the actual aggregate in SQL before placing BLOBs in a response.
+      // The lengths are temporary data in this retained view, not authority.
+      const total = k('sqlite_master')
+        .whereIn('rowid', group)
+        .select(
+          k.raw(
+            'coalesce(sum(coalesce(length(CAST(type AS BLOB)),0)+coalesce(length(CAST(name AS BLOB)),0)+coalesce(length(CAST(tbl_name AS BLOB)),0)+coalesce(length(CAST(sql AS BLOB)),0)),0)'
+          )
+        )
+      const blobs = (await k('sqlite_master')
+        .whereIn('rowid', group)
+        .select(
+          k.raw('CAST(rowid AS TEXT) AS position'),
+          ...columns.map(column =>
+            k.raw('CASE WHEN (?)<=16384 THEN CAST(?? AS BLOB) END AS ??', [total, column, `${column}_bytes`])
+          )
+        )
+        .limit(9)) as Array<Lengths & { position: string }>
+      check()
+      if (blobs.length !== group.length) invalid()
+      const seen = new Set<string>()
+      for (const row of blobs) {
+        if (!group.includes(row.position) || seen.has(row.position)) invalid()
+        seen.add(row.position)
+        const value = values.get(row.position)!
+        for (const column of columns) {
+          const blob = row[`${column}_bytes`],
+            length = value[column]
+          if (length === null ? blob !== null : !Buffer.isBuffer(blob) || blob.length !== length) invalid()
+          value[`${column}_bytes`] = blob
+        }
+      }
+      group = []
+      bytes = 0
+    }
+    for (const { position } of selected) {
+      check()
+      const value = values.get(position)!,
+        amount = columns.reduce((sum, column) => sum + (value[column] ?? 0), 0)
+      if (amount > 16384) {
+        await transfer()
+        continue // This row retains the original individual chunk path.
+      }
+      if (group.length !== 0 && amount > 16384 - bytes) await transfer()
+      group.push(position)
+      bytes += amount
+    }
+    await transfer()
+    return values
+  }
+  for (const [rowIndex, { position }] of positions.entries()) {
+    check()
+    if (typeof position !== 'string' || !/^-?(0|[1-9][0-9]{0,18})$/.test(position)) invalid()
+    if (isOwnedNativeSqlite(k) && rowIndex % 8 === 0)
+      nativeBatch = await prepareNativeBatch(positions.slice(rowIndex, rowIndex + 8))
+    const combinedLength = columns.map(() => 'coalesce(length(CAST(?? AS BLOB)),0)').join('+'),
+      lengths =
+        nativeBatch.get(position) ??
+        ((await k('sqlite_master')
+          .where('rowid', position)
+          .select(
+            columns.flatMap(column => [
+              k.raw('length(CAST(?? AS BLOB)) AS ??', [column, column]),
+              k.raw(`CASE WHEN ${combinedLength}<=16384 THEN CAST(?? AS BLOB) END AS ??`, [
+                ...columns,
+                column,
+                `${column}_bytes`
+              ])
+            ])
+          )
+          .first()) as
+          | (Record<(typeof columns)[number], number | null> & Record<`${(typeof columns)[number]}_bytes`, unknown>)
+          | undefined)
+    if (lengths === undefined) invalid()
+    const combined = columns.reduce((total, column) => total + (lengths[column] ?? 0), 0)
+    const read = async (column: (typeof columns)[number]): Promise<string | null> => {
+      check()
+      const length = lengths[column]
+      if (length === null) {
+        if (column !== 'sql') invalid()
+        return null
+      }
+      // Names cannot exceed the original complete source JSON bound; SQL keeps
+      // its original per-definition bound. Neither limit increases IPC size.
+      if (!Number.isSafeInteger(length) || length < 0 || length > (column === 'sql' ? 65536 : 1048576)) invalid()
+      const chunks: Buffer[] = []
+      if (combined <= 16384) {
+        const part = lengths[`${column}_bytes`]
+        if (!Buffer.isBuffer(part) || part.length !== length) invalid()
+        chunks.push(part)
+      } else {
+        for (let offset = 0; offset < length; offset += 16384) {
+          check()
+          const count = Math.min(16384, length - offset),
+            part = (await k('sqlite_master')
+              .where('rowid', position)
+              .select(k.raw('substr(CAST(?? AS BLOB),?,?) AS chunk', [column, offset + 1, count]))
+              .first()) as { chunk: unknown } | undefined
+          if (!Buffer.isBuffer(part?.chunk) || part.chunk.length !== count) invalid()
+          chunks.push(part.chunk)
+        }
+      }
+      try {
+        return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, length))
+      } catch {
+        return invalid()
+      }
+    }
+    const type = await read('type'),
+      name = await read('name'),
+      table = await read('tbl_name')
+    if (type === null || name === null || table === null) invalid()
+    const row = { type, name, tbl_name: table, sql: await read('sql') }
+    if (sources !== null && !excludedSourceNames.has(name)) {
+      sourceBytes += Buffer.byteLength(JSON.stringify(row), 'utf8') + (sourceBytes === 2 ? 0 : 1)
+      if (sourceBytes > 1048576) invalid()
+    }
+    rows.push(row)
+  }
+  check()
+  return rows
+}
+/** A fresh genuine receiver selects the compact authored layout. Existing
+ * native generations retain their exact complete pair of anchor definitions;
+ * mixed, altered and shadowed objects never select a new source plan. */
+async function nativeJournalLayout(
+  k: Knex
+): Promise<'original' | 'clock-shared' | 'effects-shared' | 'events-shared' | 'sources-shared' | 'sources-positional'> {
+  if (!isOwnedNativeSqlite(k)) return 'original'
+  if (!k.isTransaction) return invalid()
+  if (
+    (
+      await k('sqlite_temp_schema')
+        .whereRaw('lower(substr(name,1,17))=?', ['snapshot_journal_'])
+        .select('name')
+        .limit(1)
+    ).length !== 0
+  )
+    return invalid()
+  const names = ['snapshot_journal_physical', 'snapshot_journal_scope'],
+    rows: Array<{ type: string; name: string; sql: string }> = await k('main.sqlite_schema')
+      .whereIn('name', names)
+      .select('type', 'name', k.raw('CASE WHEN length(CAST(sql AS BLOB))<=4096 THEN sql END AS sql'))
+      .limit(3)
+  if (rows.length === 0) return 'sources-positional'
+  if (rows.length !== 2 || rows.some(row => row.type !== 'table')) return invalid()
+  const matches = (definitions: readonly string[]): boolean => {
+    const expected = new Map(definitions.map(sql => [/^CREATE TABLE (\w+)/.exec(sql)![1], sql]))
+    return rows.every(row => expected.get(row.name) === row.sql)
+  }
+  if (matches(SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL.slice(0, 2))) return 'original'
+  if (!matches(SNAPSHOT_JOURNAL_SQLITE_COMPACT_METADATA_DDL.slice(0, 2))) return invalid()
+  const families = [
+    ['effects-shared', SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL],
+    ['events-shared', [...SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL, ...SNAPSHOT_JOURNAL_SQLITE_SHARED_EVENT_DDL]],
+    [
+      'sources-shared',
+      [...SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL, ...SNAPSHOT_JOURNAL_SQLITE_SHARED_SOURCE_EVENT_DDL]
+    ],
+    [
+      'sources-positional',
+      [...SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL, ...SNAPSHOT_JOURNAL_SQLITE_POSITIONAL_SOURCE_EVENT_DDL]
+    ]
+  ] as const
+  const definitions = (family: readonly string[]) =>
+    new Map(
+      family.map(sql => {
+        const match = /^CREATE (VIEW|TRIGGER) (\w+)/.exec(sql)!
+        return [match[2], { type: match[1].toLowerCase(), sql }]
+      })
+    )
+  const helperNames = new Set(families.flatMap(([, family]) => [...definitions(family).keys()]))
+  const helpers: Array<{ type: string; name: string; sql: string }> = await k('main.sqlite_schema')
+    .whereIn('name', [...helperNames])
+    .select('type', 'name', k.raw('CASE WHEN length(CAST(sql AS BLOB))<=16384 THEN sql END AS sql'))
+    .limit(helperNames.size + 1)
+  if (helpers.length === 0) return 'clock-shared'
+  for (const [layout, family] of families) {
+    const expected = definitions(family)
+    if (
+      helpers.length === expected.size &&
+      helpers.every(row => expected.get(row.name)?.type === row.type && expected.get(row.name)?.sql === row.sql)
+    )
+      return layout
+  }
+  return invalid()
+}
 async function plan(k: Knex, config?: Knex.MigratorConfig): Promise<Plan> {
   if (!local(k) || (await readGenerationIndexState(k, config)) !== 'v2') return invalid()
-  const ddl = [
+  const layout = await nativeJournalLayout(k),
+    compact = layout !== 'original',
+    positional = layout === 'sources-positional',
+    shared = layout === 'effects-shared' || layout === 'events-shared' || layout === 'sources-shared' || positional,
+    events = layout === 'events-shared' || layout === 'sources-shared' || positional,
+    projectedSources = layout === 'sources-shared' || positional,
+    historicalObservers = await snapshotJournalSqliteObserverSql(k, shared, events)
+  let observers = historicalObservers
+  if (projectedSources) {
+    const nativeCells = await hasSnapshotSqliteCellComparison(k)
+    const cellObservers = await snapshotJournalSqliteObserverSql(k, shared, events, true)
+    const probeName = 'snapshot_journal_physical_0_UPDATE'
+    const expected = (definitions: string[]) =>
+      (positional ? snapshotJournalPositionalEventSql(definitions) : definitions).find(sql =>
+        sql.startsWith(`CREATE TRIGGER ${probeName} `)
+      )!
+    const installed = (await k('main.sqlite_schema').where({ type: 'trigger', name: probeName }).first('sql')) as
+      { sql: string } | undefined
+    if (installed === undefined) observers = nativeCells ? cellObservers : historicalObservers
+    else if (nativeCells && installed.sql === expected(cellObservers)) observers = cellObservers
+    else if (installed.sql !== expected(historicalObservers)) return invalid()
+  }
+  const originalDdl = [
     SNAPSHOT_JOURNAL_SQLITE_GENERATION_DDL,
     SNAPSHOT_JOURNAL_SQLITE_CLOCK_DDL,
-    ...SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL,
+    ...(compact ? SNAPSHOT_JOURNAL_SQLITE_COMPACT_METADATA_DDL : SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL),
     SNAPSHOT_JOURNAL_BOOTSTRAP_DDL,
     ...snapshotJournalReceiptDdl(k),
-    ...(await snapshotJournalSqliteObserverSql(k))
+    ...(shared ? SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL : []),
+    ...(compact ? snapshotJournalSharedClockObserverSql(observers, events, projectedSources) : observers)
   ]
+  const ddl = positional
+    ? await snapshotJournalNativePointerDefinitions(k, snapshotJournalPositionalEventSql(originalDdl))
+    : originalDdl
   const objects = ddl.map(sql => {
-    const match = /^CREATE (TABLE|INDEX|TRIGGER) (snapshot_journal_\w+)/.exec(sql)
+    const match = /^CREATE (TABLE|INDEX|TRIGGER|VIEW) (snapshot_journal_\w+)/.exec(sql)
     if (!match) return invalid()
     return { type: match[1].toLowerCase(), name: match[2], sql }
   })
@@ -75,16 +365,18 @@ async function plan(k: Knex, config?: Knex.MigratorConfig): Promise<Plan> {
     'settings',
     ...Object.values(names)
   ]
-  const rows: SchemaObject[] = await k('sqlite_master')
-    .whereIn('tbl_name', sources)
-    .select('type', 'name', 'tbl_name', k.raw('substr(sql,1,65537) AS sql'))
-    .orderBy(['type', 'name'])
-    .limit(513)
+  const expectedNames = new Set(objects.map(object => object.name))
+  const rows: SchemaObject[] = isOwnedNativeSqlite(k)
+    ? await readBoundedSnapshotJournalSqliteSchema(k as Knex.Transaction, sources, expectedNames)
+    : await k('sqlite_master')
+        .whereIn('tbl_name', sources)
+        .select('type', 'name', 'tbl_name', k.raw('substr(sql,1,65537) AS sql'))
+        .orderBy(['type', 'name'])
+        .limit(513)
   if (rows.length > 512 || rows.some(row => row.sql !== null && Buffer.byteLength(row.sql, 'utf8') > 65536))
     return invalid()
   if (['users', 'settings'].some(table => !rows.some(row => row.type === 'table' && row.name === table)))
     return invalid()
-  const expectedNames = new Set(objects.map(object => object.name))
   const source = JSON.stringify(rows.filter(row => !expectedNames.has(row.name)))
   if (Buffer.byteLength(source, 'utf8') > 1048576) return invalid()
   return {
@@ -93,11 +385,44 @@ async function plan(k: Knex, config?: Knex.MigratorConfig): Promise<Plan> {
   }
 }
 async function reserved(k: Knex): Promise<SchemaObject[]> {
+  if (isOwnedNativeSqlite(k)) return await readBoundedSnapshotJournalSqliteSchema(k as Knex.Transaction, null)
   return await k('sqlite_master')
-    .whereRaw('lower(substr(name,1,17))=?', ['snapshot_journal_'])
+    .where(function () {
+      void this.whereRaw('lower(substr(name,1,17))=?', ['snapshot_journal_']).orWhereRaw(
+        'lower(substr(tbl_name,1,17))=?',
+        ['snapshot_journal_']
+      )
+    })
+    .whereRaw('substr(name,1,17)<>?', ['sqlite_autoindex_'])
     .select('type', 'name', 'tbl_name', k.raw('substr(sql,1,65537) AS sql'))
     .orderBy(['type', 'name'])
     .limit(513)
+}
+
+/** Erasure only, after physical source sessions drain. Verify every owned
+ * definition before dropping observers, then auxiliary tables. No data value or
+ * caller-supplied schema description can authorize adopting a different object. */
+export async function dropSnapshotJournalSqliteForDataDeletion(k: Knex, config?: Knex.MigratorConfig): Promise<void> {
+  if (!local(k)) return invalid()
+  await k.transaction(async trx => {
+    const actual = await reserved(trx)
+    if (!actual.length) return
+    const expected = (await plan(trx, config)).objects
+    if (
+      actual.length !== expected.length ||
+      actual.some(
+        object =>
+          !expected.some(value => value.name === object.name && value.type === object.type && value.sql === object.sql)
+      )
+    )
+      return invalid()
+    for (const object of expected.filter(value => value.type === 'trigger').reverse())
+      await trx.raw('DROP TRIGGER ??', [object.name])
+    for (const object of expected.filter(value => value.type === 'view').reverse())
+      await trx.raw('DROP VIEW ??', [object.name])
+    for (const object of expected.filter(value => value.type === 'table').reverse())
+      await trx.schema.dropTable(object.name)
+  })
 }
 async function validateBootstrap(k: Knex, complete: number): Promise<void> {
   const positions = await k('snapshot_journal_bootstrap').select('*').limit(2)
@@ -246,7 +571,50 @@ export async function readSnapshotJournalSqliteGeneration(
   config?: Knex.MigratorConfig
 ): Promise<SnapshotJournalSqliteGeneration> {
   const policy = snapshotJournalReceiptPolicy(receiptPolicy)
+  if (isOwnedNativeSqlite(k) && !k.isTransaction)
+    return await k.transaction(async trx => await validate(trx, await plan(trx, config), policy))
   return await validate(k, await plan(k, config), policy)
+}
+
+/** A source-owned additive schema migration may retain journal events, floor,
+ * bootstrap progress and data generations. It must first drain every live
+ * receipt, then validate both complete old and new object plans in the same
+ * SQLite writer. Rotate the epoch so no old source binding can be resumed. */
+export async function migrateSnapshotJournalSqliteSourceAddition(
+  k: Knex,
+  apply: () => Promise<void>,
+  config?: Knex.MigratorConfig
+): Promise<void> {
+  if (!k.isTransaction || !local(k)) return invalid()
+  if (!(await k.schema.hasTable(SNAPSHOT_JOURNAL_SQLITE_GENERATION))) {
+    await apply()
+    return
+  }
+  const policies: Array<{ receiptLimit: unknown; receiptLifetimeMs: unknown }> = await k('snapshot_journal_retention')
+    .select('receiptLimit', 'receiptLifetimeMs')
+    .where('id', 1)
+    .limit(2)
+  if (policies.length !== 1) return invalid()
+  const policy = snapshotJournalReceiptPolicy({
+    receiptLimit: Number(policies[0].receiptLimit),
+    receiptLifetimeMs: Number(policies[0].receiptLifetimeMs)
+  })
+  const oldPlan = await plan(k, config)
+  const before = await validate(k, oldPlan, policy)
+  if (!before.enabled || !before.complete) return invalid()
+  const now = await snapshotArchiveDatabaseNow(k)
+  if ((await k('snapshot_journal_receipts').where('expiresAt', '>', now).select('requestId').limit(1)).length)
+    throw new WERR_INVALID_OPERATION('Drain live journal captures before changing their source schema')
+  await apply()
+  const next = await plan(k, config)
+  if (JSON.stringify(oldPlan.objects) !== JSON.stringify(next.objects)) return invalid()
+  if (
+    (await k(SNAPSHOT_JOURNAL_SQLITE_GENERATION)
+      .where({ id: 1, source: before.source, epoch: before.epoch })
+      .update({ source: next.source, epoch: randomUUID() })) !== 1
+  )
+    return invalid()
+  await validate(k, next, policy)
 }
 
 /** Atomic completion cannot be inferred from a caller's last-page acknowledgement. */

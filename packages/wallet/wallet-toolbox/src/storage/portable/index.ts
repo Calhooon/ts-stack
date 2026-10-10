@@ -1,3 +1,45 @@
+import {
+  decodePortableRow as fromPortableRow,
+  type JsonValue,
+  type PortableRow,
+  binaryFieldsByKind,
+  jsonFieldsByKind,
+  validatePortableRows,
+  requireNumber,
+  requireString,
+  assertIsoDate
+} from './Brc38PortableRows'
+export { createBrc38Stream } from './Brc38Stream'
+export type { Brc38StreamSource, Brc38StreamOptions, Brc38Stream } from './Brc38Stream'
+export { openBrc38IdbSource } from './Brc38IdbSource'
+export type { Brc38IdbSourceOptions } from './Brc38IdbSource'
+export { encodeBrc38StreamedRow } from './Brc38StreamedRow'
+export type { Brc38StreamedBinary, Brc38StreamedRow, Brc38StreamedRowPolicy } from './Brc38StreamedRow'
+export { canonicalBrc38StructuredJson } from './Brc38StructuredJson'
+export type {
+  Brc38StreamedStructured,
+  Brc38StructuredJsonPolicy,
+  Brc38JsonMember,
+  Brc38JsonMemberIndex
+} from './Brc38StructuredJson'
+export {
+  restoreAuthenticatedBrc39BrowserInactive,
+  publishAuthenticatedBrc39BrowserProfile
+} from './Brc38AuthenticatedIdbRestoreBrowser'
+export type {
+  Brc38AuthenticatedIdbRestoreOptions,
+  Brc38AuthenticatedIdbRestoreResult
+} from './Brc38AuthenticatedIdbRestoreBrowser'
+export type { Brc38IdbRestorePublication } from './Brc38IdbRestorePublication'
+export type { Brc38IdbProfileSelectionOptions } from './Brc38IdbProfileSelection'
+export { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
+export { previewAuthenticatedBrc39BrowserImport } from './Brc38AuthenticatedIdbPreviewBrowser'
+export type {
+  Brc38AuthenticatedIdbPreviewOptions,
+  Brc38AuthenticatedIdbPreview
+} from './Brc38AuthenticatedIdbPreviewBrowser'
+export { retireExpiredBrc38BrowserProfile } from './Brc38IdbProfileRetirementBrowser'
+export type { Brc38IdbProfileRetirementOptions } from './Brc38IdbProfileRetirementBrowser'
 /* eslint-disable @typescript-eslint/triple-slash-reference */
 /// <reference path="../../types/bsv-sdk-aesgcm.d.ts" />
 /* eslint-enable @typescript-eslint/triple-slash-reference */
@@ -29,10 +71,6 @@ import { createSyncMap, SyncMap } from '../schema/entities/EntityBase'
 import type * as sdk from '../../sdk'
 import { verifyOne, verifyOneOrNone, verifyTruthy } from '../../utility/utilityHelpers'
 import { upgradeLegacyManagedChangeBasketDefault } from '../methods/managedChangePolicy'
-
-type JsonPrimitive = string | number | boolean
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
-type PortableRow = Record<string, JsonValue>
 
 export interface BRC38Tables {
   provenTxs: PortableRow[]
@@ -144,37 +182,6 @@ const SYNC_CHUNK_ENTITY_ORDER = [
   'provenTxReq'
 ]
 
-const binaryFieldsByKind: Partial<Record<string, string[]>> = {
-  commission: ['lockingScript'],
-  output: ['lockingScript'],
-  provenTx: ['merklePath', 'rawTx'],
-  provenTxReq: ['rawTx', 'inputBEEF'],
-  transaction: ['inputBEEF', 'rawTx']
-}
-
-const jsonFieldsByKind: Partial<Record<string, string[]>> = {
-  provenTxReq: ['history', 'notify'],
-  syncState: ['syncMap', 'errorLocal', 'errorOther']
-}
-
-const dateFieldsByKind: Partial<Record<string, string[]>> = {
-  settings: ['created_at', 'updated_at'],
-  user: ['created_at', 'updated_at'],
-  provenTx: ['created_at', 'updated_at'],
-  provenTxReq: ['created_at', 'updated_at'],
-  outputBasket: ['created_at', 'updated_at'],
-  transaction: ['created_at', 'updated_at'],
-  commission: ['created_at', 'updated_at'],
-  output: ['created_at', 'updated_at'],
-  outputTag: ['created_at', 'updated_at'],
-  outputTagMap: ['created_at', 'updated_at'],
-  txLabel: ['created_at', 'updated_at'],
-  txLabelMap: ['created_at', 'updated_at'],
-  certificate: ['created_at', 'updated_at'],
-  certificateField: ['created_at', 'updated_at'],
-  syncState: ['created_at', 'updated_at', 'when']
-}
-
 export async function exportBRC38(
   storage: StorageProvider,
   identityKey: string,
@@ -196,7 +203,10 @@ async function captureBRC38(
   const user = verifyTruthy(await storage.findUserByIdentityKey(identityKey, trx))
   const userId = user.userId
 
-  const transactions = await storage.findTransactions({ partial: { userId }, trx })
+  const transactions = await storage.findTransactions({
+    partial: { userId },
+    trx
+  })
   const transactionTxids = new Set(transactions.map(t => t.txid).filter((txid): txid is string => txid != null))
 
   const provenTxReqs = (await storage.getProvenTxReqsForUser({ userId, trx })).filter(r => transactionTxids.has(r.txid))
@@ -210,15 +220,27 @@ async function captureBRC38(
     if (proven != null) provenTxs.push(proven)
   })
 
-  const outputBaskets = await storage.findOutputBaskets({ partial: { userId }, trx })
-  const commissions = await storage.findCommissions({ partial: { userId }, trx })
+  const outputBaskets = await storage.findOutputBaskets({
+    partial: { userId },
+    trx
+  })
+  const commissions = await storage.findCommissions({
+    partial: { userId },
+    trx
+  })
   const outputs = await storage.findOutputs({ partial: { userId }, trx })
   const outputTags = await storage.findOutputTags({ partial: { userId }, trx })
   const outputTagMaps = await storage.getOutputTagMapsForUser({ userId, trx })
   const txLabels = await storage.findTxLabels({ partial: { userId }, trx })
   const txLabelMaps = await storage.getTxLabelMapsForUser({ userId, trx })
-  const certificates = await storage.findCertificates({ partial: { userId }, trx })
-  const certificateFields = await storage.findCertificateFields({ partial: { userId }, trx })
+  const certificates = await storage.findCertificates({
+    partial: { userId },
+    trx
+  })
+  const certificateFields = await storage.findCertificateFields({
+    partial: { userId },
+    trx
+  })
   const syncStates = await storage.findSyncStates({ partial: { userId }, trx })
 
   const data: BRC38WalletData = {
@@ -369,7 +391,14 @@ function parseBRC39Header(file: Uint8Array): BRC39Header {
   const parallelism = file[19]
   const hashLength = file[20]
   validateKdfParams(iterations, memoryKiB, parallelism, hashLength)
-  return { saltLength, nonceLength, iterations, memoryKiB, parallelism, hashLength }
+  return {
+    saltLength,
+    nonceLength,
+    iterations,
+    memoryKiB,
+    parallelism,
+    hashLength
+  }
 }
 
 function assertHeaderConstants(file: Uint8Array): void {
@@ -454,21 +483,21 @@ async function restoreBRC38(storage: StorageProvider, data: DecodedBRC38): Promi
   await assertRestoreTargetEmpty(storage)
   await storage.transaction(async trx => {
     await storage.insertUser({ ...data.user }, trx)
-    for (const row of data.provenTxs) await storage.insertProvenTx({ ...row }, trx)
-    for (const row of data.outputBaskets) {
-      await storage.insertOutputBasket(upgradeLegacyManagedChangeBasketDefault({ ...row }), trx)
-    }
-    for (const row of data.outputTags) await storage.insertOutputTag({ ...row }, trx)
-    for (const row of data.txLabels) await storage.insertTxLabel({ ...row }, trx)
-    for (const row of data.transactions) await storage.insertTransaction({ ...row }, trx)
-    for (const row of data.outputs) await storage.insertOutput({ ...row }, trx)
-    for (const row of data.txLabelMaps) await storage.insertTxLabelMap({ ...row }, trx)
-    for (const row of data.outputTagMaps) await storage.insertOutputTagMap({ ...row }, trx)
-    for (const row of data.certificates) await storage.insertCertificate({ ...row }, trx)
-    for (const row of data.certificateFields) await storage.insertCertificateField({ ...row }, trx)
-    for (const row of data.commissions) await storage.insertCommission({ ...row }, trx)
-    for (const row of data.provenTxReqs) await storage.insertProvenTxReq({ ...row }, trx)
-    for (const row of data.syncStates) await storage.insertSyncState({ ...row }, trx)
+    await runInSeries(data.provenTxs, row => storage.insertProvenTx({ ...row }, trx))
+    await runInSeries(data.outputBaskets, row =>
+      storage.insertOutputBasket(upgradeLegacyManagedChangeBasketDefault({ ...row }), trx)
+    )
+    await runInSeries(data.outputTags, row => storage.insertOutputTag({ ...row }, trx))
+    await runInSeries(data.txLabels, row => storage.insertTxLabel({ ...row }, trx))
+    await runInSeries(data.transactions, row => storage.insertTransaction({ ...row }, trx))
+    await runInSeries(data.outputs, row => storage.insertOutput({ ...row }, trx))
+    await runInSeries(data.txLabelMaps, row => storage.insertTxLabelMap({ ...row }, trx))
+    await runInSeries(data.outputTagMaps, row => storage.insertOutputTagMap({ ...row }, trx))
+    await runInSeries(data.certificates, row => storage.insertCertificate({ ...row }, trx))
+    await runInSeries(data.certificateFields, row => storage.insertCertificateField({ ...row }, trx))
+    await runInSeries(data.commissions, row => storage.insertCommission({ ...row }, trx))
+    await runInSeries(data.provenTxReqs, row => storage.insertProvenTxReq({ ...row }, trx))
+    await runInSeries(data.syncStates, row => storage.insertSyncState({ ...row }, trx))
   })
   return {
     mode: 'restore',
@@ -569,7 +598,7 @@ async function mergeImportedSyncStates(
 ): Promise<{ inserts: number; updates: number }> {
   let inserts = 0
   let updates = 0
-  for (const source of syncStates) {
+  await runInSeries(syncStates, async source => {
     const row: TableSyncState = {
       ...source,
       userId,
@@ -599,7 +628,7 @@ async function mergeImportedSyncStates(
       await storage.updateSyncState(existing.syncStateId, row)
       updates++
     }
-  }
+  })
   return { inserts, updates }
 }
 
@@ -862,34 +891,6 @@ function validateRelationships(data: BRC38WalletData): void {
   validateProvenTxReqs(data, idx)
 }
 
-function validatePortableRows(kind: string, rows: PortableRow[], path: string): void {
-  const dateFields = new Set(dateFieldsByKind[kind] ?? [])
-  const binaryFields = new Set(binaryFieldsByKind[kind] ?? [])
-  const jsonFields = new Set(jsonFieldsByKind[kind] ?? [])
-  for (const [index, row] of rows.entries()) {
-    validatePortableRow(row, `${path}[${index}]`, dateFields, binaryFields, jsonFields)
-  }
-}
-
-function validatePortableRow(
-  row: PortableRow,
-  rowPath: string,
-  dateFields: Set<string>,
-  binaryFields: Set<string>,
-  jsonFields: Set<string>
-): void {
-  if (!isObject(row)) throw new Error(`BRC-38 ${rowPath} must be an object`)
-  for (const field of dateFields) {
-    if (field in row) assertIsoDate(row[field], `${rowPath}.${field}`)
-  }
-  for (const field of binaryFields) {
-    if (field in row) assertBase64(row[field], `${rowPath}.${field}`)
-  }
-  for (const field of jsonFields) {
-    if (field in row && !isObject(row[field])) throw new Error(`BRC-38 ${rowPath}.${field} must be an object`)
-  }
-}
-
 function portableRow(kind: string, row: object): PortableRow {
   const out: PortableRow = {}
   const binaryFields = new Set(binaryFieldsByKind[kind] ?? [])
@@ -913,19 +914,24 @@ function portableRow(kind: string, row: object): PortableRow {
 /** Legacy JSON objects may store absent optional fields as null. Keep array
  * positions and meaningful falsy values; never mutate the captured source. */
 function portableJson(value: unknown, field: string, path: Array<string | number> = []): JsonValue {
-  if (Array.isArray(value)) return value.map((child, index) => portableJson(child, field, [...path, index]))
-  if (isObject(value)) {
+  let normalized: JsonValue
+  if (Array.isArray(value)) normalized = value.map((child, index) => portableJson(child, field, [...path, index]))
+  else if (isObject(value)) {
     const entries: Array<[string, JsonValue]> = []
     for (const [key, child] of Object.entries(value)) {
       const childPath = [...path, key]
       if (child == null && optionalPortableJsonField(field, childPath)) continue
       entries.push([key, portableJson(child, field, childPath)])
     }
-    return Object.fromEntries(entries)
-  }
-  if (typeof value === 'string' || typeof value === 'boolean') return value
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  throw new Error('BRC-38 JSON arrays and values must not contain null, undefined or non-JSON values')
+    normalized = Object.fromEntries(entries)
+  } else if (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  )
+    normalized = value
+  else throw new Error('BRC-38 JSON arrays and values must not contain null, undefined or non-JSON values')
+  return normalized
 }
 
 function optionalPortableJsonField(field: string, path: Array<string | number>): boolean {
@@ -940,20 +946,6 @@ function optionalPortableJsonField(field: string, path: Array<string | number>):
     return path.length === 2 && SYNC_CHUNK_ENTITY_ORDER.includes(String(path[0])) && path[1] === 'maxUpdated_at'
   }
   return (field === 'errorLocal' || field === 'errorOther') && path.length === 1 && path[0] === 'stack'
-}
-
-function fromPortableRow<T>(kind: string, row: PortableRow): T {
-  const out: Record<string, unknown> = {}
-  const dateFields = new Set(dateFieldsByKind[kind] ?? [])
-  const binaryFields = new Set(binaryFieldsByKind[kind] ?? [])
-  const jsonFields = new Set(jsonFieldsByKind[kind] ?? [])
-  for (const [key, value] of Object.entries(row)) {
-    if (dateFields.has(key)) out[key] = new Date(value as string)
-    else if (binaryFields.has(key)) out[key] = toArray(value, 'base64')
-    else if (jsonFields.has(key)) out[key] = JSON.stringify(value)
-    else out[key] = value
-  }
-  return out as T
 }
 
 function sortBRC38Tables(tables: BRC38Tables): void {
@@ -998,30 +990,6 @@ function ids(rows: PortableRow[], field: string, label: string): Set<number> {
 function requireUserId(row: PortableRow, userId: number, label: string): void {
   if (requireNumber(row.userId, `${label}.userId`) !== userId)
     throw new Error(`BRC-38 ${label}.userId does not match user.userId`)
-}
-
-function requireNumber(value: unknown, path: string): number {
-  if (!Number.isInteger(value)) throw new Error(`BRC-38 ${path} must be an integer`)
-  return value as number
-}
-
-function requireString(value: unknown, path: string): string {
-  if (typeof value !== 'string') throw new Error(`BRC-38 ${path} must be a string`)
-  return value
-}
-
-function assertIsoDate(value: unknown, path: string): void {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
-    throw new Error(`BRC-38 ${path} must be a UTC ISO timestamp`)
-  }
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime()) || date.toISOString() !== value) throw new Error(`BRC-38 ${path} is invalid`)
-}
-
-function assertBase64(value: unknown, path: string): void {
-  if (typeof value !== 'string' || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
-    throw new Error(`BRC-38 ${path} must be padded base64`)
-  }
 }
 
 function rejectNulls(value: unknown, path: string): void {
@@ -1132,3 +1100,18 @@ function writeUInt32BE(target: Uint8Array, offset: number, value: number): void 
 function readUInt32BE(source: Uint8Array, offset: number): number {
   return ((source[offset] << 24) >>> 0) + (source[offset + 1] << 16) + (source[offset + 2] << 8) + source[offset + 3]
 }
+
+export { brc38JsonStreamedFieldPolicy } from './Brc38JsonBinaryFields'
+export type {
+  Brc38JsonStreamedFieldPolicy,
+  Brc38JsonStreamedField,
+  Brc38JsonStreamedRow,
+  Brc38JsonStreamedFieldSink
+} from './Brc38JsonBinaryFields'
+
+export { encryptBrc39BrowserStreamToQuarantine } from './Brc39StreamBrowser'
+export type {
+  Brc39BrowserEncryptOptions,
+  Brc39BrowserStreamPlaintext,
+  Brc39BrowserStreamOutput
+} from './Brc39StreamBrowser'

@@ -1073,7 +1073,8 @@ export function createActionResultToTxLogString(
 ): { log: string; logColor: string } {
   const BEEF_V1 = 4022206465
 
-  const beef = Beef.fromBinary(createActionResult?.tx)
+  if (createActionResult.tx === undefined) throw new Error('Created action did not return transaction bytes')
+  const beef = Beef.fromBinary(createActionResult.tx)
   beef.version = BEEF_V1
   const mainTxid = beef.txs.slice(-1)[0].txid
 

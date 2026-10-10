@@ -186,7 +186,7 @@ async function holdSQLiteGuard(trx: Knex, binding: SQLiteGuardBinding): Promise<
 }
 
 /** This pool is exclusively owned by this operation; no connection is returned for reuse. */
-async function closeGuardPool(k: Knex, connection: { open?: boolean; stream?: Duplex }): Promise<void> {
+async function closeGuardPool(k: Knex, connection: { open?: boolean; stream?: Duplex }, retry = false): Promise<void> {
   const stream = connection.stream
   let closedListener: (() => void) | undefined
   const nativeClose =
@@ -197,6 +197,13 @@ async function closeGuardPool(k: Knex, connection: { open?: boolean; stream?: Du
           stream.once('close', resolve)
         })
   try {
+    // A pool can finish destroying its bookkeeping after a driver close fails.
+    // A retry still owns the exact original physical connection, including its
+    // retained transaction/guard. Never acquire a substitute connection.
+    const physicallyClosed = String(k.client.config.client).includes('mysql')
+      ? connection.stream?.closed === true
+      : connection.open === false
+    if (retry && !physicallyClosed) await k.client.destroyRawConnection(connection)
     const destruction = k.destroy()
     const settled = await Promise.allSettled([destruction, k.client.releaseConnection(connection)])
     for (const result of settled) if (result.status === 'rejected') throw result.reason
@@ -207,7 +214,7 @@ async function closeGuardPool(k: Knex, connection: { open?: boolean; stream?: Du
       : connection.open === false
     if (closed !== true) throw new Error('Snapshot archive source connection did not close')
   } catch (error) {
-    throw new SnapshotArchiveSourceCleanupError(error)
+    throw new SnapshotArchiveSourceCleanupError(error, () => closeGuardPool(k, connection, true))
   } finally {
     if (closedListener !== undefined) stream!.removeListener('close', closedListener)
   }
@@ -243,7 +250,21 @@ export async function withSnapshotArchiveBackendGuard<T>(
     }
     // A failed physical close deliberately leaves this manual transaction and
     // its guard held. Automatic rollback would falsely prove source cleanup.
-    await close()
+    try {
+      await close()
+    } catch (cleanup) {
+      if (!(cleanup instanceof SnapshotArchiveSourceCleanupError)) throw cleanup
+      const cause = outcome.ok
+        ? cleanup.cause
+        : new AggregateError([outcome.error, cleanup], 'Snapshot archive read and physical guard cleanup failed', {
+            cause: outcome.error
+          })
+      throw new SnapshotArchiveSourceCleanupError(cause, async () => {
+        await cleanup.retryCleanup()
+        await trx.rollback().catch(() => undefined)
+        await trx.executionPromise.catch(() => undefined)
+      })
+    }
     await trx.rollback().catch(() => undefined)
     await trx.executionPromise.catch(() => undefined)
     if (!outcome.ok) throw outcome.error

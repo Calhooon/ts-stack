@@ -22,6 +22,18 @@ import {
   type SnapshotArchiveWriter
 } from './KnexSnapshotArchiveStore'
 
+function observedQuery(value: unknown): Readonly<{ sql: string; bindings: readonly unknown[] }> | undefined {
+  if (typeof value === 'string') return undefined
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    typeof Reflect.get(value, 'sql') !== 'string' ||
+    !Array.isArray(Reflect.get(value, 'bindings'))
+  )
+    throw new Error('Actual archive SQL observation differs')
+  return value as Readonly<{ sql: string; bindings: readonly unknown[] }>
+}
+
 const identity = '02' + '11'.repeat(32)
 const other = '03' + '22'.repeat(32)
 const date = new Date('2026-01-01T00:00:00.000Z')
@@ -239,7 +251,7 @@ test.each(['closing', 'expired'])('a directory read rechecks %s after loading re
   const original = db.client.query.bind(db.client)
   const intercept = jest.spyOn(db.client, 'query').mockImplementation(async (connection, query, ...rest) => {
     const result = await original(connection, query, ...rest)
-    if (typeof query !== 'string' && query.sql.includes('from `snapshot_archive_pages`')) {
+    if (observedQuery(query)?.sql.includes('from `snapshot_archive_pages`')) {
       await peer('snapshot_archives')
         .where({ archiveId: writer.archiveId })
         .update(state === 'closing' ? { state: 'closing' } : { expiresAt: 0 })
@@ -366,9 +378,9 @@ test('interrupted bounded cleanup remains recoverable and does not release capac
   let deletions = 0
   const failure = new Error('synthetic deletion failure')
   const intercept = jest.spyOn(db.client, 'query').mockImplementation(async (connection, query, ...rest) => {
-    if (typeof query !== 'string' && query.sql.startsWith('delete from `snapshot_archive_pages`')) {
+    if (observedQuery(query)?.sql.startsWith('delete from `snapshot_archive_pages`')) {
       if (++deletions === 2) throw failure
-      expect(query.bindings.length).toBeLessThanOrEqual(33)
+      expect(observedQuery(query)!.bindings.length).toBeLessThanOrEqual(33)
     }
     return await original(connection, query, ...rest)
   })
@@ -544,7 +556,7 @@ test('an expiry or close between header and payload reads cannot return a newly 
   const original = db.client.query.bind(db.client)
   let intercepted = false
   const intercept = jest.spyOn(db.client, 'query').mockImplementation(async (connection, query, ...rest) => {
-    if (!intercepted && typeof query !== 'string' && query.sql.startsWith('select * from `snapshot_archive_pages`')) {
+    if (!intercepted && observedQuery(query)?.sql.startsWith('select * from `snapshot_archive_pages`')) {
       intercepted = true
       await peer('snapshot_archives').where({ archiveId: writer.archiveId }).update({ expiresAt: 0 })
     }

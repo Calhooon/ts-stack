@@ -45,7 +45,18 @@ const requiredExports =
         'WalletPermissionsManager',
         'WalletSettingsManager',
         'WalletSigner',
-        'WalletStorageManager'
+        'WalletStorageManager',
+        'DeviceBackupController',
+        'migrateDeviceBackupPreferences',
+        'BrowserArgon2idWorkerBackend',
+        'installBrowserArgon2idWorker',
+        'openBrc38IdbSource',
+        'createBrc38Stream',
+        'previewAuthenticatedBrc39BrowserImport',
+        'restoreAuthenticatedBrc39BrowserInactive',
+        'publishAuthenticatedBrc39BrowserProfile',
+        'retireExpiredBrc38BrowserProfile',
+        'encryptBrc39BrowserStreamToQuarantine'
       ]
     : [
         'ArcSSEClient',
@@ -57,7 +68,11 @@ const requiredExports =
         'WalletPermissionsManager',
         'WalletSettingsManager',
         'WalletSigner',
-        'WalletStorageManager'
+        'WalletStorageManager',
+        'DeviceBackupController',
+        'migrateDeviceBackupPreferences',
+        'BrowserArgon2idWorkerBackend',
+        'installBrowserArgon2idWorker'
       ]
 
 const prohibitedExports =
@@ -271,7 +286,8 @@ function validateBudget(actual, maximum, label) {
     }
     if (!measureOnly && actual[dimension] > maximum[dimension]) {
       throw new Error(
-        `${label} ${dimension} size ${actual[dimension]} exceeds budget ${maximum[dimension]}`
+        `${label} ${dimension} size ${actual[dimension]} exceeds budget ${maximum[dimension]}; ` +
+          `all measured bytes ${JSON.stringify(actual)}, ceilings ${JSON.stringify(maximum)}`
       )
     }
   }
@@ -300,6 +316,25 @@ function consumerEntry(packageName) {
 }
 
 async function checkBrowser(consumerDirectory, budget) {
+  const packedWorker = path.join(
+    consumerDirectory,
+    'node_modules/@bsv/wallet-toolbox-client/out/argon2id-worker.mjs'
+  )
+  const worker = await fs.readFile(packedWorker)
+  if (worker.length === 0) throw new Error('Packed dedicated worker asset is empty')
+  assertRuntimeComposition(worker.toString('utf8'), 'Packed dedicated worker')
+  const workerManifest = JSON.parse(
+    await fs.readFile(
+      path.join(consumerDirectory, 'node_modules/@bsv/wallet-toolbox-client/package.json'),
+      'utf8'
+    )
+  )
+  if (
+    workerManifest.exports?.['./argon2id-worker'] !== './out/argon2id-worker.mjs' ||
+    !Array.isArray(workerManifest.sideEffects) ||
+    !workerManifest.sideEffects.includes('./out/argon2id-worker.mjs')
+  )
+    throw new Error('Packed dedicated worker asset contract differs')
   const entryPath = path.join(consumerDirectory, 'entry.js')
   await fs.writeFile(entryPath, consumerEntry(expectedPackage))
 

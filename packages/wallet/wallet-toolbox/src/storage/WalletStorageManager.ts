@@ -1,9 +1,29 @@
+import { Brc38CleanupScope } from './portable/Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
+import type { StorageIdb } from './StorageIdb'
+import type { Brc38IdbProfileSelectionOptions } from './portable/Brc38IdbProfileSelection'
 import { SnapshotCancelledError } from './snapshot/SnapshotCancelledError'
 import { copySnapshotCursor } from './snapshot/SnapshotCursor'
 import { runSnapshotSyncSession } from './snapshot/runSnapshotSyncSession'
 import type { SnapshotSyncStorage } from './snapshot/SnapshotSync'
 import type { WalletReadSnapshot } from './snapshot/WalletReadSnapshot'
+import type { RetainedReadSnapshotOptions } from './snapshot/RetainedReadSnapshot'
+import type {
+  SnapshotJournalProvider,
+  SnapshotJournalReceiver,
+  SnapshotJournalReconciliationSource,
+  SnapshotJournalDestinationLimits,
+  SnapshotJournalCutoverSource
+} from './snapshot/journal/SnapshotJournalProvider'
+import type { SnapshotJournalDestinationCheckpoint } from './snapshot/journal/SnapshotJournalTypes'
+import {
+  runSnapshotJournalReconciliation,
+  type SnapshotJournalReconciliationOptions,
+  type SnapshotJournalReconciliationProgress
+} from './snapshot/journal/runSnapshotJournalReconciliation'
+import { snapshotJournalRevision } from './snapshot/journal/SnapshotJournalRevision'
+import { journalCopyLimits } from './snapshot/journal/SnapshotJournalCopyLimits'
+import { closeSnapshotJournalSource } from './snapshot/journal/closeSnapshotJournalSource'
 import { runInSeries } from '../utility/runInSeries'
 import {
   type ValidCreateActionArgs,
@@ -17,6 +37,9 @@ import {
 } from '@bsv/sdk/wallet/validationHelpers'
 import { SyncPageBudget } from './sync/SyncPageBudget'
 import { StorageAccessQueue } from './sync/StorageAccessQueue'
+import { StorageAccessCancelledError } from './sync/StorageAccessCancelledError'
+import { commitSyncAdmission } from './sync/commitSyncAdmission'
+import { Brc38OwnedImportReads } from './portable/Brc38OwnedImportReads'
 import {
   runPullSession,
   type SyncSessionOptions,
@@ -66,6 +89,38 @@ interface PreparedBeefInvalidationExtension {
   suspendPreparedBeefReads: () => () => void
 }
 
+type JournalSourceProvider = sdk.WalletStorageSyncReader &
+  Pick<SnapshotJournalProvider, 'supportsSnapshotJournalSync' | 'openCurrentSnapshotJournalSource'>
+type JournalDestinationProvider = sdk.WalletStorageProvider &
+  Pick<SnapshotJournalProvider, 'supportsSnapshotJournalSync' | 'openSnapshotJournalDestination'>
+interface JournalCopyCustody {
+  reader: JournalSourceProvider
+  source: SnapshotJournalReconciliationSource
+  destination: SnapshotJournalReceiver
+  checkpoint: SnapshotJournalDestinationCheckpoint
+}
+function copyJournalCheckpoint(
+  value?: SnapshotJournalDestinationCheckpoint
+): SnapshotJournalDestinationCheckpoint | undefined {
+  return value === undefined
+    ? undefined
+    : { ...value, ...(value.after === undefined ? {} : { after: { ...value.after } }) }
+}
+function journalSource(provider: sdk.WalletStorageSyncReader): provider is JournalSourceProvider {
+  const extension = provider as Partial<JournalSourceProvider>
+  return (
+    typeof extension.supportsSnapshotJournalSync === 'function' &&
+    typeof extension.openCurrentSnapshotJournalSource === 'function'
+  )
+}
+function journalDestination(provider: sdk.WalletStorageProvider): provider is JournalDestinationProvider {
+  const extension = provider as Partial<JournalDestinationProvider>
+  return (
+    typeof extension.supportsSnapshotJournalSync === 'function' &&
+    typeof extension.openSnapshotJournalDestination === 'function'
+  )
+}
+
 async function invalidatePreparedBeefs(storage: StorageProvider, trx: sdk.TrxToken): Promise<void> {
   const extension = storage as unknown as Partial<PreparedBeefInvalidationExtension>
   if (typeof extension.invalidatePreparedBeefs === 'function') {
@@ -84,6 +139,39 @@ class ManagedStorage {
     this.isStorageProvider = storage.isStorageProvider()
     this.isAvailable = false
   }
+}
+
+declare const providerTransitionBrand: unique symbol
+/** Internal queue lifetime only. This handle does not validate a native
+ * profile, source generation, retirement decision or composed wallet. */
+export interface WalletStorageProviderTransition {
+  readonly [providerTransitionBrand]: true
+}
+export interface WalletStorageProviderTransitionPolicy {
+  readonly expiresAt: number
+  readonly signal?: AbortSignal
+}
+interface ProviderReplacementState {
+  readonly original: ManagedStorage
+  readonly stores: readonly ManagedStorage[]
+  readonly backups: readonly ManagedStorage[]
+  readonly conflicts: readonly ManagedStorage[]
+  readonly generation: number
+  readonly identityKey: string
+  readonly storageIdentityKey: string
+  readonly chain: TableSettings['chain']
+  readonly userId: number
+  readonly primary: string
+}
+interface ProviderTransitionState {
+  readonly scope: WalletStorageProviderTransition
+  readonly replacement: ProviderReplacementState
+  readonly io: Brc38OwnedImportReads
+  readonly controller: Brc38OwnedImportReads
+  readonly expiresAt: number
+  readonly deadline: number
+  readonly signal?: AbortSignal
+  installed: boolean
 }
 
 /**
@@ -133,6 +221,10 @@ export class WalletStorageManager implements sdk.WalletStorage {
   private availability?: Promise<TableSettings>
   private generation = 0
   private readonly accessQueue = new StorageAccessQueue()
+  /** Serializes transitions without reserving foreground storage during copying. */
+  private readonly primaryTransitions = new StorageAccessQueue()
+  #providerReplacementPending?: ProviderReplacementState
+  #providerTransition?: ProviderTransitionState
 
   /**
    * Creates a new WalletStorageManager with the given identityKey and optional active and backup storage providers.
@@ -166,6 +258,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
    */
   get isActiveEnabled(): boolean {
     return (
+      this.#providerReplacementPending === undefined &&
       this._active !== undefined &&
       (this._active.settings as TableSettings).storageIdentityKey === (this._active.user as TableUser).activeStorage &&
       this._conflictingActives?.length === 0
@@ -233,6 +326,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   async makeAvailable(): Promise<TableSettings> {
+    if (this.#providerReplacementPending !== undefined)
+      throw new WERR_INVALID_OPERATION('Provider replacement requires forward recovery before wallet access')
     if (this._isAvailable) return this.getActiveSettings()
     this.availability ??= this.initializeAvailable()
     const pending = this.availability
@@ -334,39 +429,279 @@ export class WalletStorageManager implements sdk.WalletStorage {
   private async withAccess<R>(
     operation: (active: sdk.WalletStorageProvider) => Promise<R>,
     read = false,
-    background = false
+    background = false,
+    signal?: AbortSignal
   ): Promise<R> {
-    await this.makeAvailable()
-    const concurrent = read && this._active?.access?.concurrentReads === true
-    const release = await this.accessQueue.acquire(
-      concurrent ? 'read' : 'exclusive',
-      background ? 'background' : 'foreground'
-    )
-    // A preceding transition can fail after updating a managed store. Reload
-    // its persisted selection under ownership before using the cached provider.
-    if (!this._isAvailable) {
-      try {
-        await this.makeAvailable()
-      } catch (error) {
-        release()
-        throw error
-      }
-    }
-    // Primary selection may have changed while this request was queued. Never
-    // apply the former provider's read-sharing promise to its replacement.
-    if (concurrent && this._active?.access?.concurrentReads !== true) {
-      release()
-      return await this.withAccess(operation, read, background)
-    }
+    if (signal?.aborted) throw new StorageAccessCancelledError(signal)
+    const leave = this.accessQueue.admit()
     try {
-      return await operation(this.getActive())
+      for (;;) {
+        // An actual transition already owns this queue through physical drain
+        // and installation. Join behind it before checking availability, then
+        // observe the replacement or the retained recovery barrier under ownership.
+        if (this.#providerTransition === undefined) await this.makeAvailable()
+        const concurrent =
+          read && this.#providerTransition === undefined && this._active?.access?.concurrentReads === true
+        const release = await this.accessQueue.acquire(
+          concurrent ? 'read' : 'exclusive',
+          background ? 'background' : 'foreground',
+          signal
+        )
+        try {
+          // A preceding transition can fail after updating a managed store.
+          // Reload persisted selection under actual ownership before use.
+          if (!this._isAvailable) await this.makeAvailable()
+          // Keep the same original request admission if primary replacement
+          // removes read sharing; release this slot before rejoining as writer.
+          if (concurrent && this._active?.access?.concurrentReads !== true) continue
+          if (signal?.aborted) throw new StorageAccessCancelledError(signal)
+          return await operation(this.getActive())
+        } finally {
+          release()
+        }
+      }
     } finally {
-      release()
+      leave()
     }
   }
 
   runAsWriter<R>(writer: (active: sdk.WalletStorageWriter) => Promise<R>): Promise<R> {
     return this.withAccess(writer)
+  }
+
+  /** The native controller prepares its complete target outside this queue.
+   * This short scope then retains the original manager through the final
+   * source fence, durable retirement, physical cleanup and provider install.
+   * A failed or ambiguous retirement must block access before releasing it.
+   * Recovery uses a NEW scope and independently rereads native state. */
+  async withOwnedProviderTransition<R>(
+    expected: sdk.WalletStorageProvider,
+    policy: WalletStorageProviderTransitionPolicy,
+    work: (scope: WalletStorageProviderTransition) => Promise<R>
+  ): Promise<R> {
+    const expiresAt = policy.expiresAt,
+      signal = policy.signal,
+      lifetime = expiresAt - Date.now(),
+      deadline = performance.now() + lifetime
+    if (!Number.isSafeInteger(expiresAt) || lifetime <= 0 || lifetime > 3600000 || typeof work !== 'function')
+      throw new WERR_INVALID_PARAMETER('policy', 'a live bounded provider transition')
+    const checkTime = (): void => {
+      signal?.throwIfAborted()
+      if (Date.now() >= expiresAt || performance.now() >= deadline)
+        throw new WERR_INVALID_OPERATION('Provider transition expired')
+    }
+    checkTime()
+    const transition = await this.primaryTransitions.acquire('exclusive')
+    let release: (() => void) | undefined, owned: ProviderTransitionState | undefined
+    try {
+      checkTime()
+      if (this.#providerReplacementPending === undefined) await this.makeAvailable()
+      release = await this.accessQueue.acquire('exclusive', 'foreground')
+      checkTime()
+      if (this.#providerTransition !== undefined)
+        throw new WERR_INVALID_OPERATION('Provider transition is already owned')
+      let replacement = this.#providerReplacementPending
+      if (replacement === undefined) {
+        const original = this.verifyActive(),
+          settings = original.settings,
+          user = original.user
+        if (
+          original.storage !== expected ||
+          !this.isActiveEnabled ||
+          settings === undefined ||
+          user === undefined ||
+          user.identityKey !== this._authId.identityKey ||
+          user.userId !== this._authId.userId ||
+          user.activeStorage !== settings.storageIdentityKey
+        )
+          throw new WERR_INVALID_OPERATION("Provider transition needs this manager's current enabled provider")
+        replacement = Object.freeze({
+          original,
+          stores: Object.freeze([...this._stores]),
+          backups: Object.freeze([...(this._backups ?? [])]),
+          conflicts: Object.freeze([...(this._conflictingActives ?? [])]),
+          generation: this.generation,
+          identityKey: this._authId.identityKey,
+          storageIdentityKey: settings.storageIdentityKey,
+          chain: settings.chain,
+          userId: user.userId,
+          primary: user.activeStorage
+        })
+      }
+      if (replacement.original.storage !== expected)
+        throw new WERR_INVALID_OPERATION('Recovery belongs to another original provider')
+      const scope = Object.freeze({}) as WalletStorageProviderTransition
+      owned = {
+        scope,
+        replacement,
+        io: new Brc38OwnedImportReads(),
+        controller: new Brc38OwnedImportReads(),
+        expiresAt,
+        deadline,
+        signal,
+        installed: false
+      }
+      this.#providerTransition = owned
+      this.#requireProviderTransition(scope)
+      return await owned.io.retain(async () => await owned!.controller.retain(async () => await work(scope)))
+    } finally {
+      if (owned !== undefined && this.#providerTransition === owned) this.#providerTransition = undefined
+      release?.()
+      transition()
+    }
+  }
+
+  #requireProviderTransition(scope: WalletStorageProviderTransition): ProviderTransitionState {
+    const owned = this.#providerTransition
+    if (owned === undefined || owned.scope !== scope || owned.installed)
+      throw new WERR_INVALID_OPERATION("Provider transition handle is not this manager's live queue scope")
+    owned.signal?.throwIfAborted()
+    if (Date.now() >= owned.expiresAt || performance.now() >= owned.deadline)
+      throw new WERR_INVALID_OPERATION('Provider transition expired')
+    const original = owned.replacement
+    const same = (actual: readonly ManagedStorage[] | undefined, captured: readonly ManagedStorage[]): boolean =>
+      actual !== undefined &&
+      actual.length === captured.length &&
+      actual.every((store, index) => store === captured[index])
+    if (
+      this.generation !== original.generation ||
+      this._authId.identityKey !== original.identityKey ||
+      this._authId.userId !== original.userId ||
+      this._active !== original.original ||
+      !same(this._stores, original.stores) ||
+      !same(this._backups, original.backups) ||
+      !same(this._conflictingActives, original.conflicts) ||
+      original.original.settings?.storageIdentityKey !== original.storageIdentityKey ||
+      original.original.settings.chain !== original.chain ||
+      original.original.user?.identityKey !== original.identityKey ||
+      original.original.user.userId !== original.userId ||
+      original.original.user.activeStorage !== original.primary ||
+      (this.#providerReplacementPending !== undefined && this.#providerReplacementPending !== original)
+    )
+      throw new WERR_INVALID_OPERATION('Managed provider selection changed during replacement')
+    return owned
+  }
+
+  /** Arm before a potentially durable retirement. Any ambiguous result keeps
+   * ordinary access blocked. This is a manager lifecycle barrier only; the
+   * controller still needs its actual source writer and native catalog. */
+  blockRetiringProviderInTransition(scope: WalletStorageProviderTransition): void {
+    const owned = this.#requireProviderTransition(scope)
+    this.#providerReplacementPending = owned.replacement
+    this._isAvailable = false
+    this._authId.isActive = false
+  }
+
+  /** Actual queue membership for the native controller even after availability
+   * is blocked. Returned coordinates are DATA; its profile factory must
+   * independently verify physical writer and retirement membership. */
+  requireOriginalProviderInTransition(
+    scope: WalletStorageProviderTransition,
+    expected: sdk.WalletStorageProvider
+  ): Readonly<{
+    identityKey: string
+    storageIdentityKey: string
+    chain: TableSettings['chain']
+    userId: number
+    primary: string
+  }> {
+    const owned = this.#requireProviderTransition(scope)
+    if (owned.replacement.original.storage !== expected)
+      throw new WERR_INVALID_OPERATION('Provider is not the original member of this transition')
+    const original = owned.replacement
+    return Object.freeze({
+      identityKey: original.identityKey,
+      storageIdentityKey: original.storageIdentityKey,
+      chain: original.chain,
+      userId: original.userId,
+      primary: original.primary
+    })
+  }
+
+  /** Retain a whole concrete forward controller before installation I/O can
+   * close. Unawaited controller work still drains under both actual queues. */
+  retainOriginalProviderTransition<T>(
+    scope: WalletStorageProviderTransition,
+    expected: sdk.WalletStorageProvider,
+    work: () => Promise<T>
+  ): Promise<T> {
+    const owned = this.#requireProviderTransition(scope)
+    this.requireOriginalProviderInTransition(scope, expected)
+    if (typeof work !== 'function') throw new WERR_INVALID_PARAMETER('work', 'a bounded provider transition controller')
+    return owned.controller.run(async () => {
+      this.requireOriginalProviderInTransition(scope, expected)
+      const value = await work()
+      if (this.#providerTransition !== owned)
+        throw new WERR_INVALID_OPERATION('Provider controller lost its actual queue scope')
+      return value
+    })
+  }
+
+  /** Install a separately admitted actual provider, preserving this manager,
+   * backups and identity. No profile receipt or semantic boolean is accepted.
+   * The native controller must have physically drained the retired provider
+   * before this call. Outstanding install I/O drains before queue release. */
+  replaceProviderInTransition(
+    scope: WalletStorageProviderTransition,
+    provider: sdk.WalletStorageProvider,
+    beforeInstall?: () => Promise<void>
+  ): Promise<void> {
+    const owned = this.#requireProviderTransition(scope)
+    if (beforeInstall !== undefined && typeof beforeInstall !== 'function')
+      throw new WERR_INVALID_PARAMETER('beforeInstall', 'a retained provider preparation check')
+    return owned.io.run(async () => {
+      const original = this.#requireProviderTransition(scope).replacement
+      if (
+        this.#providerReplacementPending !== original ||
+        provider === original.original.storage ||
+        original.stores.some(store => store.storage === provider)
+      )
+        throw new WERR_INVALID_OPERATION('Replacement needs a blocked original and a distinct admitted provider')
+      const store = new ManagedStorage(provider),
+        settings = await provider.makeAvailable()
+      this.#requireProviderTransition(scope)
+      if (settings.storageIdentityKey !== original.storageIdentityKey || settings.chain !== original.chain)
+        throw new WERR_INVALID_OPERATION('Replacement changed storage identity or network')
+      const result = await provider.findOrInsertUser(original.identityKey)
+      this.#requireProviderTransition(scope)
+      if (
+        result.isNew ||
+        result.user.identityKey !== original.identityKey ||
+        result.user.userId !== original.userId ||
+        result.user.activeStorage !== original.primary
+      )
+        throw new WERR_INVALID_OPERATION('Replacement lacks the preserved user and primary')
+      let access: sdk.StorageCapabilities['storageAccess']
+      try {
+        const caps = (await provider.getCapabilities()).storageAccess
+        access = caps?.version === 1 ? caps : undefined
+      } catch {
+        access = undefined
+      }
+      this.#requireProviderTransition(scope)
+      if (this._services !== undefined) provider.setServices(this._services)
+      // A concrete native controller rechecks its actual target after provider
+      // availability/user/capability I/O, before any managed selection changes.
+      // This callback itself supplies no storage or native admission authority.
+      await beforeInstall?.()
+      this.#requireProviderTransition(scope)
+      store.settings = settings
+      store.user = result.user
+      store.access = access
+      store.isAvailable = true
+      // No await after changing the actual managed selection. Every waiting
+      // request observes this provider or the retained recovery barrier.
+      this._stores = original.stores.map(value => (value === original.original ? store : value))
+      this._active = store
+      this._backups = [...original.backups]
+      this._conflictingActives = [...original.conflicts]
+      this.generation++
+      this.#providerReplacementPending = undefined
+      this._isAvailable = true
+      this._authId.userId = result.user.userId
+      this._authId.isActive = this.isActiveEnabled
+      owned.installed = true
+    })
   }
 
   /** Keep foreground writer authorization inside the acquired ownership boundary. */
@@ -394,6 +729,31 @@ export class WalletStorageManager implements sdk.WalletStorage {
     activeSync?: sdk.WalletStorageSync
   ): Promise<R> {
     return activeSync == null ? await this.withAccess(sync) : await sync(activeSync)
+  }
+
+  private runAsSyncCancellable<R>(
+    sync: (active: sdk.WalletStorageSync) => Promise<R>,
+    signal?: AbortSignal
+  ): Promise<R | undefined> {
+    return commitSyncAdmission(
+      operation => this.withAccess(() => operation(), false, true, signal),
+      () => sync(this.getActive()),
+      signal
+    )
+  }
+
+  private captureSyncSelection(signal?: AbortSignal): Promise<
+    | {
+        active: sdk.WalletStorageProvider
+        generation: number
+      }
+    | undefined
+  > {
+    return commitSyncAdmission(
+      operation => this.withAccess(() => operation(), false, false, signal),
+      async () => ({ active: this.getActive(), generation: this.generation }),
+      signal
+    )
   }
 
   runAsStorageProvider<R>(sync: (active: StorageProvider) => Promise<R>): Promise<R> {
@@ -449,6 +809,73 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
     if (this._stores.length === 0) await add()
     else await this.withAccess(add)
+  }
+
+  /** Restart registration of an explicitly selected, durably activated browser
+   * profile. Actual native metadata is read under the manager's current queue;
+   * a publication receipt supplied by the caller is never admitted. This is
+   * an empty-manager/profile recovery path. Existing different providers need
+   * normal source reconciliation and primary cutover, not a restore overwrite. */
+  async addRestoredBrowserStorageProvider(
+    provider: StorageIdb,
+    options: Brc38IdbProfileSelectionOptions
+  ): Promise<void> {
+    const captured = Object.freeze({
+        workingAllocation: options.workingAllocation,
+        expiresAt: options.expiresAt,
+        signal: options.signal
+      }),
+      identityKey = this._authId.identityKey
+    const transition = await this.primaryTransitions.acquire('exclusive')
+    let release: (() => void) | undefined,
+      registered = false
+    try {
+      release = await this.accessQueue.acquire('exclusive', 'foreground')
+      captured.signal?.throwIfAborted()
+      if (
+        this._authId.identityKey !== identityKey ||
+        this._stores.length > 1 ||
+        (this._stores.length === 1 && this._stores[0].storage !== provider)
+      )
+        throw new WERR_INVALID_OPERATION(
+          'Restored profile registration needs an empty manager or its same current provider'
+        )
+      const selection = await provider.readRestoredProfileSelection(captured)
+      if (selection.publication.state !== 'ACTIVATED' || selection.publication.identityKey !== identityKey)
+        throw new WERR_INVALID_OPERATION('Restored profile is not the native activated selection for this identity')
+      const settings = await provider.readSettings(),
+        fresh = await provider.readRestoredProfileSelection(captured)
+      if (
+        fresh.epoch !== selection.epoch ||
+        fresh.revision !== selection.revision ||
+        JSON.stringify(fresh.publication) !== JSON.stringify(selection.publication) ||
+        settings.chain !== fresh.publication.chain ||
+        settings.storageIdentityKey !== fresh.publication.targetStorageIdentityKey
+      )
+        throw new WERR_INVALID_OPERATION('Restored profile selection changed before manager registration')
+      if (this._services != null) provider.setServices(this._services)
+      if (this._stores.length === 0) {
+        const store = new ManagedStorage(provider)
+        store.settings = settings
+        this._stores.push(store)
+      }
+      registered = true
+      this.invalidatePrimarySelection()
+      await this.makeAvailable()
+      if (
+        this.getActive() !== provider ||
+        this.getActiveUser().userId !== selection.userId ||
+        this.getActiveStore() !== fresh.publication.targetStorageIdentityKey ||
+        !this.isActiveEnabled
+      )
+        throw new WERR_INVALID_OPERATION('Restored native primary did not become this manager selection')
+    } catch (cause) {
+      if (registered) this.invalidatePrimarySelection()
+      throw cause
+    } finally {
+      release?.()
+      transition()
+    }
   }
 
   setServices(v: sdk.WalletServices): void {
@@ -801,24 +1228,47 @@ export class WalletStorageManager implements sdk.WalletStorage {
     active: sdk.WalletStorageProvider
   ): Promise<SyncSessionResult> {
     if (view.user.identityKey !== this._authId.identityKey) throw new WERR_UNAUTHORIZED()
+    const assertCurrent = (): void => {
+      if (generation !== this.generation || active !== this.getActive())
+        throw new WERR_INVALID_OPERATION('Snapshot sync primary generation changed; resume on the selected storage')
+    }
+    const commit = async <T>(operation: () => Promise<T>): Promise<T> => {
+      if (destination.commitOutsideManager === true) {
+        // Dispatch starts only inside current queue admission. Returning the
+        // wrapper releases it immediately, without awaiting the remote promise.
+        // The actual server owns SQL serialization and the current primary
+        // epoch. In-flight replies cannot revive a replaced manager generation.
+        const dispatched = await this.withAccess(
+          () => {
+            assertCurrent()
+            const result = operation()
+            void result.catch(() => undefined)
+            return Promise.resolve({ result })
+          },
+          false,
+          true,
+          options.signal
+        )
+        const result = await dispatched.result
+        assertCurrent()
+        return result
+      }
+      return await this.withAccess(
+        () => {
+          assertCurrent()
+          return operation()
+        },
+        false,
+        true,
+        options.signal
+      )
+    }
     return await runSnapshotSyncSession(
       {
         view,
         destination,
         activeStorage: direction === 'push' ? view.user.activeStorage : this.getActiveUser().activeStorage,
-        commit: operation =>
-          this.withAccess(
-            () => {
-              if (generation !== this.generation || active !== this.getActive()) {
-                throw new WERR_INVALID_OPERATION(
-                  'Snapshot sync primary generation changed; resume on the selected storage'
-                )
-              }
-              return operation()
-            },
-            false,
-            true
-          )
+        commit
       },
       options
     )
@@ -841,24 +1291,26 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const readerSettings = await reader.makeAvailable()
     const writerSettings = await writer.makeAvailable()
     assertSyncNetwork(readerSettings, writerSettings)
-    return await this.runAsSync(() => {
-      if (selected.generation !== this.generation || selected.active !== this.getActive()) {
-        throw new WERR_INVALID_OPERATION('Snapshot sync primary generation changed; resume on the selected storage')
-      }
-      return runPullSession(
-        {
-          reader,
-          writer,
-          mode: 'exclusive',
-          atomicCheckpoint: false,
-          activeStorage: direction === 'pull' ? this.getActiveUser().activeStorage : undefined,
-          loadRequest: () =>
-            this.loadSyncRequest(this._authId, writer, readerSettings, writerSettings.storageIdentityKey),
-          commit: operation => operation()
-        },
-        options
-      )
-    })
+    return (
+      (await this.runAsSyncCancellable(() => {
+        if (selected.generation !== this.generation || selected.active !== this.getActive()) {
+          throw new WERR_INVALID_OPERATION('Snapshot sync primary generation changed; resume on the selected storage')
+        }
+        return runPullSession(
+          {
+            reader,
+            writer,
+            mode: 'exclusive',
+            atomicCheckpoint: false,
+            activeStorage: direction === 'pull' ? this.getActiveUser().activeStorage : undefined,
+            loadRequest: () =>
+              this.loadSyncRequest(this._authId, writer, readerSettings, writerSettings.storageIdentityKey),
+            commit: operation => operation()
+          },
+          options
+        )
+      }, options.signal)) ?? { status: 'cancelled', mode: 'exclusive', pages: 0, inserts: 0, updates: 0 }
+    )
   }
 
   private async trySnapshotCopy(
@@ -875,6 +1327,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     if (!(await destination.supportsDestination())) return undefined
     const cancelled = (): boolean => options.signal?.aborted === true
     if (cancelled()) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    let observerFailure: { error: unknown } | undefined
     let view: WalletReadSnapshot | undefined
     let partial: Pick<SyncSessionResult, 'pages' | 'inserts' | 'updates' | 'snapshotCheckpoint'> = {
       pages: 0,
@@ -908,7 +1361,12 @@ export class WalletStorageManager implements sdk.WalletStorage {
                         cursor: copySnapshotCursor(progress.snapshotCheckpoint.cursor)
                       }
               }
-              options.onProgress?.(progress)
+              try {
+                options.onProgress?.(progress)
+              } catch (error) {
+                observerFailure = { error }
+                throw error
+              }
             }
           },
           selected.generation,
@@ -926,6 +1384,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
         })
       }
     } catch (error) {
+      if (observerFailure !== undefined && error === observerFailure.error) throw error
       if (error instanceof SnapshotCancelledError && cancelled())
         return { status: 'cancelled', mode: 'paged', ...partial }
       // Existing ordinary backups must continue to accept large records and long
@@ -958,6 +1417,416 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
+  /** Negotiate afresh for every ordinary copy. A provider's method presence
+   * chooses an adapter; the source and each physical destination transaction
+   * independently establish actual current authority. No result is cached. */
+  private async tryJournalCopy(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions = {},
+    selection?: { generation: number; active: sdk.WalletStorageProvider },
+    onCustody?: (value: JournalCopyCustody) => void,
+    allowResourceFallback = true,
+    fallbackDirection: 'push' | 'pull' = 'pull'
+  ): Promise<SyncSessionResult | undefined> {
+    const selected = selection ?? (await this.captureSyncSelection(options.signal))
+    if (selected === undefined) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    let partial: Pick<SyncSessionResult, 'pages' | 'inserts' | 'updates' | 'journalCheckpoint'> = {
+      pages: 0,
+      inserts: 0,
+      updates: 0
+    }
+    let observerFailure: { error: unknown } | undefined
+    const observe = <T>(callback: ((value: T) => void) | undefined, value: T): void => {
+      try {
+        callback?.(value)
+      } catch (error) {
+        observerFailure = { error }
+        throw error
+      }
+    }
+    const retain = (value: SnapshotJournalReconciliationProgress): void => {
+      partial = {
+        pages: value.progress.pages,
+        inserts: value.progress.inserts,
+        updates: value.progress.updates,
+        journalCheckpoint: {
+          ...value.checkpoint,
+          ...(value.checkpoint.after === undefined ? {} : { after: { ...value.checkpoint.after } })
+        }
+      }
+    }
+    try {
+      return await this.copyJournalWindow(
+        reader,
+        writer,
+        {
+          ...options,
+          onProgress: value => observe(options.onProgress, value),
+          onJournalProgress: value => observe(options.onJournalProgress, value)
+        },
+        selected,
+        onCustody,
+        retain
+      )
+    } catch (error) {
+      // A callback's typed exception is still an observer failure. It cannot
+      // select transport fallback or erase an already acknowledged prefix.
+      if (observerFailure !== undefined && error === observerFailure.error) throw error
+      // The concrete source's finally/closed path has already physically drained.
+      // Cleanup/authority/schema/corruption errors never select fallback.
+      if (error instanceof SnapshotCancelledError && options.signal?.aborted) {
+        const cancelled: SyncSessionResult = { status: 'cancelled', mode: 'paged', ...partial }
+        options.onProgress?.({
+          ...cancelled,
+          state: 'cancelled',
+          journalCheckpoint: copyJournalCheckpoint(partial.journalCheckpoint)
+        })
+        return cancelled
+      }
+      if (!allowResourceFallback || !(error instanceof SnapshotResourceLimitError)) throw error
+    }
+    const fallback = await this.runLegacySnapshotFallback(
+      reader,
+      writer,
+      fallbackDirection,
+      {
+        ...options,
+        onProgress: value =>
+          options.onProgress?.({
+            ...value,
+            pages: partial.pages + value.pages,
+            inserts: partial.inserts + value.inserts,
+            updates: partial.updates + value.updates,
+            journalCheckpoint: copyJournalCheckpoint(partial.journalCheckpoint)
+          })
+      },
+      selected
+    )
+    // These are actual acknowledged operations, including the durable journal
+    // prefix. A retained journal position is custody data, not a claim that the
+    // fallback acknowledged that journal window or used a coherent archive.
+    return {
+      ...fallback,
+      pages: partial.pages + fallback.pages,
+      inserts: partial.inserts + fallback.inserts,
+      updates: partial.updates + fallback.updates,
+      journalCheckpoint: copyJournalCheckpoint(partial.journalCheckpoint)
+    }
+  }
+
+  private async copyJournalWindow(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions = {},
+    selection?: { generation: number; active: sdk.WalletStorageProvider },
+    onCustody?: (value: JournalCopyCustody) => void,
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+  ): Promise<SyncSessionResult | undefined> {
+    if (reader === writer || !journalSource(reader) || !journalDestination(writer)) return undefined
+    if (!(await reader.supportsSnapshotJournalSync()) || !(await writer.supportsSnapshotJournalSync())) return undefined
+    const limits = journalCopyLimits(options.maxItems, options.maxRoughSize)
+    if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    const selected = selection ?? (await this.captureSyncSelection(options.signal))
+    if (selected === undefined) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    const identityKey = this._authId.identityKey
+    const managedReader = this._stores.some(store => Object.is(store.storage, reader))
+    const managedWriter = this._stores.some(store => store.storage === writer)
+    const readerSettings = await reader.makeAvailable()
+    const writerSettings = await writer.makeAvailable()
+    assertSyncNetwork(readerSettings, writerSettings)
+    const admission = <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> =>
+      this.withAccess(
+        async active => {
+          if (
+            (observe !== 'observe' && (active !== selected.active || selected.generation !== this.generation)) ||
+            identityKey !== this._authId.identityKey ||
+            (managedReader && !this._stores.some(store => Object.is(store.storage, reader))) ||
+            (managedWriter && !this._stores.some(store => store.storage === writer))
+          )
+            throw new WERR_INVALID_OPERATION('Journal copy selection changed; open a fresh source')
+          if ((await this.getAuth()).identityKey !== identityKey) throw new WERR_UNAUTHORIZED()
+          return await operation()
+        },
+        false,
+        true,
+        observe === 'observe' ? undefined : options.signal
+      )
+    const source = await reader.openCurrentSnapshotJournalSource(identityKey, {
+      lifetimeMs: options.snapshotLifetimeMs,
+      signal: options.signal
+    })
+    let last: SnapshotJournalReconciliationProgress | undefined
+    let destination: SnapshotJournalReceiver | undefined
+    let failure: { error: unknown } | undefined
+    const cleanupScope1 = new Brc38CleanupScope(async () => {
+      try {
+        await closeSnapshotJournalSource(source, options.signal)
+      } catch (cleanupError) {
+        if (failure !== undefined && failure.error !== cleanupError)
+          throw new AggregateError([failure.error, cleanupError], 'Journal copy and physical source cleanup failed', {
+            cause: failure.error
+          })
+        throw cleanupError
+      }
+    })
+    try {
+      if (
+        source.receiptBinding.identityKey !== identityKey ||
+        source.receiptBinding.storageIdentity !== readerSettings.storageIdentityKey ||
+        source.receiptBinding.chain !== readerSettings.chain
+      )
+        throw new WERR_UNAUTHORIZED()
+      const run = runSnapshotJournalReconciliation(
+        source,
+        async () => {
+          const opened = await writer.openSnapshotJournalDestination(
+            source,
+            snapshotJournalRevision('0'),
+            limits,
+            admission,
+            options.signal,
+            true,
+            true
+          )
+          destination = opened.destination
+          return opened.destination
+        },
+        {
+          signal: options.signal,
+          onProgress: progress => {
+            onDurableProgress?.(progress)
+            options.onProgress?.({
+              state:
+                progress.state === 'complete'
+                  ? 'completed'
+                  : progress.state === 'stopped'
+                    ? 'cancelled'
+                    : progress.state === 'cancelRequested'
+                      ? 'cancelling'
+                      : 'committed',
+              mode: 'paged',
+              ...progress.progress,
+              journalCheckpoint: {
+                ...progress.checkpoint,
+                ...(progress.checkpoint.after === undefined ? {} : { after: { ...progress.checkpoint.after } })
+              }
+            })
+            options.onJournalProgress?.(progress)
+          }
+        }
+      )
+      for await (const progress of run) last = progress
+      if (last === undefined || (last.state !== 'complete' && last.state !== 'stopped'))
+        throw new WERR_INVALID_OPERATION('Journal copy did not reach a drained terminal state')
+      if (last.state === 'complete') {
+        if (destination === undefined) throw new WERR_INVALID_OPERATION('Journal destination custody is absent')
+        onCustody?.({ reader, source, destination, checkpoint: { ...last.checkpoint } })
+      }
+      return {
+        status: last.state === 'complete' ? 'completed' : 'cancelled',
+        mode: 'paged',
+        pages: last.progress.pages,
+        inserts: last.progress.inserts,
+        updates: last.progress.updates,
+        journalCheckpoint: {
+          ...last.checkpoint,
+          ...(last.checkpoint.after === undefined ? {} : { after: { ...last.checkpoint.after } })
+        }
+      }
+    } catch (error) {
+      failure = { error }
+      // A lost reply or a failed observer cannot decide actual SQL progress.
+      // This read uses destination observe admission and starts no semantic write.
+      if (destination !== undefined) {
+        try {
+          const status = await destination.status()
+          onDurableProgress?.({ state: 'committed', ...status })
+        } catch (custodyError) {
+          if (custodyError !== error) {
+            failure = {
+              error: new AggregateError([error, custodyError], 'Journal copy and actual custody observation failed', {
+                cause: error
+              })
+            }
+            {
+              await cleanupScope1.close()
+              throw failure.error
+            }
+          }
+        }
+      }
+      {
+        await cleanupScope1.close()
+        throw error
+      }
+    } finally {
+      await cleanupScope1.close()
+    }
+  }
+
+  /** Preserve ordinary push selection propagation after the data ACK. Busy
+   * foreground writers cause another incremental window, never an activation
+   * from stale copied data. Every attempt releases source and manager ownership. */
+  private async tryJournalPush(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions = {},
+    selection?: { generation: number; active: sdk.WalletStorageProvider }
+  ): Promise<SyncSessionResult | undefined> {
+    let pages = 0,
+      inserts = 0,
+      updates = 0
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let custody: JournalCopyCustody | undefined
+      const result = await this.tryJournalCopy(
+        reader,
+        writer,
+        {
+          ...options,
+          onProgress: value =>
+            options.onProgress?.({
+              ...value,
+              pages: pages + value.pages,
+              inserts: inserts + value.inserts,
+              updates: updates + value.updates
+            })
+        },
+        selection,
+        value => {
+          custody = value
+        },
+        true,
+        'push'
+      )
+      if (result === undefined) {
+        if (attempt !== 0) throw new WERR_INVALID_OPERATION('Journal support changed during primary propagation')
+        return undefined
+      }
+      pages += result.pages
+      inserts += result.inserts
+      updates += result.updates
+      const total = { ...result, pages, inserts, updates }
+      if (result.status === 'cancelled') return total
+      // The serialized resource fallback has already propagated its actual
+      // source selection under exclusive admission; it has no journal cutover.
+      if (custody === undefined && result.mode === 'exclusive') return total
+      if (custody === undefined) throw new WERR_INVALID_OPERATION('Journal push has no acknowledged custody')
+      const activeStorage = custody.source.primary.activeStorage
+      if (activeStorage === null) return total
+      const current = await custody.reader.openCurrentSnapshotJournalSource(this._authId.identityKey, {
+        lifetimeMs: options.snapshotLifetimeMs,
+        signal: options.signal
+      })
+      try {
+        if (
+          await custody.destination.selectPrimary(
+            custody.checkpoint,
+            activeStorage,
+            [{ source: current, since: custody.source.receipt.highWater }],
+            changed => {
+              if (changed) this.invalidatePrimarySelection()
+            }
+          )
+        )
+          return total
+      } finally {
+        await closeSnapshotJournalSource(current, options.signal)
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+    }
+    throw new WERR_INVALID_OPERATION(
+      'Source is still changing before primary propagation; acknowledged copies are retained, retry sync'
+    )
+  }
+
+  private invalidatePrimarySelection(): void {
+    this._isAvailable = false
+    this._authId.isActive = false
+    for (const store of this._stores) store.isAvailable = false
+  }
+
+  /** Explicit local SQL reconciliation. Both providers must already participate
+   * in this manager's single-profile selection. It neither changes the active
+   * store nor enables an advertised remote capability. Source capture, paging,
+   * proof preparation and observers never own the manager queue. Each actual
+   * destination writer retains background ownership through physical cleanup.
+   * A replacement process starts a fresh full view and recovers destination
+   * custody; the destination alone decides which work is acknowledged. */
+  async *reconcileJournal(
+    reader: SnapshotJournalProvider,
+    writer: SnapshotJournalProvider,
+    limits: SnapshotJournalDestinationLimits,
+    options: SnapshotJournalReconciliationOptions & Pick<RetainedReadSnapshotOptions, 'lifetimeMs'> = {}
+  ): AsyncGenerator<SnapshotJournalReconciliationProgress, SnapshotJournalReconciliationProgress, void> {
+    if (reader === writer) throw new WERR_INVALID_PARAMETER('writer', 'a different managed storage provider')
+    const selected = await this.withAccess(
+      active => {
+        if (
+          !this._stores.some(store => Object.is(store.storage, reader)) ||
+          !this._stores.some(store => store.storage === writer)
+        ) {
+          throw new WERR_INVALID_OPERATION('Journal reconciliation requires two currently managed providers')
+        }
+        return Promise.resolve({ active, generation: this.generation, identityKey: this._authId.identityKey })
+      },
+      false,
+      false,
+      options.signal
+    )
+    const readerSettings = await reader.makeAvailable()
+    const writerSettings = await writer.makeAvailable()
+    assertSyncNetwork(readerSettings, writerSettings)
+    const admission = <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> =>
+      this.withAccess(
+        async active => {
+          if (
+            (observe !== 'observe' && (active !== selected.active || selected.generation !== this.generation)) ||
+            selected.identityKey !== this._authId.identityKey ||
+            !this._stores.some(store => Object.is(store.storage, reader)) ||
+            !this._stores.some(store => store.storage === writer)
+          ) {
+            throw new WERR_INVALID_OPERATION('Journal reconciliation manager selection changed; open a fresh source')
+          }
+          const auth = await this.getAuth()
+          if (auth.identityKey !== selected.identityKey) throw new WERR_UNAUTHORIZED()
+          return await operation()
+        },
+        false,
+        true,
+        observe === 'observe' ? undefined : options.signal
+      )
+    const source = await reader.openCurrentSnapshotJournalSource(selected.identityKey, {
+      lifetimeMs: options.lifetimeMs,
+      signal: options.signal
+    })
+    try {
+      if (
+        source.receiptBinding.identityKey !== selected.identityKey ||
+        source.receiptBinding.storageIdentity !== readerSettings.storageIdentityKey ||
+        source.receiptBinding.chain !== readerSettings.chain
+      )
+        throw new WERR_UNAUTHORIZED()
+      return yield* runSnapshotJournalReconciliation(
+        source,
+        async () => {
+          const opened = await writer.openSnapshotJournalDestination(
+            source,
+            snapshotJournalRevision('0'),
+            limits,
+            admission,
+            options.signal,
+            true
+          )
+          return opened.destination
+        },
+        options
+      )
+    } finally {
+      await closeSnapshotJournalSource(source, options.signal)
+    }
+  }
+
   async syncFromReader(
     identityKey: string,
     reader: sdk.WalletStorageSyncReader,
@@ -971,7 +1840,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const auth = await this.getAuth()
 
     if (activeSync == null) {
-      const snapshot = await this.trySnapshotCopy(reader, this.getActive(), 'pull', { maxRoughSize: 10000000 })
+      const snapshot =
+        (await this.tryJournalCopy(reader, this.getActive(), { maxRoughSize: 10000000 })) ??
+        (await this.trySnapshotCopy(reader, this.getActive(), 'pull', { maxRoughSize: 10000000 }))
       if (snapshot !== undefined)
         return {
           inserts: snapshot.inserts,
@@ -1049,7 +1920,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const writer = this.getActive()
     const writerSettings = writer.getSettings()
     assertSyncNetwork(readerSettings, writerSettings)
-    const snapshot = await this.trySnapshotCopy(reader, writer, 'pull', options)
+    const snapshot =
+      (await this.tryJournalCopy(reader, writer, options)) ??
+      (await this.trySnapshotCopy(reader, writer, 'pull', options))
     if (snapshot !== undefined) return snapshot
     const generation = this.generation
     const activeStorage = this.getActiveUser().activeStorage
@@ -1088,17 +1961,20 @@ export class WalletStorageManager implements sdk.WalletStorage {
             return operation()
           },
           false,
-          true
+          true,
+          options.signal
         )
       )
     }
-    return await this.runAsSync(() => {
-      assertCurrent()
-      return run(operation => {
+    return (
+      (await this.runAsSyncCancellable(() => {
         assertCurrent()
-        return operation()
-      })
-    })
+        return run(operation => {
+          assertCurrent()
+          return operation()
+        })
+      }, options.signal)) ?? { status: 'cancelled', mode: 'exclusive', pages: 0, inserts: 0, updates: 0 }
+    )
   }
 
   /** Bounded push on negotiated local snapshots, with the legacy serialized fallback. */
@@ -1111,23 +1987,27 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const writerSettings = await writer.makeAvailable()
     await this.preflightManagedNetworks(writerSettings)
     await this.getAuth()
-    const snapshot = await this.trySnapshotCopy(this.getActive(), writer, 'push', options)
+    const snapshot =
+      (await this.tryJournalPush(this.getActive(), writer, options)) ??
+      (await this.trySnapshotCopy(this.getActive(), writer, 'push', options))
     if (snapshot !== undefined) return snapshot
-    return await this.runAsSync(async reader => {
-      const settings = reader.getSettings()
-      assertSyncNetwork(settings, writerSettings)
-      return await runPullSession(
-        {
-          reader,
-          writer,
-          atomicCheckpoint: false,
-          mode: 'exclusive',
-          loadRequest: () => this.loadSyncRequest(auth, writer, settings, writerSettings.storageIdentityKey),
-          commit: operation => operation()
-        },
-        options
-      )
-    })
+    return (
+      (await this.runAsSyncCancellable(async reader => {
+        const settings = reader.getSettings()
+        assertSyncNetwork(settings, writerSettings)
+        return await runPullSession(
+          {
+            reader,
+            writer,
+            atomicCheckpoint: false,
+            mode: 'exclusive',
+            loadRequest: () => this.loadSyncRequest(auth, writer, settings, writerSettings.storageIdentityKey),
+            commit: operation => operation()
+          },
+          options
+        )
+      }, options.signal)) ?? { status: 'cancelled', mode: 'exclusive', pages: 0, inserts: 0, updates: 0 }
+    )
   }
 
   async syncToWriter(
@@ -1146,12 +2026,15 @@ export class WalletStorageManager implements sdk.WalletStorage {
 
     if (activeSync == null) {
       await this.getAuth()
-      const snapshot = await this.trySnapshotCopy(this.getActive(), writer, 'push', {
+      const options: SyncSessionOptions = {
         maxRoughSize: 10000000,
         onProgress: progress => {
           log += this.committedPageLog(progress, progLog)
         }
-      })
+      }
+      const snapshot =
+        (await this.tryJournalPush(this.getActive(), writer, options)) ??
+        (await this.trySnapshotCopy(this.getActive(), writer, 'push', options))
       if (snapshot !== undefined)
         return {
           inserts: snapshot.inserts,
@@ -1226,6 +2109,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
           }
         }
         const result =
+          (await this.tryJournalPush(selected.active, backup.storage, options, selected)) ??
           (await this.trySnapshotCopy(selected.active, backup.storage, 'push', options, selected)) ??
           (await this.runLegacySnapshotFallback(selected.active, backup.storage, 'push', options, selected))
         log += progLog(
@@ -1252,6 +2136,145 @@ export class WalletStorageManager implements sdk.WalletStorage {
    * @param storageIdentityKey of current backup storage provider that is to become the new active provider.
    */
   async setActive(storageIdentityKey: string, progLog?: (s: string) => string): Promise<string> {
+    const release = await this.primaryTransitions.acquire('exclusive')
+    try {
+      await this.makeAvailable()
+      return (
+        (await this.trySetActiveJournal(storageIdentityKey, progLog ?? (value => value))) ??
+        (await this.setActiveLegacy(storageIdentityKey, progLog))
+      )
+    } finally {
+      release()
+    }
+  }
+
+  /** Complete data merge precedes a short primary cutover. The transition queue
+   * serializes competing selections; foreground wallet access keeps using its
+   * actual current primary while every source/proof read runs outside ownership.
+   * Older providers retain their explicit serialized compatibility contract. */
+  private async trySetActiveJournal(
+    storageIdentityKey: string,
+    progLog: (value: string) => string
+  ): Promise<string | undefined> {
+    const stores = [...this._stores]
+    if (stores.length < 2 || stores.length > 9) return undefined
+    for (const store of stores) {
+      if (
+        !journalSource(store.storage) ||
+        !journalDestination(store.storage) ||
+        !(await store.storage.supportsSnapshotJournalSync())
+      )
+        return undefined
+    }
+    const selected = await this.withAccess(active => {
+      if (stores.length !== this._stores.length || stores.some(store => !this._stores.includes(store)))
+        throw new WERR_INVALID_OPERATION('Managed stores changed before primary reconciliation; retry selection')
+      const target = stores.find(store => store.settings?.storageIdentityKey === storageIdentityKey)
+      if (target === undefined) throw new WERR_INVALID_PARAMETER('storageIdentityKey', 'a registered storage provider')
+      const contributors = this._conflictingActives?.length
+        ? [...new Set([this._active as ManagedStorage, ...(this._conflictingActives ?? [])])].filter(
+            store => store !== target
+          )
+        : [this._active as ManagedStorage].filter(store => store !== target)
+      return Promise.resolve({
+        active,
+        generation: this.generation,
+        target,
+        contributors,
+        unchanged: storageIdentityKey === this.getActiveStore() && this.isActiveEnabled
+      })
+    })
+    if (selected.unchanged) return progLog(`setActive to ${selected.target.settings?.storageName} unchanged\n`)
+    if (selected.contributors.length === 0) return undefined
+    let log = progLog(
+      `setActive to ${selected.target.settings?.storageName}\nMERGE CURRENT SOURCE DATA BEFORE PRIMARY CUTOVER\n`
+    )
+    let activated = false
+    try {
+      for (let attempt = 0; attempt < 8 && !activated; attempt++) {
+        const copies: JournalCopyCustody[] = []
+        for (const contributor of selected.contributors) {
+          const copied = await this.tryJournalCopy(
+            contributor.storage,
+            selected.target.storage,
+            {
+              maxRoughSize: 10000000,
+              onProgress: progress => {
+                log += this.committedPageLog(progress, progLog)
+              }
+            },
+            selected,
+            value => copies.push(value),
+            false
+          )
+          if (copied?.status !== 'completed')
+            throw new WERR_INVALID_OPERATION('Primary source reconciliation did not complete')
+        }
+        const sources: SnapshotJournalCutoverSource[] = []
+        let selectionFailure: { cause: unknown } | undefined
+        try {
+          // Opening and closure validation can read/prove source payloads; keep
+          // them outside the actual manager's final cutover admission.
+          for (const copy of copies)
+            sources.push({
+              source: await copy.reader.openCurrentSnapshotJournalSource(this._authId.identityKey),
+              since: copy.source.receipt.highWater
+            })
+          sources.sort((a, b) => a.source.receiptBinding.backend.localeCompare(b.source.receiptBinding.backend))
+          const last = copies[copies.length - 1]
+          activated = await last.destination.selectPrimary(last.checkpoint, storageIdentityKey, sources, () => {
+            this.generation++
+            this.invalidatePrimarySelection()
+          })
+        } catch (cause) {
+          selectionFailure = { cause }
+        }
+        // Drain every contributor before propagating selection or close errors.
+        const drained = await Promise.allSettled(
+          sources.map(async value => {
+            await closeSnapshotJournalSource(value.source)
+          })
+        )
+        const failures = drained.filter(value => value.status === 'rejected')
+        if (failures.length !== 0)
+          throw new AggregateError(
+            [
+              ...(selectionFailure === undefined ? [] : [selectionFailure.cause]),
+              ...failures.map(value => value.reason)
+            ],
+            'Primary source ownership did not drain'
+          )
+        if (selectionFailure !== undefined) throw selectionFailure.cause
+        if (!activated) await new Promise<void>(resolve => setTimeout(resolve, 0))
+      }
+      if (!activated)
+        throw new WERR_INVALID_OPERATION(
+          'Sources remain busy before cutover; copied pages are retained, retry selection'
+        )
+      // The target now owns the selected primary. Reconcile and propagate its
+      // selection to each other managed store using fresh independent windows.
+      await this.makeAvailable()
+      for (const store of stores) {
+        if (store === selected.target) continue
+        const copied = await this.tryJournalPush(selected.target.storage, store.storage, {
+          maxRoughSize: 10000000,
+          onProgress: progress => {
+            log += this.committedPageLog(progress, progLog)
+          }
+        })
+        if (copied?.status !== 'completed') throw new WERR_INVALID_OPERATION('Primary propagation did not complete')
+      }
+      await this.makeAvailable()
+      if (this.getActiveStore() !== storageIdentityKey || !this.isActiveEnabled)
+        throw new WERR_INVALID_OPERATION('Primary selection is not agreed by all managed stores')
+      return log + progLog('PRIMARY SELECTION AND PROPAGATION COMPLETE\n')
+    } catch (error) {
+      this.invalidatePrimarySelection()
+      throw error
+    }
+  }
+
+  private async setActiveLegacy(storageIdentityKey: string, progLog?: (s: string) => string): Promise<string> {
     progLog ||= s => s
     if (!this.isAvailable()) await this.makeAvailable()
 

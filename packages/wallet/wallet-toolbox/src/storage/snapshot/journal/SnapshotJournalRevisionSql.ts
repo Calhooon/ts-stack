@@ -1,10 +1,11 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { snapshotJournalRevision, type SnapshotJournalRevision } from './SnapshotJournalRevision'
 
 function sqlite(k: Knex): boolean {
   const client = k.client.config.client
-  if (client === 'better-sqlite3' || client === 'sqlite3') return true
+  if (client === 'better-sqlite3' || client === 'sqlite3' || isOwnedNativeSqlite(k)) return true
   if (client === 'mysql' || client === 'mysql2') return false
   throw new WERR_INVALID_OPERATION('Unsupported snapshot journal SQL driver')
 }

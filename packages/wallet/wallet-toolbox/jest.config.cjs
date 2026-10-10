@@ -11,7 +11,7 @@ const getJestConfig = async () => {
     // Must include source and test folders: default is ['<rootDir>']
     roots: ['<rootDir>'],
     // Speed up by restricting to module (source files) extensions used.
-    moduleFileExtensions: ['ts', 'js'],
+    moduleFileExtensions: ['ts', 'js', 'cjs'],
     // excluded source files...
     modulePathIgnorePatterns: ['out/src', 'out/test', '/dist/cjs/', String.raw`<rootDir>/\.stryker-tmp/`],
     // Ignore generated children of this test root. Stryker runs with a sandbox
@@ -22,7 +22,7 @@ const getJestConfig = async () => {
     // Default is 'node'
     testEnvironment: 'node',
     // default [ '**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[tj]s?(x)' ]
-    testMatch: ['**/?(*.)+(test).[tj]s', '**/__test/**/*.test.ts'],
+    testMatch: ['**/?(*.)+(test).[tj]s', '**/__test/**/*.test.ts', '**/*.test.cjs'],
     // default []
     testRegex: [],
     transform: {
@@ -44,8 +44,8 @@ const getJestConfig = async () => {
     // SQLite-backed tests create multi-gigabyte fixture sets. Purge stale
     // artifacts before a run and remove the completed run's artifacts after
     // every Jest invocation so local worktrees cannot accumulate them.
-    globalSetup: '<rootDir>/test/utils/cleanupTestDatabases.js',
-    globalTeardown: '<rootDir>/test/utils/cleanupTestDatabases.js',
+    globalSetup: '<rootDir>/test/utils/setupOwnedTestRuntime.cjs',
+    globalTeardown: '<rootDir>/test/utils/teardownOwnedTestRuntime.cjs',
     testTimeout: 30000
   }
 }

@@ -9,5 +9,14 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "files": ["hashWasm.cts", "hashWasm.mts", "portableStreams.ts"]
+  "files": [
+    "hashWasm.cts",
+    "hashWasm.mts",
+    "portableStreams.ts",
+    "deviceBackup.ts",
+    "permissionCallbacks.ts",
+    "actionBatchPack.ts",
+    "internalizeActionResult.ts",
+    "privateMigrationSource.ts"
+  ]
 }

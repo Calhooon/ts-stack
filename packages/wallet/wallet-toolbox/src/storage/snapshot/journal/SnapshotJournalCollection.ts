@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -90,7 +91,7 @@ export function snapshotJournalCollectionRequest(
   return result
 }
 function local(k: Knex): boolean {
-  if (['better-sqlite3', 'sqlite3'].includes(k.client.config.client)) return true
+  if (['better-sqlite3', 'sqlite3'].includes(k.client.config.client) || isOwnedNativeSqlite(k)) return true
   if (['mysql2', 'mysql'].includes(k.client.config.client)) return false
   return invalid()
 }

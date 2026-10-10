@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from './ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 
 interface SchemaColumn {
@@ -31,7 +32,7 @@ export async function readSqliteSchemaObservations(
   const tables = [...names]
   if (
     !k.isTransaction ||
-    k.client.config.client !== 'better-sqlite3' ||
+    (k.client.config.client !== 'better-sqlite3' && !isOwnedNativeSqlite(k)) ||
     tables.length === 0 ||
     tables.length > 16 ||
     !tables.every(table => typeof table === 'string' && /^[a-z_][a-z0-9_]*$/i.test(table))

@@ -418,7 +418,7 @@ export class WalletAuthenticationManager extends CWIStyleWalletManager {
               }
             },
             {
-              ...(completeBoundAction.outputAuthorizationVersion === 1
+              ...(Reflect.get(completeBoundAction, 'outputAuthorizationVersion') === 1
                 ? { authorizeAdditionalOutputs: getActionOutputAuthorizations }
                 : {}),
               inputSigners: {

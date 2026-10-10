@@ -62,7 +62,7 @@ export function retainReadSnapshot(
   }
   const { signal } = options
   const expiresAt = Date.now() + lifetimeMs
-  const startedAt = performance.now()
+  const monotonicExpiresAt = performance.now() + lifetimeMs
   const opened = deferred<RetainedReadSnapshot>()
   const stopped = deferred<void>()
   const closed = deferred<void>()
@@ -89,7 +89,7 @@ export function retainReadSnapshot(
   }
   const abort = (): void => stop(new SnapshotCancelledError('Retained read snapshot was cancelled'))
   const checkDeadline = (): void => {
-    if (Date.now() >= expiresAt || performance.now() - startedAt >= lifetimeMs) {
+    if (Date.now() >= expiresAt || performance.now() >= monotonicExpiresAt) {
       stop(new SnapshotResourceLimitError('Retained read snapshot expired'))
     }
   }

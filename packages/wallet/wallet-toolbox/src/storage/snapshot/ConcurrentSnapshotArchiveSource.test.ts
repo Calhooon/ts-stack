@@ -1,3 +1,4 @@
+import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from './journal/SnapshotJournalLifecycle'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -67,7 +68,7 @@ test('a ready request waits for owned reader destruction while foreground storag
   const source = (await storage.openSnapshotArchiveSource(identity))!
   expect(source.user.identityKey).toBe(identity)
   expect(source.sourceStorage.storageIdentityKey).toBe('original-source')
-  expect(source.sourceSchema).toBe('2026-10-02-001 repair snapshot SQLite conflict maintenance')
+  expect(source.sourceSchema).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
   const reader = Reflect.get(storage, 'snapshotSyncSource') as StorageKnex
   expect(reader.knex).not.toBe(storage.knex)
   expect(reader.knex.client.config.pool).toMatchObject({ min: 0, max: 1 })
@@ -285,6 +286,7 @@ test.each(['opening', 'closing'] as const)(
       lifetimeMs: 300000,
       maxBytes: 32768
     })
+    if (offered === undefined) throw new Error('Actual fixture offer was refused')
     const { owner } = await requests.claimReader(identity, offered.request)
     const failure = new SnapshotArchiveSourceCleanupError(new Error('synthetic native cleanup outcome'))
     const read = ArchiveGuard.readGuardedSnapshotArchive
@@ -293,7 +295,14 @@ test.each(['opening', 'closing'] as const)(
     else {
       jest.spyOn(ArchiveGuard, 'readGuardedSnapshotArchive').mockImplementationOnce(async (...args) => {
         jest.spyOn(args[1].client, 'destroyRawConnection').mockImplementation(async connection => {
-          native = connection
+          if (
+            connection === null ||
+            typeof connection !== 'object' ||
+            typeof Reflect.get(connection, 'open') !== 'boolean' ||
+            typeof Reflect.get(connection, 'close') !== 'function'
+          )
+            throw new Error('Actual fixture native connection differs')
+          native = connection as { open: boolean; close: () => void }
         })
         return await read(...args)
       })
@@ -338,6 +347,7 @@ test.each([new Error('synthetic guarded read failure'), undefined])(
       lifetimeMs: 300000,
       maxBytes: 32768
     })
+    if (offered === undefined) throw new Error('Actual fixture offer was refused')
     const { owner } = await requests.claimReader(identity, offered.request)
     jest.spyOn(ArchiveGuard, 'readGuardedSnapshotArchive').mockRejectedValueOnce(failure)
     await expect(storage.openSnapshotArchiveSource(identity, {}, owner)).rejects.toBe(failure)
@@ -355,6 +365,7 @@ test('destroying an active guarded reader preserves its ordinary read error for 
   const storage = await fixture()
   const requests = new KnexSnapshotArchiveRequestStore(storage.knex, true, true)
   const offered = await requests.offer(identity, { lifetimeMs: 300000, maxBytes: 32768 })
+  if (offered === undefined) throw new Error('Actual fixture offer was refused')
   const { owner } = await requests.claimReader(identity, offered.request)
   const failure = new Error('synthetic read completion failure after native closure')
   const read = ArchiveGuard.readGuardedSnapshotArchive

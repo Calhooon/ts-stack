@@ -1,3 +1,4 @@
+import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import { knex, type Knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -46,7 +47,7 @@ async function fixture(complete = true) {
   })
   const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
   try {
-    await storage.migrate('owned maintenance', 'synthetic-maintenance')
+    await migrateBeforeSnapshotJournal(storage, 'owned maintenance', 'synthetic-maintenance')
     await storage.makeAvailable()
     await k.raw('PRAGMA journal_mode=WAL')
     const { user } = await storage.findOrInsertUser(identity),
@@ -145,8 +146,8 @@ test('destruction fences pending maintenance configuration before database acces
     release.resolve()
     const destroyed = await destruction
     expect(refused).toMatchObject({ message: 'Snapshot journal maintenance is unavailable after destruction begins' })
-    expect(destroyed).toHaveProperty('error', refused)
-    expect(await outcome).toHaveProperty('error')
+    expect(destroyed).toEqual({ value: undefined })
+    expect(await outcome).toHaveProperty('error', refused)
     expect(acquire).not.toHaveBeenCalled()
   } finally {
     release.resolve()
@@ -360,7 +361,7 @@ function mysqlOwner() {
     .spyOn(Connections, 'withSnapshotJournalConnections')
     .mockImplementation(async (_writer, _reader, active, run) => {
       active()
-      return await run({}, {})
+      return await run({}, {}, async () => await writer.destroy())
     })
   jest.spyOn(Fence, 'lockSnapshotJournalMaintenanceOwner').mockResolvedValue()
   jest.spyOn(Mysql, 'readSnapshotJournalMysqlGeneration').mockResolvedValue({

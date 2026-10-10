@@ -6,8 +6,8 @@ import {
   type CipherGCM,
   type DecipherGCM
 } from 'node:crypto'
-import { toArray } from '@bsv/sdk/primitives/utils'
-import { argon2id } from '../../utility/hashWasm'
+import { deriveBrc39OwnedNodeKey } from './Brc39OwnedNodeKey'
+import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import { runInSeries } from '../../utility/runInSeries'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import {
@@ -33,6 +33,9 @@ export interface Brc39NodeStreamOptions {
   /** A selected host Argon2id backend must return a fresh owned key buffer.
    * Streaming consumes that buffer and wipes it when the operation settles. */
   maximumPasswordBytes: number
+  /** Portable worker/native backend delivery deadline, default 30 seconds.
+   * Worker exit or backend settlement is still required on cancellation. */
+  maximumKdfMilliseconds?: number
   signal?: AbortSignal
   onProgress?: (progress: Readonly<{ fileBytes: number; plaintextBytes: number }>) => void
 }
@@ -49,39 +52,6 @@ function passwordLimit(maximumPasswordBytes: number): void {
   if (!Number.isSafeInteger(maximumPasswordBytes) || maximumPasswordBytes < 1 || maximumPasswordBytes > 65536)
     throw new RangeError('maximumPasswordBytes must be an integer from 1 to 65536')
 }
-async function deriveKey(
-  header: Brc39StreamHeader,
-  password: string,
-  maximumPasswordBytes: number
-): Promise<Uint8Array> {
-  // Refuse impossible inputs before normalization/conversion. The temporary
-  // UTF8 conversion is bounded by four bytes per admitted UTF16 unit.
-  if (password.length > maximumPasswordBytes)
-    throw new SnapshotResourceLimitError('BRC-39 password exceeds the selected stream policy')
-  const normalized = password.normalize('NFC')
-  if (normalized.length > maximumPasswordBytes)
-    throw new SnapshotResourceLimitError('BRC-39 normalized password exceeds the selected stream policy')
-  const bytes = new Uint8Array(toArray(normalized, 'utf8'))
-  try {
-    if (bytes.length > maximumPasswordBytes)
-      throw new SnapshotResourceLimitError('BRC-39 encoded password exceeds the selected stream policy')
-    const result = await argon2id({
-      password: bytes,
-      salt: header.salt,
-      iterations: header.iterations,
-      memorySize: header.memoryKiB,
-      parallelism: header.parallelism,
-      hashLength: 32,
-      outputType: 'binary'
-    })
-    if (!(result instanceof Uint8Array) || result.length !== 32) throw new TypeError('Invalid BRC-39 derived key')
-    // Own the returned derivation buffer directly. A second copy would leave
-    // the original key outside the session's awaited erasure boundary.
-    return result
-  } finally {
-    bytes.fill(0)
-  }
-}
 function release(session: CryptoOwnership): void {
   const { cipher, key } = session
   session.cipher = undefined
@@ -96,9 +66,15 @@ async function discard(quarantine: Pick<Brc39StreamQuarantine, 'discard'>, origi
   try {
     await quarantine.discard()
   } catch (error_) {
-    throw new AggregateError([original, error_], 'BRC-39 processing and quarantine cleanup failed', {
-      cause: original
-    })
+    throw new Brc38StagingCleanupError(
+      [original, error_],
+      'BRC-39 processing and quarantine cleanup failed',
+      async () => {
+        if (original instanceof Brc38StagingCleanupError) await original.retryCleanup()
+        if (error_ instanceof Brc38StagingCleanupError) await error_.retryCleanup()
+        await quarantine.discard()
+      }
+    )
   }
   throw original
 }
@@ -135,7 +111,11 @@ async function closeFailedSource(source: Brc39StreamPlaintext, original: unknown
     return original
   } catch (error_) {
     if (error_ === original) return original
-    return new AggregateError([original, error_], 'BRC-39 encryption and source cleanup failed', { cause: original })
+    return new Brc38StagingCleanupError([original, error_], 'BRC-39 encryption and source cleanup failed', async () => {
+      if (original instanceof Brc38StagingCleanupError) await original.retryCleanup()
+      if (error_ instanceof Brc38StagingCleanupError) await error_.retryCleanup()
+      await source.close?.()
+    })
   }
 }
 function* splitOutput(bytes: Uint8Array, maximumChunkBytes: number): Generator<Uint8Array> {
@@ -155,7 +135,7 @@ export async function encryptBrc39StreamToQuarantine(
   output: Brc39StreamOutput,
   options: Brc39NodeEncryptOptions
 ): Promise<Readonly<{ fileBytes: number; plaintextBytes: number }>> {
-  const { maximumPasswordBytes, signal, onProgress } = options
+  const { maximumPasswordBytes, maximumKdfMilliseconds, signal, onProgress } = options
   const session: EncryptSession = { plaintextBytes: 0, fileBytes: 0 }
   try {
     passwordLimit(maximumPasswordBytes)
@@ -165,7 +145,13 @@ export async function encryptBrc39StreamToQuarantine(
     const salt = new Uint8Array(randomBytes(32))
     const nonce = new Uint8Array(randomBytes(32))
     const prefix = encodeBrc39StreamPrefix(kdf, salt, nonce, policy)
-    session.key = await deriveKey({ ...kdf, salt, nonce }, password, maximumPasswordBytes)
+    session.key = await deriveBrc39OwnedNodeKey(
+      { ...kdf, salt, nonce },
+      password,
+      maximumPasswordBytes,
+      signal,
+      maximumKdfMilliseconds
+    )
     signal?.throwIfAborted()
     session.cipher = createCipheriv('aes-256-gcm', session.key, nonce, { authTagLength: 16 })
     const write = async (bytes: Uint8Array): Promise<void> => {
@@ -224,12 +210,13 @@ async function start(
   header: Brc39StreamHeader,
   password: string,
   maximumPasswordBytes: number,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  maximumKdfMilliseconds: number | undefined
 ): Promise<void> {
   if (getCipherInfo('aes-256-gcm', { keyLength: 32, ivLength: header.nonce.length }) === undefined)
     throw new Error('Selected Node AES-GCM backend cannot process this BRC-39 nonce length')
   signal?.throwIfAborted()
-  session.key = await deriveKey(header, password, maximumPasswordBytes)
+  session.key = await deriveBrc39OwnedNodeKey(header, password, maximumPasswordBytes, signal, maximumKdfMilliseconds)
   // Cancellation waits for the owned derivation to settle before releasing it.
   signal?.throwIfAborted()
   session.cipher = createDecipheriv('aes-256-gcm', session.key, header.nonce, { authTagLength: 16 })
@@ -249,7 +236,7 @@ export async function decryptBrc39StreamToQuarantine(
   quarantine: Brc39StreamQuarantine,
   options: Brc39NodeStreamOptions
 ): Promise<Readonly<{ fileBytes: number; plaintextBytes: number }>> {
-  const { maximumPasswordBytes, signal, onProgress } = options
+  const { maximumPasswordBytes, maximumKdfMilliseconds, signal, onProgress } = options
   const session: Session = { fileBytes: 0, plaintextBytes: 0 }
   try {
     passwordLimit(maximumPasswordBytes)
@@ -261,7 +248,8 @@ export async function decryptBrc39StreamToQuarantine(
       session.fileBytes += input.length
       if (session.cipher === undefined) {
         const header = frame.header()
-        if (header !== undefined) await start(session, header, password, maximumPasswordBytes, signal)
+        if (header !== undefined)
+          await start(session, header, password, maximumPasswordBytes, signal, maximumKdfMilliseconds)
       }
       await runInSeries(ciphertext, async chunk => {
         signal?.throwIfAborted()

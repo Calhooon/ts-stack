@@ -21,7 +21,7 @@ describe('StorageClient telemetry', () => {
         binaryRequests,
         telemetry: {
           sink: {
-            capture: event => events.push(event)
+            capture: event => void events.push(event)
           },
           traceIdFactory: () => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           spanIdFactory: () => (nextSpanId++).toString(16).padStart(16, '0')
@@ -86,7 +86,7 @@ describe('StorageClient telemetry', () => {
       const client = new Client(
         {} as WalletInterface,
         'https://storage.example.test/rpc',
-        enabled ? { telemetry: { sink: { capture: (event: TelemetryEvent) => events.push(event) } } } : {}
+        enabled ? { telemetry: { sink: { capture: (event: TelemetryEvent) => void events.push(event) } } } : {}
       )
       const error = new Error('response read failed')
       const text = jest.fn(() => {
@@ -120,7 +120,7 @@ describe('StorageClient telemetry', () => {
     const events: TelemetryEvent[] = []
     const client = new StorageClient({} as WalletInterface, 'https://storage.example.test/rpc', {
       telemetry: {
-        sink: { capture: event => events.push(event) }
+        sink: { capture: event => void events.push(event) }
       }
     })
     const logger = {

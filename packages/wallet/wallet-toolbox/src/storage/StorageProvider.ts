@@ -29,7 +29,7 @@ import {
   ChainTracker,
   Transaction
 } from '@bsv/sdk'
-import type { SpendVerifierInterface } from '@bsv/sdk'
+import type { WalletScriptVerifier } from '../sdk/WalletScriptVerifier'
 import {
   classifyReqStatus,
   mergeInputsIntoBeef,
@@ -171,7 +171,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   maxRecursionDepth?: number
   readonly actionBatchMaxReservedOutputs: number
   readonly managedChangePolicy: ManagedChangePolicy
-  readonly scriptVerifier?: SpendVerifierInterface
+  readonly scriptVerifier?: WalletScriptVerifier
 
   static defaultOptions(): {
     feeModel: StorageFeeModel
@@ -1481,15 +1481,18 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   /** Local-only preparation: detach and validate proof I/O before taking manager write ownership. */
-  async prepareSyncChunk(args: RequestSyncChunkArgs, chunk: SyncChunk): Promise<() => Promise<ProcessSyncChunkResult>> {
+  async prepareSyncChunk(
+    args: RequestSyncChunkArgs,
+    chunk: SyncChunk
+  ): Promise<(trx?: TrxToken) => Promise<ProcessSyncChunkResult>> {
     const snapshot = snapshotSyncPage(args, chunk)
     const expected = await this.prepareSyncProofs(snapshot.chunk)
     let consumed = false
-    return async () => {
+    return async trx => {
       if (consumed)
         throw new WERR_INVALID_OPERATION('Prepared sync page already consumed; resume from its durable checkpoint.')
       consumed = true
-      return await this.commitSyncChunk(snapshot.args, snapshot.chunk, expected)
+      return await this.commitSyncChunk(snapshot.args, snapshot.chunk, expected, trx)
     }
   }
 
@@ -1500,7 +1503,8 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   private async commitSyncChunk(
     args: RequestSyncChunkArgs,
     chunk: SyncChunk,
-    expected: Map<string, TableProvenTx>
+    expected: Map<string, TableProvenTx>,
+    transaction?: TrxToken
   ): Promise<ProcessSyncChunkResult> {
     // A sync page may contain hundreds of related entities. Keep their lookups,
     // inserts, ID remapping, and sync-state checkpoint in one transaction. This
@@ -1559,7 +1563,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
       }
       const result = await ss.processSyncChunk(this, args, chunk, trx)
       return args.includeNextCheckpoint === true ? { ...result, nextCheckpoint: ss.makeSyncCheckpoint() } : result
-    })
+    }, transaction)
   }
 
   /**
@@ -2034,7 +2038,7 @@ export interface StorageProviderOptions extends StorageReaderWriterOptions {
    * Optional verifier for server-side action-batch script checks. This Wallet
    * Toolbox extension leaves the BRC-100 wallet interface unchanged.
    */
-  scriptVerifier?: SpendVerifierInterface
+  scriptVerifier?: WalletScriptVerifier
   /**
    * Maximum persisted outputs one action-batch workspace may reserve.
    * Defaults to 256; -1 disables this cumulative provider limit.

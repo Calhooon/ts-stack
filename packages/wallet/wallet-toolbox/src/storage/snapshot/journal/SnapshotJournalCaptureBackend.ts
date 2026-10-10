@@ -1,3 +1,9 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
+import {
+  assertOwnedNativeConnection,
+  isClosedOwnedNativeConnection,
+  nativeOwnedRootCloseState
+} from '../../schema/ownedNativeSqliteConnectionsNode'
 import type { Knex } from 'knex'
 import { createHash } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
@@ -24,7 +30,8 @@ async function fileIdentity(filename: string): Promise<FileIdentity> {
 /** Call before constructing either fresh owned pool; existing open SQLite handles
  * cannot establish file identity by rechecking only their configured pathname. */
 export async function prepareSnapshotJournalCaptureBackend(
-  config: Knex.Config
+  config: Knex.Config,
+  actualRoot?: Knex
 ): Promise<SnapshotJournalCaptureBackend> {
   const connection: unknown = config.connection
   if (
@@ -33,7 +40,7 @@ export async function prepareSnapshotJournalCaptureBackend(
     ('connectionPool' in config && config.connectionPool != null)
   )
     return unavailable()
-  if (config.client === 'better-sqlite3') {
+  if (config.client === 'better-sqlite3' || (actualRoot !== undefined && isOwnedNativeSqlite(actualRoot))) {
     const filename = (connection as Knex.Sqlite3ConnectionConfig).filename
     if (typeof filename !== 'string' || !filename || filename === ':memory:' || filename.startsWith('file:'))
       return unavailable()
@@ -53,11 +60,13 @@ async function actualIdentity(
   expected: SnapshotJournalCaptureBackend
 ): Promise<ActualBackendIdentity> {
   if (expected.kind === 'sqlite') {
+    if (typeof k.client.config.client === 'function') assertOwnedNativeConnection(k, connection)
     const rows: Array<{ name: string; file: string }> = await k.raw('PRAGMA database_list').connection(connection)
     const main = rows.filter(row => row.name === 'main')
     if (main.length !== 1 || typeof main[0].file !== 'string') return unavailable()
     const actual = await fileIdentity(main[0].file)
     if (JSON.stringify(actual) !== JSON.stringify(expected.file)) return unavailable()
+    if (typeof k.client.config.client === 'function') assertOwnedNativeConnection(k, connection)
     return { backend: actual }
   }
   const [rows]: Array<Array<{ serverUuid?: unknown; databaseName?: unknown; connectionId?: unknown }>> = await k
@@ -105,9 +114,27 @@ export async function bindSnapshotJournalCaptureBackend(
     .digest('hex')
 }
 
+/** One freshly constructed owned destination pool. The expected SQLite file
+ * identity must be obtained BEFORE construction; existing pooled handles do
+ * not establish inode continuity by observing their configured pathname. */
+export async function bindSnapshotJournalDestinationBackend(
+  k: Knex,
+  connection: unknown,
+  expected: SnapshotJournalCaptureBackend
+): Promise<string> {
+  const actual = await actualIdentity(k, connection, expected)
+  return createHash('sha256')
+    .update('snapshot-journal-backend-v1\n')
+    .update(JSON.stringify([expected.kind, actual.backend]))
+    .digest('hex')
+}
+
 /** The pool is owned exclusively by one capture. Destroy it while releasing its
  * reserved slot, and wait for native closure before reporting physical cleanup. */
 export async function closeSnapshotJournalCapturePool(k: Knex, value: unknown): Promise<void> {
+  // Actual factory origin permits only cleanup, including retry after producer
+  // admission has stopped. Caller flags/config/client cannot supply this state.
+  const native = nativeOwnedRootCloseState(k) !== undefined
   const connection = value as { open?: boolean; stream?: Duplex }
   const stream = connection.stream
   let listener: (() => void) | undefined
@@ -127,7 +154,13 @@ export async function closeSnapshotJournalCapturePool(k: Knex, value: unknown): 
         'Snapshot capture pool did not close'
       )
     await nativeClose
-    if (k.client.config.client === 'better-sqlite3' ? connection.open !== false : stream?.closed !== true)
+    if (
+      native
+        ? nativeOwnedRootCloseState(k)?.closed !== true || !isClosedOwnedNativeConnection(value)
+        : k.client.config.client === 'better-sqlite3'
+          ? connection.open !== false
+          : stream?.closed !== true
+    )
       throw new Error('Snapshot capture native connection did not close')
   } finally {
     if (listener !== undefined) stream!.removeListener('close', listener)

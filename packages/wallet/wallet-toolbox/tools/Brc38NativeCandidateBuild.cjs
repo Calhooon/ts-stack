@@ -1,0 +1,309 @@
+'use strict'
+// Maintainer build preparation only. It compiles a candidate but never executes
+// it, edits a runtime pin, publishes, deploys or admits a profile.
+const fs = require('node:fs/promises')
+const { constants } = require('node:fs')
+const path = require('node:path')
+const crypto = require('node:crypto')
+const cp = require('node:child_process')
+const retainedCompilerFailures = new WeakSet()
+let compilerGroupRetained = false
+
+class NativeCandidateBuildCleanupError extends Error {
+  /** @param {unknown} cause @param {unknown} cleanupError @param {()=>Promise<void>} cleanup */
+  constructor(cause, cleanupError, cleanup) {
+    super('Native candidate build retains an original file descriptor', { cause })
+    this.name = 'NativeCandidateBuildCleanupError'
+    this.cleanupError = cleanupError
+    this.cleanup = cleanup
+    this.complete = false
+    /** @type {Promise<void> | undefined} */ this.pending = undefined
+  }
+  get cleaned() {
+    return this.complete
+  }
+  retryCleanup() {
+    if (this.complete) return Promise.resolve()
+    if (this.pending !== undefined) return this.pending
+    this.pending = Promise.resolve()
+      .then(this.cleanup)
+      .then(() => {
+        this.complete = true
+      })
+      .finally(() => {
+        this.pending = undefined
+      })
+    return this.pending
+  }
+}
+
+const sqlite = Object.freeze({
+  bytes: 9516284,
+  sha256: '6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebaefc',
+  version: '3.53.4',
+  sourceId: '2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc'
+})
+const sources = Object.freeze([
+  'native_contract.c',
+  'brc38_quota.c',
+  'brc38_runtime.c',
+  'profile_contract.c',
+  'native_driver.c',
+  'shared_quota_sources.h',
+  'shared_quota_contract.c',
+  'cell_change_contract.c',
+  'local_observer_contract.c',
+  'local_pointer_projection_contract.c',
+  'local_pointer_group_contract.c',
+  'local_observer_names_contract.c',
+  'blob_write.c',
+  'blob_read.c',
+  'recovery_copy.c',
+  'private_stage.c',
+  'private_stage_contract.c',
+  'native_fixture.c',
+  'range_contract.c',
+  'brc38_windows_handles.c',
+  'brc38_quota_windows.c',
+  'brc38_runtime_windows.c',
+  'runtime_contract.c'
+])
+const flags = Object.freeze([
+  '-O2',
+  '-pipe',
+  '-std=c11',
+  '-D_GNU_SOURCE',
+  '-DSQLITE_THREADSAFE=1',
+  '-DSQLITE_DEFAULT_MEMSTATUS=1',
+  '-DSQLITE_DQS=0',
+  '-Wall',
+  '-Wextra',
+  '-Werror',
+  '-I.',
+  'native_driver.c',
+  '-o',
+  'native-candidate',
+  '-lpthread',
+  '-ldl',
+  '-lm'
+])
+/** Candidate compilation only; these targets are not runtime qualifications. */
+function targetFlags() {
+  if (!['arm64', 'x64'].includes(process.arch) || !['linux', 'darwin'].includes(process.platform))
+    throw new Error('Native candidate recipe requires a controlled supported Unix worker')
+  // Darwin's loader functions belong to libSystem, rather than a separate dl
+  // library. Native process guards remain responsible for actual OS limits.
+  return process.platform === 'darwin' ? flags.filter(flag => flag !== '-ldl' && flag !== '-D_GNU_SOURCE') : [...flags]
+}
+/** @param {Uint8Array} bytes */
+const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
+
+/** Read one actual non-symlink file and reject replacement during its read.
+ * @param {string} filename @param {number} maximum */
+async function readSource(filename, maximum) {
+  const file = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
+  /** @type {Buffer | undefined} */ let bytes
+  /** @type {unknown} */ let failure
+  let failed = false
+  try {
+    const before = await file.stat({ bigint: true })
+    if (!before.isFile() || before.nlink !== 1n || before.size < 1n || before.size > BigInt(maximum))
+      throw new Error('Native build source exceeds its original file bound')
+    bytes = Buffer.alloc(Number(before.size))
+    for (let offset = 0; offset < bytes.length;) {
+      const read = await file.read(bytes, offset, Math.min(65536, bytes.length - offset), offset)
+      if (read.bytesRead < 1) throw new Error('Native build source extent changed')
+      offset += read.bytesRead
+    }
+    const after = await file.stat({ bigint: true }),
+      tail = Buffer.alloc(1)
+    if (
+      (await file.read(tail, 0, 1, bytes.length)).bytesRead !== 0 ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      before.mode !== after.mode
+    )
+      throw new Error('Native build source changed during capture')
+  } catch (cause) {
+    failed = true
+    failure = cause
+  }
+  try {
+    await file.close()
+  } catch (cleanup) {
+    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, cleanup, () => file.close())
+  }
+  if (failed) throw failure
+  if (bytes === undefined) throw new Error('Native candidate source capture did not finish')
+  return bytes
+}
+
+/** Bounded compiler output and real child drainage. No engine execution.
+ * @param {string[]} args @param {string} cwd @param {number} milliseconds */
+async function compiler(args, cwd, milliseconds) {
+  const child = cp.spawn('/usr/bin/cc', args, {
+    cwd,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
+  })
+  /** @type {Buffer[]} */ const stdout = []
+  /** @type {Buffer[]} */ const stderr = []
+  let outputBytes = 0,
+    stopped = false
+  /** @type {Error | undefined} */ let childError
+  /** @type {ReturnType<typeof setTimeout> | undefined} */ let escalation
+  /** @param {NodeJS.Signals} signal */
+  const signalGroup = signal => {
+    if (child.pid === undefined) return
+    try {
+      process.kill(-child.pid, signal)
+    } catch (cause) {
+      if (cause.code !== 'ESRCH') childError = cause
+    }
+  }
+  const groupPresent = () => {
+    if (child.pid === undefined) return false
+    try {
+      process.kill(-child.pid, 0)
+      return true
+    } catch (cause) {
+      if (cause.code === 'ESRCH') return false
+      compilerGroupRetained = true
+      retainedCompilerFailures.add(cause)
+      throw cause
+    }
+  }
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    signalGroup('SIGTERM')
+    escalation = setTimeout(() => {
+      signalGroup('SIGKILL')
+    }, 5000)
+  }
+  const timer = setTimeout(stop, milliseconds)
+  /** @param {Buffer[]} target @param {Buffer} bytes */
+  const collect = (target, bytes) => {
+    outputBytes += bytes.length
+    if (outputBytes > 65536) stop()
+    else target.push(Buffer.from(bytes))
+  }
+  child.stdout.on('data', bytes => collect(stdout, bytes))
+  child.stderr.on('data', bytes => collect(stderr, bytes))
+  try {
+    /** @type {Promise<{code:number|null,signal:NodeJS.Signals|null}>} */
+    const closing = new Promise(resolve => {
+      // An error is not physical drainage. The actual close event settles the
+      // child and streams; remaining compiler descendants must also disappear.
+      child.on('error', error => {
+        childError = error
+        stop()
+      })
+      child.once('close', (code, signal) => resolve({ code, signal }))
+    })
+    const result = await closing
+    if (groupPresent()) {
+      stopped = true
+      signalGroup('SIGKILL')
+      const end = performance.now() + 5000
+      while (groupPresent() && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 25))
+      if (groupPresent()) {
+        compilerGroupRetained = true
+        const retained = new Error(
+          'Native compiler group remains owned; stop and verify the original isolated worker before cleanup'
+        )
+        retainedCompilerFailures.add(retained)
+        throw retained
+      }
+    }
+    if (childError !== undefined || stopped || result.code !== 0 || result.signal !== null)
+      throw new Error(
+        'Native candidate compiler failed or exceeded its bound: ' + Buffer.concat(stderr).toString('utf8')
+      )
+    return { stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') }
+  } finally {
+    clearTimeout(timer)
+    if (escalation !== undefined) clearTimeout(escalation)
+  }
+}
+
+/** Build inside a separately authorized isolated native Unix worker. This
+ * function does not provision or attest that worker's resource controls.
+ * Inputs/results/hashes are DATA; the actual worker owner remains required.
+ * @param {{sqliteSource:string,outputDirectory:string}} options */
+async function buildBrc38NativeCandidate(options) {
+  if (compilerGroupRetained) throw new Error('The original compiler worker still requires physical shutdown')
+  const selectedFlags = targetFlags()
+  const sqliteBytes = await readSource(options.sqliteSource, sqlite.bytes)
+  if (sqliteBytes.length !== sqlite.bytes || sha256(sqliteBytes) !== sqlite.sha256)
+    throw new Error('Native candidate SQLite source differs from the fixed recipe')
+  const root = await fs.mkdtemp(path.join(path.resolve(options.outputDirectory), 'brc38-candidate-'))
+  /** @type {Record<string,{bytes:number,sha256:string}>} */ const inputs = {}
+  try {
+    await fs.writeFile(path.join(root, 'sqlite3.c'), sqliteBytes, { flag: 'wx', mode: 0o400 })
+    inputs['sqlite3.c'] = { bytes: sqliteBytes.length, sha256: sqlite.sha256 }
+    let sourceBytes = 0
+    for (const name of sources) {
+      const bytes = await readSource(path.join(__dirname, '../src/storage/portable/native', name), 1048576)
+      sourceBytes += bytes.length
+      if (sourceBytes > 2097152) throw new Error('Native candidate source set exceeds its original bound')
+      await fs.writeFile(path.join(root, name), bytes, { flag: 'wx', mode: 0o400 })
+      inputs[name] = { bytes: bytes.length, sha256: sha256(bytes) }
+    }
+    const identity = await compiler(['--version'], root, 10000),
+      startedAt = new Date().toISOString(),
+      output = await compiler(selectedFlags, root, 180000)
+    for (const [name, expected] of Object.entries(inputs)) {
+      const bytes = await readSource(path.join(root, name), expected.bytes)
+      if (bytes.length !== expected.bytes || sha256(bytes) !== expected.sha256)
+        throw new Error('Native candidate frozen source changed during compilation')
+    }
+    const filename = path.join(root, 'native-candidate')
+    await fs.chmod(filename, 0o500)
+    const bytes = await readSource(filename, 2097152)
+    const receipt = {
+      protocol: 'brc38-native-candidate-build/v1',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      platform: process.platform,
+      architecture: process.arch,
+      sqlite,
+      compiler: identity,
+      flags: selectedFlags,
+      inputs,
+      output,
+      candidate: { path: filename, bytes: bytes.length, sha256: sha256(bytes) },
+      engineExecuted: false,
+      qualified: false,
+      runtimePinChanged: false,
+      publicationOrDeployment: false
+    }
+    await fs.writeFile(path.join(root, 'build-receipt.json'), JSON.stringify(receipt, null, 2) + '\n', {
+      flag: 'wx',
+      mode: 0o400
+    })
+    await fs.chmod(root, 0o500)
+    return receipt
+  } catch (cause) {
+    if (cause instanceof NativeCandidateBuildCleanupError)
+      throw new NativeCandidateBuildCleanupError(cause, cause.cleanupError, async () => {
+        await cause.retryCleanup()
+        await fs.rm(root, { recursive: true, force: true })
+      })
+    if (retainedCompilerFailures.has(cause))
+      throw new Error('Native candidate directory remains retained at ' + root, { cause })
+    try {
+      await fs.rm(root, { recursive: true, force: true })
+    } catch (cleanup) {
+      throw new AggregateError([cause, cleanup], 'Native candidate build retains its original directory cleanup', {
+        cause
+      })
+    }
+    throw cause
+  }
+}
+module.exports = { buildBrc38NativeCandidate, NativeCandidateBuildCleanupError, sqlite, sources, flags }

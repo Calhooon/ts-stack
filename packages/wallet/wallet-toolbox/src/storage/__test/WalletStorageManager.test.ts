@@ -22,7 +22,9 @@ function canonicalReproof(ctx: TestWalletNoSetup, ptx: TableProvenTx) {
   })
   const services = ctx.storage.getServices()
   const isValidRootForHeight = jest.fn(async () => true)
-  jest.spyOn(services, 'getChainTracker').mockResolvedValue({ isValidRootForHeight } as bsv.ChainTracker)
+  jest
+    .spyOn(services, 'getChainTracker')
+    .mockResolvedValue({ isValidRootForHeight, currentHeight: async () => 1_000_000 } satisfies bsv.ChainTracker)
   jest.spyOn(services, 'getHeaderForHeight').mockResolvedValue(header)
   const lookup = jest.spyOn(services, 'getValidatedMerklePath').mockImplementation(async (_txid, validate) => {
     const result = { name: 'canonical reproof fixture', merklePath }
@@ -57,8 +59,8 @@ describe('WalletStorageManager tests', () => {
 
   test('BRC-177 storage entry points fail closed when authority or persistence support is absent', async () => {
     const { activeStorage: provider, storage: manager } = ctxs[0]
-    const inactive = { userId: 1, isActive: false }
-    const active = { userId: 1, isActive: true }
+    const inactive = { userId: 1, identityKey: ctxs[0].identityKey, isActive: false }
+    const active = { userId: 1, identityKey: ctxs[0].identityKey, isActive: true }
 
     await expect(provider.prepareNoSendExpiry(inactive, {} as any)).rejects.toThrow('active storage provider')
     await expect(provider.activateNoSendExpiry(inactive, {} as any)).rejects.toThrow('active storage provider')
@@ -145,7 +147,7 @@ describe('WalletStorageManager tests', () => {
       })
       try {
         const args = method === 'migrate' ? ['name', 'identity'] : method === 'getCapabilities' ? [] : [{}]
-        const operation = Reflect.get(storage, method).apply(storage, args)
+        const operation = (Reflect.get(storage, method) as (...values: unknown[]) => unknown).apply(storage, args)
         expect(operation).toBeInstanceOf(Promise)
         await expect(operation).rejects.toBe(failure)
         expect(dispatch).toHaveBeenCalledTimes(1)
@@ -464,7 +466,8 @@ describe('WalletStorageManager tests', () => {
       // AtomicBEEF proof validity is covered separately; this case verifies that
       // parallel internalization stays within the supported writer batch.
       const getChainTracker = jest.fn(async () => ({
-        isValidRootForHeight: async (_root: string, _height: number) => true
+        isValidRootForHeight: async (_root: string, _height: number) => true,
+        currentHeight: async () => 1_000_000
       }))
       fred.services.getChainTracker = getChainTracker
       const promises: Array<Promise<number>> = []
@@ -576,7 +579,8 @@ describe('WalletStorageManager tests', () => {
       // (createAction + other tests cover BEEF construction/validation).
       activeStorage.setServices({
         getChainTracker: async () => ({
-          isValidRootForHeight: async (_root: string, _height: number) => true
+          isValidRootForHeight: async (_root: string, _height: number) => true,
+          currentHeight: async () => 1_000_000
         })
       } as any)
 
@@ -618,8 +622,9 @@ describe('WalletStorageManager tests', () => {
       writeEnabled: true
     })
     jest.spyOn(ctx.activeStorage.getServices(), 'getChainTracker').mockResolvedValue({
-      isValidRootForHeight: async () => true
-    } as bsv.ChainTracker)
+      isValidRootForHeight: async () => true,
+      currentHeight: async () => 1_000_000
+    } satisfies bsv.ChainTracker)
     const persist = jest.spyOn(ctx.activeStorage, 'upsertPreparedBeef')
     try {
       const result = await ctx.wallet.createAction({

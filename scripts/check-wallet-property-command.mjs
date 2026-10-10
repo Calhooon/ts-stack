@@ -11,7 +11,7 @@ const wallet = JSON.parse(fs.readFileSync(path.join(root, manifest), 'utf8'))
 const policy = JSON.parse(
   fs.readFileSync(path.join(root, 'governance/test-quality/policy.json'), 'utf8')
 )
-const prefix = 'node ../../../scripts/check-wallet-property-command.mjs && jest '
+const prefix = 'pnpm build && node ../../../scripts/check-wallet-property-command.mjs && jest '
 assert.ok(wallet.scripts['test:property'].startsWith(prefix))
 const tokens = wallet.scripts['test:property'].slice(prefix.length).split(' ')
 const declared = tokens.filter(value => value.startsWith('src/') && value.endsWith('.test.ts'))

@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import {
@@ -92,7 +93,7 @@ async function mysqlFence(k: Knex): Promise<SnapshotJournalRevision | undefined>
 export async function reserveSnapshotJournalCaptureFence(k: Knex): Promise<SnapshotJournalRevision | undefined> {
   if (!k.isTransaction) return invalid()
   const client = k.client.config.client
-  if (client === 'better-sqlite3' || client === 'sqlite3') return await sqliteFence(k)
+  if (client === 'better-sqlite3' || client === 'sqlite3' || isOwnedNativeSqlite(k)) return await sqliteFence(k)
   if (client === 'mysql' || client === 'mysql2') return await mysqlFence(k)
   return invalid()
 }

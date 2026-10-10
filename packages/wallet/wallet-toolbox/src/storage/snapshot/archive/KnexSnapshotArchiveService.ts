@@ -2,6 +2,7 @@ import { parseSnapshotArchiveReaderRequest, type SnapshotArchiveReaderRequest } 
 import { validateSnapshotArchiveReaderOptions, type SnapshotArchiveReaderOptions } from './SnapshotArchiveReaderOffer'
 import { WERR_INVALID_OPERATION, WERR_NOT_IMPLEMENTED } from '../../../sdk/WERR_errors'
 import type { StorageKnex } from '../../StorageKnex'
+import type { Knex } from 'knex'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
 import { SnapshotArchiveAdmissionLimitError, type SnapshotArchiveAdmission } from './SnapshotArchiveAdmission'
 import { SnapshotArchiveSourceCleanupError, type SnapshotArchiveSource } from './KnexSnapshotArchiveSource'
@@ -30,18 +31,22 @@ interface Capture {
 export class KnexSnapshotArchiveService {
   private readonly requests: KnexSnapshotArchiveRequestStore
   private readonly archives: KnexSnapshotArchiveStore
+  private readonly database: Knex
   private active?: Capture
   private stopped = false
   private closing?: Promise<void>
   private cleanupFailure?: { error: unknown }
 
   constructor(private readonly storage: StorageKnex) {
+    this.database = storage.knex
     this.requests = new KnexSnapshotArchiveRequestStore(storage.knex, true, true)
     this.archives = new KnexSnapshotArchiveStore(storage.knex)
   }
 
   private assertOpen(): void {
     if (this.stopped) throw new WERR_INVALID_OPERATION('Snapshot archive service is closed')
+    if (this.storage.knex !== this.database)
+      throw new WERR_INVALID_OPERATION('Snapshot archive service provider changed')
   }
 
   private failedCleanup(error: unknown): never {
@@ -169,6 +174,7 @@ export class KnexSnapshotArchiveService {
         { signal: controller.signal, lifetimeMs: Math.min(300000, remaining) },
         owner
       )
+      this.assertOpen()
       if (source === undefined) throw new WERR_NOT_IMPLEMENTED('Snapshot archive capture requires SQLite WAL or MySQL')
       await captureSnapshotArchiveSource(
         source,

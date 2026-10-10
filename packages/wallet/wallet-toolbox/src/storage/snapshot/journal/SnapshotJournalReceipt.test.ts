@@ -8,6 +8,7 @@ import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import * as ArchiveClock from '../archive/SnapshotArchiveSql'
 import {
   advanceSnapshotJournalFloor,
+  retainSnapshotJournalEvents,
   snapshotJournalReceiptPolicy,
   snapshotJournalReceiptBinding,
   snapshotJournalReceiptDdl,
@@ -588,5 +589,35 @@ describe('atomic continuity floor', () => {
       expect((await k('snapshot_journal_clock').first()).revision).toBe(allowed ? 101 : 100)
       expect(await k('snapshot_journal_receipts').orderBy('requestId')).toEqual(proofs)
     }
+  })
+
+  test('automatic event retention clamps to every live receipt and physically removes only expired capacity', async () => {
+    await stored(1, 90)
+    await stored(2, 70)
+    await stored(3, 30, 1999)
+    const result = await k.transaction(t => retainSnapshotJournalEvents(t, revision(10)))
+    expect(result).toEqual({ floor: '70', highWater: '101', liveReceipts: 2, examined: 3, receiptsRemoved: 1 })
+    expect((await k('snapshot_journal_retention').first()).floor).toBe('70')
+    expect((await k('snapshot_journal_receipts').orderBy('requestId')).map(row => row.requestId)).toEqual([
+      '1'.padStart(64, '0'),
+      '2'.padStart(64, '0')
+    ])
+  })
+  test('automatic receipt cleanup keeps the fixed native 64-row deletion bound across passes', async () => {
+    for (let index = 1; index <= 128; index++) await stored(index, 95, 1999)
+    const one = await k.transaction(t => retainSnapshotJournalEvents(t, revision(100)))
+    expect(one?.receiptsRemoved).toBe(64)
+    expect(await k('snapshot_journal_receipts')).toHaveLength(64)
+    const two = await k.transaction(t => retainSnapshotJournalEvents(t, revision(100)))
+    expect(two?.receiptsRemoved).toBe(64)
+    expect(await k('snapshot_journal_receipts')).toHaveLength(0)
+    expect(BigInt(two!.floor)).toBeGreaterThanOrEqual(BigInt(one!.floor))
+  })
+  test('disabled clock commits no automatic floor or expired receipt deletion', async () => {
+    await stored(1, 90, 1999)
+    await k('snapshot_journal_clock').update({ enabled: 0, reason: 'capacity-exhausted' })
+    await expect(k.transaction(t => retainSnapshotJournalEvents(t, revision(0)))).resolves.toBeUndefined()
+    expect((await k('snapshot_journal_retention').first()).floor).toBe('0')
+    expect(await k('snapshot_journal_receipts')).toHaveLength(1)
   })
 })

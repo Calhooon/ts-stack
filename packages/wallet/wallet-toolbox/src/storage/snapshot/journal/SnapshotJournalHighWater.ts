@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -16,7 +17,7 @@ export async function readSnapshotJournalHighWater(
   floor: SnapshotJournalRevision
 ): Promise<SnapshotJournalRevision> {
   const client = k.client.config.client,
-    local = client === 'sqlite3' || client === 'better-sqlite3'
+    local = client === 'sqlite3' || client === 'better-sqlite3' || isOwnedNativeSqlite(k)
   if (!local && client !== 'mysql' && client !== 'mysql2')
     throw new WERR_INVALID_OPERATION('Unsupported snapshot journal SQL driver')
   if (!Number.isSafeInteger(userId) || userId < 1) throw new WERR_INVALID_OPERATION('Invalid snapshot journal profile')

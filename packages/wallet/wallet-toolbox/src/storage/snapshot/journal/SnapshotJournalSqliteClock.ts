@@ -1,3 +1,4 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import {
@@ -29,7 +30,7 @@ export const SNAPSHOT_JOURNAL_SQLITE_REVISION = '(SELECT revision FROM snapshot_
 
 /** New owned installation only. Recovery and epoch replacement belong to the migration. */
 export async function installSnapshotJournalSqliteClock(k: Knex, ceiling: SnapshotJournalRevision): Promise<void> {
-  if (k.client.config.client !== 'sqlite3' && k.client.config.client !== 'better-sqlite3') {
+  if (k.client.config.client !== 'sqlite3' && k.client.config.client !== 'better-sqlite3' && !isOwnedNativeSqlite(k)) {
     throw new WERR_INVALID_OPERATION('Snapshot journal clock requires SQLite')
   }
   if (snapshotJournalRevision(ceiling) === '0') throw new WERR_INVALID_OPERATION('Empty snapshot journal event window')

@@ -1,3 +1,16 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
+import type {
+  SnapshotJournalReceiptPolicy,
+  SnapshotJournalReceiptBinding,
+  SnapshotJournalReceipt,
+  SnapshotJournalRetention
+} from './SnapshotJournalTypes'
+export type {
+  SnapshotJournalReceiptPolicy,
+  SnapshotJournalReceiptBinding,
+  SnapshotJournalReceipt,
+  SnapshotJournalRetention
+} from './SnapshotJournalTypes'
 import type { Knex } from 'knex'
 import { createHash } from 'node:crypto'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -11,39 +24,13 @@ import {
 
 export const SNAPSHOT_JOURNAL_RECEIPT_LIMIT = 128
 export const SNAPSHOT_JOURNAL_RECEIPT_MAX_LIFETIME = 2592000000
-export interface SnapshotJournalReceiptPolicy {
-  receiptLimit: number
-  receiptLifetimeMs: number
-}
-export interface SnapshotJournalReceiptBinding {
-  backend: string
-  epoch: string
-  source: string
-  schema: string
-  storageIdentity: string
-  identityKey: string
-  userId: number
-  chain: string
-}
-export interface SnapshotJournalReceipt {
-  requestId: string
-  binding: string
-  highWater: SnapshotJournalRevision
-  floor: SnapshotJournalRevision
-  expiresAt: number
-}
-export interface SnapshotJournalRetention {
-  floor: SnapshotJournalRevision
-  receiptLimit: number
-  receiptLifetimeMs: number
-}
 const digestPattern = /^[0-9a-f]{64}$/
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Invalid, unavailable or expired snapshot journal receipt')
 }
 function local(k: Knex): boolean {
   const client = k.client.config.client
-  if (client === 'sqlite3' || client === 'better-sqlite3') return true
+  if (client === 'sqlite3' || client === 'better-sqlite3' || isOwnedNativeSqlite(k)) return true
   if (client === 'mysql' || client === 'mysql2') return false
   return invalid()
 }
@@ -337,6 +324,58 @@ export async function advanceSnapshotJournalFloor(
   if ((await k('snapshot_journal_retention').where('id', 1).where('floor', state.floor).update({ floor })) !== 1)
     return invalid()
   return { floor, highWater, liveReceipts, examined: rows.length }
+}
+
+/** Automatic bounded retention policy inside a freshly owned complete-generation
+ * writer. The actual native clock and live receipts cap the floor; elapsed time
+ * alone never releases receipt capacity. No reusable authority verdict exists. */
+export async function retainSnapshotJournalEvents(
+  k: Knex,
+  requested: SnapshotJournalRevision
+): Promise<
+  | {
+      floor: SnapshotJournalRevision
+      highWater: SnapshotJournalRevision
+      liveReceipts: number
+      examined: number
+      receiptsRemoved: number
+    }
+  | undefined
+> {
+  const events = snapshotJournalRevision(requested)
+  transaction(k)
+  const highWater = await reserveSnapshotJournalCaptureFence(k)
+  if (highWater === undefined) return undefined
+  const state = await retention(k, true),
+    time = await now(k)
+  if (compareSnapshotJournalRevisions(state.floor, highWater) > 0) return invalid()
+  let floor = snapshotJournalRevision(
+    (BigInt(highWater) > BigInt(events) ? BigInt(highWater) - BigInt(events) : 0n).toString()
+  )
+  if (compareSnapshotJournalRevisions(floor, state.floor) < 0) floor = state.floor
+  const query = receiptQuery(k)
+    .orderBy('requestId')
+    .limit(state.receiptLimit + 1)
+  if (!local(k)) query.forUpdate().noWait()
+  const rows: Array<Record<string, unknown>> = await query
+  if (rows.length > state.receiptLimit) return invalid()
+  let liveReceipts = 0
+  for (const row of rows) {
+    const current = receipt(row, true)
+    if (compareSnapshotJournalRevisions(current.floor, state.floor) > 0) return invalid()
+    if (current.expiresAt <= time) continue
+    if (
+      compareSnapshotJournalRevisions(current.highWater, state.floor) < 0 ||
+      compareSnapshotJournalRevisions(current.highWater, highWater) > 0
+    )
+      return invalid()
+    liveReceipts++
+    if (compareSnapshotJournalRevisions(floor, current.highWater) > 0) floor = current.highWater
+  }
+  if ((await k('snapshot_journal_retention').where({ id: 1, floor: state.floor }).update({ floor })) !== 1)
+    return invalid()
+  const receiptsRemoved = await collectSnapshotJournalReceipts(k)
+  return { floor, highWater, liveReceipts, examined: rows.length, receiptsRemoved }
 }
 
 /** Internal collector lock; callers reserve the global writer clock first. */

@@ -765,6 +765,459 @@
           "Generated private-file operations retain exact bytes across bounded short reads/writes and independently verified complete authentication/semantics.",
           "Readers, writers and private paths remain owned through settlement and cleanup; provisional data never activates a wallet."
         ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38AuthenticatedPrivateStageNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38AuthenticatedPrivateStageNode current ownership/data contract",
+        "target": "Wallet Brc38AuthenticatedPrivateStageNode current ownership/data contract",
+        "invariants": [
+          "generated independent envelopes and partitions preserve all thirteen rows and original charged replay",
+          "generated ordinary authentication and semantic refusals release physical capacity before rejection",
+          "generated source failure, cancellation and pre-admission refusal retain exact reasons and settle original ownership"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportExistingRows.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportExistingRows current ownership/data contract",
+        "target": "Wallet Brc38ImportExistingRows current ownership/data contract",
+        "invariants": [
+          "generated row pairs preserve native identities, dates, tombstones and exact aggregate charges",
+          "generated proof/request precedence reconstructs only admitted bounded slices and freezes binary values"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportHistory.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportHistory current ownership/data contract",
+        "target": "Wallet Brc38ImportHistory current ownership/data contract",
+        "invariants": [
+          "full300 native notification projections match independent accepted-number scope oracle without mutating original history"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportIdMap.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportIdMap current ownership/data contract",
+        "target": "Wallet Brc38ImportIdMap current ownership/data contract",
+        "invariants": [
+          "generated independent import scopes preserve exact maps across committed resume"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournal.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportJournal current ownership/data contract",
+        "target": "Wallet Brc38ImportJournal current ownership/data contract",
+        "invariants": [
+          "independently observes exact prefix/IDs across every rollback and lost-ack boundary"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournalSchema.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportJournalSchema current ownership/data contract",
+        "target": "Wallet Brc38ImportJournalSchema current ownership/data contract",
+        "invariants": [
+          "nontransaction owners refuse before any query; a real transaction remains idempotent"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportJournalSchemaBody current ownership/data contract",
+        "target": "Wallet Brc38ImportJournalSchemaBody current ownership/data contract",
+        "invariants": [
+          "generated reservations charge exactly once and require owned immutable cleanup"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportMergeCheckpointNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportMergeCheckpointNode current ownership/data contract",
+        "target": "Wallet Brc38ImportMergeCheckpointNode current ownership/data contract",
+        "invariants": [
+          "generated actual authenticated headers create one-use native source checkpoints without replacing the primary",
+          "generated renamed source retains its prior identity reference and map while stale prior state refuses",
+          "generated actual durable ID mapping increments or finalizes the bounded source map and rejects prior mapping conflicts",
+          "generated changed destination user refuses its original prepared header update and preserves the outer transaction",
+          "generated cancellation after real preparation consumes apply authority and leaves durable checkpoint effects unchanged",
+          "generated original small decoded budgets refuse existing checkpoints without durable effects or writable-phase leaks"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportPage.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportPage current ownership/data contract",
+        "target": "Wallet Brc38ImportPage current ownership/data contract",
+        "invariants": [
+          "exact thirteen-table sequence and semantic values survive every row-page boundary including the original incoming Number domain"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportProvenanceNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportProvenanceNode current ownership/data contract",
+        "target": "Wallet Brc38ImportProvenanceNode current ownership/data contract",
+        "invariants": [
+          "generated authenticated header and all thirteen table originals retain independent canonical bytes hashes and exact UTF8 charges",
+          "generated prepared authority is one-use and rereads the current native budget before writer application",
+          "generated fixed decoded quota and cancellation refuse before native effects and preserve transaction rollback",
+          "generated scoped bounded native reads refuse before original payload transfer and originals stay immutable",
+          "generated real schema guards enforce exact prefix scope fixed quota and immutable charges without duplicate effects"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportTargetIndexes.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ImportTargetIndexes current ownership/data contract",
+        "target": "Wallet Brc38ImportTargetIndexes current ownership/data contract",
+        "invariants": [
+          "ordinary catalog reordering is harmless and a missing or altered owned index fails"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38KnexDestinationFence.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38KnexDestinationFence current ownership/data contract",
+        "target": "Wallet Brc38KnexDestinationFence current ownership/data contract",
+        "invariants": [
+          "actual SQLite exact 64-bit revisions retain distinct stale fences beyond Number precision"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeCatalogNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38NativeCatalogNode current ownership/data contract",
+        "target": "Wallet Brc38NativeCatalogNode current ownership/data contract",
+        "invariants": [
+          "generated migration preserves every original receipt field and independently binds initial progress",
+          "generated ordinary rollback restores the exact namespace and receipt even after progress advancement",
+          "generated receiving rows refuse migration while retaining their complete original catalog",
+          "generated changes to each expected receipt field refuse before any namespace transition",
+          "generated progress-digest changes or active-state regression refuse without changing original lineage",
+          "generated extra schema objects or legacy coexistence refuse before receipt materialization",
+          "generated duplicate migration refuses and later valid progress preserves original metadata"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38OwnedImportReads.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38OwnedImportReads current ownership/data contract",
+        "target": "Wallet Brc38OwnedImportReads current ownership/data contract",
+        "invariants": [
+          "every pending success/failure is drained and escaped work cannot restart ownership"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PortableRows.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PortableRows current ownership/data contract",
+        "target": "Wallet Brc38PortableRows current ownership/data contract",
+        "invariants": [
+          "generated rows retain unknown data and decode every declared field without changing source rows",
+          "primitive validation retains caller values and exact failing paths"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateChunkPipe.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PrivateChunkPipe current ownership/data contract",
+        "target": "Wallet Brc38PrivateChunkPipe current ownership/data contract",
+        "invariants": [
+          "300 bounded private producer/reader schedules preserve exact bytes and owned backpressure"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateDestinationLeaseNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PrivateDestinationLeaseNode current ownership/data contract",
+        "target": "Wallet Brc38PrivateDestinationLeaseNode current ownership/data contract",
+        "invariants": [
+          "generated wrapper identity never transfers a live lease between independently claimed stores",
+          "generated retained handles and new registrations reject after actual physical store closure",
+          "generated access cannot renew the original real wall-clock expiry or enter destination work after it"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateImportJournalNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PrivateImportJournalNode current ownership/data contract",
+        "target": "Wallet Brc38PrivateImportJournalNode current ownership/data contract",
+        "invariants": [
+          "generated bound admissions refuse before a real independent destination writer and preserve every durable charge",
+          "generated lost acknowledgement replays the actual native header and original provenance checkpoint without repeated writes",
+          "generated callback cancellation and rejected post-write fences atomically roll back native rows mappings and cursor",
+          "generated exact native restore replay preserves COMPLETE for an authenticated empty archive and superseded admission refuses",
+          "generated page bounds mode guards and pre-aborted calls refuse without callback or destination effects"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateImportPreviewNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PrivateImportPreviewNode current ownership/data contract",
+        "target": "Wallet Brc38PrivateImportPreviewNode current ownership/data contract",
+        "invariants": [
+          "generated real previews preserve physical destination, exact clocks and independent receipt charges; stale UUID cannot take the writer",
+          "generated independent journal writes and primary away-and-back refuse stale previews while retaining authenticated receipts",
+          "generated noncanonical or mismatched wire projections never replace the actual authenticated receipt",
+          "generated real step rollback retains both owners and preview; physical handoff keeps the original receipt and deadline"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivatePublicationCopyNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PrivatePublicationCopyNode current ownership/data contract",
+        "target": "Wallet Brc38PrivatePublicationCopyNode current ownership/data contract",
+        "invariants": [
+          "generated source bytes copy and hash exactly across fixed-buffer boundaries",
+          "generated physical byte caps refuse before creating a destination and exclusive destinations retain their bytes",
+          "generated original expiry and cancellation refuse before source ownership or destination creation",
+          "generated current ownership rejection retains the cause and never returns a successful copy receipt",
+          "generated exact descriptor receipts hash the owned file and mismatching current device or inode refuses"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ProfileInventoryClaimNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ProfileInventoryClaimNode current ownership/data contract",
+        "target": "Wallet Brc38ProfileInventoryClaimNode current ownership/data contract",
+        "invariants": [
+          "generated grants detach binding and recheck every selected durable scope field and state",
+          "generated committed and rolled-back reservations never keep a completed writer grant alive",
+          "generated wrong catalog filenames and nontransaction owners reject before any authority query"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ProfilePhysicalIdentityNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38ProfilePhysicalIdentityNode current ownership/data contract",
+        "target": "Wallet Brc38ProfilePhysicalIdentityNode current ownership/data contract",
+        "invariants": [
+          "generated full-width decimal identities preserve the optional wallet contract",
+          "generated object changes are rejected and granted retirement tolerates only owned removals"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PublishedProfileReceiptNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PublishedProfileReceiptNode current ownership/data contract",
+        "target": "Wallet Brc38PublishedProfileReceiptNode current ownership/data contract",
+        "invariants": [
+          "generated original and forwarded receiving rows preserve complete Unicode metadata and absent copy fields",
+          "generated complete receipt states preserve their independently computed digest and exact copy extent",
+          "generated same-size metadata changes, unknown states and above-limit byte metadata refuse without changing durable rows",
+          "generated complete states refuse absent, noncanonical or out-of-range copy receipts while retaining the original catalog",
+          "generated page budgets and every primary-state rule match the independent fixed-overhead model",
+          "generated original fixed policies retain independently bound identities and refuse changed digests, admission or expiry",
+          "generated v2 completed receipts refuse absent physical bindings while the explicit receiving parser retains its limited role"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PublishedWalletData.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38PublishedWalletData current ownership/data contract",
+        "target": "Wallet Brc38PublishedWalletData current ownership/data contract",
+        "invariants": [
+          "generated completed profiles reject a changed user, chain, destination, completion or primary"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38SemanticStage.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38SemanticStage current ownership/data contract",
+        "target": "Wallet Brc38SemanticStage current ownership/data contract",
+        "invariants": [
+          "generated identity-preserving ID shifts and table orders agree with the independent legacy parser"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingAdmissionNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38StagingAdmissionNode current ownership/data contract",
+        "target": "Wallet Brc38StagingAdmissionNode current ownership/data contract",
+        "invariants": [
+          "300 native capacity schedules preserve independent reservation arithmetic and exact release"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingBinding.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38StagingBinding current ownership/data contract",
+        "target": "Wallet Brc38StagingBinding current ownership/data contract",
+        "invariants": [
+          "every identity and destination epoch changes resume identity without mutating the caller",
+          "invalid profile, digest, chain and generation refuse without modifying the supplied record"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingCleanupError.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38StagingCleanupError current ownership/data contract",
+        "target": "Wallet Brc38StagingCleanupError current ownership/data contract",
+        "invariants": [
+          "generated failures preserve original causes, release retry ownership and become idempotent only after success",
+          "generated concurrent retries cannot acquire a second physical owner and failed completion permits a fresh retry"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingOwnershipNode.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet Brc38StagingOwnershipNode current ownership/data contract",
+        "target": "Wallet Brc38StagingOwnershipNode current ownership/data contract",
+        "invariants": [
+          "generated bindings and clean handoffs preserve the original physical owner and fixed lease",
+          "generated invalid caller parameters, missing files and directory permissions refuse before ownership creation",
+          "generated expired claims cannot renew a fixed original deadline or make a cleanup owner writable"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/portable/KnexBrc38StagingStore.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet KnexBrc38StagingStore current ownership/data contract",
+        "target": "Wallet KnexBrc38StagingStore current ownership/data contract",
+        "invariants": [
+          "independent UTF8 charges, thirteen counters and late key rollback survive original owned replay and reopen",
+          "generated quota, allocation and coordinate refusals preserve every original counter and indexed row",
+          "real independent authentication binds preview charges and drains reads before physical owner handoff"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/schema/knexDatabaseSystem.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet knexDatabaseSystem current ownership/data contract",
+        "target": "Wallet knexDatabaseSystem current ownership/data contract",
+        "invariants": [
+          "string aliases remain authoritative while class clients retain their dialect"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDeltaFrame.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalDeltaFrame current ownership/data contract",
+        "target": "Wallet SnapshotJournalDeltaFrame current ownership/data contract",
+        "invariants": [
+          "generated exact journal identities, raw SQL cell representations and tombstones survive independent round trips"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDeltaPage.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalDeltaPage current ownership/data contract",
+        "target": "Wallet SnapshotJournalDeltaPage current ownership/data contract",
+        "invariants": [
+          "generated all-table raw payloads, nullable cells and exact journal identities are read from the same actual source transaction",
+          "generated byte admission refusal precedes every raw payload fetch and leaves the actual source unchanged",
+          "generated durable tombstones preserve exact keys and advance source progress without materializing deleted payloads",
+          "generated bounded physical pages consume every event while preserving only actual profile members and their raw cells"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDestinationStage.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalDestinationStage current ownership/data contract",
+        "target": "Wallet SnapshotJournalDestinationStage current ownership/data contract",
+        "invariants": [
+          "generated ordinary writer rollback preserves complete raw pages and leaves no charge or checkpoint drift",
+          "generated actual page loss matches an independent ordered custody model and every example rolls back"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDestinationWindow.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalDestinationWindow current ownership/data contract",
+        "target": "Wallet SnapshotJournalDestinationWindow current ownership/data contract",
+        "invariants": [
+          "generated prefixes traverse all fifteen source streams and twelve promotion tables before acknowledgement and coherent succession",
+          "generated callback failures and primary changes roll back every actual write and checkpoint",
+          "generated repeated and regressed journal positions cannot invoke the destination callback"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalIdentityLedger.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalIdentityLedger current ownership/data contract",
+        "target": "Wallet SnapshotJournalIdentityLedger current ownership/data contract",
+        "invariants": [
+          "generated source history independently predicts acknowledged identity, aliasing and rollback"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalIdentityRetirements current ownership/data contract",
+        "target": "Wallet SnapshotJournalIdentityRetirements current ownership/data contract",
+        "invariants": [
+          "generated independent history retains every superseded association and rolls back all custody"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalSourceGenerations.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalSourceGenerations current ownership/data contract",
+        "target": "Wallet SnapshotJournalSourceGenerations current ownership/data contract",
+        "invariants": [
+          "generated source membership and identity independently predict bounded live resolution and rollback"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalSourceIdentities.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet SnapshotJournalSourceIdentities current ownership/data contract",
+        "target": "Wallet SnapshotJournalSourceIdentities current ownership/data contract",
+        "invariants": [
+          "generated relocation, txid discovery and exact parent replacement preserve only the appropriate associations"
+        ]
+      },
+      {
+        "path": "packages/wallet/wallet-toolbox/src/storage/sync/StorageAccessQueue.property.test.ts",
+        "manifest": "packages/wallet/wallet-toolbox/package.json",
+        "risk": "critical",
+        "boundary": "Wallet StorageAccessQueue current ownership/data contract",
+        "target": "Wallet StorageAccessQueue current ownership/data contract",
+        "invariants": [
+          "generated overload and cancellations preserve admitted FIFO, exclusive ownership and future admission"
+        ]
       }
     ],
     "exclusions": [

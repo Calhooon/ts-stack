@@ -2,7 +2,9 @@ import 'fake-indexeddb/auto'
 import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
-import { PrivateKey, ProtoWallet } from '@bsv/sdk'
+import { PrivateKey } from '@bsv/sdk'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { snapshotAuthenticationWallet } from '../test/utils/snapshotArchiveHttpFixtures'
 import { StorageIdb } from '../src/storage/StorageIdb'
 import { StorageKnex } from '../src/storage/StorageKnex'
 import { StorageProvider } from '../src/storage/StorageProvider'
@@ -48,59 +50,61 @@ describe.each(['sqlite', 'http'] as const)('bounded sync measured on %s', backen
     process.stdout.write(`seeded ${backend}\n`)
     let reader: WalletStorageSyncReader = source
     let server: StorageServer | undefined
+    let authenticationWallet: ReturnType<typeof snapshotAuthenticationWallet> | undefined
     let wireBytes = 0
     let queries = 0
     if (source instanceof StorageKnex)
       source.knex.on('query', () => {
         queries++
       })
-    if (backend === 'http') {
-      server = new StorageServer(source, {
-        port: 0,
-        wallet: new ProtoWallet(key),
-        monetize: false,
-        logRpcRequests: false,
-        sessionManager: new KnexSessionManager((source as StorageKnex).knex),
-        adminIdentityKeys: [],
-        calculateRequestPrice: async () => 0
-      })
-      server.start()
-      if (!server.server.listening) await once(server.server, 'listening')
-      server.server.on('request', (_req, res) => {
-        const write = res.write.bind(res)
-        const end = res.end.bind(res)
-        const size = (chunk: unknown) =>
-          typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk instanceof Uint8Array ? chunk.byteLength : 0
-        res.write = ((chunk: unknown, ...args: unknown[]) => {
-          wireBytes += size(chunk)
-          return Reflect.apply(write, res, [chunk, ...args])
-        }) as typeof res.write
-        res.end = ((chunk: unknown, ...args: unknown[]) => {
-          wireBytes += size(chunk)
-          return Reflect.apply(end, res, [chunk, ...args])
-        }) as typeof res.end
-      })
-      const address = server.server.address()
-      if (address == null || typeof address === 'string') throw new Error('HTTP fixture did not bind')
-      reader = new StorageClient(new ProtoWallet(key), `http://127.0.0.1:${address.port}`)
-    }
-    const getChunk = reader.getSyncChunk.bind(reader)
-    let pages = 0
-    let largestPage = 0
-    reader.getSyncChunk = async args => {
-      expect(args.maxItems).toBeLessThanOrEqual(1000)
-      expect(args.maxRoughSize).toBeLessThanOrEqual(pageBytes)
-      await delay(fixedReadMs)
-      const chunk = await getChunk(args)
-      pages++
-      largestPage = Math.max(
-        largestPage,
-        Object.values(chunk).reduce<number>((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0)
-      )
-      return chunk
-    }
     const reports: Record<string, unknown>[] = []
     try {
+      if (backend === 'http') {
+        authenticationWallet = snapshotAuthenticationWallet(key)
+        server = new StorageServer(source, {
+          port: 0,
+          wallet: authenticationWallet,
+          monetize: false,
+          logRpcRequests: false,
+          sessionManager: new KnexSessionManager((source as StorageKnex).knex),
+          adminIdentityKeys: [],
+          calculateRequestPrice: async () => 0
+        })
+        server.start()
+        if (!server.server.listening) await once(server.server, 'listening')
+        server.server.on('request', (_req: IncomingMessage, res: ServerResponse) => {
+          const write = res.write.bind(res)
+          const end = res.end.bind(res)
+          const size = (chunk: unknown) =>
+            typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk instanceof Uint8Array ? chunk.byteLength : 0
+          res.write = ((chunk: unknown, ...args: unknown[]) => {
+            wireBytes += size(chunk)
+            return Reflect.apply(write, res, [chunk, ...args])
+          }) as typeof res.write
+          res.end = ((chunk: unknown, ...args: unknown[]) => {
+            wireBytes += size(chunk)
+            return Reflect.apply(end, res, [chunk, ...args])
+          }) as typeof res.end
+        })
+        const address = server.server.address()
+        if (address == null || typeof address === 'string') throw new Error('HTTP fixture did not bind')
+        reader = new StorageClient(authenticationWallet, `http://127.0.0.1:${address.port}`)
+      }
+      const getChunk = reader.getSyncChunk.bind(reader)
+      let pages = 0
+      let largestPage = 0
+      reader.getSyncChunk = async args => {
+        expect(args.maxItems).toBeLessThanOrEqual(1000)
+        expect(args.maxRoughSize).toBeLessThanOrEqual(pageBytes)
+        await delay(fixedReadMs)
+        const chunk = await getChunk(args)
+        pages++
+        largestPage = Math.max(
+          largestPage,
+          Object.values(chunk).reduce<number>((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0)
+        )
+        return chunk
+      }
       for (const mode of ['exclusive', 'paged'] as const) {
         const destination = await store('sqlite')
         if (destination instanceof StorageKnex)
@@ -242,6 +246,7 @@ describe.each(['sqlite', 'http'] as const)('bounded sync measured on %s', backen
     } finally {
       process.stdout.write(`${JSON.stringify({ resumableSync: reports }, null, 2)}\n`)
       if (server !== undefined) await server.close()
+      await authenticationWallet?.destroy()
       await close(source)
     }
   }, 300000)

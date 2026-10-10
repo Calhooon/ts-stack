@@ -5,6 +5,7 @@ import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
 import { WalletStorageManager } from '../WalletStorageManager'
 import type { SyncSessionProgress } from './syncSession'
+import { StorageAccessQueueLimitError } from './StorageAccessQueueLimitError'
 
 const stores: StorageIdb[] = []
 const identityKey = PrivateKey.fromRandom().toPublicKey().toString()
@@ -16,6 +17,33 @@ function deferred() {
   })
   return { promise, resolve }
 }
+
+test('request admission is bounded before an unresolved availability call can accumulate more manager work', async () => {
+  const { manager } = await fixture(0),
+    gate = deferred(),
+    original = manager.makeAvailable.bind(manager)
+  const availability = jest.spyOn(manager, 'makeAvailable').mockImplementation(async () => {
+    await gate.promise
+    return await original()
+  })
+  const requests = Array.from({ length: 1032 }, () => manager.runAsReader(async () => 'admitted'))
+  // Observe every original rejection immediately; no source operation has begun.
+  const completion = Promise.allSettled(requests)
+  try {
+    await expect(manager.runAsReader(async () => 'overflow')).rejects.toBeInstanceOf(StorageAccessQueueLimitError)
+    expect(availability).toHaveBeenCalledTimes(1032)
+  } finally {
+    gate.resolve()
+  }
+  const results = await completion
+  expect(results.some(value => value.status === 'fulfilled')).toBe(true)
+  for (const value of results) {
+    if (value.status === 'fulfilled') expect(value.value).toBe('admitted')
+    else expect(value.reason).toBeInstanceOf(StorageAccessQueueLimitError)
+  }
+  availability.mockRestore()
+  expect(await manager.runAsReader(async () => 'reused')).toBe('reused')
+})
 
 async function makeStorage(dbName?: string): Promise<StorageIdb> {
   const storage = new StorageIdb(StorageProvider.createStorageBaseOptions('test'))
@@ -382,9 +410,13 @@ test('a queued page cancelled behind foreground work never starts its commit', a
   })
   await locked.promise
   controller.abort()
-  release.resolve()
-  await foreground
-  expect(await sync).toMatchObject({ status: 'cancelled', pages: 0 })
+  try {
+    // Cancellation settles without waiting for the unrelated foreground owner.
+    expect(await sync).toMatchObject({ status: 'cancelled', pages: 0 })
+  } finally {
+    release.resolve()
+    await foreground
+  }
   expect(applied).not.toHaveBeenCalled()
   expect(await writer.countTxLabels({ partial: {} })).toBe(0)
 })

@@ -149,9 +149,38 @@ export class SyncPageBudget {
    * available, is the provider's actual page charge. Old callers remain valid.
    */
   committed(chunk: SyncChunk, elapsedMs: number, readMs = 0, payloadBytes?: number): void {
+    this.observeCommitted(pageWorkload(chunk), elapsedMs, readMs, payloadBytes)
+  }
+
+  /** Statistics from either complete rows or separate field metadata. A count
+   * and table name need no fabricated SyncChunk or partially hydrated DTO.
+   * Field-aware callers supply actual returned extent bytes when measured;
+   * metadata-only/old sources retain their original page-charge fallback. */
+  committedSnapshot(
+    table: WalletSnapshotTable,
+    records: number,
+    elapsedMs: number,
+    readMs = 0,
+    payloadBytes?: number
+  ): void {
+    if (!Number.isSafeInteger(records) || records < 0 || records > 1000) return
+    this.observeCommitted(
+      { records, proofs: table === 'provenTxs' && records > 0, workload: table },
+      elapsedMs,
+      readMs,
+      payloadBytes
+    )
+  }
+
+  private observeCommitted(
+    cost: { records: number; proofs: boolean; workload: string },
+    elapsedMs: number,
+    readMs: number,
+    payloadBytes?: number
+  ): void {
     if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || !Number.isFinite(readMs) || readMs < 0 || readMs > elapsedMs)
       return
-    const { records, proofs, workload } = pageWorkload(chunk)
+    const { records, proofs, workload } = cost
     if (records === 0) return
     // Table transitions can change query, payload and proof costs. A stable
     // sorted key also handles legacy chunks containing more than one table.

@@ -229,6 +229,93 @@ test('repeated source names retain independent ordered metadata groups', async (
   }
 })
 
+test('two current unique constraints use one fresh exact index-part group', async () => {
+  const k = await fixture()
+  try {
+    await k.raw('CREATE UNIQUE INDEX "identity quoted index" ON identity_a(owner,code COLLATE RTRIM)')
+    const queries: string[] = []
+    const observe = (query: { sql: string }) => queries.push(query.sql)
+    k.on('query', observe)
+    const actual = await readIdentities(k, [sources[0]])
+    k.off('query', observe)
+    expect(queries.filter(sql => sql.includes('pragma_index_xinfo'))).toHaveLength(1)
+    expect(queries.filter(sql => sql.startsWith('PRAGMA index_xinfo'))).toHaveLength(0)
+    expect(actual).toEqual(await original(k, [sources[0]]))
+    expect(actual.map(identityDDL)).toEqual((await original(k, [sources[0]])).map(identityDDL))
+    const names = ((await k.raw('PRAGMA index_list(identity_a)')) as Array<{ name: string; unique: number }>)
+      .filter(row => row.unique !== 0)
+      .map(row => row.name)
+    const observed = await readSqliteIndexObservations(k, names)
+    for (const [index, name] of names.entries()) {
+      expect(observed?.[index].parts).toEqual(await k.raw('PRAGMA index_xinfo(??)', [name]))
+      expect(observed?.[index].parts[0]).not.toHaveProperty('sourceOrdinal')
+    }
+  } finally {
+    await k.destroy()
+  }
+})
+
+test('seventeen current unique constraints retain individual fresh index reads', async () => {
+  const k = await fixture()
+  try {
+    for (let index = 0; index < 16; index++)
+      await k.raw('CREATE UNIQUE INDEX ?? ON identity_a(owner,code)', ['extra_' + index])
+    const names = ((await k.raw('PRAGMA index_list(identity_a)')) as Array<{ name: string }>).map(row => row.name)
+    expect(names).toHaveLength(17)
+    expect(await readSqliteIndexObservations(k, names)).toBeUndefined()
+    expect(await readIdentities(k, [sources[0]])).toEqual(await original(k, [sources[0]]))
+  } finally {
+    await k.destroy()
+  }
+})
+
+test('a valid partial constraint retains the first original validation error before later sources', async () => {
+  const k = await fixture()
+  try {
+    await k.raw('CREATE UNIQUE INDEX partial_identity ON identity_a(owner) WHERE owner>0')
+    await k.raw('DROP TABLE identity_b')
+    const queries: string[] = []
+    const observe = (query: { sql: string }) => queries.push(query.sql)
+    k.on('query', observe)
+    await expect(readIdentities(k, sources)).rejects.toBeInstanceOf(WERR_INVALID_OPERATION)
+    k.off('query', observe)
+    expect(queries.filter(sql => sql.includes('pragma_index_xinfo'))).toHaveLength(0)
+    await expect(readIdentities(k, sources)).rejects.toThrow('Unsupported partial unique identity')
+    await expect(original(k)).rejects.toThrow('Unsupported partial unique identity')
+  } finally {
+    await k.destroy()
+  }
+})
+
+test('empty and nonoptimized index groups preserve fallback without executing metadata SQL', async () => {
+  const k = await fixture(),
+    client = k.client.config.client
+  try {
+    expect(await readSqliteIndexObservations(k, [])).toBeUndefined()
+    k.client.config.client = 'sqlite3'
+    expect(await readSqliteIndexObservations(k, ['sqlite_autoindex_identity_a_1'])).toBeUndefined()
+  } finally {
+    k.client.config.client = client
+    await k.destroy()
+  }
+})
+
+test('returned index metadata is independent across duplicate groups and future observations', async () => {
+  const k = await fixture()
+  try {
+    const names = ['sqlite_autoindex_identity_a_1', 'sqlite_autoindex_identity_a_1']
+    const observed = await readSqliteIndexObservations(k, names)
+    expect(observed).toBeDefined()
+    observed![0].parts[0].name = 'mutated_returned_part'
+    expect(observed![1].parts[0].name).toBe('code')
+    expect((await readSqliteIndexObservations(k, names))?.[0].parts).toEqual(
+      await k.raw('PRAGMA index_xinfo(??)', [names[0]])
+    )
+  } finally {
+    await k.destroy()
+  }
+})
+
 test('two bounded index names use one fresh exact index-part group', async () => {
   const k = await fixture()
   try {
@@ -255,7 +342,7 @@ test('two bounded index names use one fresh exact index-part group', async () =>
   }
 })
 
-test('seventeen current unique constraints retain individual fresh index reads', async () => {
+test('direct index helper: seventeen current unique constraints retain individual fresh index reads', async () => {
   const k = await fixture()
   try {
     for (let index = 0; index < 16; index++)
@@ -269,7 +356,7 @@ test('seventeen current unique constraints retain individual fresh index reads',
   }
 })
 
-test('empty and nonoptimized index groups preserve fallback without executing metadata SQL', async () => {
+test('direct index helper: empty and nonoptimized index groups preserve fallback without executing metadata SQL', async () => {
   const k = await fixture(),
     client = k.client.config.client
   try {
@@ -282,7 +369,7 @@ test('empty and nonoptimized index groups preserve fallback without executing me
   }
 })
 
-test('returned index metadata is independent across duplicate groups and future observations', async () => {
+test('direct index helper: returned index metadata is independent across duplicate groups and future observations', async () => {
   const k = await fixture()
   try {
     const names = ['sqlite_autoindex_identity_a_1', 'sqlite_autoindex_identity_a_1']

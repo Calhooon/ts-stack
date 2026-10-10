@@ -33,6 +33,46 @@ const options: Brc38KnexSourceOptions = {
   maximumCertificateGroupBytes: 65536,
   lifetimeMs: 300000
 }
+test('strict structured source refuses a copied/stock native label before opening a view', async () => {
+  const openReadSnapshot = jest.fn(),
+    storage = {
+      dbtype: 'SQLite',
+      chain: 'test',
+      openReadSnapshot,
+      knex: { isTransaction: false, client: { config: { client: 'better-sqlite3' } } }
+    } as unknown as StorageKnex
+  await expect(
+    openBrc38KnexSource(storage, identity, {
+      ...options,
+      streamedStructured: {
+        maximumStructuredBytes: 1000000000,
+        privateIndexParent: '/private/unused',
+        maximumTemporaryIndexBytes: 1048576,
+        maximumIndexMembers: 2000000000
+      }
+    })
+  ).rejects.toThrow('genuinely owned')
+  expect(openReadSnapshot).not.toHaveBeenCalled()
+})
+test.each([0, 1048575, 17179869185, NaN, Infinity])(
+  'invalid native sort file budget %p refuses before source I/O',
+  async budget => {
+    const openReadSnapshot = jest.fn(),
+      storage = { openReadSnapshot } as unknown as StorageKnex
+    await expect(
+      openBrc38KnexSource(storage, identity, {
+        ...options,
+        streamedStructured: {
+          maximumStructuredBytes: 1000000000,
+          privateIndexParent: '/private/unused',
+          maximumTemporaryIndexBytes: budget,
+          maximumIndexMembers: 2000000000
+        }
+      })
+    ).rejects.toThrow()
+    expect(openReadSnapshot).not.toHaveBeenCalled()
+  }
+)
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'brc38-coherent-'))
   directories.push(directory)
@@ -494,5 +534,118 @@ test('unknown table refusal keeps a real retained source available for its origi
   } finally {
     await owner.release()
     await owner.release()
+  }
+})
+
+// Additive integration cases for the explicit native large-binary path. Original
+// canonical-order and independent property bodies above remain unchanged.
+const streamedOptions: Brc38KnexSourceOptions = {
+  ...options,
+  maximumPageRows: 2,
+  maximumPageBytes: 65536,
+  streamedBinary: { maximumBinaryBytes: 2097152, maximumExtentBytes: 65536 }
+}
+const streamedEncoderOptions = {
+  maximumArchiveBytes: 16777216,
+  maximumRowBytes: 65536,
+  maximumChunkBytes: 65536,
+  streamedRows: { maximumMetadataAllocationBytes: 65536, maximumBinaryBytes: 2097152, maximumRowBytes: 4194304 }
+}
+async function streamedArchiveChunks(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
+  const values: Uint8Array[] = []
+  for await (const chunk of chunks) {
+    expect(chunk.length).toBeLessThanOrEqual(65536)
+    values.push(chunk)
+  }
+  // Whole-document allocation is confined to this finite independent oracle.
+  return Buffer.concat(values)
+}
+test('native streamed binary retains all thirteen canonical tables and a large original WAL value across concurrent writes', async () => {
+  const { source, writer, userId, otherId } = await fixture()
+  await seedClosure(source, userId, otherId)
+  const blob = Buffer.alloc(1048576, 37)
+  await source
+    .knex('transactions')
+    .where({ transactionId: 1 })
+    .update({ rawTx: blob, noSendExpiryReclaimRawTx: Buffer.alloc(131072, 37) })
+  const original = await exportBRC38(source, identity, { requireSnapshot: true })
+  const owner = await openBrc38KnexSource(source, identity, streamedOptions)
+  const sql: string[] = []
+  const observe = ({ sql: text }: { sql: string }) => {
+    if (sql.length < 500) sql.push(text)
+  }
+  source.knex.on('query', observe)
+  await writer
+    .knex('transactions')
+    .where({ transactionId: 1 })
+    .update({ rawTx: Buffer.alloc(1048576, 91) })
+  const stream = await createBrc38Stream(owner, { ...streamedEncoderOptions, exportedAt: original.exportedAt })
+  try {
+    const bytes = await streamedArchiveChunks(stream.chunks)
+    expect(parseBRC38Json(bytes.toString())).toEqual(original)
+    await stream.validateCompleted()
+    expect(sql.some(query => /substr\(/i.test(query))).toBe(true)
+    expect(sql.some(query => /select[^;]*[`"]?transactions[`"]?\.\*/i.test(query))).toBe(false)
+  } finally {
+    source.knex.off('query', observe)
+    await stream.close()
+  }
+  expect((await writer.knex('transactions').where({ transactionId: 1 }).first('rawTx')).rawTx[0]).toBe(91)
+})
+test('native binary references cease to read when their canonical row advances or the source closes', async () => {
+  const { source, userId, otherId } = await fixture()
+  await seedClosure(source, userId, otherId)
+  const owner = await openBrc38KnexSource(source, identity, streamedOptions)
+  const iterator = owner.streamedRows!('transactions')[Symbol.asyncIterator]()
+  try {
+    const first = await iterator.next()
+    expect(first.done).toBe(false)
+    const reference = first.value!.binaries.rawTx
+    expect(await reference.read(0, 1)).toEqual(Uint8Array.from([1]))
+    await iterator.next()
+    await expect(reference.read(0, 1)).rejects.toThrow('row lifetime')
+    await iterator.return?.()
+    await owner.release()
+    await expect(reference.read(0, 1)).rejects.toThrow('row lifetime')
+  } finally {
+    await iterator.return?.()
+    await owner.release()
+  }
+})
+test('native streamed binary policy refuses before any binary extent or whole-row payload fetch', async () => {
+  const { source, userId, otherId } = await fixture()
+  await seedClosure(source, userId, otherId)
+  await source
+    .knex('transactions')
+    .where({ transactionId: 1 })
+    .update({ rawTx: Buffer.alloc(1048576) })
+  const owner = await openBrc38KnexSource(source, identity, {
+    ...streamedOptions,
+    streamedBinary: { maximumBinaryBytes: 1000 }
+  })
+  const sql: string[] = []
+  const observe = ({ sql: text }: { sql: string }) => {
+    sql.push(text)
+  }
+  source.knex.on('query', observe)
+  const iterator = owner.streamedRows!('transactions')[Symbol.asyncIterator]()
+  let failure: unknown
+  try {
+    try {
+      await iterator.next()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(SnapshotResourceLimitError)
+    expect(sql.some(query => /substr\(/i.test(query))).toBe(false)
+    expect(sql.some(query => /select[^;]*[`"]?transactions[`"]?\.\*/i.test(query))).toBe(false)
+    await expect(owner.validateCompleted()).rejects.toThrow('did not complete')
+  } finally {
+    source.knex.off('query', observe)
+    await iterator.return?.()
+    // The failed retained read owns its actual terminal error through physical
+    // drain; accepting that exact error cannot hide secondary cleanup failure.
+    if (failure instanceof SnapshotResourceLimitError) await expect(owner.release()).rejects.toBe(failure)
+    else await owner.release()
   }
 })

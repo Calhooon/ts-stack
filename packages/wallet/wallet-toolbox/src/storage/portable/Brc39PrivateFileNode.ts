@@ -1,9 +1,16 @@
-import { chmod, mkdtemp, open, rm, type FileHandle } from 'node:fs/promises'
+import {
+  createPrivateTemporaryDirectory,
+  createPrivateFile,
+  requirePrivatePath,
+  requirePrivateDescriptor
+} from './Brc38PrivateFilesystemNode'
+import { open, rm, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { runInSeries } from '../../utility/runInSeries'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import type { Brc39StreamQuarantine } from './Brc39StreamNode'
+import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 
 type Consume<T> = (chunks: AsyncIterable<Uint8Array>) => Promise<T>
 export interface Brc39NodeFilePolicy {
@@ -155,7 +162,8 @@ class PrivateFile {
         actualDigest.update(buffer.subarray(0, bytesRead))
         yield bytesRead === buffer.length ? buffer : buffer.slice(0, bytesRead)
       }
-      if ((await reader.stat()).size !== size) throw new Error('Private quarantine size changed')
+      if ((await requirePrivateDescriptor(reader)).size !== BigInt(size))
+        throw new Error('Private quarantine size changed')
       if (!timingSafeEqual(actualDigest.digest(), expectedDigest)) throw new Error('Private quarantine bytes changed')
       complete = true
     }
@@ -163,7 +171,8 @@ class PrivateFile {
     let failure: { error: unknown } | undefined
     let result: T | undefined
     try {
-      if ((await reader.stat()).size !== size) throw new Error('Private quarantine size changed')
+      if ((await requirePrivateDescriptor(reader)).size !== BigInt(size))
+        throw new Error('Private quarantine size changed')
       result = await callback(iterator)
       this.check()
       if (requireComplete && !complete)
@@ -200,7 +209,8 @@ class PrivateFile {
       const writer = this.writer
       if (writer === undefined) throw new Error('Private quarantine writer is closed')
       if (this.bytes === 0) throw new TypeError('Private quarantine is empty')
-      if ((await writer.stat()).size !== this.bytes) throw new Error('Private quarantine size changed')
+      if ((await requirePrivateDescriptor(writer)).size !== BigInt(this.bytes))
+        throw new Error('Private quarantine size changed')
       await writer.sync()
       this.check()
       await writer.close()
@@ -233,10 +243,12 @@ class PrivateFile {
           errors.push(error)
         }
       })
-      try {
-        await rm(this.directory, { recursive: true, force: true })
-      } catch (error) {
-        errors.push(error)
+      if (errors.length === 0) {
+        try {
+          await rm(this.directory, { recursive: true, force: true })
+        } catch (error) {
+          errors.push(error)
+        }
       }
       if (errors.length > 0) throw new AggregateError(errors, 'Private quarantine cleanup failed')
       this.state = 'discarded'
@@ -272,13 +284,13 @@ export async function createBrc39NodeFileQuarantine(
     throw new RangeError('maximumChunkBytes must be an integer from 1 to 65536')
   const policy = Object.freeze({ ...options })
   policy.signal?.throwIfAborted()
-  const directory = await mkdtemp(join(parent, 'brc39-stage-'))
+  await requirePrivatePath(parent, true)
+  const directory = await createPrivateTemporaryDirectory(join(parent, 'brc39-stage-'))
   let stage: PrivateFile | undefined
   try {
-    await chmod(directory, 0o700)
     policy.signal?.throwIfAborted()
     const filename = join(directory, 'quarantine')
-    const writer = await open(filename, 'wx+', 0o600)
+    const writer = await createPrivateFile(filename, true)
     const owned = new PrivateFile(directory, filename, writer, policy, validate)
     stage = owned
     policy.signal?.throwIfAborted()
@@ -290,11 +302,15 @@ export async function createBrc39NodeFileQuarantine(
     }
     return Object.freeze(result)
   } catch (error) {
-    try {
+    const cleanup = async (): Promise<void> => {
+      if (error instanceof Brc38StagingCleanupError) await error.retryCleanup()
       if (stage === undefined) await rm(directory, { recursive: true, force: true })
       else await stage.discard()
+    }
+    try {
+      await cleanup()
     } catch (error_) {
-      throw combined(error, error_)
+      throw new Brc38StagingCleanupError([error, error_], 'Private quarantine creation retains cleanup', cleanup)
     }
     throw error
   }

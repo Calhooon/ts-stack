@@ -1,6 +1,31 @@
 import { parseBRC38Json, type BRC38Tables, type BRC38WalletData } from './index'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import { runInSeries } from '../../utility/runInSeries'
+import {
+  brc38JsonBinaryField,
+  brc38JsonStreamedFieldPolicy,
+  readBrc38JsonBinaryField,
+  type Brc38JsonStreamedField,
+  type Brc38JsonStreamedFieldPolicy,
+  type Brc38JsonStreamedFieldSink
+} from './Brc38JsonBinaryFields'
+import {
+  brc38JsonStructuredField,
+  brc38JsonStructuredFieldPolicy,
+  readBrc38JsonStructuredField,
+  type Brc38JsonStructuredField,
+  type Brc38JsonStructuredFieldPolicy,
+  type Brc38JsonStructuredFieldSink
+} from './Brc38JsonStructuredFields'
+
+import {
+  brc38JsonTextField,
+  brc38JsonTextFieldPolicy,
+  readBrc38JsonTextField,
+  type Brc38JsonTextField,
+  type Brc38JsonTextFieldPolicy,
+  type Brc38JsonTextFieldSink
+} from './Brc38JsonTextFields'
 
 type Table = keyof BRC38Tables
 type Row = BRC38Tables[Table][number]
@@ -15,8 +40,18 @@ export interface Brc38JsonStreamOptions {
   /** Includes empty chunks, so a producer cannot make unlimited zero-byte progress. */
   maximumInputChunks?: number
   signal?: AbortSignal
+  /** Explicit private field staging. Both this policy and the sink are required;
+   * the legacy materialized-row mode and allocation limits remain unchanged. */
+  streamedFields?: Brc38JsonStreamedFieldPolicy
+  /** Explicit structured JSON capture into private field staging. */
+  streamedStructuredFields?: Brc38JsonStructuredFieldPolicy
+  /** Explicit decoded scalar TEXT capture; legacy row mode is unchanged. */
+  streamedTextFields?: Brc38JsonTextFieldPolicy
 }
 export interface Brc38JsonStagingSink {
+  streamedFields?: Brc38JsonStreamedFieldSink
+  streamedStructuredFields?: Brc38JsonStructuredFieldSink
+  streamedTextFields?: Brc38JsonTextFieldSink
   /** Private staging only. Awaited before reading the next row. No active wallet
    * writes, ID activation or capability publication may occur here. */
   provisionalRow: (table: Table, index: number, row: Readonly<Row>) => Promise<void>
@@ -241,6 +276,24 @@ class Input {
     this.inputBytes += length
     this.buffer = this.decoder.decode(detached, { stream: true })
   }
+  check(): void {
+    this.policy.signal?.throwIfAborted()
+  }
+  async scan(accept: (unit: string) => boolean): Promise<void> {
+    let more = true
+    await runInSeries(
+      pending(() => more),
+      async () => {
+        if ((await this.peek()) === undefined) invalid()
+        const end = Math.min(this.buffer.length, this.offset + 4096 - this.workUnits)
+        while (more && this.offset < end) {
+          more = accept(this.buffer[this.offset])
+          this.advance()
+        }
+      }
+    )
+    await this.yieldIfNeeded()
+  }
   async skip(): Promise<void> {
     let more = true
     await runInSeries(
@@ -296,6 +349,11 @@ class Input {
   }
 }
 
+interface Streamed {
+  text?: { policy: Readonly<Required<Brc38JsonTextFieldPolicy>>; sink: Brc38JsonTextFieldSink }
+  binary?: { policy: Readonly<Required<Brc38JsonStreamedFieldPolicy>>; sink: Brc38JsonStreamedFieldSink }
+  structured?: { policy: Readonly<Required<Brc38JsonStructuredFieldPolicy>>; sink: Brc38JsonStructuredFieldSink }
+}
 class Document {
   readonly fields = new Set<string>()
   readonly tableFields = new Set<string>()
@@ -321,7 +379,8 @@ class Document {
     readonly reader: Input,
     sink: Brc38JsonStagingSink,
     readonly maximumRow: number,
-    public remainingMetadata: number
+    public remainingMetadata: number,
+    readonly streamed?: Streamed
   ) {
     this.row = sink.provisionalRow.bind(sink)
   }
@@ -346,6 +405,87 @@ class Document {
     if (separator !== ',') invalid()
     return true
   }
+  async streamedRow(table: Table): Promise<void> {
+    const selected = this.streamed
+    if (selected === undefined) invalid()
+    const fields: Record<string, Value> = Object.create(null),
+      binaries: Record<string, Brc38JsonStreamedField> = Object.create(null),
+      structured: Record<string, Brc38JsonStructuredField> = Object.create(null),
+      texts: Record<string, Brc38JsonTextField> = Object.create(null)
+    const seen = new Set<string>()
+    let remaining = this.maximumRow
+    await this.reader.expect('{')
+    await this.reader.skip()
+    if ((await this.reader.peek()) === '}') invalid()
+    let more = true
+    await runInSeries(
+      pending(() => more),
+      async () => {
+        const key = await this.reader.value(Math.min(remaining, 4096))
+        remaining -= key.allocation
+        if (typeof key.value !== 'string' || key.value.length > 128 || seen.has(key.value) || seen.size >= 64) invalid()
+        seen.add(key.value)
+        await this.reader.expect(':')
+        if (selected.binary !== undefined && brc38JsonBinaryField(table, key.value)) {
+          if (Object.keys(binaries).length >= 3) invalid()
+          if (remaining < 1024)
+            throw new SnapshotResourceLimitError('BRC-38 field descriptors exceed the row metadata policy')
+          remaining -= 1024
+          binaries[key.value] = await readBrc38JsonBinaryField(
+            this.reader,
+            table,
+            this.counts[table],
+            key.value,
+            selected.binary.sink,
+            selected.binary.policy
+          )
+        } else if (selected.structured !== undefined && brc38JsonStructuredField(table, key.value)) {
+          if (Object.keys(structured).length >= 3) invalid()
+          if (remaining < 1024)
+            throw new SnapshotResourceLimitError('BRC-38 structured descriptors exceed the row metadata policy')
+          remaining -= 1024
+          structured[key.value] = await readBrc38JsonStructuredField(
+            this.reader,
+            table,
+            this.counts[table],
+            key.value,
+            selected.structured.sink,
+            selected.structured.policy
+          )
+        } else if (selected.text !== undefined && brc38JsonTextField(table, key.value)) {
+          if (Object.keys(texts).length >= 7) invalid()
+          if (remaining < 1024)
+            throw new SnapshotResourceLimitError('BRC-38 scalar TEXT descriptors exceed the row metadata policy')
+          remaining -= 1024
+          texts[key.value] = await readBrc38JsonTextField(
+            this.reader,
+            table,
+            this.counts[table],
+            key.value,
+            selected.text.sink,
+            selected.text.policy
+          )
+        } else {
+          const value = await this.reader.value(remaining)
+          remaining -= value.allocation
+          fields[key.value] = value.value
+        }
+        more = await this.separator('}')
+      }
+    )
+    this.reader.check()
+    const row = Object.freeze({
+      fields: frozen(fields),
+      binaries: Object.freeze(binaries),
+      ...(selected.structured === undefined ? {} : { structured: Object.freeze(structured) }),
+      ...(selected.text === undefined ? {} : { texts: Object.freeze(texts) })
+    })
+    if (selected.text !== undefined) await selected.text.sink.row(table, this.counts[table], row)
+    else if (selected.structured !== undefined) await selected.structured.sink.row(table, this.counts[table], row)
+    else if (selected.binary !== undefined) await selected.binary.sink.row(table, this.counts[table], row)
+    else invalid()
+    this.reader.check()
+  }
   async tableRows(table: Table): Promise<void> {
     await this.reader.expect('[')
     await this.reader.skip()
@@ -357,9 +497,13 @@ class Document {
     await runInSeries(
       pending(() => more),
       async () => {
-        const result = await this.reader.value(this.maximumRow)
-        if (!object(result.value) || this.counts[table] === Number.MAX_SAFE_INTEGER) invalid()
-        await this.row(table, this.counts[table], frozen(result.value))
+        if (this.counts[table] === Number.MAX_SAFE_INTEGER) invalid()
+        if (this.streamed !== undefined) await this.streamedRow(table)
+        else {
+          const result = await this.reader.value(this.maximumRow)
+          if (!object(result.value)) invalid()
+          await this.row(table, this.counts[table], frozen(result.value))
+        }
         this.counts[table]++
         more = await this.separator(']')
       }
@@ -429,6 +573,63 @@ export async function readBrc38JsonStream(
   let input: Input | undefined
   try {
     const options = Object.freeze({ ...selected })
+    const fieldPolicy =
+      options.streamedFields === undefined ? undefined : brc38JsonStreamedFieldPolicy(options.streamedFields)
+    const fieldSink = sink.streamedFields
+    if ((fieldPolicy === undefined) !== (fieldSink === undefined))
+      throw new TypeError('BRC-38 field staging requires its explicit policy and sink together')
+    const structuredPolicy =
+        options.streamedStructuredFields === undefined
+          ? undefined
+          : brc38JsonStructuredFieldPolicy(options.streamedStructuredFields),
+      structuredSink = sink.streamedStructuredFields
+    if ((structuredPolicy === undefined) !== (structuredSink === undefined))
+      throw new TypeError('BRC-38 structured field staging requires its explicit policy and sink together')
+    const textPolicy =
+        options.streamedTextFields === undefined ? undefined : brc38JsonTextFieldPolicy(options.streamedTextFields),
+      textSink = sink.streamedTextFields
+    if ((textPolicy === undefined) !== (textSink === undefined))
+      throw new TypeError('BRC-38 scalar TEXT staging requires its explicit policy and sink together')
+    // Detach the complete callback set before the first await. No mutable method
+    // property object or unbound host method is consulted while parsing.
+    const binary =
+        fieldPolicy === undefined || fieldSink === undefined
+          ? undefined
+          : {
+              policy: fieldPolicy,
+              sink: {
+                begin: fieldSink.begin.bind(fieldSink),
+                append: fieldSink.append.bind(fieldSink),
+                finish: fieldSink.finish.bind(fieldSink),
+                row: fieldSink.row.bind(fieldSink)
+              }
+            },
+      structured =
+        structuredPolicy === undefined || structuredSink === undefined
+          ? undefined
+          : {
+              policy: structuredPolicy,
+              sink: {
+                begin: structuredSink.begin.bind(structuredSink),
+                append: structuredSink.append.bind(structuredSink),
+                finish: structuredSink.finish.bind(structuredSink),
+                row: structuredSink.row.bind(structuredSink)
+              }
+            }
+    const text =
+      textPolicy === undefined || textSink === undefined
+        ? undefined
+        : {
+            policy: textPolicy,
+            sink: {
+              begin: textSink.begin.bind(textSink),
+              append: textSink.append.bind(textSink),
+              finish: textSink.finish.bind(textSink),
+              row: textSink.row.bind(textSink)
+            }
+          }
+    const streamed =
+      binary === undefined && structured === undefined && text === undefined ? undefined : { binary, structured, text }
     const maximumRow = integer(options.maximumRowAllocationBytes, 16777216, 'maximumRowAllocationBytes')
     const remainingMetadata = integer(
       options.maximumMetadataAllocationBytes ?? 65536,
@@ -443,7 +644,7 @@ export async function readBrc38JsonStream(
     })
     const reader = input
     const complete = sink.validateCompleted.bind(sink)
-    const document = new Document(reader, sink, maximumRow, remainingMetadata)
+    const document = new Document(reader, sink, maximumRow, remainingMetadata, streamed)
     const header = await document.read()
     await reader.close()
     options.signal?.throwIfAborted()

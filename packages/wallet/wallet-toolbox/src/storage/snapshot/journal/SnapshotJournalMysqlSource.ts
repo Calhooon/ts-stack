@@ -179,7 +179,18 @@ export async function validateSnapshotJournalMysqlSource(k: Knex, config?: Knex.
  * Call only with operator-owned schema changes excluded; this read is not a DDL lock.
  * The epoch owner persists the returned digest and refuses a different binding.
  */
-export async function readSnapshotJournalMysqlBinding(k: Knex, config?: Knex.MigratorConfig): Promise<string> {
+export interface SnapshotJournalMysqlSourceInventory {
+  kind: string
+  rows: Array<Record<string, unknown>>
+}
+
+/** Metadata data only. This freshly validates and observes the actual source
+ * on every call; an inventory persisted for migration recovery is not a schema
+ * verdict or authority token. Runtime admission must repeat all live checks. */
+export async function readSnapshotJournalMysqlSourceInventory(
+  k: Knex,
+  config?: Knex.MigratorConfig
+): Promise<SnapshotJournalMysqlSourceInventory[]> {
   await validateSnapshotJournalMysqlSource(k, config)
   const tables = [
     ...numeric.map(source => source.table),
@@ -233,7 +244,7 @@ export async function readSnapshotJournalMysqlBinding(k: Knex, config?: Knex.Mig
       `SELECT EVENT_OBJECT_TABLE tableName,TRIGGER_NAME name,EVENT_MANIPULATION event,ACTION_TIMING timing,ACTION_ORDER actionOrder,DEFINER definer,${bound('ACTION_STATEMENT')} body,SQL_MODE sqlMode,CHARACTER_SET_CLIENT charset,COLLATION_CONNECTION connectionCollation,DATABASE_COLLATION databaseCollation FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND EVENT_OBJECT_TABLE IN (${marks}) AND TRIGGER_NAME NOT IN (${journalNames.map(() => '?').join(',')}) ORDER BY EVENT_OBJECT_TABLE,TRIGGER_NAME`
     ]
   ] as const
-  const digest = createHash('sha256').update('snapshot-journal-mysql-binding-v1\n')
+  const inventory: SnapshotJournalMysqlSourceInventory[] = []
   let bytes = 0
   await runInSeries(definitions, async ([kind, sql]) => {
     const [rows]: Array<Array<Record<string, unknown>>> = await k.raw(
@@ -256,7 +267,17 @@ export async function readSnapshotJournalMysqlBinding(k: Knex, config?: Knex.Mig
     const canonical = JSON.stringify([kind, rows])
     bytes += Buffer.byteLength(canonical, 'utf8')
     if (bytes > 1048576) invalid()
-    digest.update(canonical)
+    inventory.push({ kind, rows })
   })
+  return inventory
+}
+
+export function snapshotJournalMysqlInventoryDigest(inventory: readonly SnapshotJournalMysqlSourceInventory[]): string {
+  const digest = createHash('sha256').update('snapshot-journal-mysql-binding-v1\n')
+  for (const { kind, rows } of inventory) digest.update(JSON.stringify([kind, rows]))
   return digest.digest('hex')
+}
+
+export async function readSnapshotJournalMysqlBinding(k: Knex, config?: Knex.MigratorConfig): Promise<string> {
+  return snapshotJournalMysqlInventoryDigest(await readSnapshotJournalMysqlSourceInventory(k, config))
 }

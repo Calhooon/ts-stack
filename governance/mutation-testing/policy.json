@@ -586,6 +586,406 @@
       "minimumScore": 90,
       "maximumNoCoverage": 0,
       "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-authenticated-private-stage-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38AuthenticatedPrivateStageNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38AuthenticatedPrivateStageNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-existing-rows",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportExistingRows current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportExistingRows.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-history",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportHistory current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportHistory.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-id-map",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportIdMap current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportIdMap.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-journal",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportJournal current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournal.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-journal-schema",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportJournalSchema current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournalSchema.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-journal-schema-body",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportJournalSchemaBody current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-merge-checkpoint-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportMergeCheckpointNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportMergeCheckpointNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-page",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportPage current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportPage.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-provenance-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportProvenanceNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportProvenanceNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-import-target-indexes",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ImportTargetIndexes current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ImportTargetIndexes.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-knex-destination-fence",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38KnexDestinationFence current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38KnexDestinationFence.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-native-catalog-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38NativeCatalogNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeCatalogNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-owned-import-reads",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38OwnedImportReads current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38OwnedImportReads.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-portable-rows",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PortableRows current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PortableRows.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-private-chunk-pipe",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PrivateChunkPipe current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateChunkPipe.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-private-destination-lease-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PrivateDestinationLeaseNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateDestinationLeaseNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-private-import-journal-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PrivateImportJournalNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateImportJournalNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-private-import-preview-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PrivateImportPreviewNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivateImportPreviewNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-private-publication-copy-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PrivatePublicationCopyNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PrivatePublicationCopyNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-profile-inventory-claim-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ProfileInventoryClaimNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ProfileInventoryClaimNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-profile-physical-identity-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38ProfilePhysicalIdentityNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38ProfilePhysicalIdentityNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-published-profile-receipt-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PublishedProfileReceiptNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PublishedProfileReceiptNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-published-wallet-data",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38PublishedWalletData current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38PublishedWalletData.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-semantic-stage",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38SemanticStage current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38SemanticStage.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-staging-admission-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38StagingAdmissionNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingAdmissionNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-staging-binding",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38StagingBinding current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingBinding.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-staging-cleanup-error",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38StagingCleanupError current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingCleanupError.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-brc38-staging-ownership-node",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet Brc38StagingOwnershipNode current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/Brc38StagingOwnershipNode.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-knex-brc38-staging-store",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet KnexBrc38StagingStore current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/portable/KnexBrc38StagingStore.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-knex-database-system",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet knexDatabaseSystem current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/schema/knexDatabaseSystem.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-delta-frame",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalDeltaFrame current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDeltaFrame.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-delta-page",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalDeltaPage current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDeltaPage.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-destination-stage",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalDestinationStage current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDestinationStage.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-destination-window",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalDestinationWindow current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalDestinationWindow.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-identity-ledger",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalIdentityLedger current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalIdentityLedger.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-identity-retirements",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalIdentityRetirements current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-source-generations",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalSourceGenerations current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalSourceGenerations.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-snapshot-journal-source-identities",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet SnapshotJournalSourceIdentities current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalSourceIdentities.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
+    },
+    {
+      "id": "wallet-current-storage-access-queue",
+      "manifest": "packages/wallet/wallet-toolbox/package.json",
+      "risk": "critical",
+      "boundary": "Wallet StorageAccessQueue current ownership/data contract",
+      "propertyTest": "packages/wallet/wallet-toolbox/src/storage/sync/StorageAccessQueue.property.test.ts",
+      "minimumScore": 90,
+      "maximumNoCoverage": 0,
+      "maximumInvalid": 0
     }
   ]
 }

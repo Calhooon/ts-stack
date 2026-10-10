@@ -575,7 +575,7 @@ describe('Monitor tests', () => {
     }
   ]
 
-  async function runMockedSendWaiting(postBeefMockStatus, database: string) {
+  async function runMockedSendWaiting(postBeefMockStatus: 'success' | 'error', database: string) {
     const ctxs: TestWallet<{}>[] = []
     ctxs.push(await _tu.createLegacyWalletSQLiteCopy(database))
     let txidsPosted: string[] = []

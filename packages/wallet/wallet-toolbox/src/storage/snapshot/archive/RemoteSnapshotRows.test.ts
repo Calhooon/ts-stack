@@ -45,7 +45,7 @@ test('transaction bytes remain packed and detached, including the optional no-se
   )
   expect(result.rows).toEqual([row])
   expect(result.charges).toEqual([
-    Object.values(row).reduce(
+    Object.values(row).reduce<number>(
       (sum, value) =>
         sum + 64 + (typeof value === 'string' ? value.length * 2 : value instanceof Uint8Array ? value.length * 2 : 0),
       0

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { knex } from 'knex'
+import { knex, type Knex } from 'knex'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
 import { WalletStorageManager } from '../WalletStorageManager'
@@ -15,6 +15,9 @@ import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 import { SnapshotCancelledError } from './SnapshotCancelledError'
 import { runInSeries } from '../../utility/runInSeries'
 import { WERR_UNAUTHORIZED } from '../../sdk/WERR_errors'
+import { EntitySyncState } from '../schema/entities/EntitySyncState'
+import { KnexSyncTransferStore } from '../remoting/KnexSyncTransferStore'
+import { encodeSyncTransfer, syncTransferDigest } from '../remoting/SyncTransfer'
 
 const identity = '02' + '11'.repeat(32)
 const foreignIdentity = '03' + '22'.repeat(32)
@@ -1628,4 +1631,53 @@ test('an expiry during cleanup preserves an earlier malformed-page failure', asy
   await expect(manager.syncToWriterResumable({ identityKey: identity }, destination)).rejects.toBe(failure)
   expect(legacy).not.toHaveBeenCalled()
   expect(await destination.findTxLabels({ partial: {} })).toHaveLength(0)
+})
+
+test('prepared provider page shares native wallet checkpoint and binary-transfer ACK transaction', async () => {
+  const { source, destination } = await fixture(1),
+    state = await EntitySyncState.fromStorage(destination, identity, source.getSettings()),
+    originalCheckpoint = state.makeSyncCheckpoint(),
+    args = {
+      ...state.makeRequestSyncChunkArgs(identity, destination.getSettings().storageIdentityKey, 1048576, 10),
+      includeNextCheckpoint: true,
+      requireMatchingCheckpoint: true
+    },
+    chunk = await source.getSyncChunk(args),
+    bytes = encodeSyncTransfer({ args, chunk }),
+    digest = syncTransferDigest(bytes),
+    capabilities = { version: 1 as const, partBytes: 1024, maxBytes: 1048576 }
+  let transfers = new KnexSyncTransferStore(destination.knex, capabilities)
+  const manifest = await transfers.beginWrite(identity, digest, bytes.length)
+  for (let offset = 0; offset < bytes.length; offset += capabilities.partBytes)
+    await transfers.write(
+      identity,
+      manifest.transferId,
+      offset,
+      bytes.subarray(offset, offset + capabilities.partBytes)
+    )
+  const failed = await destination.prepareSyncChunk(args, chunk)
+  await expect(
+    transfers.commitPreparedWrite(identity, manifest.transferId, digest, async trx => {
+      const applied = await failed(trx)
+      expect(applied.inserts).toBeGreaterThan(0)
+      throw new Error('Independent failure before durable transfer ACK')
+    })
+  ).rejects.toThrow('before durable transfer ACK')
+  expect(await destination.findTxLabels({ partial: {} })).toHaveLength(0)
+  expect((await EntitySyncState.fromStorage(destination, identity, source.getSettings())).makeSyncCheckpoint()).toEqual(
+    originalCheckpoint
+  )
+  expect((await transfers.loadWrite(identity, manifest.transferId)).bytes).toEqual(bytes)
+  const apply = await destination.prepareSyncChunk(args, chunk),
+    result = await transfers.commitPreparedWrite(identity, manifest.transferId, digest, trx => apply(trx))
+  expect(result.nextCheckpoint).toBeDefined()
+  expect(await destination.findTxLabels({ partial: {} })).toHaveLength(1)
+  transfers = new KnexSyncTransferStore(destination.knex, capabilities)
+  const stalePrepared = await destination.prepareSyncChunk(args, chunk),
+    replay = jest.fn((trx: Knex.Transaction) => stalePrepared(trx))
+  expect(await transfers.commitPreparedWrite(identity, manifest.transferId, digest, replay)).toEqual(
+    JSON.parse(JSON.stringify(result))
+  )
+  expect(replay).not.toHaveBeenCalled()
+  expect(await destination.findTxLabels({ partial: {} })).toHaveLength(1)
 })

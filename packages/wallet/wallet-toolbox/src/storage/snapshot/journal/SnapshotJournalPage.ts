@@ -1,3 +1,8 @@
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
+import type { SnapshotJournalMetadata } from './SnapshotJournalTypes'
+export type { SnapshotJournalMetadata } from './SnapshotJournalTypes'
+import type { SnapshotJournalPosition } from './SnapshotJournalTypes'
+export type { SnapshotJournalPosition } from './SnapshotJournalTypes'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import {
@@ -7,14 +12,10 @@ import {
 } from './SnapshotJournalRevision'
 import { snapshotJournalRevisionOperand, snapshotJournalRevisionText } from './SnapshotJournalRevisionSql'
 
-export interface SnapshotJournalPosition {
-  revision: SnapshotJournalRevision
-  id1: number
-  id2: number
-  exactText: string
-}
-
 export interface SnapshotJournalInterval {
+  /** Enumerate current present rows from the pinned view, without claiming
+   * history below its retained floor. Only a complete scan permits mark/sweep. */
+  bootstrap?: true
   stream: 'scope' | 'physical'
   tableId: number
   userId: number
@@ -23,11 +24,6 @@ export interface SnapshotJournalInterval {
   high: SnapshotJournalRevision
   after?: SnapshotJournalPosition
   limit: number
-}
-
-export interface SnapshotJournalMetadata extends SnapshotJournalPosition {
-  present: boolean
-  generation?: SnapshotJournalRevision
 }
 
 function invalid(): never {
@@ -51,7 +47,7 @@ function textKey(value: unknown): string {
 
 function sqlite(k: Knex): boolean {
   const client = k.client.config.client
-  if (client === 'sqlite3' || client === 'better-sqlite3') return true
+  if (client === 'sqlite3' || client === 'better-sqlite3' || isOwnedNativeSqlite(k)) return true
   if (client === 'mysql' || client === 'mysql2') return false
   throw new WERR_INVALID_OPERATION('Unsupported snapshot journal SQL driver')
 }
@@ -72,7 +68,14 @@ function validate(interval: SnapshotJournalInterval): void {
   integer(userId, 1)
   integer(limit, 1, 256)
   for (const value of [floor, low, high]) snapshotJournalRevision(value)
-  if (compareSnapshotJournalRevisions(floor, low) > 0 || compareSnapshotJournalRevisions(low, high) > 0) invalid()
+  if (interval.bootstrap !== undefined && interval.bootstrap !== true) invalid()
+  if (
+    interval.bootstrap === true
+      ? low !== '0' || compareSnapshotJournalRevisions(floor, high) > 0
+      : compareSnapshotJournalRevisions(floor, low) > 0
+  )
+    invalid()
+  if (compareSnapshotJournalRevisions(low, high) > 0) invalid()
   if (stream === 'physical' && tableId !== 8 && tableId !== 9) invalid()
   if (after !== undefined) {
     snapshotJournalRevision(after.revision)
@@ -103,6 +106,7 @@ export function snapshotJournalMetadataQuery(k: Knex, interval: SnapshotJournalI
     .limit(interval.limit)
   if (interval.stream === 'scope') query.where('j.userId', interval.userId)
   else query.select({ generationText: snapshotJournalRevisionText(k, 'j.generation') })
+  if (interval.bootstrap === true) query.where('j.present', 1)
   const after = interval.after
   if (after === undefined) query.where('j.revision', '>', snapshotJournalRevisionOperand(k, interval.low))
   else {
@@ -160,7 +164,11 @@ export async function readSnapshotJournalMetadataPage(
       compareSnapshotJournalRevisions(revision, interval.high) > 0
     )
       invalid()
-    if (![0, 1, false, true].includes(record.present as number | boolean)) invalid()
+    if (
+      ![0, 1, false, true].includes(record.present as number | boolean) ||
+      (interval.bootstrap === true && !(record.present === 1 || record.present === true))
+    )
+      invalid()
     const row: SnapshotJournalMetadata = {
       revision,
       id1: integer(record.id1, 1),

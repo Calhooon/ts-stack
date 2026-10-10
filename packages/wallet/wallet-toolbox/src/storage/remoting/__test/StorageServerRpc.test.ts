@@ -106,11 +106,26 @@ function proofValidationFixture() {
   transaction.addOutput({ satoshis: 1, lockingScript: Script.fromHex('51') })
   const txid = transaction.id('hex')
   const path = new MerklePath(100, [[{ offset: 0, hash: txid, txid: true }]])
-  const header = toBinaryBaseBlockHeader({ version: 1, previousHash: '0'.repeat(64),
-    merkleRoot: txid, time: 1, bits: 0, nonce: 0 })
-  const proof = { provenTxId: 1, created_at: new Date(), updated_at: new Date(), txid,
-    height: 100, index: 0, merklePath: path.toBinary(), rawTx: transaction.toBinary(),
-    blockHash: asString(doubleSha256BE(header)), merkleRoot: txid }
+  const header = toBinaryBaseBlockHeader({
+    version: 1,
+    previousHash: '0'.repeat(64),
+    merkleRoot: txid,
+    time: 1,
+    bits: 0,
+    nonce: 0
+  })
+  const proof = {
+    provenTxId: 1,
+    created_at: new Date(),
+    updated_at: new Date(),
+    txid,
+    height: 100,
+    index: 0,
+    merklePath: path.toBinary(),
+    rawTx: transaction.toBinary(),
+    blockHash: asString(doubleSha256BE(header)),
+    merkleRoot: txid
+  }
   return proof
 }
 
@@ -161,14 +176,40 @@ describe('StorageServer JSON-RPC boundary', () => {
   test.each([false, true])('encodes only declared sync bytes when binary is negotiated: %s', async binary => {
     const bytes = Array.from({ length: 2048 }, (_, i) => i % 256)
     const now = new Date()
-    const chunk = { ...emptyChunk, provenTxs: [{ provenTxId: 1, created_at: now, updated_at: now,
-      txid: '00'.repeat(32), rawTx: bytes, merklePath: bytes, height: 1, index: 0,
-      merkleRoot: '00'.repeat(32), blockHash: '00'.repeat(32), extraNumbers: bytes }] }
+    const chunk = {
+      ...emptyChunk,
+      provenTxs: [
+        {
+          provenTxId: 1,
+          created_at: now,
+          updated_at: now,
+          txid: '00'.repeat(32),
+          rawTx: bytes,
+          merklePath: bytes,
+          height: 1,
+          index: 0,
+          merkleRoot: '00'.repeat(32),
+          blockHash: '00'.repeat(32),
+          extraNumbers: bytes
+        }
+      ]
+    }
     const server = makeServer({ getSyncChunk: async () => chunk })
     const captured = makeResponse()
-    await invoke(server, 'handleRpcRequest', makeRequest({ jsonrpc: '2.0', method: 'getSyncChunk',
-      params: [{ identityKey: 'alice', maxItems: 10, maxRoughSize: 100000 }], id: 1
-    }, binary ? { [BINARY_ENCODING_HEADER]: BINARY_ENCODING } : {}), captured.response)
+    await invoke(
+      server,
+      'handleRpcRequest',
+      makeRequest(
+        {
+          jsonrpc: '2.0',
+          method: 'getSyncChunk',
+          params: [{ identityKey: 'alice', maxItems: 10, maxRoughSize: 100000 }],
+          id: 1
+        },
+        binary ? { [BINARY_ENCODING_HEADER]: BINARY_ENCODING } : {}
+      ),
+      captured.response
+    )
     expect(captured.statusCode).toBe(200)
     const wire = JSON.stringify(captured.body)
     if (binary) expect(captured.body.result.provenTxs[0].rawTx.$bsvBinary).toBe('base64')
@@ -181,7 +222,12 @@ describe('StorageServer JSON-RPC boundary', () => {
   test('accounts for HTML escaping when enforcing the response-size ceiling', async () => {
     const server = makeServer({ getSettings: () => ({ value: '<'.repeat(25) }) }, { maxRpcResponseBytes: 100 })
     const captured = makeResponse()
-    await invoke(server, 'handleRpcRequest', makeRequest({ jsonrpc: '2.0', method: 'getSettings', params: [], id: 1 }), captured.response)
+    await invoke(
+      server,
+      'handleRpcRequest',
+      makeRequest({ jsonrpc: '2.0', method: 'getSettings', params: [], id: 1 }),
+      captured.response
+    )
     expect(captured.statusCode).toBe(413)
   })
 
@@ -191,20 +237,45 @@ describe('StorageServer JSON-RPC boundary', () => {
     const server = makeServer({ getSettings: () => settings, makeAvailable: async () => settings, getSyncCheckpoint })
     for (const method of ['getSettings', 'makeAvailable']) {
       const captured = makeResponse()
-      await invoke(server, 'handleRpcRequest', makeRequest({ jsonrpc: '2.0', method, params: [], id: 1 }), captured.response)
+      await invoke(
+        server,
+        'handleRpcRequest',
+        makeRequest({ jsonrpc: '2.0', method, params: [], id: 1 }),
+        captured.response
+      )
       expect(captured.body.result).toEqual({ ...settings, syncCheckpointVersion: 1 })
       expect(settings).not.toHaveProperty('syncCheckpointVersion')
     }
     const captured = makeResponse()
-    await invoke(server, 'handleRpcRequest', makeRequest({
-      jsonrpc: '2.0', method: 'getSyncCheckpoint', params: [{ identityKey: 'alice', userId: 999 }, 'source', 'source'], id: 2
-    }), captured.response)
+    await invoke(
+      server,
+      'handleRpcRequest',
+      makeRequest({
+        jsonrpc: '2.0',
+        method: 'getSyncCheckpoint',
+        params: [{ identityKey: 'alice', userId: 999 }, 'source', 'source'],
+        id: 2
+      }),
+      captured.response
+    )
     expect(captured.statusCode).toBe(200)
-    expect(getSyncCheckpoint).toHaveBeenCalledWith(expect.objectContaining({ identityKey: 'alice', userId: 7 }), 'source', 'source')
+    expect(getSyncCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ identityKey: 'alice', userId: 7 }),
+      'source',
+      'source'
+    )
     const denied = makeResponse()
-    await invoke(server, 'handleRpcRequest', makeRequest({
-      jsonrpc: '2.0', method: 'getSyncCheckpoint', params: [{ identityKey: 'bob' }, 'source', 'source'], id: 3
-    }), denied.response)
+    await invoke(
+      server,
+      'handleRpcRequest',
+      makeRequest({
+        jsonrpc: '2.0',
+        method: 'getSyncCheckpoint',
+        params: [{ identityKey: 'bob' }, 'source', 'source'],
+        id: 3
+      }),
+      denied.response
+    )
     expect(denied.body.error).toBeDefined()
     expect(getSyncCheckpoint).toHaveBeenCalledTimes(1)
   })
@@ -217,12 +288,17 @@ describe('StorageServer JSON-RPC boundary', () => {
 
     for (const [id, method] of ['prepareNoSendExpiry', 'activateNoSendExpiry', 'armNoSendExpiry'].entries()) {
       const captured = makeResponse()
-      await invoke(server, 'handleRpcRequest', makeRequest({
-        jsonrpc: '2.0',
-        method,
-        params: [{}, { caller: method }],
-        id
-      }), captured.response)
+      await invoke(
+        server,
+        'handleRpcRequest',
+        makeRequest({
+          jsonrpc: '2.0',
+          method,
+          params: [{}, { caller: method }],
+          id
+        }),
+        captured.response
+      )
       expect(captured.statusCode).toBe(200)
       expect(captured.body).toMatchObject({ jsonrpc: '2.0', id })
     }
@@ -247,9 +323,9 @@ describe('StorageServer JSON-RPC boundary', () => {
     })
     const request = makeRequest({}, {}, 'alice')
     for (const method of ['prepareNoSendExpiry', 'activateNoSendExpiry', 'armNoSendExpiry']) {
-      await expect(
-        invoke(server, 'authorizeStandardRpcCall', method, [{}, {}], request)
-      ).rejects.toThrow("this method requires the authenticated user's active storage provider")
+      await expect(invoke(server, 'authorizeStandardRpcCall', method, [{}, {}], request)).rejects.toThrow(
+        "this method requires the authenticated user's active storage provider"
+      )
     }
   })
 
@@ -261,7 +337,7 @@ describe('StorageServer JSON-RPC boundary', () => {
       {
         logRpcRequests: true,
         telemetry: {
-          sink: { capture: event => events.push(event) },
+          sink: { capture: event => void events.push(event) },
           spanIdFactory: () => (nextSpanId++).toString(16).padStart(16, '0')
         }
       }
@@ -321,7 +397,7 @@ describe('StorageServer JSON-RPC boundary', () => {
     const server = makeServer(
       {},
       {
-        telemetry: { sink: { capture: event => events.push(event) } }
+        telemetry: { sink: { capture: event => void events.push(event) } }
       }
     )
     const listeners = new Map<string, () => void>()
@@ -417,23 +493,20 @@ describe('StorageServer JSON-RPC boundary', () => {
     'openWalletReadSnapshot',
     'getSnapshotSync',
     'supportsWalletReadSnapshot'
-  ])(
-    'keeps local snapshot method %s outside the authenticated RPC surface',
-    async method => {
-      const handler = jest.fn(async () => undefined)
-      const server = makeServer({ [method]: handler })
-      const response = makeResponse()
-      await invoke(
-        server,
-        'handleRpcRequest',
-        makeRequest({ jsonrpc: '2.0', method, params: [], id: 1 }),
-        response.response
-      )
-      expect(response.statusCode).toBe(400)
-      expect(response.body).toMatchObject({ error: { code: -32601, message: `Method not found: ${method}` } })
-      expect(handler).not.toHaveBeenCalled()
-    }
-  )
+  ])('keeps local snapshot method %s outside the authenticated RPC surface', async method => {
+    const handler = jest.fn(async () => undefined)
+    const server = makeServer({ [method]: handler })
+    const response = makeResponse()
+    await invoke(
+      server,
+      'handleRpcRequest',
+      makeRequest({ jsonrpc: '2.0', method, params: [], id: 1 }),
+      response.response
+    )
+    expect(response.statusCode).toBe(400)
+    expect(response.body).toMatchObject({ error: { code: -32601, message: `Method not found: ${method}` } })
+    expect(handler).not.toHaveBeenCalled()
+  })
 
   test('redacts internal storage failures from JSON-RPC wallet errors', async () => {
     const server = makeServer(
@@ -729,6 +802,7 @@ describe('StorageServer JSON-RPC boundary', () => {
     await invoke(server, 'setupShortReqLogging')
     const middleware = use.mock.calls.at(-1)?.[0]
     expect(typeof middleware).toBe('function')
+    if (typeof middleware !== 'function') throw new Error('short-request logging middleware was not installed')
 
     const next = jest.fn()
     middleware(
@@ -757,10 +831,18 @@ describe('StorageServer JSON-RPC boundary', () => {
 
   test('bounds parallel proof checks and waits for every proof before admitting a page', async () => {
     const proof = proofValidationFixture()
-    const header = toBinaryBaseBlockHeader({ version: 1, previousHash: '0'.repeat(64),
-      merkleRoot: proof.merkleRoot, time: 1, bits: 0, nonce: 0 })
+    const header = toBinaryBaseBlockHeader({
+      version: 1,
+      previousHash: '0'.repeat(64),
+      merkleRoot: proof.merkleRoot,
+      time: 1,
+      bits: 0,
+      nonce: 0
+    })
     let release!: () => void
-    const gate = new Promise<void>(resolve => { release = resolve })
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
     let active = 0
     let maximum = 0
     const validateRoot = jest.fn(async () => {
@@ -770,14 +852,26 @@ describe('StorageServer JSON-RPC boundary', () => {
       active--
       return true
     })
-    const server = makeServer({ getServices: () => ({
-      getChainTracker: async () => ({ isValidRootForHeight: validateRoot }),
-      getHeaderForHeight: async () => header
-    }) })
+    const server = makeServer({
+      getServices: () => ({
+        getChainTracker: async () => ({ isValidRootForHeight: validateRoot }),
+        getHeaderForHeight: async () => header
+      })
+    })
     let admitted = false
-    const request = invoke(server, 'authorizeRpcCall', 'processSyncChunk', [{ identityKey: 'alice' },
-      { ...emptyChunk, provenTxs: Array.from({ length: 24 }, (_, index) => ({ ...proof, provenTxId: index + 1 })) }],
-    makeRequest({})).then(value => { admitted = true; return value })
+    const request = invoke(
+      server,
+      'authorizeRpcCall',
+      'processSyncChunk',
+      [
+        { identityKey: 'alice' },
+        { ...emptyChunk, provenTxs: Array.from({ length: 24 }, (_, index) => ({ ...proof, provenTxId: index + 1 })) }
+      ],
+      makeRequest({})
+    ).then(value => {
+      admitted = true
+      return value
+    })
     try {
       await new Promise(resolve => setImmediate(resolve))
       expect(admitted).toBe(false)
@@ -795,21 +889,32 @@ describe('StorageServer JSON-RPC boundary', () => {
   test('rejects a failed proof page after draining started checks without scheduling the rest', async () => {
     const proof = proofValidationFixture()
     let release!: () => void
-    const gate = new Promise<void>(resolve => { release = resolve })
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
     let calls = 0
     let completed = 0
-    const getChainTracker = async () => ({ isValidRootForHeight: async () => {
-      const index = calls++
-      if (index === 0) return false
-      await gate
-      completed++
-      return false
-    } })
+    const getChainTracker = async () => ({
+      isValidRootForHeight: async () => {
+        const index = calls++
+        if (index === 0) return false
+        await gate
+        completed++
+        return false
+      }
+    })
     const server = makeServer({ getServices: () => ({ getChainTracker }) })
     let settled = false
-    const request = invoke(server, 'authorizeRpcCall', 'processSyncChunk', [{ identityKey: 'alice' },
-      { ...emptyChunk, provenTxs: Array.from({ length: 24 }, () => ({ ...proof })) }], makeRequest({}))
-      .catch(error => { settled = true; return error })
+    const request = invoke(
+      server,
+      'authorizeRpcCall',
+      'processSyncChunk',
+      [{ identityKey: 'alice' }, { ...emptyChunk, provenTxs: Array.from({ length: 24 }, () => ({ ...proof })) }],
+      makeRequest({})
+    ).catch(error => {
+      settled = true
+      return error
+    })
     try {
       await new Promise(resolve => setImmediate(resolve))
       expect(calls).toBeGreaterThan(1)
@@ -831,12 +936,16 @@ describe('StorageServer JSON-RPC boundary', () => {
     await expect(invoke(server, 'authorizeRpcCall', 'destroy', [], request, destroyLog)).resolves.toBe(false)
     expect(destroyLog).toMatchObject({ comment: 'IGNORED' })
     const migrateLog: Record<string, unknown> = {}
-    await expect(invoke(server, 'authorizeRpcCall', 'migrate', ['tenant-name'], request, migrateLog)).resolves.toBe(false)
+    await expect(invoke(server, 'authorizeRpcCall', 'migrate', ['tenant-name'], request, migrateLog)).resolves.toBe(
+      false
+    )
     expect(migrateLog).toMatchObject({ comment: 'IGNORED' })
     const migrate = jest.fn(async () => 'should-not-run')
     const migrationServer = makeServer({ migrate })
-    await expect(invoke(migrationServer, 'dispatchRpcCall', 'migrate', ['tenant-name'], request))
-      .resolves.toEqual({ found: true, result: undefined })
+    await expect(invoke(migrationServer, 'dispatchRpcCall', 'migrate', ['tenant-name'], request)).resolves.toEqual({
+      found: true,
+      result: undefined
+    })
     expect(migrate).not.toHaveBeenCalled()
     await expect(invoke(server, 'authorizeRpcCall', 'getSettings', [], request)).resolves.toBe(true)
     await expect(invoke(server, 'authorizeRpcCall', 'findOrInsertUser', ['mallory'], request)).rejects.toThrow(
@@ -853,10 +962,7 @@ describe('StorageServer JSON-RPC boundary', () => {
     const proofReadArgs = { partial: {}, paged: { limit: 10, offset: 0 } }
     const proofReadParams: any[] = [proofReadArgs]
     await expect(invoke(server, 'authorizeRpcCall', 'findProvenTxReqs', proofReadParams, request)).resolves.toBe(true)
-    expect(proofReadParams).toEqual([
-      expect.objectContaining({ identityKey: 'alice', userId: 7 }),
-      proofReadArgs
-    ])
+    expect(proofReadParams).toEqual([expect.objectContaining({ identityKey: 'alice', userId: 7 }), proofReadArgs])
 
     const proofUpdateArgs = { provenTxReqId: 1, txid: '1'.repeat(64) }
     const proofUpdateParams: any[] = [proofUpdateArgs]
@@ -878,23 +984,29 @@ describe('StorageServer JSON-RPC boundary', () => {
     )
     expect(syncParamsWithoutClaim[0].reqAuthUserId).toBe(7)
 
-    const untrustedProofParams: any[] = [{}, {
-      ...emptyChunk,
-      provenTxs: [{
-        created_at: new Date(),
-        updated_at: new Date(),
-        provenTxId: 1,
-        txid: 'a'.repeat(64),
-        height: 1,
-        index: 0,
-        merklePath: [1],
-        rawTx: [1],
-        blockHash: 'b'.repeat(64),
-        merkleRoot: 'c'.repeat(64)
-      }]
-    }]
-    await expect(invoke(server, 'authorizeRpcCall', 'processSyncChunk', untrustedProofParams, request))
-      .rejects.toThrow('server-verified proof')
+    const untrustedProofParams: any[] = [
+      {},
+      {
+        ...emptyChunk,
+        provenTxs: [
+          {
+            created_at: new Date(),
+            updated_at: new Date(),
+            provenTxId: 1,
+            txid: 'a'.repeat(64),
+            height: 1,
+            index: 0,
+            merklePath: [1],
+            rawTx: [1],
+            blockHash: 'b'.repeat(64),
+            merkleRoot: 'c'.repeat(64)
+          }
+        ]
+      }
+    ]
+    await expect(invoke(server, 'authorizeRpcCall', 'processSyncChunk', untrustedProofParams, request)).rejects.toThrow(
+      'server-verified proof'
+    )
 
     await expect(
       invoke(server, 'authorizeRpcCall', 'processSyncChunk', [{ identityKey: 'mallory' }, { ...emptyChunk }], request)

@@ -101,6 +101,52 @@ describe('bounded durable sync transport', () => {
     expect((await store.beginWrite('alice', digest, bytes.length)).receivedBytes).toBe(0)
   })
 
+  test('wallet effects and transfer ACK roll back together and reopen recovers without reapplying', async () => {
+    await knex.schema.createTable('sync_atomic_wallet_fixture', table => {
+      table.integer('value')
+    })
+    const bytes = encodeSyncTransfer({ data: 'independent atomic transfer fixture' }),
+      digest = syncTransferDigest(bytes),
+      manifest = await store.beginWrite('alice', digest, bytes.length)
+    try {
+      for (let offset = 0; offset < bytes.length; offset += capabilities.partBytes)
+        await store.write('alice', manifest.transferId, offset, bytes.subarray(offset, offset + capabilities.partBytes))
+      await expect(
+        store.commitPreparedWrite('alice', manifest.transferId, digest, async trx => {
+          await trx('sync_atomic_wallet_fixture').insert({ value: 1 })
+          throw new Error('Independent failure after wallet effects')
+        })
+      ).rejects.toThrow('after wallet effects')
+      expect(await knex('sync_atomic_wallet_fixture')).toEqual([])
+      expect((await store.loadWrite('alice', manifest.transferId)).bytes).toEqual(bytes)
+      await expect(
+        store.commitPreparedWrite('alice', manifest.transferId, digest, async trx => {
+          await trx('sync_atomic_wallet_fixture').insert({ value: 2 })
+          return { invalidAcknowledgement: 'x'.repeat(65537) }
+        })
+      ).rejects.toThrow('result budget')
+      expect(await knex('sync_atomic_wallet_fixture')).toEqual([])
+      const apply = jest.fn(async (trx: typeof knex) => {
+        await trx('sync_atomic_wallet_fixture').insert({ value: 3 })
+        return { done: false, inserts: 1, nextCheckpoint: { sequence: 1 } }
+      })
+      const result = await store.commitPreparedWrite('alice', manifest.transferId, digest, apply)
+      // Discard the caller's ACK, then reopen the actual destination store.
+      store = new KnexSyncTransferStore(knex, capabilities)
+      expect(await store.commitPreparedWrite('alice', manifest.transferId, digest, apply)).toEqual(result)
+      expect(apply).toHaveBeenCalledTimes(1)
+      expect(await knex('sync_atomic_wallet_fixture')).toEqual([{ value: 3 }])
+      expect(await knex('sync_transfer_parts')).toEqual([])
+      await expect(store.commitPreparedWrite('bob', manifest.transferId, digest, apply)).rejects.toThrow('expired')
+      await expect(store.commitPreparedWrite('alice', manifest.transferId, 'f'.repeat(64), apply)).rejects.toThrow(
+        'current staging'
+      )
+      expect(apply).toHaveBeenCalledTimes(1)
+    } finally {
+      await knex.schema.dropTable('sync_atomic_wallet_fixture')
+    }
+  })
+
   test('rejects corrupted and out-of-order parts without accepting a complete record', async () => {
     const bytes = encodeSyncTransfer({ bytes: new Uint8Array(2000).fill(53) })
     const m = await store.beginWrite('alice', syncTransferDigest(bytes), bytes.length)

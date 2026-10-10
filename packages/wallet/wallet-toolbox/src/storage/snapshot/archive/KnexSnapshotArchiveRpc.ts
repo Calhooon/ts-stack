@@ -2,6 +2,7 @@ import type { SnapshotArchiveReaderOffer } from './SnapshotArchiveReaderOffer'
 import { SnapshotArchiveCleanupPendingError, type SnapshotArchiveCleanupPending } from './SnapshotArchiveCleanup'
 import { WERR_INVALID_OPERATION, WERR_UNAUTHORIZED } from '../../../sdk/WERR_errors'
 import type { StorageKnex } from '../../StorageKnex'
+import type { Knex } from 'knex'
 import { KnexSnapshotArchiveService } from './KnexSnapshotArchiveService'
 import { readSnapshotArchiveSourceSchema } from './KnexSnapshotArchiveSource'
 import { snapshotArchiveDatabaseNow } from './SnapshotArchiveSql'
@@ -15,18 +16,24 @@ import {
 /** Authenticated dispatch. The HTTP edge still owns framing, rate and body limits. */
 export class KnexSnapshotArchiveRpc {
   private readonly service: KnexSnapshotArchiveService
+  private readonly database: Knex
   private stopped = false
 
   constructor(private readonly storage: StorageKnex) {
+    this.database = storage.knex
     this.service = new KnexSnapshotArchiveService(storage)
   }
 
   async capabilities() {
     if (
       this.stopped ||
+      this.storage.knex !== this.database ||
       (this.storage.chain !== 'main' && this.storage.chain !== 'test') ||
       this.storage.getSnapshotSync() === undefined ||
-      !(await this.storage.supportsSnapshotArchiveSource())
+      // The local native source does not establish the separate durable remote
+      // guard/receiver contract. Keep version-one RPC negotiation on its
+      // existing qualified backends until that native contract is installed.
+      !(await this.storage.supportsSnapshotArchiveSource(false))
     )
       return undefined
     for (const name of [
@@ -37,22 +44,40 @@ export class KnexSnapshotArchiveRpc {
       'snapshot_archive_pages',
       'snapshot_archive_capacity'
     ]) {
-      if (!(await this.storage.knex.schema.hasTable(name))) return undefined
+      if (!(await this.database.schema.hasTable(name))) return undefined
     }
-    return this.stopped ? undefined : snapshotArchiveCapabilities
+    // Guarded ownership is required by reader admission and cross-replica
+    // cancellation. Table presence alone does not prove the guard upgrade.
+    for (const [table, column] of [
+      ['snapshot_archive_owners', 'guardVersion'],
+      ['snapshot_archive_owner_slots', 'slot'],
+      ['snapshot_archive_owner_slots', 'bindingJson']
+    ]) {
+      if (!(await this.database.schema.hasColumn(table, column))) return undefined
+    }
+    return this.stopped || this.storage.knex !== this.database ? undefined : snapshotArchiveCapabilities
   }
 
   private async sourceOffer(serverTime?: number): Promise<SnapshotArchiveOffer> {
     const chain = this.storage.chain
     if (chain !== 'main' && chain !== 'test') throw new WERR_INVALID_OPERATION('Snapshot archive chain is unavailable')
-    const sourceSchema = await readSnapshotArchiveSourceSchema(this.storage, this.storage.knex)
     const settings = this.storage.getSettings()
+    const sourceStorageIdentityKey = settings.storageIdentityKey
+    const sourceSchema = await readSnapshotArchiveSourceSchema(this.storage, this.database)
+    const now = serverTime ?? (await snapshotArchiveDatabaseNow(this.database))
+    if (
+      this.stopped ||
+      this.storage.knex !== this.database ||
+      this.storage.chain !== chain ||
+      this.storage.getSettings().storageIdentityKey !== sourceStorageIdentityKey
+    )
+      throw new WERR_INVALID_OPERATION('Snapshot archive source changed during its offer')
     return {
       version: 1,
-      sourceStorageIdentityKey: settings.storageIdentityKey,
+      sourceStorageIdentityKey,
       sourceSchema,
       chain,
-      serverTime: serverTime ?? (await snapshotArchiveDatabaseNow(this.storage.knex))
+      serverTime: now
     }
   }
 

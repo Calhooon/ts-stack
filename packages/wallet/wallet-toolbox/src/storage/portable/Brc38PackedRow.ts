@@ -76,7 +76,8 @@ function plain(value: object): void {
   const prototype: unknown = Object.getPrototypeOf(value)
   if (prototype !== null && (typeof prototype !== 'object' || Object.getPrototypeOf(prototype) !== null)) invalid()
 }
-function optional(field: string, path: readonly (string | number)[]): boolean {
+/** Shared historical omission rule. Arrays and required fields never omit null. */
+export function isOptionalBrc38StructuredField(field: string, path: readonly (string | number)[]): boolean {
   if (field === 'history')
     return (
       (path.length === 1 && path[0] === 'notes') ||
@@ -94,7 +95,7 @@ function objectValue(value: object, state: State, field: string, path: readonly 
     text(key, state)
     const child = data(value, key),
       childPath = [...path, key]
-    if (child == null && optional(field, childPath)) continue
+    if (child == null && isOptionalBrc38StructuredField(field, childPath)) continue
     result[key] = detached(child, state, field, childPath, depth + 1).value
   }
   return result

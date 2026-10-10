@@ -80,7 +80,7 @@ test('generated guarded-owner schedules keep quota through native close and fenc
             closing = gate(),
             finish = gate()
           const destroy = source.client.destroyRawConnection.bind(source.client)
-          source.client.destroyRawConnection = async connection => {
+          source.client.destroyRawConnection = async (connection: unknown) => {
             closing.resolve()
             await finish.promise
             await destroy(connection)

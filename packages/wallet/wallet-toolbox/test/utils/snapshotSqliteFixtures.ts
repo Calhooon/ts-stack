@@ -107,7 +107,7 @@ export async function exact(k: Knex) {
   await expectGlobalMembership(k)
 }
 
-export function value(table: string, id: number, other: number, userId: number): Record<string, unknown> {
+export function value(table: string, id: number, other: number, userId: number): Record<string, string | number> {
   const key = numeric.find(([name]) => name === table)?.[1]
   const row = key ? { [key]: id, ...(profiles.some(([name]) => name === table) ? { userId } : {}) } : {}
   switch (table) {

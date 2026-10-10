@@ -39,12 +39,12 @@ describe('processAction shareReqsWithWorld', () => {
     const events: TelemetryEvent[] = []
     const storage = {
       ...makeStorageFake(),
-      telemetry: new Telemetry({ sink: { capture: event => events.push(event) } })
+      telemetry: new Telemetry({ sink: { capture: event => void events.push(event) } })
     }
 
     const result = await processAction(
       storage as any,
-      { userId: 1 },
+      { userId: 1, identityKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798' },
       {
         isNewTx: false,
         isSendWith: false,
@@ -76,7 +76,7 @@ describe('processAction shareReqsWithWorld', () => {
     await expect(
       processAction(
         storage as any,
-        { userId: 1 },
+        { userId: 1, identityKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798' },
         {
           isNewTx: false,
           isSendWith: false,

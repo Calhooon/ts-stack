@@ -1,4 +1,13 @@
-import { Beef, CreateActionArgs, Telemetry, TelemetryEvent, Transaction, Validation } from '@bsv/sdk'
+import {
+  AtomicBEEF,
+  Beef,
+  CreateActionArgs,
+  TransactionOutput,
+  Telemetry,
+  TelemetryEvent,
+  Transaction,
+  Validation
+} from '@bsv/sdk'
 import { Wallet } from '../../../src/Wallet'
 import { _tu, TestWalletNoSetup } from '../../utils/TestUtilsWalletStorage'
 import { actionBatchBlobDigest, actionBatchManifestDigest } from '../../../src/utility/actionBatchDigest'
@@ -28,21 +37,28 @@ function actionArgs(noSendChange: string[] = []): CreateActionArgs {
   }
 }
 
-function rawTransaction(atomicBeef: number[], txid: string): number[] {
+function rawTransaction(atomicBeef: AtomicBEEF, txid: string): number[] {
   const transaction = Beef.fromBinary(atomicBeef).findTxid(txid)?.tx
   expect(transaction).toBeDefined()
-  return Array.from(transaction!.toUint8Array())
+  if (transaction === undefined) throw new Error('Expected the action transaction in its BEEF')
+  return Array.from(transaction.toUint8Array())
 }
 
-function feePaid(atomicBeef: number[], txid: string): number {
+function feePaid(atomicBeef: AtomicBEEF, txid: string): number {
   const transaction = Beef.fromBinary(atomicBeef).findAtomicTransaction(txid)
   expect(transaction).toBeDefined()
+  if (transaction === undefined) throw new Error('Expected the atomic action transaction')
   const inputs = transaction.inputs.reduce(
     (sum, input) => sum + (input.sourceTransaction?.outputs[input.sourceOutputIndex].satoshis ?? 0),
     0
   )
-  const outputs = transaction.outputs.reduce((sum, output) => sum + output.satoshis, 0)
+  const outputs = transaction.outputs.reduce((sum, output) => sum + outputSatoshis(output), 0)
   return inputs - outputs
+}
+
+function outputSatoshis(output: TransactionOutput): number {
+  if (output.satoshis === undefined) throw new Error('Expected the action output satoshis')
+  return output.satoshis
 }
 
 async function captureCommitManifest(
@@ -380,7 +396,7 @@ describe('in-memory action batch workspace', () => {
       ctx.wallet,
       'telemetry',
       new Telemetry({
-        sink: { capture: event => events.push(event) }
+        sink: { capture: event => void events.push(event) }
       })
     )
     const legacyCreate = jest.spyOn(ctx.storage, 'createAction')
@@ -1369,7 +1385,10 @@ describe('in-memory action batch workspace', () => {
 
     const zeroFeeTransaction = Transaction.fromBinary(capturedRaw)
     const plannedInputSatoshis = action.plan.inputs.reduce((sum, input) => sum + input.sourceSatoshis, 0)
-    const transactionOutputSatoshis = zeroFeeTransaction.outputs.reduce((sum, output) => sum + output.satoshis, 0)
+    const transactionOutputSatoshis = zeroFeeTransaction.outputs.reduce(
+      (sum, output) => sum + outputSatoshis(output),
+      0
+    )
     const currentFee = plannedInputSatoshis - transactionOutputSatoshis
     expect(currentFee).toBeGreaterThan(0)
     zeroFeeTransaction.outputs[0].satoshis! += currentFee

@@ -18,14 +18,17 @@ For Node servers, use [`@bsv/wallet-toolbox`](https://www.npmjs.com/package/@bsv
 `WalletStorageManager.syncFromReaderResumable(identityKey, source, options)` adds
 cancellation, durable checkpoints and per-page progress. IndexedDB and Knex local
 destinations yield the manager queue during source/proof I/O and between atomic
-page commits. Remote destinations retain exclusive execution. Use
+page commits. Negotiated remote snapshot destinations release the manager queue
+while the authenticated server owns its atomic transaction; legacy providers
+retain serialized execution. Use
 `maxRoughSize: 262144` as a measured starting point for constrained clients;
 one oversized record may still exceed this rough page target and is subject to
 the provider's separate transfer bound. Resume by invoking the API again: the
 destination checkpoint is authoritative, including after a lost acknowledgement.
 See the [sync contract and next-stage design](../../../../docs/guides/wallet-sync-reliability.md).
-This is an eventual replica merge; it does not create a coherent source snapshot
-or change the existing archive format.
+Ordinary replica merge and coherent archive capture are separate APIs. A
+replica checkpoint is never substituted for the source archive's original
+sync-state rows. Existing BRC-38/39 formats remain unchanged.
 
 ## BRC-100 result compatibility
 
@@ -46,16 +49,30 @@ Test the independent key and data recovery paths on a replacement device.
 Read [Wallet backup and recovery](https://bsv-blockchain.github.io/ts-stack/guides/wallet-backup-recovery/),
 [BRC-38/39 integration](https://bsv-blockchain.github.io/ts-stack/guides/wallet-data-portability/) and the
 [recovery checklist](https://bsv-blockchain.github.io/ts-stack/guides/wallet-recovery-drill/).
-The unpublished candidate exports `RetainedReadSnapshot` and
-`RetainedReadSnapshotOptions` types. They do not add a retained IndexedDB,
-remote, or native mobile implementation. Unsupported local providers report
-`supportsRetainedReadSnapshot() === false` and refuse `openReadSnapshot()`.
-The SQL implementation and its connection/lifetime limits are described in the
-[sync guide](https://bsv-blockchain.github.io/ts-stack/guides/wallet-sync-reliability/#retained-local-sql-read-views-unpublished-candidate).
+The unpublished 2.15 candidate exports the same snapshot and journal
+contracts as the client build. Its `StorageClient` uses the shared authenticated
+remote archive and negotiated remote snapshot-destination implementations.
+These bind every handle/checkpoint to one identity, network and source, with
+finite expiry and transfer limits. Unsupported servers retain their serialized
+protocol; they never advertise a partial archive as complete.
 
-Portable helpers require a concrete local `StorageProvider`; a remote client
-is not one. Qualify the local-copy path and device memory limits before adding
-export/import UI.
+This package does not install an IndexedDB or native SQLite provider on a mobile
+device. A host native provider must implement and qualify the negotiated
+contracts; a remote client is not a local `StorageProvider`. The portable
+streaming interfaces and optional asynchronous Argon2id backend are exported
+without a Node dependency. A Hermes host must supply a ready interoperable
+native backend for strict streaming encryption; Web Worker availability is a
+host capability, not a mobile assumption.
+
+`DeviceBackupController` shares only device backup preferences and destination
+catalogue IDs. It verifies each profile's identity/network independently and
+never shares primary selection or recovery checkpoints. Call `suspend()` on
+backgrounding, await original in-flight acknowledgement/cleanup, then `resume()`
+on foregrounding. The host owns foreground cadence and atomic preference
+storage; constructing the controller starts no timer. Native suspension,
+disk-pressure and physical device validation remain outstanding.
+See the [implementation map](../docs/implementation-544.md) and
+[device lifecycle example](../examples/deviceBackup.ts).
 
 ## Large wallet records
 
@@ -264,29 +281,65 @@ The accompanying [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and
 [LICENSES/](./LICENSES/) preserve earlier Open BSV grants compiled into the
 mobile build.
 
-The 2.15 candidate also exports version-one `WalletReadSnapshot`, cursor/page and
-packed-row types. The base provider explicitly refuses unsupported local pages;
-only `StorageKnex` currently implements them. Type availability does not imply an
-IndexedDB, native mobile or remote snapshot implementation. Existing sync and
-archive APIs retain their behavior. See the [SQL paging contract](../../../../docs/guides/wallet-sync-reliability.md#profile-bound-local-sql-pages).
+The unpublished candidate exports version-one retained snapshot, packed row,
+field reader and durable sync checkpoint contracts. Provider capabilities are
+negotiated independently; importing their types does not enable a backend.
+`syncToWriterResumable` and `syncFromReaderResumable` yield between bounded
+commits when both adapters support the operation and preserve the exclusive
+fallback for older providers.
 
-The candidate also exports `snapshotSyncTables` and the version-one
-`SnapshotSyncSource`, `SnapshotSyncCheckpoint`, `SnapshotSyncCommit`,
-`SnapshotSyncStorage` and `SnapshotSyncTable` types. `syncToWriterResumable` adds
-push progress/cancellation with an explicit exclusive fallback. These exports
-support adapter integration; they do not enable SQL retention or the auxiliary
-SQL migration in this browser/mobile entry point. Current IndexedDB and remote
-paths retain their documented behavior. See the [local SQL integration and remaining limits](../../../../docs/guides/wallet-sync-reliability.md#durable-local-sql-sync-and-ordinary-backup).
+The browser package's `StorageIdb` has an explicit packed version-one adapter;
+`StorageIdb` is not exported by this mobile entrypoint. Passing
+`packed` in `StorageIdbOptions` selects a separate schema-version-7 namespace;
+it never converts or replaces the default version-6 wallet. Packed providers
+implement retained MVCC snapshots, bounded field extents and durable local
+merge/checkpoint commits. `readPackedStoragePage` also reads bounded pages from
+legacy databases, but those pages alone do not form a retained snapshot.
+Logical retention quotas bound records and bytes; they are not browser disk or
+process-memory measurements. Keep identity and network explicit for each
+profile and preserve the legacy database until a separately qualified migration
+has succeeded.
 
-The candidate now includes `getSnapshotArchiveTransport(identityKey)` on
-`StorageClient`. It negotiates a migrated WAL/MySQL server's immutable archive
-capability and validates bounded authenticated admission/status, directories and
-pages. A dedicated response ceiling applies before parsing; server and storage
-identity bindings remain shared with ordinary RPC. `snapshotArchives: false`
-disables the transport, and old/disabled peers decline it. This is a low-level
-transport, not a retained database adapter or adoption by ordinary sync/export.
-Remote row cursors, manager integration, portable semantics and physical platform
-acceptance remain open. See the [archive transport contract](../../../../docs/guides/wallet-sync-reliability.md#authenticated-snapshot-archive-transport-unpublished-candidate).
+The mobile `StorageClient` negotiates the authenticated single-user archive reader through
+`getSnapshotArchiveTransport(identityKey)`. Its `getSnapshotSync()` source
+adapter opens immutable, expiring remote views for ordinary resumable copies to
+compatible local destinations. Each view retains the original source settings,
+user and all thirteen standard tables, including original sync-state rows.
+Those original sync states are archive provenance; a replica's destination
+checkpoint is separate. `snapshotArchives: false`, old peers and unsupported
+server configurations decline the source capability. A migrated server separately
+advertises `snapshotSyncDestination` for bounded, authenticated full-row merge
+pages. The manager releases its queue after dispatch; the server atomically
+commits entity effects, ID mappings and the durable checkpoint under fresh
+session and primary fences. Replies are limited to 16 KiB. Pages admit at most 128 rows and 10,000,000
+charged allocation bytes, intersected with caller limits. Frames above the
+512 KiB inline ceiling use the existing durable transfer store with 256 KiB
+parts and a 16 MiB total frame ceiling. The staged result, entity effects, maps
+and checkpoint commit in one original SQL transaction. One page remains in
+flight under one 30-second I/O deadline across its upload and commit. A timeout does not establish whether the server committed: observe its
+durable checkpoint before recovery. Old or disabled destination peers retain
+the exclusive compatibility path. Rows that exceed the negotiated page/frame budget refuse; remote field
+extents are not advertised by this protocol. Staging retains the original source
+expiry, and authenticated cleanup remains available after expiry. A failed
+release retains its concrete original transfer cleanup for retry.
+Raw archive frames use storage-key ordering and must not be presented directly
+as canonical BRC-38 output.
+
+Portable exports include `createBrc38Stream`, `openBrc38IdbSource` and bounded
+BRC-39 browser processing. The browser import entrypoints
+`previewAuthenticatedBrc39BrowserImport`, `restoreAuthenticatedBrc39BrowserInactive`
+and `publishAuthenticatedBrc39BrowserProfile` authenticate the complete original
+envelope, verify semantic/proof closure and use isolated staging with durable
+recovery state. Preview is data, not an activation grant; publication preserves
+original primary and sync values as provenance. The IDB implementation requires
+an actual IndexedDB host and explicit resource policies. The Node native SQLite
+controller has a separate entrypoint and runtime contract.
+
+These are working-source implementation contracts, not release or physical
+platform acceptance claims. Browser/native/mobile suspension, disk pressure,
+packed-consumer compatibility, independent format vectors and performance
+qualification remain required before downstream adoption. See the
+[wallet sync and migration guide](../../../../docs/guides/wallet-sync-reliability.md).
 
 ## WAB faucet fee compatibility
 

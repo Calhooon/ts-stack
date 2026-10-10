@@ -1,3 +1,6 @@
+import { StorageAccessQueueLimitError } from './StorageAccessQueueLimitError'
+import { StorageAccessCancelledError } from './StorageAccessCancelledError'
+
 type Mode = 'read' | 'exclusive'
 type Priority = 'foreground' | 'background'
 interface Waiter {
@@ -5,22 +8,62 @@ interface Waiter {
   priority: Priority
   queuedAt: number
   grant: (release: () => void) => void
+  detach: () => void
 }
 
 /**
  * One ownership queue: exclusive operations never overlap; opted-in reads
  * share up to eight slots. Foreground work may pass a background page at most
  * eight times or for one second. FIFO order is retained within each priority.
+ * Pending admission is finite; this bounds waiter count, not caller payload
+ * bytes. Cancellation removes only the actual queued request, never an owner.
  */
 export class StorageAccessQueue {
   private readonly waiters: Waiter[] = []
   private readers = 0
   private exclusive = false
   private foregroundGrants = 0
+  private requests = 0
 
-  acquire(mode: Mode, priority: Priority = 'foreground'): Promise<() => void> {
-    return new Promise(resolve => {
-      this.waiters.push({ mode, priority, queuedAt: Date.now(), grant: resolve })
+  constructor(private readonly maximumPending = 1024) {
+    if (!Number.isSafeInteger(maximumPending) || maximumPending < 1 || maximumPending > 65536)
+      throw new StorageAccessQueueLimitError('Storage queue pending admission limit must be an integer from 1 to 65536')
+  }
+
+  /** Bound manager requests even while initial availability I/O precedes
+   * ownership selection. Retain one original admission across mode re-selection.
+   * Eight extra slots account for the maximum number of actual read owners. */
+  admit(): () => void {
+    if (this.requests >= this.maximumPending + 8)
+      throw new StorageAccessQueueLimitError('Storage request admission limit reached before initialization')
+    this.requests++
+    let released = false
+    return () => {
+      if (!released) {
+        released = true
+        this.requests--
+      }
+    }
+  }
+
+  acquire(mode: Mode, priority: Priority = 'foreground', signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted === true) return Promise.reject(new StorageAccessCancelledError(signal))
+    if (this.waiters.length >= this.maximumPending)
+      return Promise.reject(new StorageAccessQueueLimitError('Storage queue pending admission limit reached'))
+    return new Promise((resolve, reject) => {
+      const detach = (): void => signal?.removeEventListener('abort', cancel)
+      const waiter: Waiter = { mode, priority, queuedAt: Date.now(), grant: resolve, detach }
+      const cancel = (): void => {
+        const index = this.waiters.indexOf(waiter)
+        if (index < 0) return
+        this.waiters.splice(index, 1)
+        detach()
+        reject(new StorageAccessCancelledError(signal!))
+        this.pump()
+      }
+      this.waiters.push(waiter)
+      signal?.addEventListener('abort', cancel, { once: true })
+      if (signal?.aborted === true) cancel()
       this.pump()
     })
   }
@@ -47,6 +90,7 @@ export class StorageAccessQueue {
       const waiter = this.waiters[index]
       if (waiter.mode === 'exclusive' ? this.readers > 0 : this.readers >= 8) return
       this.waiters.splice(index, 1)
+      waiter.detach()
       if (waiter.mode === 'exclusive') this.exclusive = true
       else this.readers++
       this.foregroundGrants = waiter.priority === 'background' ? 0 : Math.min(8, this.foregroundGrants + 1)

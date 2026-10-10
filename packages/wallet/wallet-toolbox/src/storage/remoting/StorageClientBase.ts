@@ -73,7 +73,7 @@ import {
   StorageCapabilities
 } from '../../sdk/ActionBatch.interfaces'
 import { TableSettings } from '../schema/tables/TableSettings'
-import { WERR_INVALID_OPERATION, WERR_NOT_IMPLEMENTED } from '../../sdk/WERR_errors'
+import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
 import { WalletServices } from '../../sdk/WalletServices.interfaces'
 import { TableUser } from '../schema/tables/TableUser'
 import { TableSyncState } from '../schema/tables/TableSyncState'
@@ -96,6 +96,15 @@ import { openRemoteSnapshot } from '../snapshot/archive/openRemoteSnapshot'
 import { SnapshotCancelledError } from '../snapshot/SnapshotCancelledError'
 import { snapshotArchiveFetch } from '../snapshot/archive/SnapshotArchiveTransportFailure'
 import type { SnapshotSyncStorage } from '../snapshot/SnapshotSync'
+import { RemoteSnapshotSyncDestination } from '../snapshot/RemoteSnapshotSyncDestination'
+import {
+  remoteSnapshotSyncRequestBytes,
+  remoteSnapshotSyncResponseBytes,
+  validateRemoteSnapshotSyncCapabilities,
+  remoteSnapshotSyncMethods,
+  type RemoteSnapshotSyncCapabilities,
+  type RemoteSnapshotSyncMethod
+} from '../snapshot/RemoteSnapshotSyncProtocol'
 import {
   snapshotArchiveResponseBytes,
   snapshotArchiveRequestBytes,
@@ -103,7 +112,14 @@ import {
   type SnapshotArchiveCapabilities,
   type SnapshotArchiveMethod
 } from '../snapshot/archive/SnapshotArchiveProtocol'
-import { BINARY_ENCODING, BINARY_ENCODING_HEADER, parseJsonRpc, validateJsonRpcResponse } from './BinaryJson'
+import {
+  BINARY_ENCODING,
+  BINARY_ENCODING_HEADER,
+  BINARY_REQUEST_ENCODING_HEADER,
+  parseJsonRpc,
+  stringifyJsonRpc,
+  validateJsonRpcResponse
+} from './BinaryJson'
 import { WalletErrorFromJson } from '../../sdk/WalletErrorFromJson'
 
 const syncChunkResponseRetryLimit = 4
@@ -119,6 +135,7 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotArchiveReaderVersion?: 1
+  snapshotSyncDestination?: RemoteSnapshotSyncCapabilities
 }
 
 export interface StorageClientOptions {
@@ -272,6 +289,8 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
+  if (properties.snapshotSyncDestination != null)
+    validateRemoteSnapshotSyncCapabilities(properties.snapshotSyncDestination.value)
   if (
     properties.snapshotArchiveReaderVersion != null &&
     (properties.snapshotArchiveReaderVersion.value !== 1 || properties.snapshotArchive == null)
@@ -301,6 +320,7 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   private readonly snapshotArchivesEnabled: boolean
   private readonly snapshotWallet: WalletInterface
   private snapshotAuthClient?: AuthFetch
+  private snapshotDestinationAuthClient?: AuthFetch
   private snapshotSource?: { identityKey: string; chain: 'main' | 'test'; supportsReader: boolean }
   /** Optional progress/cancellation hook for a bounded transfer; never receives wallet contents. */
   onSyncTransferProgress?: (progress: { direction: 'read' | 'write'; bytes: number; totalBytes: number }) => void
@@ -338,21 +358,24 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return response
   }
 
-  /** Source-only adapter. Opening performs authenticated capability negotiation, including on the first sync. */
+  /** Source/destination support negotiate independently. Older servers retain
+   * their original exclusive destination path. */
   getSnapshotSync(): SnapshotSyncStorage | undefined {
     if (!this.snapshotArchivesEnabled) return undefined
-    const unavailable = () => Promise.reject(new WERR_NOT_IMPLEMENTED('Remote snapshot destination is unavailable'))
-    return {
-      fallbackOnResourceError: false,
-      supportsDestination: () => Promise.resolve(false),
-      openSource: async (identityKey, options) => {
+    return new RemoteSnapshotSyncDestination(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      async () => {
+        const settings = await this.makeAvailable()
+        return {
+          storageIdentityKey: settings.storageIdentityKey,
+          supportsDestination: settings.snapshotSyncDestination !== undefined
+        }
+      },
+      async (identityKey, options) => {
         const transport = await this.getSnapshotArchiveTransport(identityKey)
         return transport === undefined ? undefined : await openRemoteSnapshot(transport, options)
-      },
-      begin: unavailable,
-      checkpoint: unavailable,
-      prepare: unavailable
-    }
+      }
+    )
   }
 
   /** Available only after an authenticated compatible advertisement. */
@@ -369,27 +392,39 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   }
 
   private async snapshotRpcCall(
-    method: SnapshotArchiveMethod,
+    method: SnapshotArchiveMethod | RemoteSnapshotSyncMethod,
     params: unknown[],
     signal?: AbortSignal
   ): Promise<unknown> {
     const id = this.nextRequestId()
-    const body = JSON.stringify({ jsonrpc: '2.0', method, params, id })
-    if (new TextEncoder().encode(body).length > snapshotArchiveRequestBytes)
-      throw new TypeError('Snapshot archive request exceeds its transport limit')
-    this.snapshotAuthClient ??= new AuthFetch(
-      this.snapshotWallet,
-      undefined,
-      undefined,
-      undefined,
-      { maxResponseBytes: snapshotArchiveResponseBytes },
-      snapshotArchiveFetch(fetch)
+    const remoteDestination = remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)
+    const body = stringifyJsonRpc({ jsonrpc: '2.0', method, params, id }, true)
+    if (
+      new TextEncoder().encode(body).length >
+      (remoteDestination ? remoteSnapshotSyncRequestBytes : snapshotArchiveRequestBytes)
     )
+      throw new TypeError('Snapshot archive request exceeds its transport limit')
+    const createAuthClient = (maxResponseBytes: number): AuthFetch =>
+      new AuthFetch(
+        this.snapshotWallet,
+        undefined,
+        undefined,
+        undefined,
+        { maxResponseBytes },
+        snapshotArchiveFetch(fetch)
+      )
+    const authClient = remoteDestination
+      ? (this.snapshotDestinationAuthClient ??= createAuthClient(remoteSnapshotSyncResponseBytes))
+      : (this.snapshotAuthClient ??= createAuthClient(snapshotArchiveResponseBytes))
     let received: Response
     try {
-      received = await this.snapshotAuthClient.fetch(this.endpointUrl, {
+      received = await authClient.fetch(this.endpointUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', [BINARY_ENCODING_HEADER]: BINARY_ENCODING },
+        headers: {
+          'Content-Type': 'application/json',
+          [BINARY_ENCODING_HEADER]: BINARY_ENCODING,
+          [BINARY_REQUEST_ENCODING_HEADER]: BINARY_ENCODING
+        },
         body,
         signal
       })

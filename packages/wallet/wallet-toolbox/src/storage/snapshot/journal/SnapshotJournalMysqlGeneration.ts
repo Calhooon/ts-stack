@@ -252,6 +252,86 @@ async function reserved(k: Knex): Promise<Array<{ name: string; type: string }>>
   return [...tables, ...triggers]
 }
 const owner = (epoch: string): string => 'snapshot-journal-owner:' + epoch
+
+/** Explicit data erasure only. Actual typed definitions, trigger context and
+ * epoch ownership are verified even for an interrupted installation before any
+ * native observer is removed. Source row data and authority are never adopted
+ * from the generation record. The caller excludes other migrators and drains
+ * its retained source sessions before invoking this nontransactional DDL. */
+export async function dropSnapshotJournalMysqlForDataDeletion(
+  k: Knex,
+  fallbackPolicy: SnapshotJournalReceiptPolicy,
+  config?: Knex.MigratorConfig
+): Promise<void> {
+  client(k)
+  if (k.isTransaction) return invalid()
+  if (!(await reserved(k)).length) return
+  const rows: Array<{ source: unknown; plan: unknown; ceiling: unknown }> = await k(SNAPSHOT_JOURNAL_MYSQL_INTENT)
+    .where('id', 1)
+    .select(
+      k.raw('substr(source,1,65) AS source'),
+      k.raw('substr(plan,1,65) AS plan'),
+      k.raw('substr(ceiling,1,20) AS ceiling')
+    )
+    .limit(2)
+  if (
+    rows.length !== 1 ||
+    typeof rows[0].source !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(rows[0].source) ||
+    typeof rows[0].plan !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(rows[0].plan)
+  )
+    return invalid()
+  const ceiling = snapshotJournalRevision(rows[0].ceiling)
+  let policy = snapshotJournalReceiptPolicy(fallbackPolicy)
+  const retentionPresent = await k.schema.hasTable('snapshot_journal_retention')
+  if (retentionPresent) {
+    const values: Array<{ receiptLimit: unknown; receiptLifetimeMs: unknown }> = await k('snapshot_journal_retention')
+      .where('id', 1)
+      .select('receiptLimit', 'receiptLifetimeMs')
+      .limit(2)
+    if (values.length !== 1) return invalid()
+    policy = snapshotJournalReceiptPolicy({
+      receiptLimit: Number(values[0].receiptLimit),
+      receiptLifetimeMs: Number(values[0].receiptLifetimeMs)
+    })
+  }
+  const p = await plan(k, ceiling, policy, config)
+  // Once retention has been erased its old policy is no longer available.
+  // Policy affects seed validation and the installation digest, not object
+  // definitions. The surviving physical definitions and epoch ownership must
+  // still be checked individually; this path never admits a runtime source.
+  if (retentionPresent && p.binding.plan !== rows[0].plan) return invalid()
+  const state = await readSnapshotJournalMysqlIntent(k, { source: rows[0].source, plan: rows[0].plan, ceiling })
+  if (state.nextObject > p.objects.length || (state.complete && state.nextObject !== p.objects.length)) return invalid()
+  const actual = await reserved(k)
+  if (
+    actual.some(
+      value =>
+        value.name !== SNAPSHOT_JOURNAL_MYSQL_INTENT &&
+        !p.objects.some(
+          object =>
+            object.definition.name === value.name && value.type === (object.type === 'table' ? 'BASE TABLE' : 'TRIGGER')
+        )
+    )
+  )
+    return invalid()
+  // Missing objects are allowed only in this destructive, caller-owned path.
+  // They can result from either an interrupted installation or a previous
+  // partial erasure. A stored progress flag cannot authorize a surviving object.
+  for (const object of p.objects) {
+    if (actual.some(value => value.name === object.definition.name))
+      await validateObject(k, object, state, p.context, policy)
+  }
+  // Removing observers first prevents later standard-table rollback from
+  // accessing already removed auxiliary tables.
+  const present = new Set(actual.map(value => value.name))
+  for (const object of p.objects.filter(value => value.type === 'trigger').reverse())
+    if (present.has(object.definition.name)) await k.raw('DROP TRIGGER ??', [object.definition.name])
+  for (const object of p.objects.filter(value => value.type === 'table').reverse())
+    if (present.has(object.definition.name)) await k.schema.dropTable(object.definition.name)
+  await k.schema.dropTable(SNAPSHOT_JOURNAL_MYSQL_INTENT)
+}
 function triggerBody(trigger: Trigger, epoch: string): string {
   return trigger.body.replace(/^BEGIN /, 'BEGIN /* ' + owner(epoch) + ' */ ')
 }
@@ -575,6 +655,27 @@ export async function readSnapshotJournalMysqlGeneration(
   if (state.nextObject !== p.objects.length) return invalid()
   await validateObjects(k, p, state)
   return await validateState(k, p, state)
+}
+
+/** Internal forward-index migration check. Actual native source semantics,
+ * complete journal object definitions/epoch ownership, receipt policy, clock,
+ * floor and bootstrap are all re-read. The old source string is association
+ * data: the migrator must also prove the fresh native inventory differs only
+ * by its fixed, individually verified additive indexes. It cannot substitute
+ * this helper for normal runtime generation admission. */
+export async function readSnapshotJournalMysqlSourceUpgradeGeneration(
+  k: Knex,
+  oldSource: string,
+  ceiling: SnapshotJournalRevision,
+  receiptPolicy: SnapshotJournalReceiptPolicy,
+  config?: Knex.MigratorConfig
+): Promise<{ generation: SnapshotJournalMysqlGeneration; currentSource: string }> {
+  if (!/^[0-9a-f]{64}$/.test(oldSource)) return invalid()
+  const p = await plan(k, ceiling, receiptPolicy, config)
+  const state = await readSnapshotJournalMysqlIntent(k, { ...p.binding, source: oldSource })
+  if (state.nextObject !== p.objects.length) return invalid()
+  await validateObjects(k, p, state)
+  return { generation: await validateState(k, p, state), currentSource: p.binding.source }
 }
 
 /** Publication still requires the registered migration journal in the reader view. */

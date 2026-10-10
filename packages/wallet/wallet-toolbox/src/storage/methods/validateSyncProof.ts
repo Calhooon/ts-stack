@@ -4,6 +4,8 @@ import { WalletServices } from '../../sdk/WalletServices.interfaces'
 import { doubleSha256BE } from '../../utility/utilityHelpers'
 import { asString } from '../../utility/utilityHelpers.noBuffer'
 import { TableProvenTx } from '../schema/tables/TableProvenTx'
+import { StaleSyncProofError } from './SyncProofErrors'
+export { StaleSyncProofError } from './SyncProofErrors'
 
 export interface SyncProofValidationStorage {
   getServices: () => WalletServices
@@ -15,13 +17,6 @@ const reconciled = new WeakSet<TableProvenTx>()
 
 function equalBytes(a: number[], b: number[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index])
-}
-
-/** Identifies a structurally valid proof which needs current-chain reconciliation. */
-export class StaleSyncProofError extends WERR_INVALID_PARAMETER {
-  constructor() {
-    super('provenTx', 'a server-verified proof. Merkle root is not active at the recorded height')
-  }
 }
 
 function invalidSyncProof(message: string): never {

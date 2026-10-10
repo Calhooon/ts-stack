@@ -1,9 +1,17 @@
+import { SnapshotWorkingAllocationLimitError } from './SnapshotWorkingAllocationLimitError'
 import { runSnapshotSyncSession } from './runSnapshotSyncSession'
-import type { WalletReadSnapshot, WalletSnapshotCursor } from './WalletReadSnapshot'
-import type { SnapshotSyncCheckpoint, SnapshotSyncCommit, SnapshotSyncStorage } from './SnapshotSync'
+import type {
+  WalletReadSnapshot,
+  WalletSnapshotCursor,
+  WalletSnapshotTable,
+  WalletSnapshotPageLimits,
+  WalletSnapshotFieldMetadataPage
+} from './WalletReadSnapshot'
+import type { SnapshotSyncCheckpoint, SnapshotSyncCommit, SnapshotSyncStorage, SnapshotSyncTable } from './SnapshotSync'
 import type { SyncSessionOptions, SyncSessionProgress } from '../sync/syncSession'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 import { SyncPageBudget } from '../sync/SyncPageBudget'
+import { StorageAccessQueue } from '../sync/StorageAccessQueue'
 
 function session() {
   const checkpoint: SnapshotSyncCheckpoint = {
@@ -44,6 +52,289 @@ function session() {
     commit
   }
 }
+
+function fieldSession() {
+  const f = session(),
+    reader = {
+      readMetadataPage: jest.fn(
+        async (
+          _table?: WalletSnapshotTable,
+          _cursor?: WalletSnapshotCursor,
+          _limits?: WalletSnapshotPageLimits
+        ): Promise<WalletSnapshotFieldMetadataPage<SnapshotSyncTable>> => ({ rows: [], payloadBytes: 0, done: true })
+      ),
+      readFieldExtent: jest.fn(async () => new Uint8Array([7]))
+    },
+    close = jest.fn(async (): Promise<void> => {}),
+    prepareFields = jest.fn(
+      async (
+        _checkpoint?: SnapshotSyncCheckpoint,
+        _page?: WalletSnapshotFieldMetadataPage<SnapshotSyncTable>,
+        _view?: WalletReadSnapshot,
+        _signal?: AbortSignal
+      ) => ({ apply: f.apply, close })
+    )
+  Reflect.set(f.view, 'fieldReader', reader)
+  Reflect.set(f.destination, 'prepareFields', prepareFields)
+  return { ...f, reader, close, prepareFields }
+}
+
+test('queued snapshot cancellation drains the prepared fields before unrelated ownership is released', async () => {
+  const f = fieldSession(),
+    queue = new StorageAccessQueue(),
+    controller = new AbortController()
+  let releaseOwner: (() => void) | undefined
+  const pending = runSnapshotSyncSession(
+    {
+      ...f.input,
+      commit: async <T>(operation: () => Promise<T>) => {
+        const release = await queue.acquire('exclusive', 'background', controller.signal)
+        try {
+          return await operation()
+        } finally {
+          release()
+        }
+      }
+    },
+    {
+      signal: controller.signal,
+      onProgress: state => {
+        if (state.state !== 'committing') return
+        // acquire grants synchronously; its promise continuation captures release.
+        void queue.acquire('exclusive').then(release => {
+          releaseOwner = release
+          controller.abort()
+        })
+      }
+    }
+  )
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Queued snapshot cancellation waited for unrelated ownership')), 3000)
+      })
+    ])
+    expect(result).toMatchObject({ status: 'cancelled', pages: 0 })
+    expect(f.apply).not.toHaveBeenCalled()
+    expect(f.close).toHaveBeenCalledTimes(1)
+    expect(releaseOwner).toBeDefined()
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    releaseOwner?.()
+    await pending
+  }
+})
+
+test('paired field negotiation prepares outside write admission and drains only after the writer returns', async () => {
+  const f = fieldSession(),
+    order: string[] = []
+  let writing = false
+  f.commit.mockImplementation(async work => {
+    writing = true
+    try {
+      return await work()
+    } finally {
+      writing = false
+      order.push('writer-drained')
+    }
+  })
+  f.prepareFields.mockImplementation(async () => {
+    expect(writing).toBe(false)
+    order.push('prepare')
+    expect(await f.reader.readFieldExtent()).toEqual(new Uint8Array([7]))
+    return { apply: f.apply, close: f.close }
+  })
+  f.close.mockImplementation(async () => {
+    expect(writing).toBe(false)
+    order.push('close')
+  })
+  const result = await runSnapshotSyncSession(f.input, { maxItems: 1, maxRoughSize: 8192 })
+  expect(result.pages).toBe(1)
+  expect(f.apply).toHaveBeenCalledTimes(1)
+  expect(f.prepareFields).toHaveBeenCalledWith(
+    f.checkpoint,
+    { rows: [], payloadBytes: 0, done: true },
+    f.view,
+    undefined
+  )
+  expect(f.reader.readMetadataPage).toHaveBeenCalledWith('provenTxReqs', f.checkpoint.cursor, {
+    maxRows: 1,
+    maxBytes: 8192
+  })
+  expect(f.view.readPage).not.toHaveBeenCalled()
+  expect(f.destination.prepare).not.toHaveBeenCalled()
+  expect(order).toEqual(['writer-drained', 'prepare', 'writer-drained', 'close'])
+})
+
+test.each(['source', 'destination'])('unpaired %s field support preserves the full-row path', async missing => {
+  const f = fieldSession()
+  Reflect.deleteProperty(
+    missing === 'source' ? f.view : f.destination,
+    missing === 'source' ? 'fieldReader' : 'prepareFields'
+  )
+  await runSnapshotSyncSession(f.input, {})
+  expect(f.view.readPage).toHaveBeenCalledTimes(1)
+  expect(f.destination.prepare).toHaveBeenCalledTimes(1)
+  expect(f.reader.readMetadataPage).not.toHaveBeenCalled()
+  expect(f.prepareFields).not.toHaveBeenCalled()
+})
+
+test('fresh field refusal preserves the legacy row path without copying field metadata', async () => {
+  const f = fieldSession(),
+    probe = jest.fn(async () => false)
+  Reflect.set(f.destination, 'supportsFieldDestination', probe)
+  await runSnapshotSyncSession(f.input, {})
+  expect(probe).toHaveBeenCalledTimes(1)
+  expect(f.view.readPage).toHaveBeenCalledTimes(1)
+  expect(f.destination.prepare).toHaveBeenCalledTimes(1)
+  expect(f.reader.readMetadataPage).not.toHaveBeenCalled()
+  expect(f.prepareFields).not.toHaveBeenCalled()
+})
+
+test('partial or changed field installation cannot silently select legacy fallback', async () => {
+  const f = fieldSession(),
+    failure = new Error('Original native schema differs')
+  Reflect.set(f.destination, 'supportsFieldDestination', async () => {
+    throw failure
+  })
+  await expect(runSnapshotSyncSession(f.input, {})).rejects.toBe(failure)
+  expect(f.view.readPage).not.toHaveBeenCalled()
+  expect(f.destination.prepare).not.toHaveBeenCalled()
+  expect(f.reader.readMetadataPage).not.toHaveBeenCalled()
+  expect(f.prepareFields).not.toHaveBeenCalled()
+})
+
+test.each([32, 128])(
+  'row admission intersects the remote ceiling %s with adaptive and original caller limits',
+  async maxRows => {
+    const bounded = session()
+    Reflect.set(bounded.destination, 'pageLimits', Object.freeze({ maxRows, maxBytes: 262144 }))
+    await runSnapshotSyncSession(bounded.input, { maxItems: 1000, maxRoughSize: 10000000 })
+    expect(bounded.view.readPage).toHaveBeenCalledWith('provenTxReqs', bounded.checkpoint.cursor, {
+      // The first table page starts at 64; a lower negotiated limit still binds.
+      maxRows: Math.min(maxRows, 64),
+      maxBytes: 262144
+    })
+    const smaller = session()
+    Reflect.set(smaller.destination, 'pageLimits', Object.freeze({ maxRows, maxBytes: 262144 }))
+    await runSnapshotSyncSession(smaller.input, { maxItems: 2, maxRoughSize: 4096 })
+    expect(smaller.view.readPage).toHaveBeenCalledWith('provenTxReqs', smaller.checkpoint.cursor, {
+      maxRows: 2,
+      maxBytes: 4096
+    })
+  }
+)
+
+test.each([
+  { maxRows: 0, maxBytes: 4096 },
+  { maxRows: 1.5, maxBytes: 4096 },
+  { maxRows: 128, maxBytes: NaN },
+  { maxRows: 1001, maxBytes: 4096 }
+])('invalid row admission refuses before source read: %j', async limits => {
+  const f = session()
+  Reflect.set(f.destination, 'pageLimits', limits)
+  await expect(runSnapshotSyncSession(f.input, {})).rejects.toThrow('row limits')
+  expect(f.view.readPage).not.toHaveBeenCalled()
+  expect(f.destination.prepare).not.toHaveBeenCalled()
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('field admission intersects destination ceilings with the original caller limits', async () => {
+  const bounded = fieldSession()
+  Reflect.set(bounded.destination, 'fieldPageLimits', Object.freeze({ maxRows: 8, maxBytes: 262144 }))
+  await runSnapshotSyncSession(bounded.input, { maxItems: 1000, maxRoughSize: 10000000 })
+  expect(bounded.reader.readMetadataPage).toHaveBeenCalledWith('provenTxReqs', bounded.checkpoint.cursor, {
+    maxRows: 8,
+    maxBytes: 262144
+  })
+  const smaller = fieldSession()
+  Reflect.set(smaller.destination, 'fieldPageLimits', Object.freeze({ maxRows: 8, maxBytes: 262144 }))
+  await runSnapshotSyncSession(smaller.input, { maxItems: 2, maxRoughSize: 4096 })
+  expect(smaller.reader.readMetadataPage).toHaveBeenCalledWith('provenTxReqs', smaller.checkpoint.cursor, {
+    maxRows: 2,
+    maxBytes: 4096
+  })
+})
+
+test.each([
+  { maxRows: 0, maxBytes: 4096 },
+  { maxRows: 1.5, maxBytes: 4096 },
+  { maxRows: 8, maxBytes: NaN }
+])('invalid field admission refuses before source read: %j', async limits => {
+  const f = fieldSession()
+  Reflect.set(f.destination, 'fieldPageLimits', limits)
+  await expect(runSnapshotSyncSession(f.input, {})).rejects.toThrow('field limits')
+  expect(f.reader.readMetadataPage).not.toHaveBeenCalled()
+  expect(f.prepareFields).not.toHaveBeenCalled()
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('field preparation failure propagates without replaying a full row', async () => {
+  const f = fieldSession(),
+    failure = new Error('Original source field differs')
+  f.prepareFields.mockRejectedValueOnce(failure)
+  await expect(runSnapshotSyncSession(f.input, {})).rejects.toBe(failure)
+  expect(f.view.readPage).not.toHaveBeenCalled()
+  expect(f.destination.prepare).not.toHaveBeenCalled()
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('cancellation after field preparation drains once before yielding its durable state', async () => {
+  const f = fieldSession(),
+    controller = new AbortController()
+  f.prepareFields.mockImplementationOnce(async () => {
+    controller.abort()
+    return { apply: f.apply, close: f.close }
+  })
+  const result = await runSnapshotSyncSession(f.input, { signal: controller.signal })
+  expect(result.status).toBe('cancelled')
+  expect(result.pages).toBe(0)
+  expect(f.close).toHaveBeenCalledTimes(1)
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('a closed source drains field preparation before waiting for original source cleanup', async () => {
+  const f = fieldSession()
+  let released!: () => void
+  Reflect.set(
+    f.view,
+    'closed',
+    new Promise<void>(resolve => {
+      released = resolve
+    })
+  )
+  f.close.mockImplementation(async () => {
+    released()
+  })
+  await expect(
+    runSnapshotSyncSession(f.input, {
+      onProgress: progress => {
+        if (progress.state === 'committing') Reflect.set(f.view, 'isOpen', false)
+      }
+    })
+  ).rejects.toThrow('closed before destination commit')
+  expect(f.close).toHaveBeenCalledTimes(1)
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('field commit and drainage failures both remain attached', async () => {
+  const f = fieldSession(),
+    failure = new Error('Original destination changed'),
+    cleanup = new Error('Original drainage failed')
+  f.apply.mockRejectedValueOnce(failure)
+  f.close.mockRejectedValueOnce(cleanup)
+  let received: unknown
+  try {
+    await runSnapshotSyncSession(f.input, {})
+  } catch (cause) {
+    received = cause
+  }
+  expect(received).toBeInstanceOf(AggregateError)
+  expect((received as AggregateError).errors).toEqual([failure, cleanup])
+  expect(f.close).toHaveBeenCalledTimes(1)
+})
 
 test.each([
   { maxItems: 0 },
@@ -341,7 +632,7 @@ test('progress timings separate read, preparation, queue and commit costs', asyn
   const f = session()
   let now = 1000
   const clock = jest.spyOn(Date, 'now').mockImplementation(() => now)
-  const budget = jest.spyOn(SyncPageBudget.prototype, 'committed')
+  const budget = jest.spyOn(SyncPageBudget.prototype, 'committedSnapshot')
   const progress: SyncSessionProgress[] = []
   ;(f.view.readPage as jest.Mock).mockImplementation(async () => {
     now += 11
@@ -371,7 +662,7 @@ test('progress timings separate read, preparation, queue and commit costs', asyn
       queueMs: 17,
       commitMs: 19
     })
-    expect(budget).toHaveBeenCalledWith(expect.any(Object), 43, 24, 0)
+    expect(budget).toHaveBeenCalledWith('provenTxReqs', 0, 43, 24, 0)
   } finally {
     budget.mockRestore()
     clock.mockRestore()
@@ -449,4 +740,87 @@ test('identifies the current snapshot table before reading its first page', asyn
     apply.mockRestore()
     beginTable.mockRestore()
   }
+})
+
+test('adaptive field paging observes actual verification/replay bytes and reports them separately from metadata charge', async () => {
+  const f = fieldSession(),
+    progress: SyncSessionProgress[] = [],
+    committed = jest.spyOn(SyncPageBudget.prototype, 'committedSnapshot')
+  let bytes = 200
+  Object.defineProperty(f.reader, 'extentBytesRead', { get: () => bytes })
+  f.prepareFields.mockImplementationOnce(async () => {
+    bytes += 140000
+    return { apply: f.apply, close: f.close }
+  })
+  try {
+    await runSnapshotSyncSession(f.input, {
+      onProgress: value => {
+        progress.push(value)
+      }
+    })
+    expect(committed).toHaveBeenCalledWith('provenTxReqs', 0, expect.any(Number), expect.any(Number), 140000)
+    expect(progress.find(value => value.state === 'committed')?.fieldBytesRead).toBe(140000)
+    expect(f.close).toHaveBeenCalledTimes(1)
+  } finally {
+    committed.mockRestore()
+  }
+})
+
+test('field read telemetry refusal drains the real preparation before any writer is admitted', async () => {
+  const f = fieldSession()
+  let bytes = 100
+  Object.defineProperty(f.reader, 'extentBytesRead', { get: () => bytes })
+  f.prepareFields.mockImplementationOnce(async () => {
+    bytes = 99
+    return { apply: f.apply, close: f.close }
+  })
+  await expect(runSnapshotSyncSession(f.input, {})).rejects.toThrow('telemetry changed')
+  expect(f.close).toHaveBeenCalledTimes(1)
+  expect(f.apply).not.toHaveBeenCalled()
+})
+
+test('a drained working reservation refusal rereads a smaller prefix at the same source cursor before committing', async () => {
+  const f = fieldSession(),
+    cursors: unknown[] = [],
+    limits: number[] = []
+  f.reader.readMetadataPage.mockImplementation(async (_table, cursor, selected) => {
+    cursors.push(cursor)
+    limits.push(selected!.maxRows!)
+    return {
+      rows: Array.from({ length: selected!.maxRows! }, (_, index) => ({
+        fields: { provenTxReqId: 8 + index },
+        extents: {},
+        cursor: {
+          version: 1 as const,
+          snapshotId: f.checkpoint.snapshotId,
+          table: 'provenTxReqs' as const,
+          after: [8 + index]
+        }
+      })),
+      payloadBytes: 4096,
+      done: true
+    }
+  })
+  f.prepareFields.mockRejectedValueOnce(new SnapshotWorkingAllocationLimitError('Original combined allocation'))
+  f.apply.mockResolvedValueOnce({
+    checkpoint: { ...f.checkpoint, sequence: 12, tableIndex: 12, cursor: undefined, done: true },
+    inserts: 1,
+    updates: 0
+  })
+  await runSnapshotSyncSession(f.input, { maxItems: 4 })
+  expect(limits).toEqual([4, 2])
+  expect(cursors).toEqual([f.checkpoint.cursor, f.checkpoint.cursor])
+  expect(f.prepareFields.mock.calls.every(call => call[0] === f.checkpoint && call[2] === f.view)).toBe(true)
+  expect(f.apply).toHaveBeenCalledTimes(1)
+  expect(f.close).toHaveBeenCalledTimes(1)
+})
+
+test('storage quota refusal never retries an accepted source as a smaller or serialized copy', async () => {
+  const f = fieldSession(),
+    failure = new SnapshotResourceLimitError('Original storage quota')
+  f.prepareFields.mockRejectedValueOnce(failure)
+  await expect(runSnapshotSyncSession(f.input, { maxItems: 4 })).rejects.toBe(failure)
+  expect(f.reader.readMetadataPage).toHaveBeenCalledTimes(1)
+  expect(f.view.readPage).not.toHaveBeenCalled()
+  expect(f.apply).not.toHaveBeenCalled()
 })

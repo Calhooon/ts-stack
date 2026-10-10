@@ -443,7 +443,7 @@ test('preserves typed proof failure and recovery context across remote JSON', ()
   error.message += ' Retry canonical recovery.'
   const result = WalletErrorFromJson(JSON.parse(error.toJson()))
   expect(result).toBeInstanceOf(WERR_INVALID_MERKLE_ROOT)
-  expect(result.toJson()).toEqual(error.toJson())
+  expect(WalletError.unknownToJson(result)).toEqual(error.toJson())
   for (const changes of [
     { blockHeight: -1 },
     { blockHeight: NaN },
@@ -458,5 +458,5 @@ test('preserves typed proof failure and recovery context across remote JSON', ()
     )
   }
   const noTxid = new WERR_INVALID_MERKLE_ROOT('11'.repeat(32), 0, '22'.repeat(32))
-  expect(WalletErrorFromJson(JSON.parse(noTxid.toJson())).toJson()).toBe(noTxid.toJson())
+  expect(WalletError.unknownToJson(WalletErrorFromJson(JSON.parse(noTxid.toJson())))).toBe(noTxid.toJson())
 })
