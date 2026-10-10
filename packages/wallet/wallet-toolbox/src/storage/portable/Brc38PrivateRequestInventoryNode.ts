@@ -109,6 +109,12 @@ export function brc38PrivateRequestPostimageMetadata(row: Model): Readonly<Recor
   const result: Record<string, unknown> = {}
   for (const [name, value] of Object.entries(row)) {
     if ((payloads as readonly string[]).includes(name)) continue
+    // Missing legacy counters use the existing nonnull SQL insert defaults.
+    // Reconstruction compares the actual complete stored scalar postimage.
+    if (value === undefined && (name === 'wasBroadcast' || name === 'rebroadcastAttempts')) {
+      result[name] = 0n
+      continue
+    }
     result[name] =
       value instanceof Date
         ? value.toISOString()
