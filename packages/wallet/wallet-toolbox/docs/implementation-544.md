@@ -2017,3 +2017,11 @@ still requires the resulting executable to match the existing static pin
 and pass all thirteen native modes; neither a toolchain receipt nor a
 successful compilation grants runtime admission. Recipe reproduction and
 configured-path runtime qualification are pending this candidate's Linux run.
+
+The source-owned compiler recipe reproduced the exact static executable on
+source331. Its original WAL baseline then refused because the isolated
+read-only worker lacked the original C fixtures' fixed `/work` directory.
+Delivery now supplies a private 64 MiB tmpfs there, owned by the selected
+worker UID/GID, with no executable access. The original C fixture paths,
+assertions and executable hash remain unchanged. All thirteen modes and the
+configured-path application contracts still require a complete passing run.

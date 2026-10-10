@@ -45,6 +45,7 @@ timeout --signal=TERM --kill-after=10s 600s docker run --rm --init \
   --name "$container" --platform linux/arm64 --network none --read-only \
   --memory 12g --cpus 4 --pids-limit 512 --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --tmpfs "/work:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=$(id -u),gid=$(id -g)" \
   --mount "type=bind,source=$repo,target=/workspace,readonly" \
   --mount "type=bind,source=$private,target=/native-tests" \
   --workdir /workspace/packages/wallet/wallet-toolbox \
