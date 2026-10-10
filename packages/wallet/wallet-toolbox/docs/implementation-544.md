@@ -2008,3 +2008,12 @@ wiring, realistic recovery admission, complete original customer workflows
 and full affected qualification remain unfinished until demonstrated. Other
 platforms still require independent qualification; x64 is not silently
 substituted for the qualified ARM64 component.
+
+The pinned Node base was observed to contain no `cc` or `gcc`, and the first
+delivery attempt failed before application tests. The delivery script now
+builds `scripts/wallet-native-test-tooling.Dockerfile`, which pins the GCC
+12.2.0 and libc development packages measured on the qualified worker. It
+still requires the resulting executable to match the existing static pin
+and pass all thirteen native modes; neither a toolchain receipt nor a
+successful compilation grants runtime admission. Recipe reproduction and
+configured-path runtime qualification are pending this candidate's Linux run.

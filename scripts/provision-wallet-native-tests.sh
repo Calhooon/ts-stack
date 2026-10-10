@@ -7,7 +7,6 @@ if [[ $(uname -s) != Linux || $(uname -m) != aarch64 ]]; then
   exit 1
 fi
 repo=$(git rev-parse --show-toplevel)
-base_image='node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d'
 private=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ts-wallet-native-tests.XXXXXX")
 chmod 700 "$private"
 container="ts-wallet-native-tests-$(basename "$private")"
@@ -33,6 +32,13 @@ fi
 [[ $(stat --format=%s "$private/sqlite3.c") == 9516284 ]]
 printf '%s  %s\n' 6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebaefc \
   "$private/sqlite3.c" | sha256sum --check --status
+# Build the source-owned compiler recipe on this ARM64 worker, never on macOS.
+# The build context contains only the exact recipe, not credentials or repo data.
+mkdir -- "$private/tooling"
+cp -- "$repo/scripts/wallet-native-test-tooling.Dockerfile" "$private/tooling/Dockerfile"
+compiler_image=$(timeout --signal=TERM --kill-after=10s 600s \
+  docker build --quiet --platform linux/arm64 "$private/tooling")
+[[ $compiler_image == sha256:* ]]
 # Fail on any compiler/build mismatch. Source capture and all thirteen original
 # standalone native modes precede exclusive immutable executable delivery.
 timeout --signal=TERM --kill-after=10s 600s docker run --rm --init \
@@ -42,7 +48,7 @@ timeout --signal=TERM --kill-after=10s 600s docker run --rm --init \
   --mount "type=bind,source=$repo,target=/workspace,readonly" \
   --mount "type=bind,source=$private,target=/native-tests" \
   --workdir /workspace/packages/wallet/wallet-toolbox \
-  "$base_image" node --max-old-space-size=1536 tools/Brc38NativeQualification.cjs \
+  "$compiler_image" node --max-old-space-size=1536 tools/Brc38NativeQualification.cjs \
     --sqlite-source /native-tests/sqlite3.c --destination /native-tests/native-contract \
   > "$private/component-delivery.json"
 [[ -f $private/native-contract && ! -L $private/native-contract ]]
