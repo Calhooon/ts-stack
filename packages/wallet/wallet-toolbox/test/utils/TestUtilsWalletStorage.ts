@@ -6,6 +6,7 @@ import { Knex, knex as makeKnex } from 'knex'
 import {
   Beef,
   CachedKeyDeriver,
+  type ChainTracker,
   CreateActionArgs,
   CreateActionOutput,
   CreateActionResult,
@@ -1665,6 +1666,48 @@ export abstract class TestUtilsWalletStorage {
     }
 
     return mockData
+  }
+
+  /** Explicit offline authority for the pinned legacy test wallet only. It
+   * accepts exact fixture height/root pairs, never arbitrary supplied proofs.
+   * Callers separately supply any authored monitor block headers. */
+  static async installOfflineLegacyChainTracker(
+    ctx: TestWalletNoSetup,
+    headers: ReadonlyArray<{ height: number; merkleRoot: string }> = []
+  ): Promise<ChainTracker> {
+    if (
+      ctx.chain !== 'test' ||
+      ctx.identityKey !== '03ac2d10bdb0023f4145cc2eba2fcd2ad3070cb2107b0b48170c46a9440e4cc3fe'
+    )
+      throw new Error('Offline legacy authority requires its exact pinned test profile')
+    const stored: Array<{ height: number; merkleRoot: string }> = await ctx.activeStorage
+      .knex('proven_txs')
+      .select('height', 'merkleRoot')
+      .limit(4097)
+    if (stored.length === 0 || stored.length > 4096 || headers.length > 64)
+      throw new Error('Offline legacy authority exceeds its fixture inventory')
+    const roots = new Set<string>()
+    let currentHeight = 0
+    for (const { height, merkleRoot } of [...stored, ...headers]) {
+      if (!Number.isSafeInteger(height) || height < 1 || !/^[0-9a-fA-F]{64}$/.test(merkleRoot))
+        throw new Error('Invalid offline legacy chain fixture')
+      roots.add(`${String(height)}:${merkleRoot.toLowerCase()}`)
+      currentHeight = Math.max(currentHeight, height)
+    }
+    const tracker: ChainTracker = {
+      async isValidRootForHeight(root, height, signal) {
+        signal?.throwIfAborted()
+        return roots.has(`${String(height)}:${root.toLowerCase()}`)
+      },
+      async currentHeight(signal) {
+        signal?.throwIfAborted()
+        return currentHeight
+      }
+    }
+    jest.spyOn(ctx.services, 'getChainTracker').mockResolvedValue(tracker)
+    jest.spyOn(ctx.services, 'getHeight').mockResolvedValue(currentHeight)
+    jest.spyOn(ctx.activeStorage, 'getServices').mockReturnValue(ctx.services)
+    return tracker
   }
 
   static mockPostServicesAsSuccess(ctxs: TestWalletOnly[]): void {

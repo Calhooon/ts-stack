@@ -504,12 +504,15 @@ describe('action batch reservations', () => {
   test('first-action persisted noSendChange is reserved and returned explicitly', async () => {
     const legacy = await _tu.createLegacyWalletSQLiteCopy('actionBatchPersistedNoSendChange', 'legacy')
     try {
+      const tracker = await _tu.installOfflineLegacyChainTracker(legacy)
+      await expect(tracker.isValidRootForHeight('00'.repeat(32), 1)).resolves.toBe(false)
       legacy.wallet.randomVals = [0.1, 0.2, 0.3, 0.7, 0.8, 0.9]
       const seed = await legacy.wallet.createAction({
         description: 'seed persisted noSend change',
         outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'seed output' }],
         options: { noSend: true, randomizeOutputs: false }
       })
+      expect(legacy.services.getChainTracker).toHaveBeenCalled()
       expect(seed.noSendChange).toBeDefined()
       const noSendChange = seed.noSendChange ?? []
       expect(noSendChange).not.toHaveLength(0)

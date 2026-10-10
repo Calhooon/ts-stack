@@ -1680,3 +1680,15 @@ legacy request flag `1`, typed request flag `true`, and a certificate table
 scan whose locale ties retain insertion order. Its full composed fixture
 returned in 235.3 seconds under the explicit 300-second fixture allowance;
 this is diagnostic setup evidence, not complete system qualification.
+
+### Offline legacy action and monitor qualification
+
+The selected legacy action-batch and monitor fixtures use an explicit test-only
+chain tracker. It accepts exact height/root pairs from the pinned legacy
+wallet's proof inventory and the monitor's independently authored block
+headers. Unknown roots and wrong heights are independently rejected; wallet
+creation, proof validation, monitor transitions and reservation assertions
+remain real. This avoids relying on external chain services during isolated
+Linux qualification. It neither changes production chain authority nor
+qualifies a live chain or funded restore/spend. Fixture teardown drains every
+owned legacy wallet even when an assertion fails.
