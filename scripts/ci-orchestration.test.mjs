@@ -172,6 +172,9 @@ test('CI bounds every job and allocates no runner for an empty infrastructure ma
   for (const job of jobs) {
     if (job.name === 'mutation-tests') {
       assertWalletMutationTimeout(job, 45)
+    } else if (job.name === 'coverage-wallet') {
+      // Exact finite per-cohort allowances retain all existing ordinary bounds.
+      assertNativeWalletJob(job.source)
     } else {
       assert.match(job.source, /^    timeout-minutes: \d+$/m, `${job.name} must have a timeout`)
     }

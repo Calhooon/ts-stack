@@ -2069,3 +2069,10 @@ Mutation/dependent routing and full supported-host qualification remain unfinish
 the large mutation selections need measured review before repeating full real-expiry
 workflows in each baseline. No original composed body, assertion, fault or real
 expiry check was edited by this routing change.
+
+The aggregate rereads each original Jest JSON report, verifies its exact digest
+and repeats the full case/status checks before counting its receipt. Same-head
+metadata alone is insufficient. The case report must identify the complete
+expected package-relative test path. The root orchestration contract separately
+checks the exact finite per-cohort job allowance while preserving numeric bounds
+for every unrelated job.

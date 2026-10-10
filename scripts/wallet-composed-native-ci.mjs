@@ -98,7 +98,7 @@ export function validateComposedNativeReport(report, cohortId) {
     report.numFailedTestSuites !== 0 ||
     report.numPendingTestSuites !== 0 ||
     report.testResults.length !== 1 ||
-    !suite.name?.replaceAll('\\', '/').endsWith('/' + composedNativeTestFile.split('/').at(-1)) ||
+    !suite.name?.replaceAll('\\', '/').endsWith('/' + composedNativeTestFile) ||
     !Array.isArray(assertions) ||
     assertions.length !== composedNativeCaseNames.length ||
     !isDeepStrictEqual(assertions.map(value => value.fullName).sort(), composedNativeCaseNames)

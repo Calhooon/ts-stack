@@ -76,6 +76,9 @@ test('an empty, missing, duplicate, renamed or wrong-file inventory cannot pass 
     },
     value => {
       value.testResults[0].name = '/repo/Another.test.ts'
+    },
+    value => {
+      value.testResults[0].name = '/another-directory/' + composedNativeTestFile.split('/').at(-1)
     }
   ]
   for (const mutate of mutations) {
