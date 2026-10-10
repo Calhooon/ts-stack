@@ -1852,3 +1852,29 @@ credit; the complete customer workflow remains separately required. No allocatio
 relaxed. Limits should protect supported workloads and resource use with
 measured headroom; reducing feature scope or adding complex representations
 solely to fit an arbitrary cap is not the objective.
+
+
+The source308 complete original customer run cleared the strict INTEGER
+allocation-history predicate and reached PREPARED after 193 drained operations.
+It then failed after 2151.142s, before expiry, because existing operational
+checkpoint payload preparation correctly required query-only mode, while the
+fresh physically read-only private native lease retained SQLite's default
+query_only=0. All original customer records, assertions and oracles remain.
+A test-only source309 addition to the original genuine native raw-field case
+reads the actual PRAGMA and fails against that unchanged reader (160ms).
+Source310 sets and verifies query-only mode before lending every fresh private
+native read lease. It retains the separate physical read-only slot, exact
+owner/transaction/source checks, writer revalidation and destruction on both
+success and failed admission. The payload reader's refusal is unchanged.
+Same-test runtime qualification and complete customer/restart/repeat remain
+required; root/build success does not establish those outcomes.
+
+Read-only source308 observations showed a 1.82GiB container peak without memory
+limit/OOM events and little CPU throttling; most sampled CPU belonged to the
+native kernels, with roughly 70percent cumulative CPU in system calls. The
+native driver currently selects a 64KiB SQLite page cache per connection and
+checks actual file/directory identity on physical reads. Cache thrashing is a
+hypothesis for the high file-operation cost, not a measured causal conclusion.
+Review a bounded cache allocation within the existing native heap before
+complexity solely to fit a timeout. No cache, native heap, admission deadline
+or original customer workload was changed by source310.

@@ -2137,6 +2137,13 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       failed = false,
       cause: unknown
     try {
+      // The separate physical slot is read-only; payload preparation also
+      // requires its actual SQLite query-only mode before any borrower runs.
+      // Destruction below drains this fresh slot, including admission failures.
+      await database.raw('PRAGMA query_only=ON')
+      const mode = (await database.raw('PRAGMA query_only')) as Array<{ query_only: number }>
+      if (mode.length !== 1 || mode[0].query_only !== 1)
+        throw new Error('Private native read-only query mode differs')
       value = await work(database)
     } catch (failure) {
       failed = true
