@@ -18,7 +18,10 @@ test('actual native export preserves all13 tables, all22 TEXT cells and legacy r
         await verifyBrc38NativeSourcePayloadText(fixture.storage, {
           expected,
           privateIndexParent: fixture.directory,
-          expiresAt: Math.min(fixture.expiresAt, Date.now() + 120000)
+          expiresAt: Math.min(fixture.expiresAt, Date.now() + 360000),
+          onMode(mode, phase) {
+            console.log(JSON.stringify({ stage: 'native-portable-mode', mode, phase, at: new Date().toISOString() }))
+          }
         })
         const after = await withComposedFixtureRead(fixture.manager, readIndependentNativeInventory)
         try {
@@ -69,6 +72,6 @@ test('actual native export preserves all13 tables, all22 TEXT cells and legacy r
         })
       }
     },
-    480000
+    720000
   )
-}, 510000)
+}, 750000)

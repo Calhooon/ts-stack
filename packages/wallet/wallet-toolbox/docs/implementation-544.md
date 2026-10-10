@@ -1706,3 +1706,17 @@ The offline fixture binds both Services and the Monitor's separately configured
 Chaintracks authority. Stubbing only Services leaves real Monitor proof checks
 using its original external chain client; both paths now use the same exact
 fixture root/height membership.
+
+The source294 full native case failed normally after389.948s because its single
+120-second source budget covered three independent modes. The recorded failure
+remains unqualified. The corrected test gives each mode its own120-second
+source deadline, with a maximum360-second aggregate operation,720-second
+selected fixture lease and750-second Jest deadline. It reports mode start/end
+times for full-cost review. The helper default180s, application defaults, field
+and memory limits, and every original correctness/cleanup check remain intact.
+
+The IndexedDB source also preserves the optional request flag's original
+boolean or historical0/1 spelling. Four complete-document regressions compare
+both ordinary and packed streams with the original materialized exporter and
+check that the actual source row is unchanged. These simulated IDB checks are
+component evidence; real browser qualification remains required.

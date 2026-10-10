@@ -491,7 +491,7 @@ test.each(['table', 'reverse-table', 'descending-index', 'reverse-index'] as con
     await source.knex.raw('DROP INDEX IF EXISTS brc38_import_target_certificateFields')
     if (mode.endsWith('index'))
       await source.knex.raw('CREATE INDEX ?? ON certificate_fields(userId, fieldName DESC, certificateId)', [
-        'legacy "descending" finder'
+        'legacy "descending" finder (fixture)'
       ])
     if (mode.startsWith('reverse')) await source.knex.raw('PRAGMA reverse_unordered_selects = ON')
     for (const names of [
@@ -516,7 +516,7 @@ test.each(['table', 'reverse-table', 'descending-index', 'reverse-index'] as con
         plan: Array<{ detail: string }> = await source.knex.raw('EXPLAIN QUERY PLAN ' + query.sql, query.bindings)
       expect(plan).toHaveLength(1)
       expect(plan[0].detail).toContain(
-        mode.endsWith('index') ? 'legacy "descending" finder' : 'SCAN certificate_fields'
+        mode.endsWith('index') ? 'legacy "descending" finder (fixture)' : 'SCAN certificate_fields'
       )
       const original = await exportBRC38(source, identity, { requireSnapshot: true })
       expect(original.tables.provenTxReqs[0].wasBroadcast).toBe(1)

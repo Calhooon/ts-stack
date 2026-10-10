@@ -748,3 +748,64 @@ test('the all13 streamed source preserves exact legacy BRC-38 data and no-send s
     await stream.close()
   }
 })
+
+// Legacy SQLite archives can place the numeric optional flag in IDB. Compare
+// complete documents with the real original getter, not another stream mode.
+test.each([false, true, 0, 1])('IDB archives preserve the original request flag %p in both modes', async flag => {
+  await storage.db!.put('transactions', row(1))
+  await storage.db!.put('proven_tx_reqs', {
+    ...timestamps,
+    provenTxReqId: 1,
+    txid: row(1).txid!,
+    status: 'unmined',
+    attempts: 0,
+    notified: true,
+    wasBroadcast: flag as unknown as boolean,
+    history: '{"notes":[{"what":"original"}]}',
+    notify: '{}',
+    rawTx: [6]
+  })
+  const expected = await exportBRC38(storage, identity)
+  expect(expected.tables.provenTxReqs[0].wasBroadcast).toBe(flag)
+  for (const packed of [false, true]) {
+    const source = await openBrc38IdbSource(storage, identity, {
+      maximumPageRows: 1,
+      maximumPageBytes: 65536,
+      maximumRowAllocationBytes: 65536,
+      maximumCertificateGroupBytes: 65536,
+      ...(packed
+        ? { streamedBinary: { maximumBinaryBytes: 65536 }, streamedStructured: { maximumStructuredBytes: 65536 } }
+        : {})
+    })
+    try {
+      const stream = await createBrc38Stream(source, {
+        exportedAt: expected.exportedAt,
+        maximumArchiveBytes: 1048576,
+        maximumRowBytes: 65536,
+        maximumMetadataBytes: 65536,
+        maximumChunkBytes: 4096,
+        ...(packed
+          ? {
+              streamedRows: {
+                maximumBinaryBytes: 65536,
+                maximumStructuredBytes: 65536,
+                maximumMetadataAllocationBytes: 65536,
+                maximumRowBytes: 65536
+              }
+            }
+          : {})
+      })
+      try {
+        const chunks: Uint8Array[] = []
+        for await (const chunk of stream.chunks) chunks.push(chunk)
+        await stream.validateCompleted()
+        expect(parseBRC38Json(Buffer.concat(chunks).toString('utf8'))).toEqual(expected)
+      } finally {
+        await stream.close()
+      }
+    } finally {
+      await source.release()
+    }
+  }
+  expect((await storage.db!.get('proven_tx_reqs', 1))!.wasBroadcast).toBe(flag)
+})

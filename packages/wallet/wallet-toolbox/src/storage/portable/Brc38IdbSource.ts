@@ -36,7 +36,8 @@ const binaries: Partial<Record<WalletSnapshotTable, readonly string[]>> = {
   outputs: ['lockingScript']
 }
 const booleans: Partial<Record<WalletSnapshotTable, readonly string[]>> = {
-  provenTxReqs: ['notified', 'wasBroadcast'],
+  // Preserve the optional flag's original boolean or historical SQL spelling.
+  provenTxReqs: ['notified'],
   outputBaskets: ['isDeleted'],
   transactions: ['isOutgoing'],
   commissions: ['isRedeemed'],

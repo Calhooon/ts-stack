@@ -14,6 +14,7 @@ export async function verifyBrc38NativeSourcePayloadText(
     expected: Readonly<BRC38WalletData>
     privateIndexParent: string
     expiresAt: number
+    onMode?: (mode: string, phase: 'started' | 'completed') => void
   }>
 ): Promise<void> {
   const expected = fixture.expected,
@@ -24,11 +25,18 @@ export async function verifyBrc38NativeSourcePayloadText(
     Buffer.byteLength(encoded, 'utf8') > 131072 ||
     !Number.isSafeInteger(expiresAt) ||
     expiresAt <= Date.now() ||
-    expiresAt > Date.now() + 120000
+    expiresAt > Date.now() + 360000
   )
     throw new Error('Independent complete bounded native portable fixture required')
+  let modeExpiresAt = expiresAt,
+    modeDeadline = deadline
   const check = (): void => {
-    if (Date.now() >= expiresAt || performance.now() >= deadline)
+    if (
+      Date.now() >= expiresAt ||
+      performance.now() >= deadline ||
+      Date.now() >= modeExpiresAt ||
+      performance.now() >= modeDeadline
+    )
       throw new Error('Native portable logical TEXT case reached its original deadline')
   }
   for (const source of nativePackedTextSources)
@@ -48,9 +56,12 @@ export async function verifyBrc38NativeSourcePayloadText(
   if (typeof expected.user.identityKey !== 'string') throw new Error('Native fixture user identity differs')
   for (const mode of ['ordinary', 'structured', 'text']) {
     const structured = mode !== 'ordinary'
+    modeExpiresAt = Math.min(expiresAt, Date.now() + 120000)
+    modeDeadline = performance.now() + modeExpiresAt - Date.now()
     check()
+    fixture.onMode?.(mode, 'started')
     const source = await openBrc38KnexSource(storage, expected.user.identityKey, {
-        lifetimeMs: expiresAt - Date.now(),
+        lifetimeMs: modeExpiresAt - Date.now(),
         maximumPageRows: 2,
         maximumPageBytes: 2097152,
         maximumRowAllocationBytes: 2097152,
@@ -125,5 +136,6 @@ export async function verifyBrc38NativeSourcePayloadText(
         output.fill(0)
       }
     }
+    fixture.onMode?.(mode, 'completed')
   }
 }

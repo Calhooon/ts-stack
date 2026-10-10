@@ -633,15 +633,24 @@ export async function openBrc38KnexSource(
         // stable order before the legacy locale sort. Do not fetch its payload.
         if (plan.length !== 1 || typeof plan[0].detail !== 'string' || plan[0].detail.length > 1024)
           throw new Error('Unsupported BRC-38 certificate finder plan')
-        const indexed = /^(?:SCAN|SEARCH) certificate_fields USING (?:COVERING )?INDEX (.+?)(?: \(|$)/.exec(
-          plan[0].detail
-        )
+        const indexed = /^(SCAN|SEARCH) certificate_fields USING (?:COVERING )?INDEX (.+)$/.exec(plan[0].detail)
         if (indexed === null && plan[0].detail !== 'SCAN certificate_fields')
           throw new Error('Unsupported BRC-38 certificate finder order')
+        let indexName: string | undefined
+        if (indexed !== null) {
+          indexName = indexed[2]
+          if (indexed[1] === 'SEARCH') {
+            // Conditions follow the final " ("; an index name itself may
+            // contain spaces, parentheses and quotes. Knex quotes it below.
+            const suffix = indexName.lastIndexOf(' (')
+            if (suffix < 1 || !indexName.endsWith(')')) throw new Error('Unsupported BRC-38 certificate finder index')
+            indexName = indexName.slice(0, suffix)
+          }
+        }
         const table =
-          indexed === null
+          indexName === undefined
             ? k.raw('?? NOT INDEXED', ['certificate_fields'])
-            : k.raw('?? INDEXED BY ??', ['certificate_fields', indexed[1]])
+            : k.raw('?? INDEXED BY ??', ['certificate_fields', indexName])
         const ordinals: Array<{ ordinal: string }> = await k
           .select(k.raw('cast(?? as text) as ??', ['certificate_fields._rowid_', 'ordinal']))
           .from(table)
