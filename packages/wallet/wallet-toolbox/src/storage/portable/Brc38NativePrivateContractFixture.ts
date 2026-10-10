@@ -77,7 +77,11 @@ export async function withBrc38NativePrivateContractFixture(
         check()
         return result
       }
-    await store.withAuthenticatedPrivateDestination(async () => {
+    const destination = (operation: () => Promise<void>): Promise<void> =>
+      streamedStructured
+        ? store.withAuthenticatedPrivateStructuredDestination(operation)
+        : store.withAuthenticatedPrivateDestination(operation)
+    await destination(async () => {
       const storage = new StorageKnex({
         ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
         knex: store.knex,
