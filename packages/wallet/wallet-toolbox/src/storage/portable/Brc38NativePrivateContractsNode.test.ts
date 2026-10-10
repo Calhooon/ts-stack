@@ -1436,8 +1436,11 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
         true,
         async database =>
           await database.transaction(async trx => {
-            store.assertPrivateNativeReadTransaction(trx)
-            expect(await readBrc38NativeLocalFieldBytes(trx, local)).toBe(expected.length)
+          store.assertPrivateNativeReadTransaction(trx)
+          // BEGIN alone does not establish a retained main-database view.
+          // Prove the independent original rows before reading their extents.
+          expect(await trx('monitor_events').select('id').orderBy('id')).toEqual([{ id: 400 }, { id: 401 }])
+          expect(await readBrc38NativeLocalFieldBytes(trx, local)).toBe(expected.length)
             expect(await readBrc38NativeLocalFieldBytes(trx, { ...local, rowId: 401 })).toBeNull()
             expect(await readBrc38NativeTextBytes(trx, ordinary)).toBe(expected.length)
             expect(await readBrc38NativeTextBytes(trx, { ...ordinary, rowId: 10 })).toBeNull()

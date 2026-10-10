@@ -1809,3 +1809,12 @@ lossless over the admitted range and fits the existing portable Knex declaration
 without an assertion or ambient type change. The C ABI still rejects direct REAL
 coordinates. The genuine native regression and every original case are retained;
 current complete qualification is required.
+
+
+Source301 root/build, seventeen whole component suites429 and the original TEXT
+reader suite13 pass. The raw native regression correctly refused an unestablished
+read view: BEGIN alone leaves SQLite at SQLITE_TXN_NONE. Source302 independently
+selects and asserts its original raw row keys inside the genuine READ transaction
+before invoking extent metadata. The retained-view C guard and production readers
+remain unchanged; all complete-byte and negative controls remain. The corrected
+regression requires fresh execution and does not qualify full customer recovery.
