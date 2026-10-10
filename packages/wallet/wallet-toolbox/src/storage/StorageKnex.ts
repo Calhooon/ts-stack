@@ -980,6 +980,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       try {
         await this.releaseConcurrentSource(reader)
       } catch (cleanup) {
+        // One retained guarded failure remains the same error for opening and
+        // later provider destruction; it already owns its concrete cleanup.
+        if (error === cleanup && error instanceof SnapshotArchiveSourceCleanupError) throw error
         throw new SnapshotArchiveSourceCleanupError(
           origin === undefined
             ? cleanup

@@ -1486,3 +1486,12 @@ accepts its original date input after the existing in-place timestamp conversion
 and the archive migration test checks the actual later journal migration and
 ordering. Complete affected suites and broader system qualification remain
 required; no interrupted coverage attempt counts as complete.
+
+The affected source277 run confirms the archive service/store, SyncState update
+and profile transfer suites pass. The guarded-source control also requires the
+same retained cleanup error at opening and later provider destruction. When both
+steps return that same existing typed error, preserve it directly; its cleanup
+owner and retry are already attached. Distinct opening/cleanup failures continue
+through the ordinary/native cause handling above. The DELETE activation suite
+reaches a 30-second case deadline; no product or test deadline increase follows
+until a bounded complete-case measurement distinguishes workload from a hang.
