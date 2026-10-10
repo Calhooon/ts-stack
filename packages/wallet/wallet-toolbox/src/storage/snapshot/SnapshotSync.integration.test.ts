@@ -250,11 +250,14 @@ test.each(['before-row', 'before-checkpoint', 'before-commit', 'after-commit'] a
         }
         if (input.boundary === 'before-commit') {
           const transaction = storage.knex.transaction.bind(storage.knex)
-          storage.knex.transaction = (work, ...options) => transaction(async trx => {
-            const result = await work(trx)
-            await hold()
-            return result
-          }, ...options)
+          Object.defineProperty(storage.knex, 'transaction', {
+            configurable: true,
+            value: (work, ...options) => transaction(async trx => {
+              const result = await work(trx)
+              await hold()
+              return result
+            }, ...options)
+          })
         }
         await (await storage.getSnapshotSync().prepare(input.before, input.page))()
         if (input.boundary === 'after-commit') await hold()

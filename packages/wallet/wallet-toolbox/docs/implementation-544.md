@@ -1580,3 +1580,9 @@ exercises its intended transport; production negotiation and independent journal
 tests remain unchanged. Its killed-before-commit child now intercepts the actual
 Knex transaction. Original cases, semantic assertions and deadlines remain;
 these fixture corrections require complete validation, not larger limits.
+
+The original two suites then pass 158 of 159 cases. The remaining crash hook
+used assignment to Knex's non-writable transaction property. Its owned child
+now defines that configurable property explicitly, retaining the actual
+transaction, pre-commit SIGKILL and durable recovery assertions. No production
+behavior or time allowance changes; full validation remains required.
