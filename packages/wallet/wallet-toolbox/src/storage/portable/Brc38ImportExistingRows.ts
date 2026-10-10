@@ -425,7 +425,7 @@ async function readExistingFieldTargets(
       return
     }
     const rows = (await query(trx, target).select(
-      metadataNames,
+      ...metadataNames,
       ...(binaryNames.length + textNames.length === 0 ? [] : [trx.raw('rowid AS __brc38NativeBinaryRowId')])
     )) as Array<Record<string, unknown> & { created_at: Date; updated_at: Date }>
     if (rows.length !== 1) invalid()

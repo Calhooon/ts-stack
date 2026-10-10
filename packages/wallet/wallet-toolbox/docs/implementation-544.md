@@ -1940,3 +1940,12 @@ actual composed-source regression through the production current-field helper,
 with an independent raw coordinate query, TEXT extent and wrong-ID/cross-user
 negative controls. Production remains unchanged for the old-fail proof. All
 original eighteen customer/recovery cases and their assertions remain.
+
+The source315 focused actual-source regression reproduces the same missing
+physical coordinate after its independent raw integer/row query succeeds.
+Source316 spreads the metadata column names into Knex.select, preserving the
+additional actual rowid expression. Indexed identity, safe positive physical
+coordinate, schema/pointer, owner, allocation and cross-user checks are unchanged.
+The same full composed-source regression, including wrong-ID/cross-user negative
+controls, must pass before credit. Full customer/current restart/repeat remains
+required after this functional correction; a larger allowance is not its fix.
