@@ -305,6 +305,10 @@ async function prepareBrc38PackedPrivateMetadata(
     }
     if (brc38JsonBinaryField(table, key) && value != null) invalid()
     chargeBrc38ImportDecodedBudget(budget, typeof value === 'string' ? 512 + 16 * value.length : 512)
+    // Legacy requests omit these migrated non-null columns. Absence uses SQL
+    // defaults on insertion and preserves the actual counters on update.
+    if (value === undefined && table === 'provenTxReqs' && (key === 'wasBroadcast' || key === 'rebroadcastAttempts'))
+      continue
     if (value instanceof Date) {
       if (!Number.isFinite(value.getTime())) invalid()
       row[key] = new Date(value.getTime())

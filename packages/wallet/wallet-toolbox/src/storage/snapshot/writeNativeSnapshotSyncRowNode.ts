@@ -130,6 +130,10 @@ export async function writeNativeSnapshotSyncRow(
     const descriptor = descriptors[key]
     if (descriptor === undefined || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) invalid()
     const value: unknown = descriptor.value
+    // Keep missing legacy broadcast/retry fields absent: inserts retain the
+    // schema defaults and updates retain the destination's current counters.
+    if (value === undefined && table === 'provenTxReqs' && (key === 'wasBroadcast' || key === 'rebroadcastAttempts'))
+      continue
     if (value instanceof Date) {
       if (!Number.isFinite(value.getTime())) invalid()
       row[key] = new Date(value.getTime())

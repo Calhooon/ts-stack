@@ -7,7 +7,12 @@ metadata creates own undefined optional broadcast/retry properties; native
 private insertion serializes those as SQL NULL instead of using the existing
 false/zero migration defaults. The ordinary native sync writer also rejects
 that optional shape. Genuine private insert/rollback/update and ordinary native
-writer regressions are now authored with production unchanged; runtime is pending.
+writer regressions reproduce both unchanged-production failures on source317.
+The private and ordinary native writers now omit only undefined optional
+broadcast/retry columns before normalization. Inserts use the existing schema
+defaults; updates preserve stored counters. Explicit false/zero and true/retry
+values remain writes, and nullable fields retain their existing handling.
+The same five genuine regressions require fresh qualification of this correction.
 The failed full run drained cleanly after1105.817s, without timeout/native fault
 or OOM. All original customer data, expiry, cases and semantic oracles remain.
 The complete wallet and test-source compiler now passes with zero diagnostics.
