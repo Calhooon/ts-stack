@@ -1,3 +1,4 @@
+import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import knexModule from 'knex'
 import * as journalGeneration from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import * as captureBackend from '../snapshot/journal/SnapshotJournalCaptureBackend'
@@ -73,7 +74,7 @@ test('real authenticated preview persists actual target schema/epoch/exact clock
   expect(
     queries.filter(sql => sql.includes(' AS occupied') && !sql.includes('snapshot_journal_receipts'))
   ).toHaveLength(15)
-  expect(queries.some(sql => /count\(|offset /i.test(sql))).toBe(false)
+  expect(queries.filter(sql => sql.includes(' AS occupied')).some(sql => /count\(|offset /i.test(sql))).toBe(false)
   expect(Object.isFrozen(value.target)).toBe(true)
 })
 test('compressed profiles retain the same authenticated preview binding as accepted bounded legacy identities', async () => {
@@ -277,9 +278,20 @@ test('private semantic seal by itself cannot stand in for complete envelope auth
 })
 test('persisted oversized preview is rejected by SQL extent before its payload is selected', async () => {
   await preview()
-  await store()
-    .knex('private_import')
-    .update({ previewJson: 'x'.repeat(8193) })
+  const actual = store(),
+    guardName = 'brc38_source_seal_private_import_update',
+    oversized = 'x'.repeat(8193)
+  await expect(actual.knex('private_import').update({ previewJson: oversized })).rejects.toThrow('seal')
+  // Synthetic physical corruption is separate from the ordinary write refusal.
+  // The read runs only after the exact source guard has been restored.
+  await actual.knex.transaction(async trx => {
+    const guard = await trx('sqlite_schema').where({ name: guardName, type: 'trigger' }).first('sql')
+    expect(typeof guard?.sql).toBe('string')
+    await trx.raw('DROP TRIGGER ??', [guardName])
+    await trx('private_import').update({ previewJson: oversized })
+    await trx.raw(guard.sql)
+  })
+  await verifyBrc38AuthenticatedSourceSeal(actual.knex)
   const queries: string[] = [],
     listener = (query: { sql: string }) => queries.push(query.sql)
   store().knex.on('query', listener)

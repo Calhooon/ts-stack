@@ -23,6 +23,22 @@ import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { Script, Transaction } from '@bsv/sdk'
 import { inspectBrc38AuthenticatedRawTransaction } from './Brc38AuthenticatedRawTransactionNode'
 
+/** Controlled corruption fixture: ordinary callers cannot change sealed data.
+ * Restore the exact guard in the same transaction before testing read integrity. */
+async function corruptSealedBinaryChunk(store: KnexBrc38StagingStore, payload: Buffer): Promise<void> {
+  const coordinate = { tableName: 'transactions', position: 0, field: 'rawTx', offset: 0 },
+    guardName = 'brc38_source_seal_private_binary_chunks_update'
+  await expect(store.knex('private_binary_chunks').where(coordinate).update({ payload })).rejects.toThrow('immutable')
+  await store.knex.transaction(async trx => {
+    const guard = await trx('sqlite_schema').where({ name: guardName, type: 'trigger' }).first('sql')
+    expect(typeof guard?.sql).toBe('string')
+    await trx.raw('DROP TRIGGER ??', [guardName])
+    await trx('private_binary_chunks').where(coordinate).update({ payload })
+    await trx.raw(guard.sql)
+  })
+  await verifyBrc38AuthenticatedSourceSeal(store.knex)
+}
+
 const password = authenticatedStagePassword
 let directory = '',
   root: Brc38StagingAdmissionNode,
@@ -463,10 +479,7 @@ test('authenticated streamed reader retains exact source membership, actual exte
       'field-aware semantic and native import activation'
     )
     expect(legacy).not.toHaveBeenCalled()
-    await store
-      .knex('private_binary_chunks')
-      .where({ tableName: 'transactions', position: 0, field: 'rawTx', offset: 0 })
-      .update({ payload: Buffer.alloc(65536, 58) })
+    await corruptSealedBinaryChunk(store, Buffer.alloc(65536, 58))
     await expect(
       store.withAuthenticatedStreamedImportRead(
         async (_json, _metadata, reader) => await reader.chunk('transactions', 0, 'rawTx', 0)
@@ -611,10 +624,7 @@ test('authenticated raw framing uses the actual sealed binary field and independ
       })
     ).rejects.toBe(cancellation)
     expect(await target.writer('users')).toEqual([])
-    await store
-      .knex('private_binary_chunks')
-      .where({ tableName: 'transactions', position: 0, field: 'rawTx', offset: 0 })
-      .update({ payload: Buffer.alloc(65536, 59) })
+    await corruptSealedBinaryChunk(store, Buffer.alloc(65536, 59))
     await expect(
       inspectBrc38AuthenticatedRawTransaction(store, 'transactions', 0, { maximumBytes: 262144, maximumChunks: 8 })
     ).rejects.toThrow()

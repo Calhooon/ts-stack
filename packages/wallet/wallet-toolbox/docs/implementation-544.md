@@ -1622,3 +1622,17 @@ rechecks a physical guard after a successful comparison. This targets measured
 repeated setup queries; full native timing and system qualification remain
 pending. The symlink refusal oracle names the actual file-type/link-count
 boundary while retaining refusal and no-file-creation assertions.
+
+The complete native diagnostic reaches actual source activation in 153.5 seconds
+and observer entry in 154.6 seconds, then expires and physically drains at its
+original 180-second lease. The composed test fixture now accepts an explicit
+five-minute admission; its default remains three minutes and no production
+limit or original case deadline is changed. Full setup, import and recovery
+measurements remain required before selecting complete-case harness allowances.
+
+Synthetic corruption fixtures first prove normal sealed writes refuse, then
+transactionally introduce the intended damaged payload and restore the exact
+physical guard before exercising digest or SQL-extent refusal. The preview's
+fifteen occupancy queries retain their no-count/no-offset assertion; independent
+schema ownership checks can use metadata counts. Closed binary references name
+the actual source-closed error while the row-advance lifetime check remains.

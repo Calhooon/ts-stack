@@ -606,7 +606,7 @@ test('native binary references cease to read when their canonical row advances o
     await expect(reference.read(0, 1)).rejects.toThrow('row lifetime')
     await iterator.return?.()
     await owner.release()
-    await expect(reference.read(0, 1)).rejects.toThrow('row lifetime')
+    await expect(reference.read(0, 1)).rejects.toThrow('closed or expired')
   } finally {
     await iterator.return?.()
     await owner.release()
