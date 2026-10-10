@@ -307,7 +307,9 @@ export async function composedNativeFixture(
       merge: Brc38PrivateNativeMergeOptions = {
         receiptPolicy: previewReceiptPolicy,
         maximumStepRows: 16,
-        maximumStepBytes: 2097152,
+        // Occupied merge includes checkpoint scratch, existing-state planning
+        // and retained decoded metadata; the empty restore allowance is smaller.
+        maximumStepBytes: 8388608,
         maximumMappedIds: maximumRows,
         maximumJournalLogicalBytes,
         maximumLocalRows: maximumRows,

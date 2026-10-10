@@ -1853,7 +1853,6 @@ relaxed. Limits should protect supported workloads and resource use with
 measured headroom; reducing feature scope or adding complex representations
 solely to fit an arbitrary cap is not the objective.
 
-
 The source308 complete original customer run cleared the strict INTEGER
 allocation-history predicate and reached PREPARED after 193 drained operations.
 It then failed after 2151.142s, before expiry, because existing operational
@@ -1879,7 +1878,6 @@ Review a bounded cache allocation within the existing native heap before
 complexity solely to fit a timeout. No cache, native heap, admission deadline
 or original customer workload was changed by source310.
 
-
 Source311 replaces the native driver's fixed64KiB SQLite cache target with a
 bounded share of its already admitted hard heap. Each of the four driver and
 two possible temporary recovery-copy connections targets at most one twelfth
@@ -1891,7 +1889,6 @@ ceiling or suppress a timeout. A fresh exact native build must pass the original
 standalone native contracts before registry admission. Full customer timing
 and correctness remain unqualified; the source308 CPU observations support an
 experiment, not a speedup claim or final production sizing.
-
 
 The fresh source311 Linuxarm64 native15 candidate passed all13 original
 standalone modes: runtime, WAL/DELETE/descriptors, profile, private stage,
@@ -1906,3 +1903,16 @@ including original full UTF8/NUL/NULL and ownership/cancellation controls.
 The complete customer, restart, repeat, performance, platform, consumer and
 exact-head CI/review obligations remain open. No standalone result is a
 full-system or production sizing claim.
+
+The complete original source312 customer case failed after438.181s in the
+first import's checkpoint preparation, before its one-hour expiry. The fixture
+selected2MiB per merge page even though checkpoint TEXT scratch alone reserves
+2MiB, in addition to existing-state planning and retained decoded metadata.
+Source313 explicitly selects8MiB for this complete occupied fixture's merge
+page, within its existing8MiB row allocation ceiling. Empty restore retains
+2MiB. Original records, full TEXT values, semantic/auxiliary/prior-import
+oracles, row counts, physical quota, working allocator and real expiry remain.
+Production defaults are unchanged. The failed run peaked at1818038272 container
+bytes with zero memory-limit or OOM events; container RSS is separate from
+explicit component allocation accounting. The allocation selection requires
+full original customer/restart/repeat qualification and is not production sizing.
