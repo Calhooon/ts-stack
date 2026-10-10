@@ -17,8 +17,7 @@ existing TypeScript input and includes the existing precise hash declarations.
 The fresh original full Linux root typecheck passes across all workspace
 projects, including the client, mobile, examples and operator. Full root lint and
 formatting also pass. No compiler option, runtime contract or worker resource
-limit is relaxed. The complete root control suite passes 372 of 374 cases; two
-test-governance corrections remain pending shared ownership coordination.
+limit is relaxed. The complete current root control suite passes all 374 cases.
 
 The complete 27-case storage-manager cohort executes 25 passing cases and two
 external-fetch failures, then fails to exit before its supervisor deadline.
@@ -1738,7 +1737,11 @@ measured235-second setup. This selected test allowance preserves the full
 large incoming and later customer TEXT records, every original assertion,
 independent semantic/auxiliary/prior-import oracles, actual import/recovery
 implementations, memory quotas and physical cleanup. It reports only synthetic
-stage names and timing, never archive contents. Its complete result is pending;
+stage names and timing, never archive contents. The first and repeat imports
+also report structural phase, operation number and elapsed time from the
+existing synchronous public callback after authentication or a fully drained
+merge operation. This observation cannot authorize work or renew an expiry;
+it measures progress before reviewing the selected whole-workflow allowance. Its complete result is pending;
 other recovery cases and the helper default180-second lifetime remain unchanged.
 No production deadline or resource recommendation follows from this allowance.
 
@@ -1801,7 +1804,6 @@ copied-actor and cancellation refusals. This lower transport control is not a
 complete composed profile or system qualification. Current full customer and
 all supported-platform/resource/consumer/exact-head evidence remain required.
 
-
 The source300 bigint binding attempt was stopped by the original client/mobile
 Knex typecheck before any runtime cohort. Source301 uses explicit SQLite INTEGER
 casts on those already validated safe-number coordinates. This conversion is
@@ -1810,7 +1812,6 @@ without an assertion or ambient type change. The C ABI still rejects direct REAL
 coordinates. The genuine native regression and every original case are retained;
 current complete qualification is required.
 
-
 Source301 root/build, seventeen whole component suites429 and the original TEXT
 reader suite18 pass. The raw native regression correctly refused an unestablished
 read view: BEGIN alone leaves SQLite at SQLITE_TXN_NONE. Source302 independently
@@ -1818,7 +1819,6 @@ selects and asserts its original raw row keys inside the genuine READ transactio
 before invoking extent metadata. The retained-view C guard and production readers
 remain unchanged; all complete-byte and negative controls remain. The corrected
 regression requires fresh execution and does not qualify full customer recovery.
-
 
 Current source302 qualification passes all four original root gates and the
 wallet build. Seventeen complete metadata/affected suites pass429 cases, the

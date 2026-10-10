@@ -12,7 +12,10 @@ import { brc38StagingBinding } from './Brc38StagingBinding'
 import { StorageKnex } from '../StorageKnex'
 import { seedComposedAuxiliaryFixture, assertComposedAuxiliaryFixture } from './Brc38ComposedAuxiliaryFixture'
 import { Brc38ProfileInventoryNode } from './Brc38ProfileInventoryNode'
-import { Brc38AuthenticatedNativeMergeInterruptedError } from './Brc38AuthenticatedNativeMergeNode'
+import {
+  Brc38AuthenticatedNativeMergeInterruptedError,
+  type Brc38AuthenticatedNativeMergeOptions
+} from './Brc38AuthenticatedNativeMergeNode'
 import * as nativeBackend from './Brc38NativeBackendNode'
 import { WalletStorageManager } from '../WalletStorageManager'
 import { bootstrapCurrentBrc38NativeObserver } from './Brc38CurrentNativeObserverNode'
@@ -36,6 +39,21 @@ test('actual occupied import, current restart and repeat import preserve a later
   const observe = (phase: string): void => {
     console.log(JSON.stringify({ stage: 'composed-customer-workflow', phase, at: new Date().toISOString() }))
   }
+  const progressObserver =
+    (attempt: 'first' | 'repeat'): NonNullable<Brc38AuthenticatedNativeMergeOptions['progress']> =>
+    value => {
+      console.log(
+        JSON.stringify({
+          stage: 'composed-customer-progress',
+          attempt,
+          phase: value.phase,
+          operation: value.operation?.operation,
+          elapsedMilliseconds: value.operation?.elapsedMilliseconds,
+          mergePhase: value.operation?.progress.phase,
+          at: new Date().toISOString()
+        })
+      )
+    }
   observe('started')
   const incomingDescription = 'imported \u0000雪😀"\\\n'.repeat(9000),
     customerDescription = 'customer \u0000雪😀"\\\n'.repeat(10000),
@@ -66,7 +84,8 @@ test('actual occupied import, current restart and repeat import preserve a later
       source: fixture.source,
       merge: fixture.merge,
       executable: fixture.executable,
-      maximumOperations: 4096
+      maximumOperations: 4096,
+      progress: progressObserver('first')
     })
     observe('first-import-completed')
     expect(fixture.sourceProfile.ownershipReleased).toBe(true)
@@ -195,7 +214,8 @@ test('actual occupied import, current restart and repeat import preserve a later
       source: fixture.source,
       merge: fixture.merge,
       executable: fixture.executable,
-      maximumOperations: 4096
+      maximumOperations: 4096,
+      progress: progressObserver('repeat')
     })
     expect(repeated.inventory.importId).not.toBe(result.inventory.importId)
     expect(repeated.reservationId).not.toBe(result.reservationId)
