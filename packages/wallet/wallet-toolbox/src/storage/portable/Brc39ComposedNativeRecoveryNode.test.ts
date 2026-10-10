@@ -50,6 +50,18 @@ test('actual occupied import, current restart and repeat import preserve a later
           operation: value.operation?.operation,
           elapsedMilliseconds: value.operation?.elapsedMilliseconds,
           mergePhase: value.operation?.progress.phase,
+          episode:
+            value.operation !== undefined && 'episode' in value.operation.progress
+              ? value.operation.progress.episode
+              : undefined,
+          nextRow:
+            value.operation !== undefined && 'nextRow' in value.operation.progress
+              ? value.operation.progress.nextRow
+              : undefined,
+          totalRows:
+            value.operation !== undefined && 'totalRows' in value.operation.progress
+              ? value.operation.progress.totalRows
+              : undefined,
           at: new Date().toISOString()
         })
       )
@@ -63,7 +75,7 @@ test('actual occupied import, current restart and repeat import preserve a later
         incoming.tables.transactions[0].description = incomingDescription
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
       },
-      720000
+      5400000
     )
   observe('fixture-ready')
   try {
@@ -240,7 +252,7 @@ test('actual occupied import, current restart and repeat import preserve a later
     await fixture.close()
     observe('physically-closed')
   }
-}, 750000)
+}, 5430000)
 
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',

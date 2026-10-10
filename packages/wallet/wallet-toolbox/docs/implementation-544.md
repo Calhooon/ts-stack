@@ -1731,14 +1731,20 @@ there was no OOM or timeout, and all owned work was physically drained.
 This qualifies the export component only, not complete customer recovery.
 
 The first original occupied import/current restart/repeat import/customer-write
-integration case selects the same bounded720-second fixture lease and a
-750-second Jest deadline. Its old30-second test deadline could not contain
+integration case originally selected a bounded720-second fixture lease and
+750-second Jest deadline. The source304 run expired normally at720.346s,
+after230.755s setup and46 real drained baseline operations (median8.974s;
+maximum26.077s). It had not completed the first baseline. Source305 therefore
+selects a provisional5400-second fixture lease and5430-second Jest deadline
+for measurement of both complete imports, current recovery and customer writes.
+This ninety-minute bound is a qualification envelope, not a production SLO;
+full latency, foreground fairness and resource qualification remain mandatory. Its old30-second test deadline could not contain
 measured235-second setup. This selected test allowance preserves the full
 large incoming and later customer TEXT records, every original assertion,
 independent semantic/auxiliary/prior-import oracles, actual import/recovery
 implementations, memory quotas and physical cleanup. It reports only synthetic
 stage names and timing, never archive contents. The first and repeat imports
-also report structural phase, operation number and elapsed time from the
+also report structural phase, operation number, episode, row progress and elapsed time from the
 existing synchronous public callback after authentication or a fully drained
 merge operation. This observation cannot authorize work or renew an expiry;
 it measures progress before reviewing the selected whole-workflow allowance. Its complete result is pending;

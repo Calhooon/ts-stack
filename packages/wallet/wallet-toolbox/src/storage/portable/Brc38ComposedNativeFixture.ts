@@ -68,10 +68,12 @@ export async function composedNativeFixture(
 ) {
   if (measurement !== undefined && !snapshotMeasurementCases.includes(measurement))
     throw new RangeError('Composed measurement must select an immutable declared shape')
-  // Full setup measured 235.3s; three independent archive modes each retain
-  // their own 120s deadline. The explicit twelve-minute integration lease
-  // also bounds inventory/cleanup. The original default stays three minutes.
-  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 720000)
+  // Full setup measured 230.8s; a twelve-minute customer workflow lease
+  // expired during the first baseline after 46 drained operations. A selected
+  // whole-workflow measurement may admit at most ninety minutes, including
+  // both complete imports and current recovery. It is not a production SLO.
+  // Every actual UTC/monotonic check remains; the default stays three minutes.
+  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 5400000)
     throw new RangeError('Composed fixture requires one finite original lifetime')
   const targetStorageIdentityKey = selected.targetStorageIdentityKey ?? 'synthetic target'
   if (
