@@ -1878,3 +1878,16 @@ hypothesis for the high file-operation cost, not a measured causal conclusion.
 Review a bounded cache allocation within the existing native heap before
 complexity solely to fit a timeout. No cache, native heap, admission deadline
 or original customer workload was changed by source310.
+
+
+Source311 replaces the native driver's fixed64KiB SQLite cache target with a
+bounded share of its already admitted hard heap. Each of the four driver and
+two possible temporary recovery-copy connections targets at most one twelfth
+of that heap and at most1MiB. SQLite cache_size remains a target; the existing
+hard heap and address-space limits are the actual memory boundaries. Schema,
+VFS identity, physical quota, IPC, authentication, ownership and lifetime
+checks remain fresh and unchanged. This does not increase a production memory
+ceiling or suppress a timeout. A fresh exact native build must pass the original
+standalone native contracts before registry admission. Full customer timing
+and correctness remain unqualified; the source308 CPU observations support an
+experiment, not a speedup claim or final production sizing.

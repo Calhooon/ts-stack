@@ -707,6 +707,16 @@ static void brc38SharedQuotaEventProtocol(sqlite3_context *context, int argc, sq
     sqlite3_result_error_code(context, SQLITE_AUTH);
   else sqlite3_result_text(context, "brc38-shared-quota-event/v1", -1, SQLITE_STATIC);
 }
+/* SQLite cache_size is a page-cache target, not the memory boundary. Reserve
+ * at most half the existing hard heap across four driver and two temporary
+ * recovery-copy connections; retain headroom for statements/schema/results.
+ * A target above 1MiB offers no unmeasured benefit here. Actual allocator,
+ * address, file identity, aggregate physical and IPC ceilings stay unchanged. */
+static sqlite3_int64 nativeCacheKiB(void) {
+  sqlite3_int64 target = brc38RuntimeHeapMaximum /
+      (2 * (DRIVER_CONNECTIONS + 2) * 1024);
+  return target > 1024 ? 1024 : target;
+}
 static int openNative(int slot, int readonly) {
   int family = slot == 3 ? 0 : slot;
   char path[PATH_MAX];
@@ -720,13 +730,15 @@ static int openNative(int slot, int readonly) {
   int rc = sqlite3_open_v2(
       path, &db, readonly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE,
       driverQuota.vfs.zName);
-  if (rc == SQLITE_OK)
-    rc = sqlite3_exec(
-        db,
+  if (rc == SQLITE_OK) {
+    char pragmas[256];
+    int bytes = snprintf(pragmas, sizeof(pragmas),
         "PRAGMA busy_timeout=0; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY;"
-        "PRAGMA cache_size=-64; PRAGMA synchronous=FULL; PRAGMA "
-        "foreign_keys=ON;",
-        NULL, NULL, NULL);
+        "PRAGMA cache_size=-%lld; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+        (long long)nativeCacheKiB());
+    rc = bytes < 1 || bytes >= (int)sizeof(pragmas) ? SQLITE_MISUSE :
+        sqlite3_exec(db, pragmas, NULL, NULL, NULL);
+  }
   if (rc == SQLITE_OK && driverPrivateStage) {
     char policy[256];
     int bytes = snprintf(policy, sizeof(policy),

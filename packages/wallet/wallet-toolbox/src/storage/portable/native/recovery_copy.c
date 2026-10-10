@@ -140,8 +140,9 @@ static int recoveryCopyStart(const unsigned char *p, const unsigned char *end) {
     if (rc == SQLITE_OK) {
       int bytes = snprintf(pragmas, sizeof(pragmas),
         "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;"
-        "PRAGMA fullfsync=ON; PRAGMA cache_size=-64; PRAGMA temp_store=MEMORY;"
+        "PRAGMA fullfsync=ON; PRAGMA cache_size=-%lld; PRAGMA temp_store=MEMORY;"
         "PRAGMA mmap_size=0; PRAGMA busy_timeout=0; PRAGMA max_page_count=%lld;",
+        (long long)nativeCacheKiB(),
         (long long)(recoveryCopyQuota.mainMaximum[family] / 4096));
       rc = bytes < 1 || bytes >= (int)sizeof(pragmas) ? SQLITE_MISUSE :
         sqlite3_exec(*database, pragmas, NULL, NULL, NULL);
