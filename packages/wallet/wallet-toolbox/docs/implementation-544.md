@@ -1586,3 +1586,28 @@ used assignment to Knex's non-writable transaction property. Its owned child
 now defines that configurable property explicitly, retaining the actual
 transaction, pre-commit SIGKILL and durable recovery assertions. No production
 behavior or time allowance changes; full validation remains required.
+
+### Complete failure reproduction and corrective batch
+
+The original twelve failed suites were reproduced with coverage and the original
+three workers under a 12 GiB container allowance. The former 6 GiB allowance
+produced OOM kills; this attempt peaked above that cap without OOM events. The
+legacy portability suite passed, but the campaign remains unqualified: the
+composed native recovery suite also exposed setup deadlines and original
+30-second case timeouts. Those require independent diagnosis.
+
+A single retained source failure now preserves its exact identity through close;
+distinct cleanup failures remain aggregated. Snapshot archive opening similarly
+distinguishes its original failed read from a second physical cleanup failure.
+A queued native index operation rechecks revocation before executing, so sealing
+cannot overwrite a close that already owns admission. Both process-loss child
+programs are explicit ordinary build inputs and forked from their compiled
+`out/test/storage` locations. Byte-preflight evidence inspects its one actual
+SELECT after schema checks; Unix privacy tests retain refusal and no-file controls.
+Password and salt refusals identify their respective resource boundary, while
+the original encoded-byte erasure and cleanup controls remain unchanged.
+
+These changes do not resolve the remaining offline chain authority, controlled
+sealed-storage corruption fixtures, legacy export ordering/boolean compatibility,
+or composed native setup/resource qualification. Full qualification and the
+remaining #544 acceptance rows are still open; #569 remains held and unmerged.

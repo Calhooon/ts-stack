@@ -324,7 +324,7 @@ test('owned process loss before GCM completion resumes only the exact originally
   const bytes = await encrypted(),
     selected = options(bytes)
   const child = fork(
-    join(__dirname, '../../../test/storage/portableAuthenticatedChild.js'),
+    join(__dirname, '../../../out/test/storage/portableAuthenticatedChild.js'),
     [directory, JSON.stringify(selected)],
     { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
   )

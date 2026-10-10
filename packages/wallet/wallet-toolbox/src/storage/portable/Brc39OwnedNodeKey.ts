@@ -124,8 +124,10 @@ export async function deriveBrc39OwnedNodeKey(
     }
   }
   try {
-    if (bytes.length > maximumPasswordBytes || salt.length < 1 || salt.length > 255)
-      throw new SnapshotResourceLimitError('BRC-39 encoded password or salt exceeds the selected stream policy')
+    if (bytes.length > maximumPasswordBytes)
+      throw new SnapshotResourceLimitError('BRC-39 encoded password exceeds the selected stream policy')
+    if (salt.length < 1 || salt.length > 255)
+      throw new SnapshotResourceLimitError('BRC-39 salt exceeds the selected stream policy')
     if (occupied) throw new SnapshotResourceLimitError('Another BRC-39 Node derivation retains admission')
     occupied = true
     admitted = true

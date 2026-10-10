@@ -24,6 +24,8 @@
     }
   },
   "files": [
+    "test/storage/portableAdmissionChild.ts",
+    "test/storage/portableAuthenticatedChild.ts",
     "test/utils/browserSnapshotRestoreFixture.ts",
     "test/utils/Brc38ImportEntityRestoreFixture.ts",
     "test/utils/snapshotJournalHistoricalFixture.ts",

@@ -317,7 +317,7 @@ test.each(['reserved', 'created', 'ready', 'retired', 'deleted', 'owner-uncommit
     const root = await create(),
       limits = resumeLimits()
     const child = fork(
-      join(__dirname, '../../../test/storage/portableAdmissionChild.js'),
+      join(__dirname, '../../../out/test/storage/portableAdmissionChild.js'),
       [directory, JSON.stringify(rootCapacity), JSON.stringify(limits), phase],
       { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
     )

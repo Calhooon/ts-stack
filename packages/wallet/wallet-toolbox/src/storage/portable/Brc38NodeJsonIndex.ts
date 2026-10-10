@@ -351,7 +351,11 @@ export class Brc38NodeJsonIndex implements Brc38JsonMemberIndex {
     }
     this.#busy = true
     const result = Promise.resolve()
-      .then(action)
+      .then(() => {
+        // Close may revoke admission before this queued action starts.
+        this.check()
+        return action()
+      })
       .catch(error => {
         if (this.#state !== 'closing' && this.#state !== 'closed') this.#state = 'failed'
         throw error

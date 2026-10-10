@@ -282,12 +282,14 @@ test('one operation owns admission and close drains it without issuing a second 
 test('nonprivate and symlink parents refuse before creating index files', async () => {
   const selected = await policy()
   await chmod(selected.privateParent, 0o755)
-  await expect(Brc38NodeJsonIndex.open(selected)).rejects.toThrow('private owned')
+  await expect(Brc38NodeJsonIndex.open(selected)).rejects.toThrow(/private.*(?:owned|ownership)/i)
   await chmod(selected.privateParent, 0o700)
   const alias = selected.privateParent + '-alias'
   await symlink(selected.privateParent, alias)
   try {
-    await expect(Brc38NodeJsonIndex.open({ ...selected, privateParent: alias })).rejects.toThrow('private owned')
+    await expect(Brc38NodeJsonIndex.open({ ...selected, privateParent: alias })).rejects.toThrow(
+      /private.*(?:owned|ownership)/i
+    )
   } finally {
     await unlink(alias)
   }

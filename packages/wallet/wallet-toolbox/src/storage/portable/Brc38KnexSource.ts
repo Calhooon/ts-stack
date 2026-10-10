@@ -579,7 +579,8 @@ export async function openBrc38KnexSource(
       } catch (error) {
         failures.push(error)
       }
-      if (failures.length !== 0) throw new AggregateError(failures, 'BRC-38 source physical cleanup failed')
+      if (failures.length === 1) throw failures[0]
+      if (failures.length > 1) throw new AggregateError(failures, 'BRC-38 source physical cleanup failed')
     })()
     void closed.catch(() => {
       closed = undefined

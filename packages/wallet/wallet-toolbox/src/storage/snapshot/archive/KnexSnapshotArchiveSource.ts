@@ -195,7 +195,10 @@ export async function openKnexSnapshotArchiveSource(
   } catch (error) {
     try {
       await view.close()
+      await view.closed
     } catch (cleanup) {
+      // A failed read remains its original error after physical closure.
+      if (cleanup === error) throw error
       throw new SnapshotArchiveSourceCleanupError(
         new AggregateError([error, cleanup], 'Snapshot archive opening failed with retained source cleanup', {
           cause: error
