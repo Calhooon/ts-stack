@@ -74,6 +74,11 @@ The portable local controller coalesces stale height refresh and immutable
 object loads, applies failed-load backoff, and validates through the asynchronous
 `InlineBulkFileDataValidator` without importing Node worker or filesystem code.
 
+BEEF requests and schema-declared storage response bytes use the existing
+negotiated compact binary JSON codec. Legacy peers retain numeric-array JSON
+and identical transaction/proof bytes. Authentication and payload ceilings
+remain unchanged; upgrade both clients and active storage for the savings.
+
 ## Backup and recovery
 
 Recover both key material and wallet records; a manager snapshot or device

@@ -375,6 +375,6 @@ export async function listOutputs(
       )
     )
   }
-  if (vargs.includeTransactions) result.BEEF = beef.toBinary()
+  if (vargs.includeTransactions) result.BEEF = beef.toUint8Array()
   return result
 }

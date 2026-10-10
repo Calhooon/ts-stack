@@ -111,6 +111,11 @@ require their operational authorization after complete artifact validation.
 
 ## wallet-toolbox 2.14.7
 
+- BEEF requests and schema-declared storage response bytes use the existing
+  negotiated compact binary JSON codec. Legacy peers retain numeric-array
+  JSON and identical transaction/proof bytes. Existing authentication and
+  payload ceilings remain unchanged; no API or database migration is required.
+
 - BRC-177 anchors cover both the protected action and an economic reclaim.
   Protected actions keep their only managed input bound to the named anchor,
   create no wallet change, and pay the bounded reclaim surplus as miner fee.

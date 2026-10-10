@@ -21,6 +21,11 @@ The unpublished 2.15 candidate adds `syncFromReaderResumable`, fair foreground s
 
 Use this package when you are building a wallet product, a wallet-like service, or another implementation that must match BRC-100 behavior.
 
+BEEF requests and schema-declared storage response bytes use the existing
+negotiated compact binary JSON codec. Legacy peers retain numeric-array JSON
+and identical transaction/proof bytes. Authentication and payload ceilings
+remain unchanged; upgrade both clients and active storage for the savings.
+
 ## Optional registry descriptions
 
 ProtoMap, BasketMap and CertMap supply descriptive metadata, not permission grants.
