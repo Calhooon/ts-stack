@@ -1692,3 +1692,17 @@ remain real. This avoids relying on external chain services during isolated
 Linux qualification. It neither changes production chain authority nor
 qualifies a live chain or funded restore/spend. Fixture teardown drains every
 owned legacy wallet even when an assertion fails.
+
+The complete native thirteen-table/twenty-two-TEXT/three-mode integration case
+selects a finite 480-second fixture lease and a 510-second Jest deadline. Full
+setup independently measured 227.3 and 235.3 seconds; the existing 120-second
+archive operation plus physical inventory reads and cleanup need separate
+headroom. The helper's default remains 180 seconds, and all payload, memory,
+authentication, UTC/monotonic expiry and cleanup checks are retained. This
+test-only admission is subject to actual full-case measurement; no production
+latency or lifecycle limit follows from it.
+
+The offline fixture binds both Services and the Monitor's separately configured
+Chaintracks authority. Stubbing only Services leaves real Monitor proof checks
+using its original external chain client; both paths now use the same exact
+fixture root/height membership.

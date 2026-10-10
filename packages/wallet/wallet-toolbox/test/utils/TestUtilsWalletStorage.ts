@@ -1706,6 +1706,16 @@ export abstract class TestUtilsWalletStorage {
     }
     jest.spyOn(ctx.services, 'getChainTracker').mockResolvedValue(tracker)
     jest.spyOn(ctx.services, 'getHeight').mockResolvedValue(currentHeight)
+    // Monitor proof processing receives its configured Chaintracks directly,
+    // independently of Services.getChainTracker. Bind both authority paths.
+    for (const authority of new Set([ctx.monitor.chaintracks, ctx.monitor.chaintracksWithEvents])) {
+      if (authority === undefined) continue
+      jest
+        .spyOn(authority, 'isValidRootForHeight')
+        .mockImplementation((root, height) => tracker.isValidRootForHeight(root, height))
+      jest.spyOn(authority, 'currentHeight').mockResolvedValue(currentHeight)
+    }
+
     jest.spyOn(ctx.activeStorage, 'getServices').mockReturnValue(ctx.services)
     return tracker
   }

@@ -68,6 +68,7 @@ test('actual native export preserves all13 tables, all22 TEXT cells and legacy r
           errorOther: { code: 'independent remote', description: '\u0000' }
         })
       }
-    }
+    },
+    480000
   )
-}, 30000)
+}, 510000)

@@ -68,9 +68,10 @@ export async function composedNativeFixture(
 ) {
   if (measurement !== undefined && !snapshotMeasurementCases.includes(measurement))
     throw new RangeError('Composed measurement must select an immutable declared shape')
-  // Explicit diagnostic admission may allow five minutes after measured full
-  // setup exceeded three. The default and every selected fixed lease remain.
-  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 300000)
+  // Full setup measured 235.3s. An explicit eight-minute integration lease
+  // allows the separately bounded 120s archive operation and physical inventory
+  // reads/cleanup. The original default stays three minutes.
+  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 480000)
     throw new RangeError('Composed fixture requires one finite original lifetime')
   const targetStorageIdentityKey = selected.targetStorageIdentityKey ?? 'synthetic target'
   if (
