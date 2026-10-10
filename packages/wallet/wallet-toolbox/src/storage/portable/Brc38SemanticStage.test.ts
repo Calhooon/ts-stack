@@ -46,7 +46,7 @@ test.each([-1, 2, null, '1', {}, []])('invalid historical request flag %p refuse
       maximumArchiveBytes: 1048576,
       maximumRowAllocationBytes: 65536
     })
-  ).rejects.toThrow('wasBroadcast must be a boolean or 0/1')
+  ).rejects.toThrow(value === null ? 'Invalid bounded BRC-38 JSON stream' : 'wasBroadcast must be a boolean or 0/1')
   expect(state.sealed).toBe(0)
   expect(state.discarded).toBe(1)
   expect(state.rows.size).toBe(0)

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { knex } from 'knex'
 import fc from 'fast-check'
 import { StorageKnex } from '../StorageKnex'
+import { migrateBeforeSqliteGeneration } from '../../../test/utils/snapshotHistoricalMigrations'
 import { StorageProvider } from '../StorageProvider'
 import { runInSeries } from '../../utility/runInSeries'
 import { openBrc38KnexSource, type Brc38KnexSourceOptions } from './Brc38KnexSource'
@@ -73,7 +74,7 @@ test.each([0, 1048575, 17179869185, NaN, Infinity])(
     expect(openReadSnapshot).not.toHaveBeenCalled()
   }
 )
-async function fixture() {
+async function fixture(historicalIndexes = false) {
   const directory = await mkdtemp(join(tmpdir(), 'brc38-coherent-'))
   directories.push(directory)
   const open = () => {
@@ -92,7 +93,8 @@ async function fixture() {
   }
   const source = open()
   await source.knex.raw('PRAGMA journal_mode = WAL')
-  await source.migrate('original source', 'source-storage')
+  if (historicalIndexes) await migrateBeforeSqliteGeneration(source, 'original source', 'source-storage')
+  else await source.migrate('original source', 'source-storage')
   await source.makeAvailable()
   const { user } = await source.findOrInsertUser(identity),
     { user: other } = await source.findOrInsertUser(foreignIdentity)
@@ -481,10 +483,12 @@ test.each([
 test.each(['table', 'reverse-table', 'descending-index', 'reverse-index'] as const)(
   'locale ties retain the legacy finder with %s scan',
   async mode => {
-    const { source, userId, otherId } = await fixture()
+    // Build the actual pre-generation schema; removing a bound live index
+    // correctly refuses admission and cannot represent a legacy provider.
+    const { source, userId, otherId } = await fixture(true)
     await seedClosure(source, userId, otherId)
     await source.knex('certificate_fields').where({ certificateId: 1 }).del()
-    await source.knex.raw('DROP INDEX brc38_import_target_certificateFields')
+    await source.knex.raw('DROP INDEX IF EXISTS brc38_import_target_certificateFields')
     if (mode.endsWith('index'))
       await source.knex.raw('CREATE INDEX ?? ON certificate_fields(userId, fieldName DESC, certificateId)', [
         'legacy "descending" finder'
