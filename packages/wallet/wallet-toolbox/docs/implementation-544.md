@@ -1693,8 +1693,8 @@ Linux qualification. It neither changes production chain authority nor
 qualifies a live chain or funded restore/spend. Fixture teardown drains every
 owned legacy wallet even when an assertion fails.
 
-The complete native thirteen-table/twenty-two-TEXT/three-mode integration case
-selects a finite 480-second fixture lease and a 510-second Jest deadline. Full
+The source294 native thirteen-table/twenty-two-TEXT/three-mode attempt
+selected a finite 480-second fixture lease and a 510-second Jest deadline. Full
 setup independently measured 227.3 and 235.3 seconds; the existing 120-second
 archive operation plus physical inventory reads and cleanup need separate
 headroom. The helper's default remains 180 seconds, and all payload, memory,
@@ -1720,3 +1720,24 @@ boolean or historical0/1 spelling. Four complete-document regressions compare
 both ordinary and packed streams with the original materialized exporter and
 check that the actual source row is unchanged. These simulated IDB checks are
 component evidence; real browser qualification remains required.
+
+### Full customer import and recovery qualification
+
+The source295 original complete native export case passed in410.212 seconds
+(command411.340 seconds). Ordinary, structured and text modes took17.500,
+55.221 and67.869 seconds respectively, each below its retained120-second
+source allowance. All thirteen tables, twenty-two text fields, complete archive
+provenance and independent pre/post physical inventory assertions passed;
+there was no OOM or timeout, and all owned work was physically drained.
+This qualifies the export component only, not complete customer recovery.
+
+The first original occupied import/current restart/repeat import/customer-write
+integration case selects the same bounded720-second fixture lease and a
+750-second Jest deadline. Its old30-second test deadline could not contain
+measured235-second setup. This selected test allowance preserves the full
+large incoming and later customer TEXT records, every original assertion,
+independent semantic/auxiliary/prior-import oracles, actual import/recovery
+implementations, memory quotas and physical cleanup. It reports only synthetic
+stage names and timing, never archive contents. Its complete result is pending;
+other recovery cases and the helper default180-second lifetime remain unchanged.
+No production deadline or resource recommendation follows from this allowance.

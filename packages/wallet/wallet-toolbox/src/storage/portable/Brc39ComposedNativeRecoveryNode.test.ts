@@ -33,12 +33,21 @@ import { captureComposedPriorImports, assertComposedPriorImports } from './Brc38
 // auxiliary metadata/byte oracles. Full imported semantics/custody/clocks
 // and fault/resource campaigns remain separately required.
 test('actual occupied import, current restart and repeat import preserve a later full TEXT customer write', async () => {
+  const observe = (phase: string): void => {
+    console.log(JSON.stringify({ stage: 'composed-customer-workflow', phase, at: new Date().toISOString() }))
+  }
+  observe('started')
   const incomingDescription = 'imported \u0000雪😀"\\\n'.repeat(9000),
     customerDescription = 'customer \u0000雪😀"\\\n'.repeat(10000),
-    fixture = await composedNativeFixture('/work/native-contract', (_source, incoming) => {
-      incoming.tables.transactions[0].description = incomingDescription
-      incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
-    })
+    fixture = await composedNativeFixture(
+      '/work/native-contract',
+      (_source, incoming) => {
+        incoming.tables.transactions[0].description = incomingDescription
+        incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
+      },
+      720000
+    )
+  observe('fixture-ready')
   try {
     const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager)
     await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
@@ -59,6 +68,7 @@ test('actual occupied import, current restart and repeat import preserve a later
       executable: fixture.executable,
       maximumOperations: 4096
     })
+    observe('first-import-completed')
     expect(fixture.sourceProfile.ownershipReleased).toBe(true)
     expect(fixture.manager.getActive()).toBe(result.provider)
     expect(fixture.manager.isActiveEnabled).toBe(true)
@@ -81,6 +91,7 @@ test('actual occupied import, current restart and repeat import preserve a later
         })
       ).toBe(1)
     })
+    observe('customer-write-completed')
     await assertComposedSemanticFixture(fixture.manager, expectedCustomer)
     const binding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
     await fixture.targetInventory.closeNamedRecoveryManager(result.inventory.importId, binding.digest, fixture.manager)
@@ -108,6 +119,7 @@ test('actual occupied import, current restart and repeat import preserve a later
         temporaryQuota: fixture.temporaryQuota
       }
     })
+    observe('current-recovery-completed')
     expect(current.recovered).toBe('COMPLETED_CURRENT')
     expect(current.manager).not.toBe(fixture.manager)
     expect(current.manager.getActive()).toBeInstanceOf(StorageKnex)
@@ -187,6 +199,7 @@ test('actual occupied import, current restart and repeat import preserve a later
     })
     expect(repeated.inventory.importId).not.toBe(result.inventory.importId)
     expect(repeated.reservationId).not.toBe(result.reservationId)
+    observe('repeat-import-completed')
     expect(repeated.profile).not.toBe(current.profile)
     expect(current.profile.ownershipReleased).toBe(true)
     expect(current.manager.getActive()).toBe(repeated.provider)
@@ -205,8 +218,9 @@ test('actual occupied import, current restart and repeat import preserve a later
     expect(fixture.merge.workingAllocation.used).toBe(0)
   } finally {
     await fixture.close()
+    observe('physically-closed')
   }
-}, 30000)
+}, 750000)
 
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',
