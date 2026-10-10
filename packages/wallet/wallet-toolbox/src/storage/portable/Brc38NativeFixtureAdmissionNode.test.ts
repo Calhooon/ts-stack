@@ -1,3 +1,9 @@
+import { snapshotJournalQuotaLayout } from '../snapshot/journal/SnapshotJournalNativeQuotaLayout'
+import {
+  snapshotJournalOrdinarySqliteQuotaTriggers,
+  snapshotJournalSharedQuotaTriggers
+} from '../snapshot/journal/SnapshotJournalSharedQuota'
+import { nativeQuotaDispatchDdl } from '../snapshot/journal/SnapshotJournalNativeQuotaSql'
 import { previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { withBrc38NativePrivateContractFixture } from './Brc38NativePrivateContractFixture'
 import {
@@ -112,8 +118,11 @@ test('explicit preview admission rejects invalid physical allowances before open
 
 test('the original four-MiB native allowance refuses the complete layout and retains real rollback state', async () => {
   const stopped = new Error('Independent small-admission exhaustion proof completed')
-  await expect(
-    withBrc38NativePrivateContractFixture(
+  let verifiedRollback = false,
+    nativeOrigin: unknown,
+    migrationFailure: unknown
+  try {
+    await withBrc38NativePrivateContractFixture(
       async fixture => {
         expect(fixture.store.limits.maximumPhysicalBytes).toBe(4194304)
         expect(fixture.store.limits.maximumRowBytes).toBe(65536)
@@ -142,6 +151,7 @@ test('the original four-MiB native allowance refuses the complete layout and ret
         }
         const origin = failure instanceof AggregateError ? failure.cause : failure
         expect(origin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13 })
+        nativeOrigin = origin instanceof Error ? origin.cause : origin
         await fixture.withRead(async k => {
           expect(await catalogue(k)).toEqual(before.schema)
           expect(await readBrc38NativeLocalBaselineGeneration(k)).toEqual(before.baseline)
@@ -152,6 +162,7 @@ test('the original four-MiB native allowance refuses the complete layout and ret
           expect(await k.schema.hasTable('snapshot_journal_generation')).toBe(false)
         })
         fixture.check()
+        verifiedRollback = true
         throw stopped
       },
       'before-journal',
@@ -159,7 +170,27 @@ test('the original four-MiB native allowance refuses the complete layout and ret
       undefined,
       65536
     )
-  ).rejects.toBe(stopped)
+  } catch (cause) {
+    migrationFailure = cause
+  }
+  // SQL_FULL's automatic rollback fences the original writer permanently.
+  // Migration rollback and FK restoration must retain that concrete refusal,
+  // rather than turning the independently verified small admission into success.
+  expect(verifiedRollback).toBe(true)
+  expect(migrationFailure).toBeInstanceOf(AggregateError)
+  if (!(migrationFailure instanceof AggregateError)) throw new Error('Actual fenced migration cleanup missing')
+  expect(migrationFailure.message).toBe('Private native migration retains foreign-key restoration failure')
+  expect(migrationFailure.errors).toHaveLength(2)
+  expect(nativeOrigin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13, nativeAutocommit: true })
+  for (const failure of migrationFailure.errors) {
+    expect(failure).toMatchObject({
+      code: 'SQLITE_ABORT',
+      nativeCode: 4,
+      nativeConnectionFenced: true,
+      nativeAutocommit: true
+    })
+    expect(failure.cause).toBe(nativeOrigin)
+  }
 }, 30000)
 
 test('explicit full-feature native admission seals the complete actual packed baseline and journal', async () => {
@@ -213,4 +244,45 @@ test('explicit full working admission retains the original serialized row limit 
     await expect(previewPrivateFixture(undefined, undefined, 65536, 16777216, maximum)).rejects.toThrow(
       'explicit bounded allocation allowance'
     )
+}, 30000)
+
+test('genuine native owner retains exact ordinary SQLite quota source and refuses mixed or altered historical definitions', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    await fixture.withWriter(async k => {
+      const rows: Array<{ sql: string }> = await k('sqlite_schema')
+        .where({ type: 'table' })
+        .where('name', 'like', 'snapshot_reconciliation_%')
+        .select('sql')
+      const ddl = rows.map(row => row.sql)
+      const compact = await snapshotJournalQuotaLayout(k, ddl)
+      for (const trigger of compact.triggers) await k.raw('DROP TRIGGER ??', [trigger.name])
+      for (const sql of [...compact.dispatch].reverse()) {
+        const name = /^CREATE VIEW (\w+)/.exec(sql)?.[1]
+        if (name === undefined) throw new Error('Actual compact quota view missing')
+        await k.raw('DROP VIEW ??', [name])
+      }
+      const ordinary = snapshotJournalOrdinarySqliteQuotaTriggers(ddl)
+      for (const trigger of ordinary) await k.raw(trigger.sql)
+      expect(await snapshotJournalQuotaLayout(k, ddl)).toEqual({ ddl, triggers: ordinary, dispatch: [] })
+      const native = snapshotJournalSharedQuotaTriggers(k, ddl)
+      await k.raw('DROP TRIGGER ??', [ordinary[0].name])
+      await k.raw(native[0].sql)
+      await expect(snapshotJournalQuotaLayout(k, ddl)).rejects.toThrow('Mixed native quota definitions')
+      await k.raw('DROP TRIGGER ??', [native[0].name])
+      await k.raw(ordinary[0].sql.replace('4096+', '4097+'))
+      await expect(snapshotJournalQuotaLayout(k, ddl)).rejects.toThrow('Shared journal quota differs')
+      await k.raw('DROP TRIGGER ??', [ordinary[0].name])
+      await k.raw(ordinary[0].sql)
+      for (const sql of nativeQuotaDispatchDdl) await k.raw(sql)
+      await expect(snapshotJournalQuotaLayout(k, ddl)).rejects.toThrow('Mixed native quota definitions')
+      for (const sql of [...nativeQuotaDispatchDdl].reverse()) {
+        const name = /^CREATE VIEW (\w+)/.exec(sql)?.[1]
+        if (name === undefined) throw new Error('Actual compact quota view missing')
+        await k.raw('DROP VIEW ??', [name])
+      }
+      for (const trigger of ordinary) await k.raw('DROP TRIGGER ??', [trigger.name])
+      for (const trigger of native) await k.raw(trigger.sql)
+      expect(await snapshotJournalQuotaLayout(k, ddl)).toEqual({ ddl, triggers: native, dispatch: [] })
+    })
+  }, 'after-journal')
 }, 30000)

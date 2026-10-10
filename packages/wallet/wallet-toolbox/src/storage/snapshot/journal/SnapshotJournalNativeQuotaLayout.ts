@@ -1,7 +1,11 @@
 import type { Knex } from 'knex'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
-import { snapshotJournalSharedQuotaTriggers, SNAPSHOT_JOURNAL_SHARED_QUOTA } from './SnapshotJournalSharedQuota'
+import {
+  snapshotJournalSharedQuotaTriggers,
+  snapshotJournalOrdinarySqliteQuotaTriggers,
+  SNAPSHOT_JOURNAL_SHARED_QUOTA
+} from './SnapshotJournalSharedQuota'
 import { nativeQuotaDispatchDdl, nativeQuotaDispatchTriggers } from './SnapshotJournalNativeQuotaSql'
 
 /** Choose from complete freshly observed definitions. Existing native layouts
@@ -19,8 +23,15 @@ export async function snapshotJournalQuotaLayout(k: Knex, ddl: readonly string[]
         return [match[2], { type: match[1].toLowerCase(), sql: value }]
       })
     )
-  const old = expected(historical.map(trigger => trigger.sql))
-  const current = expected([...reduced.map(trigger => trigger.sql), ...nativeQuotaDispatchDdl])
+  const ordinary = snapshotJournalOrdinarySqliteQuotaTriggers(ddl)
+  const layouts = [
+    { triggers: historical, dispatch: [] as readonly string[] },
+    { triggers: ordinary, dispatch: [] as readonly string[] },
+    { triggers: reduced, dispatch: nativeQuotaDispatchDdl }
+  ]
+  const definitions = layouts.map(layout =>
+    expected([...layout.triggers.map(trigger => trigger.sql), ...layout.dispatch])
+  )
   const prefix = 'snapshot_reconciliation_quota_'
   const actual: Array<{ name: unknown; type: unknown; sql: unknown }> = await k('sqlite_schema')
     .whereRaw('lower(substr(name,1,?))=?', [prefix.length, prefix])
@@ -29,24 +40,25 @@ export async function snapshotJournalQuotaLayout(k: Knex, ddl: readonly string[]
       'type',
       k.raw("CASE WHEN typeof(sql)='text' AND length(CAST(sql AS BLOB))<=16384 THEN sql ELSE 0 END AS sql")
     )
-    .limit(current.size + 1)
-  let oldPresent = false
-  let currentPresent = false
+    .limit(definitions[2].size + 1)
+  let candidates = definitions.map((_, index) => index)
   for (const row of actual) {
-    const legacy = typeof row.name === 'string' ? old.get(row.name) : undefined
-    const compact = typeof row.name === 'string' ? current.get(row.name) : undefined
-    if (legacy !== undefined && legacy.type === row.type && legacy.sql === row.sql) oldPresent = true
-    else if (compact !== undefined && compact.type === row.type && compact.sql === row.sql) currentPresent = true
-    else throw new WERR_INVALID_OPERATION('Shared journal quota differs from its owned source')
+    const matches = definitions.map(definition => {
+      const value = typeof row.name === 'string' ? definition.get(row.name) : undefined
+      return value !== undefined && value.type === row.type && value.sql === row.sql
+    })
+    if (!matches.some(Boolean)) throw new WERR_INVALID_OPERATION('Shared journal quota differs from its owned source')
+    candidates = candidates.filter(index => matches[index])
+    if (candidates.length === 0) throw new WERR_INVALID_OPERATION('Mixed native quota definitions')
   }
-  if (oldPresent && currentPresent) throw new WERR_INVALID_OPERATION('Mixed native quota definitions')
-  if (!oldPresent && !currentPresent) {
+  let selected = candidates[0]
+  if (actual.length === 0) {
     // Absence of observers cannot reclassify an occupied historical counter.
     // A fresh native installation chooses dispatch before creating any tables.
     const counter = await k('sqlite_schema').where({ type: 'table', name: SNAPSHOT_JOURNAL_SHARED_QUOTA }).first('name')
-    oldPresent = counter !== undefined
+    selected = counter === undefined ? 2 : 0
   }
-  if (!oldPresent) {
+  if (selected === 2) {
     // A historical qualified executable lacks the guarded dispatch. It cannot
     // acquire this layout merely because the newer TypeScript source exists.
     // Check the genuine current kernel on every selection, never cache it.
@@ -54,10 +66,5 @@ export async function snapshotJournalQuotaLayout(k: Knex, ddl: readonly string[]
     if (protocol.length !== 1 || protocol[0].protocol !== 'brc38-shared-quota-event/v1')
       throw new WERR_INVALID_OPERATION('Native shared quota dispatch requires its guarded kernel')
   }
-  if (oldPresent) return { ddl, triggers: historical, dispatch: [] as readonly string[] }
-  return {
-    ddl,
-    triggers: reduced,
-    dispatch: nativeQuotaDispatchDdl
-  }
+  return { ddl, ...layouts[selected] }
 }

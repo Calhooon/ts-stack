@@ -118,6 +118,28 @@ describe('complete composed SQL image data', () => {
     await db('image_custody').where({ importId: second, fromRow: 1 }).update({ fromRow: 2 })
     expect((await image()).sha256).not.toBe(original.sha256)
   })
+  test('explicit rowId composite keys in WITHOUT ROWID images retain their complete values and ordinary shadows refuse', async () => {
+    await db.raw(
+      'CREATE TABLE image_explicit_rowid(lineage TEXT,rowId INTEGER,payload BLOB,PRIMARY KEY(lineage,rowId)) WITHOUT ROWID'
+    )
+    await db('image_explicit_rowid').insert([
+      { lineage: 'a', rowId: 7, payload: Buffer.from([0, 255, 1]) },
+      { lineage: 'b', rowId: 7, payload: Buffer.alloc(0) }
+    ])
+    const original = await image()
+    expect(original.rows).toBe('2')
+    expect(await image(16384)).toEqual(original)
+    await db('image_explicit_rowid').where({ lineage: 'a', rowId: 7 }).update({ rowId: 8 })
+    expect((await image()).sha256).not.toBe(original.sha256)
+    await db('image_explicit_rowid').where({ lineage: 'a', rowId: 8 }).update({ rowId: 7 })
+    expect(await image()).toEqual(original)
+    for (const column of ['rowId', '_rowid_', 'oid']) {
+      await db.raw('CREATE TABLE image_shadow(?? INTEGER,payload BLOB)', [column])
+      await expect(image()).rejects.toThrow('Composed database image')
+      await db.raw('DROP TABLE image_shadow')
+    }
+    expect(working.used).toBe(0)
+  })
   test('actual read loss, abort, expiry, unsupported key storage and exhausted allocation refuse with drained charge', async () => {
     const controller = new AbortController()
     controller.abort(new Error('fixture image cancelled'))

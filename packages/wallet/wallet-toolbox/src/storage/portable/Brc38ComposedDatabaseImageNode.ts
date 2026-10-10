@@ -181,7 +181,7 @@ export async function readBrc38ComposedDatabaseImage(
         if (
           column.cid !== index ||
           column.hidden !== 0 ||
-          ['rowid', '_rowid_', 'oid'].includes(field.toLowerCase()) ||
+          (!withoutRowid && ['rowid', '_rowid_', 'oid'].includes(field.toLowerCase())) ||
           typeof column.type !== 'string' ||
           Buffer.byteLength(column.type) > 128 ||
           ![0, 1].includes(column.notnull as number) ||

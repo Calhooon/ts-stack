@@ -168,19 +168,21 @@ describe('actual durable single-profile publication and explicit native activati
       const profile = await restore.publish(parent)
       opened.push(profile)
       const recorded = await captureBrc38ProfilePhysicalIdentity(profile.directory, true)
-      expect(check).toHaveBeenCalledTimes(1)
-      expect(check.mock.calls[0]?.[1]).toEqual(recorded.wallet)
+      expect(check).toHaveBeenCalled()
+      expect(check.mock.calls.map(call => call[1])).toEqual(check.mock.calls.map(() => recorded.wallet))
+      check.mockClear()
       await profile.close()
       const recovered = await Brc38PublishedProfileNode.open(
         profile.directory,
         staged.value.reservation.store.binding!.digest
       )
       opened.push(recovered)
-      expect(check).toHaveBeenCalledTimes(2)
-      expect(check.mock.calls[1]?.[1]).toEqual(recorded.wallet)
+      expect(check).toHaveBeenCalled()
+      expect(check.mock.calls.map(call => call[1])).toEqual(check.mock.calls.map(() => recorded.wallet))
+      check.mockClear()
       const manager = await recovered.activate(proof.services)
-      expect(check).toHaveBeenCalledTimes(3)
-      expect(check.mock.calls[2]?.[1]).toEqual(recorded.wallet)
+      expect(check).toHaveBeenCalled()
+      expect(check.mock.calls.map(call => call[1])).toEqual(check.mock.calls.map(() => recorded.wallet))
       expect(manager.isActiveEnabled).toBe(true)
       expect(await captureBrc38ProfilePhysicalIdentity(profile.directory, true)).toEqual(recorded)
     } finally {
@@ -357,9 +359,13 @@ describe('actual durable single-profile publication and explicit native activati
       parent,
       admission: original
     }
-    const child = spawn(process.execPath, ['-e', script, __dirname, JSON.stringify(args)], {
-      stdio: ['ignore', 'ignore', 'pipe', 'ipc']
-    })
+    const child = spawn(
+      process.execPath,
+      ['-e', script, join(__dirname, '../../../out/src/storage/portable'), JSON.stringify(args)],
+      {
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+      }
+    )
     let errorText = ''
     child.stderr?.on('data', (value: Buffer) => {
       errorText = (errorText + value.toString()).slice(0, 4096)

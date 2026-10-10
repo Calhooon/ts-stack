@@ -228,7 +228,11 @@ test.each(['destroy', 'release', 'unclosed'] as const)(
     const binding = await prepareSnapshotArchiveGuardBackend(f.k, 0, null)
     const readFailure = new Error('original read failed'),
       cleanupFailure = new Error('original physical close failed')
-    f.destroy.mockImplementation(async () => undefined)
+    f.destroy.mockImplementation(async () => {
+      // A delivered close event without closed-state proof reaches refusal.
+      // No event at all would keep the original physical owner pending.
+      if (phase === 'unclosed') f.stream.emit('close')
+    })
     if (phase === 'destroy') f.destroy.mockRejectedValueOnce(cleanupFailure)
     if (phase === 'release') f.client.releaseConnection.mockRejectedValueOnce(cleanupFailure)
     const read = jest.fn(async () => {

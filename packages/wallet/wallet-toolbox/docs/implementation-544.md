@@ -1495,3 +1495,27 @@ owner and retry are already attached. Distinct opening/cleanup failures continue
 through the ordinary/native cause handling above. The DELETE activation suite
 reaches a 30-second case deadline; no product or test deadline increase follows
 until a bounded complete-case measurement distinguishes workload from a hang.
+
+The complete DELETE diagnostic exposes two compatibility defects rather than a
+capacity defect. Composed images now permit explicit `rowId` columns only for
+`WITHOUT ROWID` tables, whose complete composite primary keys already determine
+row order; ordinary implicit-rowid shadowing still refuses. A native owner can
+also retain the exact historical ordinary SQLite quota family after handoff.
+Selection compares complete current definitions against ordinary historical,
+native historical and guarded dispatch sources, rejects altered or mixed
+families, and never rewrites an occupied layout. The existing 16 KiB definition
+bound remains: observed historical definitions are 890–2,481 bytes.
+
+The guard cleanup fixture now delivers its intended unproved close event, so it
+can check refusal and retry ownership while the physical `closed` state remains
+false. A missing event correctly leaves cleanup pending and does not justify a
+larger timeout. Publication checks require a real descriptor verification at
+each boundary and every observed verification to match the durable wallet
+identity, rather than prescribing one call when publication now performs three.
+The killed-copy child loads the actual compiled modules produced by the required
+build. The four-MiB negative control keeps every independent rollback-state
+check and additionally asserts both concrete fenced migration cleanup failures
+retain the original SQL_FULL cause; an intentional fixture stop is not the
+writer's subsequent native error. Full current-source regression and system
+qualification remain required. No product or test deadline increases accompany
+these corrections.

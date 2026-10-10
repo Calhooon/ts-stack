@@ -33,7 +33,16 @@ function invalid(): never {
  */
 export function snapshotJournalSharedQuotaTriggers(k: Knex, ddl: readonly string[]): SnapshotJournalQuotaTrigger[] {
   const mysql = ['mysql', 'mysql2'].includes(String(k.client.config.client))
-  const native = !mysql && isOwnedNativeSqlite(k)
+  return quotaTriggers(ddl, mysql, !mysql && isOwnedNativeSqlite(k))
+}
+
+/** Exact historical SQLite grammar. Native owner handoff preserves these
+ * definitions; selecting their source never grants or fabricates ownership. */
+export function snapshotJournalOrdinarySqliteQuotaTriggers(ddl: readonly string[]): SnapshotJournalQuotaTrigger[] {
+  return quotaTriggers(ddl, false, false)
+}
+
+function quotaTriggers(ddl: readonly string[], mysql: boolean, native: boolean): SnapshotJournalQuotaTrigger[] {
   const result: SnapshotJournalQuotaTrigger[] = []
   for (const sql of ddl.filter(value => value.startsWith('CREATE TABLE '))) {
     const match = /^CREATE TABLE (snapshot_reconciliation_\w+)\((.*)\)(?: ENGINE=.*)?$/.exec(sql)
