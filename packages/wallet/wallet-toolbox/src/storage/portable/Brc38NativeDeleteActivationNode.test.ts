@@ -231,9 +231,17 @@ describe('authenticated native DELETE activation and forward backend record', ()
     const manager = await profile.activateNative(source.proof.services)
     await profile.promoteNativeWal()
     const provider = manager.getActive(),
-      user = { ...manager.getActiveUser() },
       primary = manager.getActiveStore()
     if (!(provider instanceof StorageKnex)) throw new Error('Actual native source provider required')
+    // Legacy primary selection updates the durable timestamp while its manager
+    // cache refreshes activeStorage. Recovery preserves the actual wallet row.
+    const user = await provider.findUserById(manager.getActiveUser().userId)
+    if (user === undefined) throw new Error('Actual original native user missing')
+    expect(manager.getActiveUser()).toMatchObject({
+      userId: user.userId,
+      identityKey: user.identityKey,
+      activeStorage: user.activeStorage
+    })
     const workingAllocation = new Brc38WorkingAllocation(4194304),
       policy = {
         workingAllocation,

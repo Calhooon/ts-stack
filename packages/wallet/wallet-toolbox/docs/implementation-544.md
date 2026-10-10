@@ -1560,3 +1560,13 @@ retirement refusal. The four-MiB control independently verifies rollback and
 requires the exact original stop error plus the concrete FK restoration fence
 failure, which retains SQL_FULL. Normal whole-suite and broader qualification
 remain required; previous failed runs remain evidence.
+
+The normal source281 run passes all four root gates and 193 of 194 affected
+cases. No-decision recovery now completes; its remaining mismatch is a fixture
+snapshot of the legacy manager's cached user timestamp. Existing primary
+selection refreshes cached `activeStorage` while updating `updated_at` in the
+durable row. The fixture now snapshots the actual original typed user through
+its actual provider before freezing, verifies identity/primary cache coordinates,
+and retains exact recovered-user and complete database-image equality. No
+public cache contract or recovery data is changed to satisfy that expectation.
+Complete current affected and broader qualification remain required.
