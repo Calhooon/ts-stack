@@ -530,6 +530,10 @@ describe('createAction funding performance', () => {
 
   test('keeps canonical createAction compatible when the optional COOK queue is absent', async () => {
     await replaceFundingCandidates(1, 5_000)
+    jest.spyOn(ctx.activeStorage.getServices(), 'getChainTracker').mockResolvedValue({
+      isValidRootForHeight: async () => true,
+      currentHeight: async () => 1_000_000
+    } satisfies ChainTracker)
     ctx.activeStorage.preparedBeefPolicy.writeEnabled = true
     Object.defineProperty(ctx.activeStorage, 'enqueuePreparedBeef', {
       configurable: true,
@@ -642,6 +646,10 @@ describe('createAction funding performance', () => {
 
   test('falls back to the canonical builder when the prepared store is unavailable', async () => {
     const source = await replaceFundingCandidates(1, 5_000)
+    jest.spyOn(ctx.activeStorage.getServices(), 'getChainTracker').mockResolvedValue({
+      isValidRootForHeight: async () => true,
+      currentHeight: async () => 1_000_000
+    } satisfies ChainTracker)
     ctx.activeStorage.preparedBeefPolicy.readEnabled = true
     jest.spyOn(ctx.activeStorage, 'findPreparedBeefs').mockRejectedValueOnce(new Error('cache unavailable'))
     const canonicalBuilder = jest.spyOn(ctx.activeStorage, 'getBeefForTransactions')

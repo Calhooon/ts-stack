@@ -1570,3 +1570,13 @@ its actual provider before freezing, verifies identity/primary cache coordinates
 and retains exact recovered-user and complete database-image equality. No
 public cache contract or recovery data is changed to satisfy that expectation.
 Complete current affected and broader qualification remain required.
+
+The next original full-coverage attempt exposed two funding success fixtures
+without their offline chain tracker and a legacy snapshot suite whose injected
+faults were bypassed by the newer journal transport. The funding cases now use
+the existing independent tracker fixture while retaining the real canonical
+builder. The snapshot fixture explicitly declines journal negotiation so it
+exercises its intended transport; production negotiation and independent journal
+tests remain unchanged. Its killed-before-commit child now intercepts the actual
+Knex transaction. Original cases, semantic assertions and deadlines remain;
+these fixture corrections require complete validation, not larger limits.

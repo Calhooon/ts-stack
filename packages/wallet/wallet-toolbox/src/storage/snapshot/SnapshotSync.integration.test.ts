@@ -63,6 +63,9 @@ async function fixture(count = 130, wal = true, disabled?: 'source' | 'destinati
       })
     })
     stores.push(store)
+    // Exercise the retained snapshot transport, including its fault hooks,
+    // even when the fixture migrations also install the newer journal transport.
+    jest.spyOn(store, 'supportsSnapshotJournalSync').mockResolvedValue(false)
     if (wal) await store.knex.raw('PRAGMA journal_mode = WAL')
     await store.migrate(name, name)
     await store.makeAvailable()
@@ -246,12 +249,12 @@ test.each(['before-row', 'before-checkpoint', 'before-commit', 'after-commit'] a
           }
         }
         if (input.boundary === 'before-commit') {
-          const transaction = storage.transaction.bind(storage)
-          storage.transaction = (work, token) => transaction(async trx => {
+          const transaction = storage.knex.transaction.bind(storage.knex)
+          storage.knex.transaction = (work, ...options) => transaction(async trx => {
             const result = await work(trx)
             await hold()
             return result
-          }, token)
+          }, ...options)
         }
         await (await storage.getSnapshotSync().prepare(input.before, input.page))()
         if (input.boundary === 'after-commit') await hold()
