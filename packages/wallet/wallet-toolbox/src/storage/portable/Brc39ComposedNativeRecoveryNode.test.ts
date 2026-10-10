@@ -1,4 +1,5 @@
 import { readBrc38NativeCurrentFieldTargets } from './Brc38ImportExistingRows'
+import { writeNativeSnapshotSyncRow } from '../snapshot/writeNativeSnapshotSyncRowNode'
 import * as occupiedHistoryText from './Brc38PrivateOccupiedHistoryTextNode'
 import { withBrc38PrivateOccupiedHistory, type Brc38PrivateOccupiedHistory } from './Brc38PrivateOccupiedHistoryNode'
 import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
@@ -708,6 +709,84 @@ test('retained occupied history callback replays independent legacy bytes and re
     await fixture.close()
   }
 }, 30000)
+
+test('actual native request writer preserves omitted legacy broadcast counters', async () => {
+  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  try {
+    await fixture.manager.runAsStorageProvider(async () => {
+      await fixture.storage.toDb().transaction(async trx => {
+        const requests = await trx('proven_tx_reqs').select(
+          'provenTxReqId',
+          'txid',
+          'created_at',
+          'updated_at',
+          'status',
+          'attempts',
+          'notified'
+        )
+        expect(requests).toHaveLength(1)
+        const request = requests[0],
+          id = request.provenTxReqId as number
+        await trx('proven_tx_reqs').where({ provenTxReqId: id }).update({ wasBroadcast: 1, rebroadcastAttempts: 7 })
+        const metadata = {
+          ...request,
+          created_at: new Date('2026-10-03T00:00:00.000Z'),
+          updated_at: new Date('2026-10-04T00:00:00.000Z'),
+          attempts: 3,
+          wasBroadcast: undefined,
+          rebroadcastAttempts: undefined
+        }
+        expect(
+          await writeNativeSnapshotSyncRow(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            metadata,
+            { row: {}, fields: [] },
+            {},
+            id
+          )
+        ).toBe(id)
+        expect(
+          await trx('proven_tx_reqs')
+            .where({ provenTxReqId: id })
+            .first('wasBroadcast', 'rebroadcastAttempts', 'attempts')
+        ).toEqual({ wasBroadcast: 1, rebroadcastAttempts: 7, attempts: 3 })
+        expect(
+          await writeNativeSnapshotSyncRow(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            { ...metadata, wasBroadcast: false, rebroadcastAttempts: 0 },
+            { row: {}, fields: [] },
+            {},
+            id
+          )
+        ).toBe(id)
+        expect(
+          await trx('proven_tx_reqs').where({ provenTxReqId: id }).first('wasBroadcast', 'rebroadcastAttempts')
+        ).toEqual({ wasBroadcast: 0, rebroadcastAttempts: 0 })
+        expect(
+          await writeNativeSnapshotSyncRow(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            { ...metadata, wasBroadcast: true, rebroadcastAttempts: 3 },
+            { row: {}, fields: [] },
+            {},
+            id
+          )
+        ).toBe(id)
+        expect(
+          await trx('proven_tx_reqs').where({ provenTxReqId: id }).first('wasBroadcast', 'rebroadcastAttempts')
+        ).toEqual({ wasBroadcast: 1, rebroadcastAttempts: 3 })
+      })
+    })
+  } finally {
+    await fixture.close()
+  }
+  expect(fixture.merge.workingAllocation.used).toBe(0)
+}, 330000)
 
 test('actual composed current transaction field selection preserves its physical coordinate', async () => {
   const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)

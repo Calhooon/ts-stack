@@ -1,6 +1,15 @@
 # #544 implementation map (unpublished candidate)
 
 This map accounts for the authored source of all 24 required behavior families.
+The original full occupied customer workflow on source316 committed12/14 rows
+before failing the actual non-null broadcast-column constraint. Legacy request
+metadata creates own undefined optional broadcast/retry properties; native
+private insertion serializes those as SQL NULL instead of using the existing
+false/zero migration defaults. The ordinary native sync writer also rejects
+that optional shape. Genuine private insert/rollback/update and ordinary native
+writer regressions are now authored with production unchanged; runtime is pending.
+The failed full run drained cleanly after1105.817s, without timeout/native fault
+or OOM. All original customer data, expiry, cases and semantic oracles remain.
 The complete wallet and test-source compiler now passes with zero diagnostics.
 Selected functional cohorts pass, including the native schema compatibility and
 measured migration fixtures described below. Full system, supported-host,

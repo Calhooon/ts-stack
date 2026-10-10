@@ -1,4 +1,7 @@
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
+import { insertBrc38PackedRestoreMetadata, updateBrc38PackedPrivateMetadata } from './Brc38PackedRestoreMetadataNode'
+import { writeBrc38NativePackedBytes } from './Brc38NativePackedFieldsNode'
+import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 import { hasBrc38NativeLocalPackedLayout } from './Brc38NativeLocalPackedLayoutNode'
 import { snapshotJournalNativeDestinationExtras } from '../snapshot/journal/SnapshotJournalNativeDestinationSchema'
 import { verifySnapshotJournalDestinationSchema } from '../snapshot/journal/SnapshotJournalDestinationSchema'
@@ -85,6 +88,101 @@ import {
 import { Brc38PrivateDerivedTextLifetimes } from './Brc38PrivateDerivedTextLifetimesNode'
 import { withBrc38PrivateContentVersion } from './Brc38PrivateContentVersionNode'
 import { compareBrc38PrivateDerivedText } from './Brc38PrivateDerivedTextComparisonNode'
+
+test.each([
+  { name: 'omitted', fields: {}, expected: { wasBroadcast: 0, rebroadcastAttempts: 0 } },
+  {
+    name: 'own undefined',
+    fields: { wasBroadcast: undefined, rebroadcastAttempts: undefined },
+    expected: { wasBroadcast: 0, rebroadcastAttempts: 0 }
+  },
+  {
+    name: 'explicit false and zero',
+    fields: { wasBroadcast: false, rebroadcastAttempts: 0 },
+    expected: { wasBroadcast: 0, rebroadcastAttempts: 0 }
+  },
+  {
+    name: 'explicit true and retries',
+    fields: { wasBroadcast: true, rebroadcastAttempts: 3 },
+    expected: { wasBroadcast: 1, rebroadcastAttempts: 3 }
+  }
+])(
+  'native request metadata preserves legacy defaults and explicit counters: $name',
+  async ({ fields, expected }) => {
+    await withBrc38NativePrivateContractFixture(async fixture => {
+      const bytes = Uint8Array.from([0, 255, 7, 8]),
+        metadata = {
+          created_at: new Date('2026-10-03T00:00:00.000Z'),
+          updated_at: new Date('2026-10-03T00:00:00.000Z'),
+          provenTxReqId: 0,
+          status: 'completed',
+          attempts: 2,
+          notified: false,
+          txid: 'ab'.repeat(32),
+          ...fields
+        },
+        budget = () => ({ maximum: 16777216, remaining: 16777216 }),
+        insert = async (trx: import('knex').Knex.Transaction): Promise<number> => {
+          const id = await insertBrc38PackedRestoreMetadata(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            metadata,
+            ['rawTx'],
+            budget(),
+            ['history', 'notify']
+          )
+          if (typeof id !== 'number') throw new Error('Actual request insert did not return its physical ID')
+          expect(Number.isSafeInteger(id)).toBe(true)
+          expect(id).toBeGreaterThan(0)
+          await writeBrc38NativePackedBytes(trx, { table: 'provenTxReqs', field: 'rawTx', rowId: id }, bytes)
+          for (const field of ['history', 'notify'] as const)
+            await writeBrc38NativePackedTextBytes(trx, { table: 'provenTxReqs', field, rowId: id }, Buffer.from('{}'))
+          expect(
+            await trx('proven_tx_reqs').where({ provenTxReqId: id }).first('wasBroadcast', 'rebroadcastAttempts')
+          ).toEqual(expected)
+          expect(
+            await trx.raw(
+              'SELECT typeof(wasBroadcast) AS broadcastType,typeof(rebroadcastAttempts) AS retriesType FROM proven_tx_reqs WHERE provenTxReqId=?',
+              [id]
+            )
+          ).toEqual([{ broadcastType: 'integer', retriesType: 'integer' }])
+          return id
+        },
+        rollback = new Error('Independent complete request metadata rollback')
+      await expect(
+        fixture.withWriter(async trx => {
+          await insert(trx)
+          throw rollback
+        })
+      ).rejects.toBe(rollback)
+      expect(await fixture.withRead(async trx => await trx('proven_tx_reqs').count({ count: '*' }).first())).toEqual({
+        count: 0
+      })
+      const id = await fixture.withWriter(insert)
+      await fixture.withWriter(async trx => {
+        await trx('proven_tx_reqs').where({ provenTxReqId: id }).update({ wasBroadcast: 1, rebroadcastAttempts: 7 })
+        expect(
+          await updateBrc38PackedPrivateMetadata(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            { ...metadata, provenTxReqId: id, wasBroadcast: undefined, rebroadcastAttempts: undefined, attempts: 3 },
+            [],
+            { table: 'provenTxReqs', index: 'provenTxReqs', key: { txid: metadata.txid }, found: true, localId: id },
+            budget()
+          )
+        ).toBe(id)
+        expect(
+          await trx('proven_tx_reqs')
+            .where({ provenTxReqId: id })
+            .first('wasBroadcast', 'rebroadcastAttempts', 'attempts')
+        ).toEqual({ wasBroadcast: 1, rebroadcastAttempts: 7, attempts: 3 })
+      })
+    })
+  },
+  30000
+)
 
 test('native destination extras retain actual literal and occupied compact packed guards', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
@@ -1436,12 +1534,12 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
         true,
         async database =>
           await database.transaction(async trx => {
-          store.assertPrivateNativeReadTransaction(trx)
-          expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
-          // BEGIN alone does not establish a retained main-database view.
-          // Prove the independent original rows before reading their extents.
-          expect(await trx('monitor_events').select('id').orderBy('id')).toEqual([{ id: 400 }, { id: 401 }])
-          expect(await readBrc38NativeLocalFieldBytes(trx, local)).toBe(expected.length)
+            store.assertPrivateNativeReadTransaction(trx)
+            expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+            // BEGIN alone does not establish a retained main-database view.
+            // Prove the independent original rows before reading their extents.
+            expect(await trx('monitor_events').select('id').orderBy('id')).toEqual([{ id: 400 }, { id: 401 }])
+            expect(await readBrc38NativeLocalFieldBytes(trx, local)).toBe(expected.length)
             expect(await readBrc38NativeLocalFieldBytes(trx, { ...local, rowId: 401 })).toBeNull()
             expect(await readBrc38NativeTextBytes(trx, ordinary)).toBe(expected.length)
             expect(await readBrc38NativeTextBytes(trx, { ...ordinary, rowId: 10 })).toBeNull()
