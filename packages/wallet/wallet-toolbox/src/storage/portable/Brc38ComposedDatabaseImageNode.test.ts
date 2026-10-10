@@ -118,7 +118,7 @@ describe('complete composed SQL image data', () => {
     await db('image_custody').where({ importId: second, fromRow: 1 }).update({ fromRow: 2 })
     expect((await image()).sha256).not.toBe(original.sha256)
   })
-  test('explicit rowId composite keys in WITHOUT ROWID images retain their complete values and ordinary shadows refuse', async () => {
+  test('explicit rowId composite keys retain every row through unshadowed aliases and all-shadowed ordinary keys refuse', async () => {
     await db.raw(
       'CREATE TABLE image_explicit_rowid(lineage TEXT,rowId INTEGER,payload BLOB,PRIMARY KEY(lineage,rowId)) WITHOUT ROWID'
     )
@@ -133,11 +133,29 @@ describe('complete composed SQL image data', () => {
     expect((await image()).sha256).not.toBe(original.sha256)
     await db('image_explicit_rowid').where({ lineage: 'a', rowId: 8 }).update({ rowId: 7 })
     expect(await image()).toEqual(original)
-    for (const column of ['rowId', '_rowid_', 'oid']) {
-      await db.raw('CREATE TABLE image_shadow(?? INTEGER,payload BLOB)', [column])
-      await expect(image()).rejects.toThrow('Composed database image')
+    for (const shadowed of [['rowId'], ['rowId', '_rowid_'], ['oid']]) {
+      await db.raw(
+        'CREATE TABLE image_shadow(' + shadowed.map(name => '"' + name + '" INTEGER').join(',') + ',payload BLOB)'
+      )
+      await db('image_shadow').insert([
+        { ...Object.fromEntries(shadowed.map(name => [name, 7])), payload: Buffer.from([1, 0, 255]) },
+        { ...Object.fromEntries(shadowed.map(name => [name, 7])), payload: Buffer.alloc(0) }
+      ])
+      const shadow = await image()
+      expect(shadow.rows).toBe('4')
+      expect(await image(16384)).toEqual(shadow)
+      await db('image_shadow')
+        .where({ payload: Buffer.alloc(0) })
+        .update({ payload: Buffer.from([9]) })
+      expect((await image()).sha256).not.toBe(shadow.sha256)
+      await db('image_shadow')
+        .where({ payload: Buffer.from([9]) })
+        .update({ payload: Buffer.alloc(0) })
+      expect(await image()).toEqual(shadow)
       await db.raw('DROP TABLE image_shadow')
     }
+    await db.raw('CREATE TABLE image_shadow(rowId INTEGER,_rowid_ INTEGER,oid INTEGER)')
+    await expect(image()).rejects.toThrow('Composed database image')
     expect(working.used).toBe(0)
   })
   test('actual read loss, abort, expiry, unsupported key storage and exhausted allocation refuse with drained charge', async () => {

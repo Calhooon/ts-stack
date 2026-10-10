@@ -1704,7 +1704,10 @@ function nativeKnex(createKnex, SqliteClient, session, slot) {
     client: OwnedNativeSqliteClient,
     connection: { filename: slot === 2 ? path.join(path.dirname(filename), 'profile.sqlite') : filename },
     useNullAsDefault: true,
-    pool: { min: 0, max: 1 },
+    // The catalog lease belongs to the profile's actual owned lifetime.
+    // Idle eviction cannot revoke retirement negotiation while its root
+    // remains active; profile destruction still drains this one connection.
+    pool: { min: slot === 2 ? 1 : 0, max: 1 },
     acquireConnectionTimeout: 1000
   })
   const lifetime = { session, slot, closing: false, closed: false }

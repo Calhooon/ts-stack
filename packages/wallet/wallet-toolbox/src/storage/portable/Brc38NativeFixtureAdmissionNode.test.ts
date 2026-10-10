@@ -12,7 +12,8 @@ import {
 } from './Brc38NativeLocalPackedLayoutNode'
 import {
   installBrc38NativeLocalBaselineGeneration,
-  readBrc38NativeLocalBaselineGeneration
+  readBrc38NativeLocalBaselineGeneration,
+  hasBrc38NativeLocalBaselineGenerationSchema
 } from './Brc38NativeLocalBaselineGenerationNode'
 import {
   installSnapshotJournalSqliteGeneration,
@@ -127,38 +128,41 @@ test('the original four-MiB native allowance refuses the complete layout and ret
         expect(fixture.store.limits.maximumPhysicalBytes).toBe(4194304)
         expect(fixture.store.limits.maximumRowBytes).toBe(65536)
         expect(fixture.store.limits.maximumRowAllocationBytes).toBe(65536)
-        await fixture.withWriter(async k => await installAdditionalLayout(k))
-        const before = await fixture.withRead(async k => ({
+        const state = async (k: Knex.Transaction) => ({
           schema: await catalogue(k),
-          baseline: await readBrc38NativeLocalBaselineGeneration(k),
+          baseline: (await hasBrc38NativeLocalBaselineGenerationSchema(k))
+            ? await readBrc38NativeLocalBaselineGeneration(k)
+            : undefined,
+          packed: await hasBrc38NativeLocalPackedLayout(k),
           settings: await k('settings').select('*'),
           pages: await k.raw('PRAGMA page_count'),
           maximum: await k.raw('PRAGMA max_page_count')
-        }))
+        })
+        const before = await fixture.withRead(state)
         expect(before.maximum).toEqual([{ max_page_count: 336 }])
         let failure: unknown
         try {
-          await fixture.withWriter(
-            async k =>
-              await installSnapshotJournalSqliteGeneration(
-                k,
-                snapshotJournalRevision(MAX_SNAPSHOT_JOURNAL_REVISION),
-                previewReceiptPolicy
-              )
-          )
+          await fixture.withWriter(async k => {
+            await installAdditionalLayout(k)
+            await installSnapshotJournalSqliteGeneration(
+              k,
+              snapshotJournalRevision(MAX_SNAPSHOT_JOURNAL_REVISION),
+              previewReceiptPolicy
+            )
+          })
         } catch (cause) {
           failure = cause
         }
-        const origin = failure instanceof AggregateError ? failure.cause : failure
+        const origin = failure instanceof Error ? (failure.cause ?? failure) : failure
         expect(origin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13 })
         nativeOrigin = origin instanceof Error ? origin.cause : origin
         await fixture.withRead(async k => {
           expect(await catalogue(k)).toEqual(before.schema)
-          expect(await readBrc38NativeLocalBaselineGeneration(k)).toEqual(before.baseline)
+          expect((await state(k)).baseline).toEqual(before.baseline)
           expect(await k('settings').select('*')).toEqual(before.settings)
           expect(await k.raw('PRAGMA page_count')).toEqual(before.pages)
           expect(await k.raw('PRAGMA max_page_count')).toEqual(before.maximum)
-          expect(await hasBrc38NativeLocalPackedLayout(k)).toBe(true)
+          expect(await hasBrc38NativeLocalPackedLayout(k)).toBe(before.packed)
           expect(await k.schema.hasTable('snapshot_journal_generation')).toBe(false)
         })
         fixture.check()
@@ -257,9 +261,9 @@ test('genuine native owner retains exact ordinary SQLite quota source and refuse
       const compact = await snapshotJournalQuotaLayout(k, ddl)
       for (const trigger of compact.triggers) await k.raw('DROP TRIGGER ??', [trigger.name])
       for (const sql of [...compact.dispatch].reverse()) {
-        const name = /^CREATE VIEW (\w+)/.exec(sql)?.[1]
-        if (name === undefined) throw new Error('Actual compact quota view missing')
-        await k.raw('DROP VIEW ??', [name])
+        const definition = /^CREATE (TRIGGER|VIEW) (\w+)/.exec(sql)
+        if (definition === null) throw new Error('Actual compact quota definition missing')
+        await k.raw('DROP ' + definition[1] + ' ??', [definition[2]])
       }
       const ordinary = snapshotJournalOrdinarySqliteQuotaTriggers(ddl)
       for (const trigger of ordinary) await k.raw(trigger.sql)
@@ -276,9 +280,9 @@ test('genuine native owner retains exact ordinary SQLite quota source and refuse
       for (const sql of nativeQuotaDispatchDdl) await k.raw(sql)
       await expect(snapshotJournalQuotaLayout(k, ddl)).rejects.toThrow('Mixed native quota definitions')
       for (const sql of [...nativeQuotaDispatchDdl].reverse()) {
-        const name = /^CREATE VIEW (\w+)/.exec(sql)?.[1]
-        if (name === undefined) throw new Error('Actual compact quota view missing')
-        await k.raw('DROP VIEW ??', [name])
+        const definition = /^CREATE (TRIGGER|VIEW) (\w+)/.exec(sql)
+        if (definition === null) throw new Error('Actual compact quota definition missing')
+        await k.raw('DROP ' + definition[1] + ' ??', [definition[2]])
       }
       for (const trigger of ordinary) await k.raw('DROP TRIGGER ??', [trigger.name])
       for (const trigger of native) await k.raw(trigger.sql)

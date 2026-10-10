@@ -181,7 +181,6 @@ export async function readBrc38ComposedDatabaseImage(
         if (
           column.cid !== index ||
           column.hidden !== 0 ||
-          (!withoutRowid && ['rowid', '_rowid_', 'oid'].includes(field.toLowerCase())) ||
           typeof column.type !== 'string' ||
           Buffer.byteLength(column.type) > 128 ||
           ![0, 1].includes(column.notnull as number) ||
@@ -194,12 +193,18 @@ export async function readBrc38ComposedDatabaseImage(
           invalid()
         add([column.cid, field, column.type, column.notnull, column.dflt_value, column.pk])
       }
+      // SQLite exposes three aliases for its physical rowid. An ordinary
+      // authored rowId field shadows only one; never use it as the row key.
+      const implicitRowid = ['rowid', '_rowid_', 'oid'].find(
+        alias => !columns.some(column => (column.name as string).toLowerCase() === alias)
+      )
+      if (!withoutRowid && implicitRowid === undefined) invalid()
       const keyColumns = withoutRowid
         ? columns
             .filter(column => (column.pk as number) > 0)
             .sort((a, b) => (a.pk as number) - (b.pk as number))
             .map(column => identifier(column.name))
-        : ['rowid']
+        : [implicitRowid!]
       if (
         keyColumns.length < 1 ||
         keyColumns.length > 8 ||

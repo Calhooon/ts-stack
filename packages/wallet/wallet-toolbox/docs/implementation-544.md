@@ -1519,3 +1519,27 @@ retain the original SQL_FULL cause; an intentional fixture stop is not the
 writer's subsequent native error. Full current-source regression and system
 qualification remain required. No product or test deadline increases accompany
 these corrections.
+
+The next exact diagnostic corrects the earlier image classification: existing
+legacy global key/edge tables may also use ordinary rowid storage. The reader
+now selects an unshadowed alias from SQLite's three implicit rowid names and
+refuses an ordinary table when all three are shadowed. Explicit source fields
+remain complete cell data. Regression rows share the same explicit `rowId`, so
+count, payload and mutation checks detect using that field incorrectly.
+
+A native profile's existing catalog connection is retained until actual profile
+destruction, instead of being evicted by a 30-second idle pool timer. Its pool
+still admits exactly one connection; source writers and temporary readers keep
+their original zero-minimum pools. All retirement ABI, actual lease and freeze
+requirements remain. The earlier full native case reached the genuine writer
+with its catalog lease already evicted; increasing the test deadline could not
+repair that ownership failure.
+
+The original four-MiB layout attempt exhausts capacity during baseline setup,
+before reaching journal setup. Its independent snapshot now precedes that entire
+attempt and checks the actual rolled-back schema, baseline presence, packed
+presence, settings and page allowance. Both fenced migration cleanup errors
+must retain the original SQL_FULL cause. The new quota regression removes its
+actual declared trigger/view types rather than assuming both are views. Previous
+failed diagnostic and ordinary runs remain retained; no full qualification or
+new deadline allowance is claimed.
