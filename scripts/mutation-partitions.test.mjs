@@ -221,7 +221,8 @@ test('service execution preserves the complete canonical union and all configura
     { target: 'before', partition: 'whole' },
     ...['persistence', 'controller', 'guard', 'backend'].map(partition => ({
       target: 'wallet-snapshot-remote-service',
-      partition
+      partition,
+      wallet_native: true
     })),
     { target: 'after', partition: 'whole' }
   ])
@@ -280,7 +281,8 @@ test('HTTP execution preserves every canonical range, full configuration and fut
     { target: 'before', partition: 'whole' },
     ...['protocol', 'client', 'server'].map(partition => ({
       target: 'wallet-snapshot-remote-http',
-      partition
+      partition,
+      wallet_native: true
     })),
     { target: 'after', partition: 'whole' }
   ])
