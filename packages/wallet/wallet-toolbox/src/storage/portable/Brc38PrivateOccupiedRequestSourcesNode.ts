@@ -59,7 +59,7 @@ function invalid(): never {
 }
 
 export function brc38PrivateRequestTxidAccepted(txid: string): boolean {
-  return /^[0-9a-f]{64}$/.test(txid)
+  return txid.length === 64 && /^[0-9a-f]{64}$/i.test(txid)
 }
 
 export async function withBrc38PrivateOccupiedRequestSources<T>(
@@ -341,7 +341,7 @@ async function withBrc38PrivateRequestSources<T>(
                       coordinate === undefined ? undefined : await readBrc38NativePackedTextDescriptor(trx, coordinate),
                     sourceRows = await trx('rows')
                       .where({ tableName: 'provenTxReqs', position: sourcePosition })
-                      .whereRaw("lower(json_extract(payload,'$.txid'))=?", [txid])
+                      .whereRaw("lower(json_extract(payload,'$.txid'))=?", [txid.toLowerCase()])
                       .select(
                         'position',
                         trx.raw(
