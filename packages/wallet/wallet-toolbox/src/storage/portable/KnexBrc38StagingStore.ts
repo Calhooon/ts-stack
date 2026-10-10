@@ -1135,6 +1135,40 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     this.#available()
     if (!this.#busy || (this.owner instanceof Brc38PrivateNativeOwnershipNode && !authenticatedNativeReplay))
       throw new Error('Provisional structured completion requires its original staging operation')
+    if (this.owner instanceof Brc38PrivateNativeOwnershipNode) {
+      const owner = this.owner
+      try {
+        return await this.#withPrivateNativeReadDatabase(
+          async database =>
+            await ownedTransaction(database, async trx => {
+              // This pre-callback validation has physical read membership only;
+              // it does not enroll an authenticated writer or cache a verdict.
+              owner.assertTransaction(trx, true)
+              if (privateNativeTransactionIdentity(trx)?.slot !== 3)
+                throw new Error('Native authenticated replay requires its actual read-only slot')
+              const initial = await this.#metadata(trx),
+                originalArchive = (await this.#privateImport(trx)).archiveSha256
+              if (initial.state !== 'sealed' || originalArchive === null)
+                throw new Error('Native row replay requires its actual sealed authenticated source')
+              const value = await operation(trx),
+                current = await this.#metadata(trx)
+              this.#available()
+              owner.assertTransaction(trx, true)
+              if (
+                current.state !== initial.state ||
+                current.header !== initial.header ||
+                current.rows !== initial.rows ||
+                (await this.#privateImport(trx)).archiveSha256 !== originalArchive
+              )
+                throw new Error('Native row replay changed its actual authenticated source')
+              return value
+            })
+        )
+      } catch (cause) {
+        if (cause instanceof Brc38StagingCleanupError) this.#retainStructuredAcquisitionCleanup(cause)
+        throw cause
+      }
+    }
     return await ownedTransaction(this.knex, async trx => {
       let failed = false,
         original: unknown
@@ -1163,18 +1197,10 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
         await trx.raw('PRAGMA query_only=ON')
         const mode = (await trx.raw('PRAGMA query_only')) as Array<{ query_only: number }>
         if (mode.length !== 1 || mode[0].query_only !== 1) throw new Error('Private structured read mode differs')
-        const initial = await this.#metadata(trx)
-        let originalArchive: string | null | undefined
-        if (this.owner instanceof Brc38PrivateNativeOwnershipNode) {
-          originalArchive = (await this.#privateImport(trx)).archiveSha256
-          if (initial.state !== 'sealed' || originalArchive === null)
-            throw new Error('Native row replay requires its actual sealed authenticated source')
-        }
+        await this.#metadata(trx)
         const value = await operation(trx)
         await this.#metadata(trx)
         this.#available()
-        if (originalArchive !== undefined && (await this.#privateImport(trx)).archiveSha256 !== originalArchive)
-          throw new Error('Native row replay changed its actual authenticated source')
         return value
       } catch (cause) {
         failed = true
@@ -1242,7 +1268,7 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     this.#available()
     if (this.owner instanceof Brc38PrivateNativeOwnershipNode) {
       if (trx === undefined) this.owner.assertDatabase(this.knex)
-      else this.owner.assertTransaction(trx)
+      else this.owner.assertTransaction(trx, sourceOnly)
       return
     }
     if (!sourceOnly || !(this.owner instanceof Brc38StagingOwnershipNode) || this.binding === undefined)
@@ -2136,19 +2162,31 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     if (!isBrc38OwnedPrivateNativeSqlite(this.knex) || !(this.owner instanceof Brc38PrivateNativeOwnershipNode))
       throw new Error('Private native destination requires its current authenticated receiver scope')
     if (!readOnly) return await work(this.knex)
+    return await this.#withPrivateNativeReadDatabase(work)
+  }
+  /** Internal source validation can borrow the same physical read-only lease
+   * before writer enrollment. Its caller owns the exclusive staging operation;
+   * public native access still requires the authenticated callback above. */
+  async #withPrivateNativeReadDatabase<T>(work: (database: Knex) => Promise<T>): Promise<T> {
+    if (!(this.owner instanceof Brc38PrivateNativeOwnershipNode))
+      throw new Error('Private native read lease requires its actual physical owner')
     const database = this.owner.createReadDatabase()
     privateNativeDatabases.set(database, this)
     let value!: T,
       failed = false,
       cause: unknown
     try {
-      // The separate physical slot is read-only; payload preparation also
-      // requires its actual SQLite query-only mode before any borrower runs.
+      // The kernel establishes read-only/query-only mode before its authorizer.
+      // Inspect it here; comparison/recovery never relax or rewrite settings.
       // Destruction below drains this fresh slot, including admission failures.
-      await database.raw('PRAGMA query_only=ON')
+      this.owner.assertDatabase(database, true)
       const mode = (await database.raw('PRAGMA query_only')) as Array<{ query_only: number }>
       if (mode.length !== 1 || mode[0].query_only !== 1) throw new Error('Private native read-only query mode differs')
       value = await work(database)
+      this.owner.assertDatabase(database, true)
+      const after = (await database.raw('PRAGMA query_only')) as Array<{ query_only: number }>
+      if (after.length !== 1 || after[0].query_only !== 1)
+        throw new Error('Private native read-only query mode changed')
     } catch (failure) {
       failed = true
       cause = failure

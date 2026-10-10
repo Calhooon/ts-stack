@@ -750,6 +750,11 @@ static int openNative(int slot, int readonly) {
     else
       rc = sqlite3_exec(db, policy, NULL, NULL, NULL);
   }
+  /* Establish physical read-only/query-only policy before installing the
+   * authorizer. Frozen comparison/recovery must never need to mutate a
+   * connection setting, and callers still cannot relax the phase fence. */
+  if (rc == SQLITE_OK && readonly)
+    rc = sqlite3_exec(db, "PRAGMA query_only=ON;", NULL, NULL, NULL);
   if (rc != SQLITE_OK) {
     if (db)
       sqlite3_close(db);
