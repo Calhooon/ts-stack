@@ -27,13 +27,14 @@ export async function withBrc38NativePrivateContractFixture(
   phase: 'before-journal' | 'after-journal' = 'before-journal',
   maximumPhysicalBytes = 16777216,
   afterJournal?: (fixture: Brc38NativePrivateContractFixture) => Promise<void>,
-  maximumRowAllocationBytes = 16777216
+  maximumRowAllocationBytes = 16777216,
+  transform?: Parameters<typeof previewPrivateFixture>[1]
 ): Promise<void> {
   if (phase !== 'before-journal' && phase !== 'after-journal')
     throw new RangeError('Explicit native fixture phase required')
   const fixture = await previewPrivateFixture(
     undefined,
-    undefined,
+    transform,
     65536,
     maximumPhysicalBytes,
     maximumRowAllocationBytes

@@ -1,4 +1,7 @@
-import { brc38PrivateRequestTxidAccepted } from './Brc38PrivateOccupiedRequestSourcesNode'
+import {
+  brc38PrivateRequestTxidAccepted,
+  withBrc38PrivateOccupiedRequestSources
+} from './Brc38PrivateOccupiedRequestSourcesNode'
 import { brc38PrivateRequestPostimageMetadata } from './Brc38PrivateRequestInventoryNode'
 import { brc38ImportRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
@@ -106,6 +109,122 @@ test.each([
 ])('occupied request source accepts exactly the portable HEX grammar: $name', ({ txid, accepted }) => {
   expect(brc38PrivateRequestTxidAccepted(txid)).toBe(accepted)
 })
+
+test('actual occupied request source preserves uppercase indexed identity and revokes readers', async () => {
+  await withBrc38NativePrivateContractFixture(
+    async fixture => {
+      const txid = 'A'.repeat(64),
+        metadata = {
+          created_at: new Date('2026-10-03T00:00:00.000Z'),
+          updated_at: new Date('2026-10-03T00:00:00.000Z'),
+          provenTxReqId: 0,
+          status: 'completed',
+          attempts: 2,
+          notified: false,
+          txid
+        },
+        id = await fixture.withWriter(async trx => {
+          const id = await insertBrc38PackedRestoreMetadata(
+            fixture.storage,
+            trx,
+            'provenTxReqs',
+            metadata,
+            [],
+            { maximum: 16777216, remaining: 16777216 },
+            ['history', 'notify']
+          )
+          if (typeof id !== 'number') throw new Error('Actual request insert did not return its physical ID')
+          for (const field of ['history', 'notify'] as const)
+            await writeBrc38NativePackedTextBytes(trx, { table: 'provenTxReqs', field, rowId: id }, Buffer.from('{}'))
+          return id
+        }),
+        working = new Brc38WorkingAllocation(16777216),
+        source = {
+          privateIndexParent: fixture.privateIndexParent,
+          maximumTemporaryIndexBytes: 2097152,
+          maximumIndexMembers: 10000,
+          maximumStructuredBytes: 65536,
+          maximumCanonicalBytes: 65536,
+          maximumReadBytes: 1024,
+          maximumCombinedTemporaryBytes: 10485760,
+          workingAllocation: working,
+          expiresAt: fixture.store.limits.expiresAt
+        },
+        projection = {
+          maximumTemporaryIndexBytes: 6291456,
+          maximumMembers: 10000,
+          maximumOutputBytes: 65536,
+          maximumReadBytes: 1024,
+          workingAllocation: working,
+          expiresAt: fixture.store.limits.expiresAt
+        }
+      let escaped: import('./Brc38StructuredJson').Brc38StreamedStructured | undefined,
+        consumed = false
+      await withBrc38PrivateOccupiedRequestSources(
+        fixture.store,
+        fixture.storage,
+        0,
+        id,
+        txid,
+        'history',
+        source,
+        projection,
+        async sources => {
+          sources.owners.check()
+          const incoming = await sources.incoming.read(0, sources.incoming.length),
+            current = await sources.current.read(0, sources.current.length)
+          try {
+            expect(JSON.parse(Buffer.from(incoming).toString(sources.incoming.encoding))).toEqual({ notes: [] })
+            expect(Buffer.from(current).toString(sources.current.encoding)).toBe('{}')
+            expect(sources.prior.bytes).toBe(2)
+            escaped = sources.current
+            consumed = true
+          } finally {
+            incoming.fill(0)
+            current.fill(0)
+          }
+          sources.owners.check()
+        }
+      )
+      expect(consumed).toBe(true)
+      await expect(escaped!.read(0, 1)).rejects.toThrow()
+      for (const wrong of [
+        { id, txid: txid.toLowerCase() },
+        { id: id + 1, txid }
+      ]) {
+        let reached = false
+        await expect(
+          withBrc38PrivateOccupiedRequestSources(
+            fixture.store,
+            fixture.storage,
+            0,
+            wrong.id,
+            wrong.txid,
+            'history',
+            source,
+            projection,
+            async () => {
+              reached = true
+            }
+          )
+        ).rejects.toThrow()
+        expect(reached).toBe(false)
+        expect(working.used).toBe(0)
+      }
+      expect(await fixture.withRead(async trx => await trx('proven_tx_reqs').select('provenTxReqId', 'txid'))).toEqual([
+        { provenTxReqId: id, txid }
+      ])
+      expect(working.used).toBe(0)
+    },
+    'before-journal',
+    16777216,
+    undefined,
+    16777216,
+    data => {
+      data.tables.provenTxReqs[0].txid = 'A'.repeat(64)
+    }
+  )
+}, 30000)
 
 test.each([
   { name: 'omitted', fields: {}, expected: { wasBroadcast: 0, rebroadcastAttempts: 0 } },
