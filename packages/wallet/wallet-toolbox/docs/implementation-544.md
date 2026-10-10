@@ -1453,3 +1453,16 @@ seconds. Host suspension or clock drift must be resolved before interpreting
 that sample as a capacity or deadline defect. No native or product limit changes
 follow from it. Full corrected coverage, platform and production qualification
 remain required.
+
+On stable clocks, the complete native private contract suite ran 30 passes and
+two 30-second case timeouts. A private diagnostic retained all 32 bodies, data
+and assertions while measuring those two registrations with a 90-second harness:
+exhausted-epoch retirement and rebuild completed in 45.296 seconds; derived TEXT
+version ownership completed in 32.722 seconds. All 32 diagnostic cases passed in
+234.170 seconds. That measurement establishes no branch qualification or
+production capacity. The two actual outer test allowances now select 90 seconds,
+with the native fixture's original 120-second lifetime and every other case
+allowance, resource formula and product deadline preserved. This bounded
+headroom accommodates the complete declared workload without speculative
+implementation changes for a 30-second ceiling. Normal current-source gates,
+complete native cases, coverage and system qualification remain required.

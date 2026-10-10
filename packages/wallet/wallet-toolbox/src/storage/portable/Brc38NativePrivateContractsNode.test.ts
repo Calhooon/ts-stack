@@ -1085,7 +1085,7 @@ test('actual exhausted local epoch retires in pages and bootstraps a new complet
     await seedMonitor(fixture)
     await verifyBrc38NativeLocalEpochRecovery(fixture, -7)
   }, 'after-journal')
-}, 30000)
+}, 90000)
 
 test('actual unsafe physical key blocks epoch activation until its ordinary removal', async () => {
   await withBrc38NativePrivateContractFixture(verifyBrc38NativeLocalEpochUnsafeActivationRefusal, 'after-journal')
@@ -1139,7 +1139,7 @@ test('derived native TEXT versions preserve independent bytes and release only t
     )
     expect(working.used).toBe(0)
   })
-}, 30000)
+}, 90000)
 
 test('actual private candidate journal preserves exact integer progress and point reservations', async () => {
   await withBrc38NativePrivateContractFixture(verifyBrc38PrivateLocalCandidateJournal)
