@@ -38,10 +38,9 @@ import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import { captureComposedPriorImports, assertComposedPriorImports } from './Brc38ComposedPriorImportFixture'
 
 // Whole-feature cases explicitly admit the existing 16 KiB native read bound.
-// Default/small-buffer fixtures remain 1 KiB. Full workflows explicitly use
-// supported 16 KiB stream chunks; formats, data, KDF strength and clocks stay exact.
+// Default/small-buffer fixtures remain 1 KiB; data, crypto chunks and clocks stay exact.
 const composedNativeFixture = (...args: Parameters<typeof originalComposedNativeFixture>) => {
-  args[6] = { ...args[6], maximumReadBytes: 16384, maximumChunkBytes: 16384 }
+  args[6] = { ...args[6], maximumReadBytes: 16384 }
   return originalComposedNativeFixture(...args)
 }
 

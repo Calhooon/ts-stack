@@ -68,7 +68,6 @@ export async function composedNativeFixture(
     targetStorageIdentityKey?: string
     proofBytes?: 256 | 32768 | 131073
     maximumReadBytes?: number
-    maximumChunkBytes?: number
   }> = {}
 ) {
   if (measurement !== undefined && !snapshotMeasurementCases.includes(measurement))
@@ -87,10 +86,6 @@ export async function composedNativeFixture(
   const maximumReadBytes = selected.maximumReadBytes ?? 1024
   if (!Number.isSafeInteger(maximumReadBytes) || maximumReadBytes < 1 || maximumReadBytes > 16384)
     throw new RangeError('Composed fixture requires an explicitly bounded native read allowance')
-  const maximumChunkBytes = selected.maximumChunkBytes ?? 1024
-  if (!Number.isSafeInteger(maximumChunkBytes) || maximumChunkBytes < 64 || maximumChunkBytes > 16384)
-    throw new RangeError('Composed fixture requires an explicitly bounded stream chunk allowance')
-  const ciphertextChunkBytes = selected.maximumChunkBytes ?? (measurement === undefined ? 137 : 1024)
   const targetStorageIdentityKey = selected.targetStorageIdentityKey ?? 'synthetic target'
   if (
     typeof targetStorageIdentityKey !== 'string' ||
@@ -208,18 +203,14 @@ export async function composedNativeFixture(
         },
         crypto: {
           ...value.crypto,
-          policy: {
-            ...value.crypto.policy,
-            maximumFileBytes: measurement === undefined ? 1048576 : 8388608,
-            maximumChunkBytes
-          }
+          policy: { ...value.crypto.policy, maximumFileBytes: measurement === undefined ? 1048576 : 8388608 }
         },
         maximumPlaintextBytes: measurement === undefined ? 1048576 : 8388608,
         maximumCiphertextChunks: measurement === undefined ? value.maximumCiphertextChunks : 65536,
-        streamedFields: { maximumBinaryBytes: 1048576, maximumChunkBytes },
-        streamedTextFields: { maximumTextBytes: 1048576, maximumChunkBytes },
+        streamedFields: { maximumBinaryBytes: 1048576, maximumChunkBytes: 1024 },
+        streamedTextFields: { maximumTextBytes: 1048576, maximumChunkBytes: 1024 },
         streamedStructuredFields: {
-          fields: { maximumStructuredBytes: structuredBytes, maximumChunkBytes },
+          fields: { maximumStructuredBytes: structuredBytes, maximumChunkBytes: 1024 },
           staging: resources.sourcePolicy
         }
       }
@@ -252,7 +243,7 @@ export async function composedNativeFixture(
       sourceBytes = await encrypted(sourceData, measurement === undefined ? undefined : 'program-measurement'),
       sourceOptions = packet(sourceBytes, sourceData),
       sourceStaged = await stageAuthenticatedBrc39PrivateImport(
-        chunks(sourceBytes, ciphertextChunkBytes),
+        chunks(sourceBytes, measurement === undefined ? 137 : 1024),
         authenticatedStagePassword,
         sourceAdmission,
         sourceOptions
@@ -382,7 +373,7 @@ export async function composedNativeFixture(
           maximumOperations: measurement === undefined ? 4096 : 65536
         }
       },
-      chunks: () => chunks(bytes, ciphertextChunkBytes),
+      chunks: () => chunks(bytes, measurement === undefined ? 137 : 1024),
       retainCleanup(cleanup: () => Promise<void>) {
         closes.push(cleanup)
       },

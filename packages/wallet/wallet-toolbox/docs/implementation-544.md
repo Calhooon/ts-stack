@@ -2129,23 +2129,30 @@ requires actual workflow measurements. A permission refusal does not justify
 raising time, memory or storage allowances. Authentication, atomicity and physical
 ownership remain correctness contracts while operational budgets are reviewed.
 
-### Workload-specific complete-fixture chunk admission
+### Judicious resource and qualification budgets
 
-The source343 customer measurement imported all14 rows and reached
-INVENTORY_REQUIRED after1147.503s of controller work. It was deliberately stopped
-after1862.399s of test-command runtime; no complete-case or system qualification
-is credited. Its source still used1KiB stored field/crypto chunks and137-byte
-ciphertext input fragments. The observed repeated whole-field validation and
-individual stored-chunk reads are cost candidates, not an isolated causal
-performance result. Memory peaked near1.2GiB with no OOM/limit events or CPU
-throttling.
+The supported16KiB full-fixture chunk experiment is removed. At matching
+checkpoints it measured502.599s for preparation versus364.185s with original1KiB
+chunks, and178.245s for the first three imports versus134.439s. Both runs were
+intentionally stopped before complete customer/restart/write/repeat qualification;
+they provide no complete-case pass or functional failure credit. Single sequential
+observations do not establish a statistical throughput baseline or isolate the
+source of CPU cost. The larger-chunk run peaked at1,162,825,728bytes with no memory
+limit/OOM events or CPU throttling before its832.190s cutoff. Source343 fixture and
+recovery test bytes are restored exactly; original data, assertions, fault
+coordinates, real clocks and native qualification remain unchanged.
 
-The complete original21 cases now explicitly select existing supported16KiB
-streamed field/crypto/cipher-input chunks, alongside their16KiB read allowance.
-The helper retains its1KiB field/crypto and137-byte normal input defaults;
-existing small-buffer controls remain. The canonical plaintext, ciphertext format,
-NFC/KDF strength, all records/assertions/fault coordinates and real clocks remain.
-Native, working, physical, logical, row, IPC, FD and deadline ceilings are unchanged.
-This is test workload admission, not a production default or throughput claim.
-Actual complete workflow/resource/cleanup and compatibility evidence are required
-before accepting its benefit. #569 remains held, and full qualification is open.
+Limits must identify the protected resource and supported workload, measured
+normal/concurrent/recovery demand, headroom, exhaustion/refusal/cleanup behavior,
+and total qualification and engineering cost. A larger cap is justified when the
+workload and safe failure behavior support it; implementation changes require a
+measured avoidable cost. Repeated whole-field validation and individual chunk
+reads remain source-observed cost candidates needing targeted measurement.
+
+The installed mutation Jest adapter runs serially. Six original real one-hour
+expiry waits cannot fit the present45/90minute workflow bounds even before setup
+or mutation. Review campaign topology and allowances together while preserving
+all original functional obligations, canonical mutants, global score gates and
+real expiry semantics. Do not build elaborate workarounds solely to satisfy those
+ceilings. The authorized30% browser increase remains for review after full goal
+completion. Full composed/system/platform/mutation qualification remains open.
