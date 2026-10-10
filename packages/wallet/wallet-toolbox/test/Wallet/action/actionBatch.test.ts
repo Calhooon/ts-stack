@@ -368,6 +368,9 @@ describe('in-memory action batch workspace', () => {
       services: legacyCtx.services,
       actionBatchMode: 'legacy'
     })
+    const tracker = await legacyCtx.services.getChainTracker()
+    const root = jest.spyOn(tracker, 'isValidRootForHeight').mockResolvedValue(true)
+    const storageServices = jest.spyOn(legacyCtx.activeStorage, 'getServices').mockReturnValue(legacyCtx.services)
     ctx.wallet.randomVals = randomVals
     legacy.randomVals = randomVals
     try {
@@ -385,6 +388,8 @@ describe('in-memory action batch workspace', () => {
       expect(batchRaw).toEqual(legacyRaw)
       expect(feePaid(batchResult.tx!, batchResult.txid!)).toBe(feePaid(legacyResult.tx!, legacyResult.txid!))
     } finally {
+      storageServices.mockRestore()
+      root.mockRestore()
       await legacy.destroy()
       await legacyCtx.wallet.destroy()
     }

@@ -1434,3 +1434,22 @@ implementation complexity, maintenance cost and compatibility. The authorized
 30% browser allowance is reviewed after the full goal. All eleven acceptance
 rows remain open; full platform/resource/property/mutation/conformance/artifact
 and exact-head CI/analyzer/review qualification is still required.
+
+The ordinary wallet selection contains 671 suites and retains its default three
+Jest workers. The original full build and packed-consumer command passes on the
+source274 candidate, including every declared public export, wildcard resolution
+and consumer declarations. Registry access is a prerequisite of its unchanged
+script-disabled temporary npm installation; a network-isolated attempt is not
+a package-validity result.
+
+The first complete coverage campaign is unqualified. Its action parity fixture
+created a second legacy wallet without the intended offline chain tracker, and
+create-action fixtures used live chain services for synthetic transactions. Both
+now install their actual fixture Services before actions and restore their
+spies; original test declarations, assertions, options and deadlines remain.
+The native timeout sample also contains inconsistent elapsed clocks: its parent
+recorded 429.451 monotonic seconds while the native suite reported 2,269.852
+seconds. Host suspension or clock drift must be resolved before interpreting
+that sample as a capacity or deadline defect. No native or product limit changes
+follow from it. Full corrected coverage, platform and production qualification
+remain required.
