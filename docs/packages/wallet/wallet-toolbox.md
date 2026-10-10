@@ -26,6 +26,11 @@ negotiated compact binary JSON codec. Legacy peers retain numeric-array JSON
 and identical transaction/proof bytes. Authentication and payload ceilings
 remain unchanged; upgrade both clients and active storage for the savings.
 
+IndexedDB treats empty certificate certifier/type, transaction status and
+output-tag ID arrays like omitted optional filters, matching Knex. Nonempty
+arrays, partial predicates and user ownership remain enforced. No API, wire
+or database migration is required.
+
 ## Optional registry descriptions
 
 ProtoMap, BasketMap and CertMap supply descriptive metadata, not permission grants.
