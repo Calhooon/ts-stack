@@ -447,10 +447,13 @@ function rowCharge(value: Row): number {
   }
   return bytes
 }
-function certificateOrder(first: SourceRow, second: SourceRow): number {
+function certificateNamesOrder(first: SourceRow, second: SourceRow): number {
   if (typeof first.row.fieldName !== 'string' || typeof second.row.fieldName !== 'string')
     throw new TypeError('Invalid certificate field name')
-  const compared = first.row.fieldName.localeCompare(second.row.fieldName)
+  return first.row.fieldName.localeCompare(second.row.fieldName)
+}
+function certificateOrder(first: SourceRow, second: SourceRow): number {
+  const compared = certificateNamesOrder(first, second)
   if (compared !== 0 || first.ordinal === undefined || second.ordinal === undefined) return compared
   if (first.ordinal < second.ordinal) return -1
   if (first.ordinal > second.ordinal) return 1
@@ -466,9 +469,7 @@ async function* groupedEntries(
     group: SourceRow[] = []
   async function* ordered() {
     group.sort(certificateOrder)
-    if (
-      group.some((value, index) => index > 0 && value.row.fieldName.localeCompare(group[index - 1].row.fieldName) === 0)
-    ) {
+    if (group.some((value, index) => index > 0 && certificateNamesOrder(value, group[index - 1]) === 0)) {
       await resolveTies(group)
       group.sort(certificateOrder)
     }
