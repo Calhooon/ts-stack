@@ -1751,7 +1751,7 @@ stage names and timing, never archive contents. The first and repeat imports
 also report structural phase, operation number, episode, row progress and elapsed time from the
 existing synchronous public callback after authentication or a fully drained
 merge operation. This observation cannot authorize work or renew an expiry;
-it measures progress before reviewing the selected whole-workflow allowance. Its complete result is pending;
+it measures progress before reviewing the selected whole-workflow allowance. The source306 complete case failed functionally after2090.687s, before its3600s expiry: strict source allocation-history validation rejected sequence metadata during the first import. The first import, later customer write, restart and repeat import remain unqualified;
 other recovery cases and the helper default180-second lifetime remain unchanged.
 No production deadline or resource recommendation follows from this allowance.
 
@@ -1837,3 +1837,15 @@ controls), and the actual raw native regression passes one:448 component cases
 in total. Thirty-two other native cases are unselected and unqualified. The
 source299 complete customer run failed at the now-corrected raw coordinate ABI;
 current complete import/restart/repeat/recovery qualification remains required.
+
+The incoming-ID reservation regression now independently checks SQLite's
+`typeof(seq)` as well as exact deleted-high counters, retry stability, foreground
+allocation and stale-primary refusal. Its selected fixture admits900 seconds
+with a930-second test deadline because native setup alone measured230 seconds;
+the helper default180 seconds and other cases are retained. Source307 first
+runs this strengthened actual native test against the unchanged reservation
+writer. A suspected REAL binding must be demonstrated before applying an
+explicit INTEGER cast. No allocation-history integrity or expiry check is
+relaxed. Limits should protect supported workloads and resource use with
+measured headroom; reducing feature scope or adding complex representations
+solely to fit an arbitrary cap is not the objective.

@@ -44,11 +44,12 @@ export async function withBrc38NativeCandidateContractFixture(
   }) => Promise<void>,
   selected: Readonly<{
     prepareSource?: (source: Awaited<ReturnType<typeof composedNativeFixture>>) => Promise<void>
+    lifetimeMs?: number
     maximumSourceReadBytes?: 32 | 1024
     customize?: Parameters<typeof composedNativeFixture>[1]
   }> = {}
 ): Promise<void> {
-  const source = await composedNativeFixture('/work/native-contract', selected.customize)
+  const source = await composedNativeFixture('/work/native-contract', selected.customize, selected.lifetimeMs)
   let initial: Awaited<ReturnType<typeof readIndependentNativeInventory>> | undefined,
     failed = false,
     failure: unknown

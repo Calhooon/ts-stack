@@ -48,14 +48,15 @@ async function readCounters(fixture: Brc38NativeCandidateContractFixture): Promi
     for (const [table, [sql, id]] of Object.entries(families)) {
       const sequence = (await trx('sqlite_sequence')
           .where({ name: sql })
-          .select(trx.raw('CAST(seq AS TEXT) AS value'))
-          .limit(2)) as Array<{ value: string }>,
+          .select(trx.raw('CAST(seq AS TEXT) AS value'), trx.raw('typeof(seq) AS kind'))
+          .limit(2)) as Array<{ value: string; kind: string }>,
         rows = (await trx(sql)
           .orderBy(id, 'desc')
           .select(trx.raw('CAST(?? AS TEXT) AS value', [id]))
           .limit(1)) as Array<{ value: string }>
       if (
         sequence.length > 1 ||
+        sequence.some(row => row.kind !== 'integer') ||
         [...sequence, ...rows].some(
           row => !/^-?(?:0|[1-9]\d{0,15})$/.test(row.value) || !Number.isSafeInteger(Number(row.value))
         )
@@ -228,37 +229,40 @@ async function insertForeground(
 }
 
 test('actual incoming ranges retain deleted-high history, survive retry and exclude ordinary foreground IDs', async () => {
-  await withBrc38NativeCandidateContractFixture(async fixture => {
-    expect((await readCounters(fixture)).outputBaskets).toBe(1600)
-    await verifyBrc38NativeIncomingIdReservations(
-      {
-        storage: fixture.source.storage,
-        selection: fixture.selection,
-        receiptPolicy: previewReceiptPolicy,
-        store: fixture.store,
-        working: fixture.options.workingAllocation,
-        readCounters: async () => await readCounters(fixture),
-        insertForegroundRows: async () => await insertForeground(fixture),
-        changePrimaryAwayAndBack: async () => {
-          const source = fixture.source,
-            userId = source.manager.getActiveUser().userId,
-            original = source.manager.getActiveStore()
-          await source.manager.runAsStorageProvider(async active => {
-            if (active !== source.storage) throw new Error('Primary reservation refusal selected another source')
-            await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(source.storage, async writer => {
-              expect(
-                await source.storage.updateUser(userId, { activeStorage: 'independent-other-primary' }, writer)
-              ).toBe(1)
-              expect(await source.storage.updateUser(userId, { activeStorage: original }, writer)).toBe(1)
+  await withBrc38NativeCandidateContractFixture(
+    async fixture => {
+      expect((await readCounters(fixture)).outputBaskets).toBe(1600)
+      await verifyBrc38NativeIncomingIdReservations(
+        {
+          storage: fixture.source.storage,
+          selection: fixture.selection,
+          receiptPolicy: previewReceiptPolicy,
+          store: fixture.store,
+          working: fixture.options.workingAllocation,
+          readCounters: async () => await readCounters(fixture),
+          insertForegroundRows: async () => await insertForeground(fixture),
+          changePrimaryAwayAndBack: async () => {
+            const source = fixture.source,
+              userId = source.manager.getActiveUser().userId,
+              original = source.manager.getActiveStore()
+            await source.manager.runAsStorageProvider(async active => {
+              if (active !== source.storage) throw new Error('Primary reservation refusal selected another source')
+              await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(source.storage, async writer => {
+                expect(
+                  await source.storage.updateUser(userId, { activeStorage: 'independent-other-primary' }, writer)
+                ).toBe(1)
+                expect(await source.storage.updateUser(userId, { activeStorage: original }, writer)).toBe(1)
+              })
             })
-          })
+          },
+          check: fixture.check
         },
-        check: fixture.check
-      },
-      counts
-    )
-  })
-}, 30000)
+        counts
+      )
+    },
+    { lifetimeMs: 900000 }
+  )
+}, 930000)
 
 test('actual private page allocation consumes genuine source-reserved IDs and rolls back a caught unique violation', async () => {
   await withBrc38NativeCandidateContractFixture(async fixture => {
