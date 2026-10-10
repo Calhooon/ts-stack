@@ -1737,7 +1737,11 @@ after230.755s setup and46 real drained baseline operations (median8.974s;
 maximum26.077s). It had not completed the first baseline. Source305 therefore
 selects a provisional5400-second fixture lease and5430-second Jest deadline
 for measurement of both complete imports, current recovery and customer writes.
-This ninety-minute bound is a qualification envelope, not a production SLO;
+That ninety-minute source305 attempt failed before native setup (243ms):
+the structured JSON index correctly refused a source lifetime above its
+existing one-hour bound. Source306 selects a3600-second fixture lease and
+3630-second Jest deadline within that supported maximum. Both failed attempts
+remain retained. This qualification window does not establish a production SLO;
 full latency, foreground fairness and resource qualification remain mandatory. Its old30-second test deadline could not contain
 measured235-second setup. This selected test allowance preserves the full
 large incoming and later customer TEXT records, every original assertion,

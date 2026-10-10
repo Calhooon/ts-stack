@@ -75,7 +75,7 @@ test('actual occupied import, current restart and repeat import preserve a later
         incoming.tables.transactions[0].description = incomingDescription
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
       },
-      5400000
+      3600000
     )
   observe('fixture-ready')
   try {
@@ -252,7 +252,7 @@ test('actual occupied import, current restart and repeat import preserve a later
     await fixture.close()
     observe('physically-closed')
   }
-}, 5430000)
+}, 3630000)
 
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',
