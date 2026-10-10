@@ -1800,3 +1800,12 @@ raw UTF-8/NUL/NULL cells, compares complete bytes, and verifies REAL-coordinate,
 copied-actor and cancellation refusals. This lower transport control is not a
 complete composed profile or system qualification. Current full customer and
 all supported-platform/resource/consumer/exact-head evidence remain required.
+
+
+The source300 bigint binding attempt was stopped by the original client/mobile
+Knex typecheck before any runtime cohort. Source301 uses explicit SQLite INTEGER
+casts on those already validated safe-number coordinates. This conversion is
+lossless over the admitted range and fits the existing portable Knex declaration
+without an assertion or ambient type change. The C ABI still rejects direct REAL
+coordinates. The genuine native regression and every original case are retained;
+current complete qualification is required.

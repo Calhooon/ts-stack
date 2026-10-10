@@ -53,11 +53,10 @@ export async function readBrc38NativeTextBytes(
     if ((await packedKey(trx, input)) !== key) throw new Error('Native TEXT retained physical key changed')
     return descriptor?.bytes ?? null
   }
-  const rows = (await trx.raw('SELECT brc38_text_read_protocol() AS abi,brc38_text_extent_bytes(?,?,?) AS bytes', [
-    BigInt(coordinate[0]),
-    BigInt(coordinate[1]),
-    BigInt(rowId)
-  ])) as Array<{ abi: number; bytes: number | null }>
+  const rows = (await trx.raw(
+    'SELECT brc38_text_read_protocol() AS abi,brc38_text_extent_bytes(CAST(? AS INTEGER),CAST(? AS INTEGER),CAST(? AS INTEGER)) AS bytes',
+    [coordinate[0], coordinate[1], rowId]
+  )) as Array<{ abi: number; bytes: number | null }>
   signal?.throwIfAborted()
   actual(trx)
   if (
