@@ -2107,3 +2107,24 @@ The source-owned native compiler build now removes intermediate containers even 
 The corrected focused source341 regression reproduces the original native `query_only=ON/OFF` permission refusal inside the real authenticated structured path. Its earlier source340 attempt failed at missing authenticated callback scope and is not permission evidence. Both failed reports remain retained; failed asynchronous work was physically drained by the owned runner.
 
 Physical read-only native connections now establish query-only mode before installing the existing authorizer. Comparison and retired recovery still refuse setting mutations and wallet/schema writes. Structured native replay borrows a separate actual read-only slot, freshly verifies its physical owner, sealed metadata and archive before/after the operation, and drains the lease before writer enrollment. Ordinary provisional staging retains its original query-only toggle/reset and retry ownership. Failed native read cleanup remains explicitly owned and retriable. Source342 is authored; all13 original component modes and a newly qualified exact build pin must pass before this correction can be used by application tests. Full original workflow/production qualification remains open.
+
+### Qualified native read-mode component and workload-based limits
+
+Source342's read-mode correction passed all13 original component contracts on
+LinuxARM64, including committed-writer process loss and WAL recovery. The exact
+1,353,576-byte executable is now pinned at
+`38f6ea837fa8430dfa864cf27322c3fcfdcd1a1d58aca1a270a98ba29ad77401`.
+All contract process groups and the owned compiler container drained; frozen
+source and native inputs remained exact. Application regression, complete
+customer/recovery, supported-platform and full-system qualification remain open.
+
+Limits must name the resource and supported workload, account for observed normal,
+concurrent and recovery peaks, leave explicit headroom, and retain tested
+exhaustion and cleanup behavior. Review their engineering and qualification cost
+before requiring additional machinery solely to meet an inherited number. The
+authorized30-percent browser artifact increase remains provisional until full
+implementation and qualification are complete. The explicit complete-fixture
+16KiB read allowance uses an existing supported reader width; its benefit still
+requires actual workflow measurements. A permission refusal does not justify
+raising time, memory or storage allowances. Authentication, atomicity and physical
+ownership remain correctness contracts while operational budgets are reviewed.
