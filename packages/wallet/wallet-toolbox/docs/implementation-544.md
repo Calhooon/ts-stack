@@ -1643,3 +1643,16 @@ provisional immutable-prefix guard. Their ordinary refusal is asserted before
 corruption and the complete fresh seal/prefix definition checks run afterward.
 Production write protections are unchanged. Earlier single-guard fixture
 attempts stopped at the second protection and did not qualify read integrity.
+
+The complete actual native fixture now returns in 227.3 seconds and immediately
+closes/removes its physical directory under explicit five-minute admission.
+The diagnostic command passes in 228.1 seconds with zero OOM, exact original
+native input and frozen source, and no retained worker/container. This validates
+full setup under the selected allowance, not complete import/recovery, native
+case timing or production suitability. Original defaults and application case
+deadlines remain unchanged.
+
+Binary corruption uses the actual persisted bounded chunk length, rather than
+assuming every chunk is 64 KiB. The same-size postimage passes the unrelated
+length constraint and exercises the retained read-digest refusal after both
+physical guards have been exactly restored. Full affected validation follows.

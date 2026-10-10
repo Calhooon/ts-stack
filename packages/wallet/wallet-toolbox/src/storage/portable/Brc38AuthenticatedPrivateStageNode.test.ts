@@ -27,7 +27,14 @@ import { inspectBrc38AuthenticatedRawTransaction } from './Brc38AuthenticatedRaw
  * Restore the exact guard in the same transaction before testing read integrity. */
 async function corruptSealedBinaryChunk(store: KnexBrc38StagingStore, payload: Buffer): Promise<void> {
   const coordinate = { tableName: 'transactions', position: 0, field: 'rawTx', offset: 0 },
-    guardNames = ['brc38_source_seal_private_binary_chunks_update', 'private_binary_chunks_prefix_update']
+    guardNames = ['brc38_source_seal_private_binary_chunks_update', 'private_binary_chunks_prefix_update'],
+    extent = await store.knex('private_binary_chunks').where(coordinate).first('bytes')
+  expect(Number.isSafeInteger(extent?.bytes)).toBe(true)
+  expect(extent.bytes).toBeGreaterThan(0)
+  expect(extent.bytes).toBeLessThanOrEqual(payload.byteLength)
+  // Preserve the real chunk length so the later refusal proves its digest,
+  // rather than stopping at an unrelated table length constraint.
+  payload = payload.subarray(0, extent.bytes)
   await expect(store.knex('private_binary_chunks').where(coordinate).update({ payload })).rejects.toThrow('immutable')
   await store.knex.transaction(async trx => {
     const guards: Array<{ name: string; sql: string }> = []
