@@ -1437,6 +1437,7 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
         async database =>
           await database.transaction(async trx => {
           store.assertPrivateNativeReadTransaction(trx)
+          expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
           // BEGIN alone does not establish a retained main-database view.
           // Prove the independent original rows before reading their extents.
           expect(await trx('monitor_events').select('id').orderBy('id')).toEqual([{ id: 400 }, { id: 401 }])
