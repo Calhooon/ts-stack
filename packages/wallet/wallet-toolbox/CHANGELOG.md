@@ -109,6 +109,14 @@ serialized behavior. Explicitly refusing migrations cannot be downgraded in plac
 Publication, provider rollout, physical-device qualification and a funded recovery
 require their operational authorization after complete artifact validation.
 
+## wallet-toolbox 2.14.7
+
+- BRC-177 anchors cover both the protected action and an economic reclaim.
+  Protected actions keep their only managed input bound to the named anchor,
+  create no wallet change, and pay the bounded reclaim surplus as miner fee.
+  Ordinary actions retain their existing change planning. No API, wire or
+  database migration is required.
+
 ## wallet-toolbox 2.14.6
 
 - UMP support pins anchor verified update lineage. Password and token updates

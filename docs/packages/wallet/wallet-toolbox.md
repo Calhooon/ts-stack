@@ -46,6 +46,11 @@ then use [BRC-38/39 integration](../../guides/wallet-data-portability.md), the
 The integration guide documents concrete-provider requirements, explicit
 restore/merge modes and the limits of the current in-memory export helpers.
 
+BRC-177 anchors cover both the delivery and an economic reclaim. When the
+reclaim floor is larger, the protected action pays the bounded surplus as
+miner fee while retaining no wallet change. Upgrade the active storage
+implementation to receive this funding fix; no wire or database migration is required.
+
 ## Current capabilities
 
 Wallet Toolbox 2.11 adds the built-in BRC-177 `p nosend expiry` module. It
