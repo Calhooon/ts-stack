@@ -1929,3 +1929,14 @@ Empty restore remains2MiB. Physical/logical quotas, original customer bytes,
 rows, independent oracles, finite expiry, cancellation and cleanup remain.
 This is a qualification envelope, not a product default or production sizing.
 Complete original import/restart/repeat validation is still required.
+
+Source314's complete original customer run committed five of fourteen rows,
+then failed at the existing transaction physical-coordinate guard after658.554s.
+The16MiB complete fixture envelope cleared the prior header/proof/request/scalar
+allocation failures; no timeout or OOM occurred. Existing field selection passes
+a metadata array followed by a raw rowid expression to Knex.select; Knex keeps
+only that first array, omitting the required coordinate. Source315 adds a focused
+actual composed-source regression through the production current-field helper,
+with an independent raw coordinate query, TEXT extent and wrong-ID/cross-user
+negative controls. Production remains unchanged for the old-fail proof. All
+original eighteen customer/recovery cases and their assertions remain.

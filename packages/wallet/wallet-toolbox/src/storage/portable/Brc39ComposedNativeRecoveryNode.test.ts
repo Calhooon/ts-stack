@@ -1,3 +1,4 @@
+import { readBrc38NativeCurrentFieldTargets } from './Brc38ImportExistingRows'
 import * as occupiedHistoryText from './Brc38PrivateOccupiedHistoryTextNode'
 import { withBrc38PrivateOccupiedHistory, type Brc38PrivateOccupiedHistory } from './Brc38PrivateOccupiedHistoryNode'
 import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
@@ -707,3 +708,69 @@ test('retained occupied history callback replays independent legacy bytes and re
     await fixture.close()
   }
 }, 30000)
+
+test('actual composed current transaction field selection preserves its physical coordinate', async () => {
+  const fixture = await composedNativeFixture('/work/native-contract', undefined, 300000)
+  try {
+    const userId = fixture.manager.getActiveUser().userId,
+      txid = fixture.sourceData.tables.transactions[0].txid
+    expect(typeof txid).toBe('string')
+    await fixture.manager.runAsStorageProvider(async () => {
+      await fixture.storage.toDb().transaction(async trx => {
+        const direct: Array<{ physical: number; localId: number; coordinateType: string }> = await trx.raw(
+          'SELECT rowid AS physical, transactionId AS localId, typeof(rowid) AS coordinateType FROM transactions WHERE userId=? AND txid=?',
+          [userId, txid]
+        )
+        expect(direct).toHaveLength(1)
+        expect(direct[0].coordinateType).toBe('integer')
+        expect(Number.isSafeInteger(direct[0].physical)).toBe(true)
+        expect(direct[0].physical).toBeGreaterThan(0)
+        const target = {
+          table: 'transactions' as const,
+          index: 'transactions' as const,
+          key: { userId, txid: txid! },
+          found: true,
+          localId: direct[0].localId
+        }
+        const fields = await readBrc38NativeCurrentFieldTargets(
+          trx,
+          fixture.storage,
+          userId,
+          'transactions',
+          [target],
+          65536
+        )
+        expect(fields).toHaveLength(1)
+        expect(fields[0].binaryRowId).toBe(direct[0].physical)
+        expect(fields[0].metadata?.transactionId).toBe(direct[0].localId)
+        expect(fields[0].metadata).not.toHaveProperty('__brc38NativeBinaryRowId')
+        expect(fields[0].texts?.description?.bytes).toBe(
+          Buffer.byteLength(fixture.sourceData.tables.transactions[0].description)
+        )
+        await expect(
+          readBrc38NativeCurrentFieldTargets(
+            trx,
+            fixture.storage,
+            userId,
+            'transactions',
+            [{ ...target, localId: direct[0].localId + 1 }],
+            65536
+          )
+        ).rejects.toThrow('prepared indexed identity')
+        await expect(
+          readBrc38NativeCurrentFieldTargets(
+            trx,
+            fixture.storage,
+            userId,
+            'transactions',
+            [{ ...target, key: { ...target.key, userId: userId + 1 } }],
+            65536
+          )
+        ).rejects.toThrow('prepared indexed identity')
+      })
+    })
+  } finally {
+    await fixture.close()
+  }
+  expect(fixture.merge.workingAllocation.used).toBe(0)
+}, 330000)
