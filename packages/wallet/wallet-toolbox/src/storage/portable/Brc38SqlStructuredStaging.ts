@@ -409,7 +409,9 @@ export async function readBrc38SqlStructuredChunk(
 }
 /** One exact arbitrary range, detached from independently verified physical
  * chunks in this actual private view. Expected length/hash are comparison DATA;
- * the enclosing real store still checks owner/schema/expiry and source scope. */
+ * the enclosing real store still checks owner/schema/expiry and source scope.
+ * Explicit provisional reads use the actual query-only staging transaction;
+ * they return content DATA and never enroll a native actor or authenticated source. */
 export async function readBrc38SqlStructuredRange(
   k: Knex,
   table: Brc38StageTable,
@@ -419,9 +421,10 @@ export async function readBrc38SqlStructuredRange(
   length: number,
   selected: Brc38JsonStructuredField,
   maximumReadBytes?: number,
-  assertActive: () => void = () => {}
+  assertActive: () => void = () => {},
+  provisionalRead = false
 ): Promise<Uint8Array> {
-  if (maximumReadBytes !== undefined) requireBrc38PackedRead(k as Knex.Transaction)
+  if (maximumReadBytes !== undefined && !provisionalRead) requireBrc38PackedRead(k as Knex.Transaction)
   const expected = {
       field: selected.field,
       encoding: selected.encoding,
@@ -484,7 +487,10 @@ export async function readBrc38SqlStructuredRange(
       } else {
         const remaining = length - used
         let copied = 0
-        const actual = await visitBrc38SqlStructuredChunkWindows(
+        const visit = provisionalRead
+          ? visitBrc38SqlProvisionalStructuredChunkWindows
+          : visitBrc38SqlStructuredChunkWindows
+        const actual = await visit(
           k as Knex.Transaction,
           chunksTable,
           { ...coordinate_, offset: prior.offset },

@@ -1371,24 +1371,29 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
             )
               throw new SnapshotResourceLimitError('Structured source exceeds its original transfer window')
             await current()
-            const bytes = await ownedTransaction(this.knex, async trx => {
-              await this.#assertStructuredSemanticOwner(sourceOnly, trx)
-              await this.#metadata(trx)
-              const value = await readBrc38SqlStructuredRange(
-                trx,
-                table,
-                index,
-                field,
-                offset,
-                length,
-                expected,
-                policy.maximumReadBytes,
-                () => this.#available()
-              )
-              this.#available()
-              await this.#assertStructuredSemanticOwner(sourceOnly, trx)
-              return value
-            })
+            const provisional = this.owner instanceof Brc38StagingOwnershipNode,
+              read = provisional
+                ? this.#withProvisionalStructuredRead.bind(this)
+                : (operation: (trx: Knex.Transaction) => Promise<Uint8Array>) => ownedTransaction(this.knex, operation),
+              bytes = await read(async trx => {
+                await this.#assertStructuredSemanticOwner(sourceOnly, trx)
+                await this.#metadata(trx)
+                const value = await readBrc38SqlStructuredRange(
+                  trx,
+                  table,
+                  index,
+                  field,
+                  offset,
+                  length,
+                  expected,
+                  policy.maximumReadBytes,
+                  () => this.#available(),
+                  provisional
+                )
+                this.#available()
+                await this.#assertStructuredSemanticOwner(sourceOnly, trx)
+                return value
+              })
             await current()
             return bytes
           },
@@ -2142,8 +2147,7 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       // Destruction below drains this fresh slot, including admission failures.
       await database.raw('PRAGMA query_only=ON')
       const mode = (await database.raw('PRAGMA query_only')) as Array<{ query_only: number }>
-      if (mode.length !== 1 || mode[0].query_only !== 1)
-        throw new Error('Private native read-only query mode differs')
+      if (mode.length !== 1 || mode[0].query_only !== 1) throw new Error('Private native read-only query mode differs')
       value = await work(database)
     } catch (failure) {
       failed = true
