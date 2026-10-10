@@ -10,8 +10,10 @@ describe('actual private native comparison phase', () => {
     await fixture?.close()
     fixture = undefined
   })
-  async function open() {
-    fixture = await previewPrivateFixture()
+  async function open(streamedStructured = false) {
+    fixture = streamedStructured
+      ? await previewPrivateFixture(undefined, undefined, 65536, 16777216, 16777216, true)
+      : await previewPrivateFixture()
     const { root, selected, value } = fixture
     await value.reservation.store.close()
     const reservation = await root.resumeNative(
@@ -54,6 +56,36 @@ describe('actual private native comparison phase', () => {
     })
     await store.requirePrivateNativeComparison()
   })
+  test('frozen authenticated structured validation uses a drained physical query-only lease without reopening writer settings', async () => {
+    const { store, selected } = await open(true)
+    const stopped = new Error('Independent structured read callback completed')
+    await store.beginPrivateNativeComparison()
+    await store.withPrivateNativeDatabase(true, async database => {
+      await database.transaction(async reader => {
+        store.assertPrivateNativeReadTransaction(reader)
+        expect(await reader.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+        expect(await reader('comparison_probe').select('*')).toEqual([{ id: 1, value: 'original semantic data' }])
+        await expect(reader.raw('PRAGMA query_only=OFF')).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+        await expect(
+          reader('comparison_probe').where({ id: 1 }).update({ value: 'not admitted' })
+        ).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+      })
+    })
+    await store.withAuthenticatedPrivateStructuredDestination(async (header, metadata) => {
+      expect(header.user.identityKey).toBe(selected.binding.identityKey)
+      expect(metadata.rows).toBeGreaterThan(0)
+      await expect(store.knex.raw('PRAGMA query_only=OFF')).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+    })
+    await expect(
+      store.withAuthenticatedPrivateStructuredDestination(async () => {
+        throw stopped
+      })
+    ).rejects.toBe(stopped)
+    await store.withPrivateNativeDatabase(true, async database => {
+      expect(await database('comparison_probe').select('*')).toEqual([{ id: 1, value: 'original semantic data' }])
+    })
+    await store.requirePrivateNativeComparison()
+  }, 120000)
   test('physical original-reservation resume restores a new mutable kernel without renewing the original custody or expiry', async () => {
     const { store, root, selected, id } = await open(),
       originalBinding = await store.knex('private_binding').select('*')

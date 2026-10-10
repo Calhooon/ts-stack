@@ -64,7 +64,11 @@ export async function composedNativeFixture(
     expiresAt: number
   ) => Promise<void>,
   beforeObserver?: (fixture: Brc38ComposedNativeBeforeObserver) => Promise<void>,
-  selected: Readonly<{ targetStorageIdentityKey?: string; proofBytes?: 256 | 32768 | 131073 }> = {}
+  selected: Readonly<{
+    targetStorageIdentityKey?: string
+    proofBytes?: 256 | 32768 | 131073
+    maximumReadBytes?: number
+  }> = {}
 ) {
   if (measurement !== undefined && !snapshotMeasurementCases.includes(measurement))
     throw new RangeError('Composed measurement must select an immutable declared shape')
@@ -79,6 +83,9 @@ export async function composedNativeFixture(
   // the default stays three minutes.
   if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 3600000)
     throw new RangeError('Composed fixture requires one finite original lifetime')
+  const maximumReadBytes = selected.maximumReadBytes ?? 1024
+  if (!Number.isSafeInteger(maximumReadBytes) || maximumReadBytes < 1 || maximumReadBytes > 16384)
+    throw new RangeError('Composed fixture requires an explicitly bounded native read allowance')
   const targetStorageIdentityKey = selected.targetStorageIdentityKey ?? 'synthetic target'
   if (
     typeof targetStorageIdentityKey !== 'string' ||
@@ -173,7 +180,7 @@ export async function composedNativeFixture(
         maximumMembers: measurement === undefined ? 10000 : 30000,
         maximumOutputBytes: structuredBytes,
         maximumScalarBytes: 65536,
-        maximumReadBytes: 1024,
+        maximumReadBytes,
         expiresAt,
         workingAllocation: working
       },
@@ -318,7 +325,7 @@ export async function composedNativeFixture(
         maximumMappedIds: maximumRows,
         maximumJournalLogicalBytes,
         maximumLocalRows: maximumRows,
-        maximumReadBytes: 1024,
+        maximumReadBytes,
         workingAllocation: working,
         structuredResources: resources,
         services: proof.services

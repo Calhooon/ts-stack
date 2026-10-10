@@ -2093,3 +2093,11 @@ Native compiler/delivery evidence is retained even when a mutation job fails.
 This provides executable delivery; the repeated full real-expiry baselines and
 finite campaign bounds still need measured qualification and a cost review before
 a complete campaign. It does not establish successful mutation qualification.
+
+### Measured fixture read admission and current native comparison refusal
+
+The original complete customer case on source339 imported all14 rows, then failed at structured inventory validation after1899.566s. The native comparison fence correctly refused `PRAGMA query_only` assignments; its retained cleanup also refused resetting that writer setting. This is a functional ownership/mode failure, not quota exhaustion or a reason to raise a deadline. An actual frozen-phase regression now requires a physical query-only reader, refused setting resets/wallet writes, complete authenticated structured validation and drained callback-failure cleanup. The native/store fix and newly qualified exact build remain pending at this checkpoint.
+
+Complete composed cases explicitly select a16KiB read allowance already supported by the native field/inventory readers. The helper's1KiB default, source data, staged/crypto chunks, hashes, identities, working/physical ceilings and real UTC/monotonic deadlines remain. The180,000-byte original imported TEXT requires176 comparison iterations at1KiB and11 at16KiB. This static cost model is not measured performance or production sizing; paired complete workflow/resource/cleanup evidence is required. The mutation adapter forces serial Jest, so file splitting alone cannot admit six real one-hour expiry scenarios into45/90-minute jobs. Preserve the complete case/mutant obligations and resolve measured campaign topology before qualification.
+
+The source-owned native compiler build now removes intermediate containers even on failure. The30-suite wallet manual inventory received an actual static review on October10, retaining its classifications and seven-day cadence; no funded/manual/remote suite ran. Full qualification and exact-head CI remain required; #569 stays held open.

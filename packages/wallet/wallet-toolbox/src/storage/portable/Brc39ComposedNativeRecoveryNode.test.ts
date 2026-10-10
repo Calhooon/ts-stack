@@ -10,7 +10,7 @@ import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
 import type { TableProvenTxReq } from '../schema/tables'
 import { retryInactiveBrc39ComposedNativeImport } from './Brc39ComposedNativeRetryNode'
 import * as cutover from './Brc38ComposedNativeCutoverNode'
-import { composedNativeFixture } from './Brc38ComposedNativeFixture'
+import { composedNativeFixture as originalComposedNativeFixture } from './Brc38ComposedNativeFixture'
 import { importBrc39ComposedNativeProfile } from './Brc39ComposedNativeImportNode'
 import { recoverBrc39ComposedNativeImport } from './Brc39ComposedNativeRecoveryNode'
 import { authenticatedStagePassword } from './Brc38AuthenticatedPrivateStageFixture'
@@ -36,6 +36,13 @@ import {
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import { captureComposedPriorImports, assertComposedPriorImports } from './Brc38ComposedPriorImportFixture'
+
+// Whole-feature cases explicitly admit the existing 16 KiB native read bound.
+// Default/small-buffer fixtures remain 1 KiB; data, crypto chunks and clocks stay exact.
+const composedNativeFixture = (...args: Parameters<typeof originalComposedNativeFixture>) => {
+  args[6] = { ...args[6], maximumReadBytes: 16384 }
+  return originalComposedNativeFixture(...args)
+}
 
 // The complete first customer attempt ran for 1057s before a functional refusal,
 // and genuine fixture setup alone measured 74-231s. Recovery tests must reach

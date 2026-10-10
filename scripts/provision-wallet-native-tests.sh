@@ -37,7 +37,7 @@ printf '%s  %s\n' 6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebae
 mkdir -- "$private/tooling"
 cp -- "$repo/scripts/wallet-native-test-tooling.Dockerfile" "$private/tooling/Dockerfile"
 compiler_image=$(timeout --signal=TERM --kill-after=10s 600s \
-  docker build --quiet --platform linux/arm64 "$private/tooling")
+  docker build --force-rm --quiet --platform linux/arm64 "$private/tooling")
 [[ $compiler_image == sha256:* ]]
 # Fail on any compiler/build mismatch. Source capture and all thirteen original
 # standalone native modes precede exclusive immutable executable delivery.
