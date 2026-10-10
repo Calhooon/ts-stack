@@ -1396,3 +1396,41 @@ case deadlines plus setup and physical drainage; its two-case cohort has not yet
 run. Failed Docker API observations block new runtime admission. Limits continue
 to require workload, concurrency, recovery and peak measurements with headroom,
 including the authorized browser allowance's review after the full goal finishes.
+
+## Measured qualification progress and harness allowance
+
+The full workspace typecheck passes on source273. The complete manager suite
+passes all 27 original cases in 128.942 seconds after preparing its intended
+chain tracker before createAction and restoring/destroying owned fixtures in
+finally. Shared membership passes all 22 cases and 2,700 generated schedules
+(seed3242026) in 129.573 seconds, retaining its original 30-second case deadlines.
+The aligned root suite initially had 372 passes and two governance failures;
+the acknowledged invariant descriptions, genuine 97-suite/97-target goldens and
+preserved wallet build prerequisite are now corrected. Full updated gates still
+require execution.
+
+The full HTTP attempt failed: the zero-latency case reached its 360-second harness
+deadline, followed by authenticated-response failures in the second case. The
+first asynchronous case may have remained active, so the second is not an
+independent latency verdict. Failed evidence and exact container cleanup remain.
+A private 90-second diagnostic observed 12 completed upload-part calls with
+3.554–4.605-second durations (median3.821 seconds); request serialization took
+about 2 milliseconds and most time was in authenticated HTTP. It is diagnostic
+evidence, not a passing campaign or production capacity proof.
+
+The test transfers a 7 MiB record in roughly 28 parts and repeats complete corrupt
+and valid reads, acknowledgement loss, disconnect, restart and restore. Those
+operations plus the one-second latency variant need a workload-derived harness
+allowance. Each complete case now allows 600 seconds; a whole-suite supervisor
+must allow 1,260 seconds for both cases plus setup and drainage. All original
+assertions, mocks, operations, data, latency variants and production RPC deadlines
+remain unchanged. The original failure is retained; the larger allowance is
+unqualified until both complete cases pass. This avoids optimizing inherited
+authentication solely to meet an unsupported harness ceiling.
+
+Limits require a demonstrated purpose, supported workload, measured use and peaks,
+concurrency, cancellation, recovery and useful headroom. Compare that benefit with
+implementation complexity, maintenance cost and compatibility. The authorized
+30% browser allowance is reviewed after the full goal. All eleven acceptance
+rows remain open; full platform/resource/property/mutation/conformance/artifact
+and exact-head CI/analyzer/review qualification is still required.

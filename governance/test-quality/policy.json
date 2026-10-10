@@ -796,7 +796,8 @@
         "boundary": "Wallet Brc38ImportHistory current ownership/data contract",
         "target": "Wallet Brc38ImportHistory current ownership/data contract",
         "invariants": [
-          "full300 native notification projections match independent accepted-number scope oracle without mutating original history"
+          "Accepted incoming transaction IDs map to the independent destination scope, deduplicate and sort; unmapped integer IDs are counted.",
+          "Original JSON and prepared rows remain byte-identical and notification projections never activate imported history."
         ]
       },
       {
@@ -806,7 +807,8 @@
         "boundary": "Wallet Brc38ImportIdMap current ownership/data contract",
         "target": "Wallet Brc38ImportIdMap current ownership/data contract",
         "invariants": [
-          "generated independent import scopes preserve exact maps across committed resume"
+          "Committed entity/incoming-ID/local-ID rows equal the independent generated scope, including accepted IDs beyond safe integer precision.",
+          "Resume reloads every exact entity map and persisting it again leaves the durable row inventory unchanged."
         ]
       },
       {
@@ -816,7 +818,8 @@
         "boundary": "Wallet Brc38ImportJournal current ownership/data contract",
         "target": "Wallet Brc38ImportJournal current ownership/data contract",
         "invariants": [
-          "independently observes exact prefix/IDs across every rollback and lost-ack boundary"
+          "Rollback restores both native rows and the destination-authoritative next-row checkpoint at every generated page.",
+          "Lost-ack replay never invokes the row writer again; committed rows, ID maps and byte accounting equal the independent prefix."
         ]
       },
       {
@@ -826,7 +829,8 @@
         "boundary": "Wallet Brc38ImportJournalSchema current ownership/data contract",
         "target": "Wallet Brc38ImportJournalSchema current ownership/data contract",
         "invariants": [
-          "nontransaction owners refuse before any query; a real transaction remains idempotent"
+          "Nontransaction or non-SQLite owners are rejected before any query is issued.",
+          "Repeated install and validation inside a genuine SQLite transaction preserve the complete original schema inventory."
         ]
       },
       {
@@ -836,7 +840,8 @@
         "boundary": "Wallet Brc38ImportJournalSchemaBody current ownership/data contract",
         "target": "Wallet Brc38ImportJournalSchemaBody current ownership/data contract",
         "invariants": [
-          "generated reservations charge exactly once and require owned immutable cleanup"
+          "Mapping admission enforces exact import scope and capacity while each accepted mapping increments durable accounting once.",
+          "Mappings remain immutable; deletion requires owned cleanup, forbids new admissions, and returns durable mapping accounting to zero."
         ]
       },
       {
@@ -861,7 +866,8 @@
         "boundary": "Wallet Brc38ImportPage current ownership/data contract",
         "target": "Wallet Brc38ImportPage current ownership/data contract",
         "invariants": [
-          "exact thirteen-table sequence and semantic values survive every row-page boundary including the original incoming Number domain"
+          "Every generated page preserves all thirteen tables in the independent legacy sequence and exact original semantic row values.",
+          "Page row/byte ceilings and a single pending read hold at every boundary; observed calls and final cursor equal the complete independent inventory."
         ]
       },
       {
@@ -885,7 +891,8 @@
         "boundary": "Wallet Brc38ImportTargetIndexes current ownership/data contract",
         "target": "Wallet Brc38ImportTargetIndexes current ownership/data contract",
         "invariants": [
-          "ordinary catalog reordering is harmless and a missing or altered owned index fails"
+          "Independent SQLite point queries use the expected unique source tree and retain owner residuals and NOT NULL enforcement.",
+          "Repeated owned-index installation yields the exact seventeen query identities; missing or altered compound indexes are rejected."
         ]
       },
       {
@@ -895,7 +902,8 @@
         "boundary": "Wallet Brc38KnexDestinationFence current ownership/data contract",
         "target": "Wallet Brc38KnexDestinationFence current ownership/data contract",
         "invariants": [
-          "actual SQLite exact 64-bit revisions retain distinct stale fences beyond Number precision"
+          "Captured SQLite revisions retain exact signed 64-bit decimal values beyond Number precision and unchanged fences permit the callback.",
+          "An independently incremented revision rejects the stale fence before any callback or wallet row write."
         ]
       },
       {
@@ -921,7 +929,8 @@
         "boundary": "Wallet Brc38OwnedImportReads current ownership/data contract",
         "target": "Wallet Brc38OwnedImportReads current ownership/data contract",
         "invariants": [
-          "every pending success/failure is drained and escaped work cannot restart ownership"
+          "Retained ownership waits for every pending read to settle and preserves the exact callback/read failure or ordered aggregate.",
+          "Escaped work cannot invoke a read while ownership drains or after it closes."
         ]
       },
       {
@@ -942,7 +951,8 @@
         "boundary": "Wallet Brc38PrivateChunkPipe current ownership/data contract",
         "target": "Wallet Brc38PrivateChunkPipe current ownership/data contract",
         "invariants": [
-          "300 bounded private producer/reader schedules preserve exact bytes and owned backpressure"
+          "Generated reader/producer schedules deliver the exact original byte sequence including empty input.",
+          "Each yielded chunk respects the configured width, and every owned append completes before the producer finishes."
         ]
       },
       {
@@ -1044,7 +1054,8 @@
         "boundary": "Wallet Brc38PublishedWalletData current ownership/data contract",
         "target": "Wallet Brc38PublishedWalletData current ownership/data contract",
         "invariants": [
-          "generated completed profiles reject a changed user, chain, destination, completion or primary"
+          "Only one exact user/settings profile with a complete destination checkpoint is accepted without mutating input values.",
+          "Changed user, identity, chain, destination, receipt completion or state-specific primary selection is rejected."
         ]
       },
       {
@@ -1054,7 +1065,8 @@
         "boundary": "Wallet Brc38SemanticStage current ownership/data contract",
         "target": "Wallet Brc38SemanticStage current ownership/data contract",
         "invariants": [
-          "generated identity-preserving ID shifts and table orders agree with the independent legacy parser"
+          "Generated reference shifts and table reorderings preserve every semantic row against the independent legacy parser.",
+          "Staging seals exactly once with at most one returned row and the full expected row count, leaving original archive data unchanged."
         ]
       },
       {
@@ -1064,7 +1076,8 @@
         "boundary": "Wallet Brc38StagingAdmissionNode current ownership/data contract",
         "target": "Wallet Brc38StagingAdmissionNode current ownership/data contract",
         "invariants": [
-          "300 native capacity schedules preserve independent reservation arithmetic and exact release"
+          "After every generated admission/release, physical and logical usage equals independent reservation arithmetic.",
+          "Full capacity rejects another owner; releasing reservations permits later admissions and all owned stores are physically closed."
         ]
       },
       {
@@ -1120,7 +1133,8 @@
         "boundary": "Wallet knexDatabaseSystem current ownership/data contract",
         "target": "Wallet knexDatabaseSystem current ownership/data contract",
         "invariants": [
-          "string aliases remain authoritative while class clients retain their dialect"
+          "Configured string driver aliases remain authoritative over conflicting dialect hints in original and copied readers.",
+          "Class-based clients preserve their own dialect and constructor identity; a class without a dialect remains unknown."
         ]
       },
       {
@@ -1130,7 +1144,8 @@
         "boundary": "Wallet SnapshotJournalDeltaFrame current ownership/data contract",
         "target": "Wallet SnapshotJournalDeltaFrame current ownership/data contract",
         "invariants": [
-          "generated exact journal identities, raw SQL cell representations and tombstones survive independent round trips"
+          "All thirteen table identities, exact revisions, raw SQL cell values, negative zero and tombstones survive the independent frame comparison.",
+          "Decoded buffers and dates own their storage; mismatched row identity or examined counts are rejected."
         ]
       },
       {
@@ -1176,7 +1191,8 @@
         "boundary": "Wallet SnapshotJournalIdentityLedger current ownership/data contract",
         "target": "Wallet SnapshotJournalIdentityLedger current ownership/data contract",
         "invariants": [
-          "generated source history independently predicts acknowledged identity, aliasing and rollback"
+          "Generated generation/identity histories produce exact current/previous associations and independently predicted mapping counts.",
+          "Rollback leaves mappings and budgets empty and preserves the original destination checkpoint."
         ]
       },
       {
@@ -1186,7 +1202,8 @@
         "boundary": "Wallet SnapshotJournalIdentityRetirements current ownership/data contract",
         "target": "Wallet SnapshotJournalIdentityRetirements current ownership/data contract",
         "invariants": [
-          "generated independent history retains every superseded association and rolls back all custody"
+          "Every superseded association and current mapping equals the independent generated history, including exact retirement and mapping budgets.",
+          "Rollback removes all current/retired custody and budgets while preserving the original destination checkpoint."
         ]
       },
       {
@@ -1196,7 +1213,8 @@
         "boundary": "Wallet SnapshotJournalSourceGenerations current ownership/data contract",
         "target": "Wallet SnapshotJournalSourceGenerations current ownership/data contract",
         "invariants": [
-          "generated source membership and identity independently predict bounded live resolution and rollback"
+          "Only independently predicted live profile members resolve exact generation/revision values; absent or foreign rows are refused.",
+          "Generated rollback removes physical, profile and global witness rows."
         ]
       },
       {
@@ -1206,7 +1224,8 @@
         "boundary": "Wallet SnapshotJournalSourceIdentities current ownership/data contract",
         "target": "Wallet SnapshotJournalSourceIdentities current ownership/data contract",
         "invariants": [
-          "generated relocation, txid discovery and exact parent replacement preserve only the appropriate associations"
+          "Relocation and changes to transaction ID discovery or ordinary values preserve the appropriate natural identities.",
+          "Exact parent-generation replacement changes child associations while retaining the parent natural identity; rollback empties all witness and transaction rows."
         ]
       },
       {
@@ -1216,7 +1235,8 @@
         "boundary": "Wallet StorageAccessQueue current ownership/data contract",
         "target": "Wallet StorageAccessQueue current ownership/data contract",
         "invariants": [
-          "generated overload and cancellations preserve admitted FIFO, exclusive ownership and future admission"
+          "Generated overload/cancellation yields exactly the independent admitted FIFO, with correct typed refusals and no simultaneous exclusive owners.",
+          "Release is idempotent; all admitted operations drain to zero active owners and subsequent admission remains possible."
         ]
       }
     ],

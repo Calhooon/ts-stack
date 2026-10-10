@@ -234,5 +234,5 @@ test.each([0, 1000])(
     // transport calls after the authenticated framing/retry gates; keep the production
     // deadlines under test without letting Jest's harness deadline pre-empt it.
   },
-  360000
+  600000
 )

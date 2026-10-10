@@ -32,11 +32,11 @@ test('current required, manual, live, resource, and conformance tests are govern
 
   assert.deepEqual(result.errors, [])
   assert.equal(result.summary.requiredDirectSkips, 2)
-  assert.equal(result.summary.propertySuites, 57)
+  assert.equal(result.summary.propertySuites, 97)
   assert.equal(result.summary.propertyPackages, 31)
   assert.equal(result.summary.propertyExcludedPackages, 5)
   assert.equal(result.summary.propertyClassifiedPackages, 36)
-  assert.equal(result.summary.mutationTargets, 57)
+  assert.equal(result.summary.mutationTargets, 97)
   assert.equal(result.summary.manualAndLiveFiles, 32)
   assert.equal(result.summary.walletManualSuites, 30)
   assert.equal(result.summary.conformanceSkipFiles, 19)
@@ -159,7 +159,7 @@ test('wallet property command keeps every registered suite after its runner opti
   const manifest = 'packages/wallet/wallet-toolbox/package.json'
   const packageDirectory = path.dirname(path.join(REPOSITORY_ROOT, manifest))
   const wallet = JSON.parse(fs.readFileSync(path.join(REPOSITORY_ROOT, manifest), 'utf8'))
-  const prefix = 'node ../../../scripts/check-wallet-property-command.mjs && jest '
+  const prefix = 'pnpm build && node ../../../scripts/check-wallet-property-command.mjs && jest '
   assert.ok(wallet.scripts['test:property'].startsWith(prefix))
   const tokens = wallet.scripts['test:property'].slice(prefix.length).split(' ')
   const options = [
