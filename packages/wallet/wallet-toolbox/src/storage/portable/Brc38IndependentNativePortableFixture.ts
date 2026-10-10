@@ -7,7 +7,9 @@ import type { IndependentNativeInventory } from './Brc38IndependentNativeInvento
 // row projection, source header or archive parser creates this oracle.
 const forms = [
   ['provenTxs', 'proven_txs', []],
-  ['provenTxReqs', 'proven_tx_reqs', ['notified', 'wasBroadcast']],
+  // Independent physical SQL preimage preserves the historical export getter's
+  // numeric optional flag, rather than the separate typed finder's boolean.
+  ['provenTxReqs', 'proven_tx_reqs', ['notified']],
   ['outputBaskets', 'output_baskets', ['isDeleted']],
   ['transactions', 'transactions', ['isOutgoing']],
   ['commissions', 'commissions', ['isRedeemed']],

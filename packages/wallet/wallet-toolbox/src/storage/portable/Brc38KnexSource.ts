@@ -65,7 +65,9 @@ interface Definition {
 }
 const definitions: Record<WalletSnapshotTable, Definition> = {
   provenTxs: { name: 'proven_txs', keys: ['provenTxId'] },
-  provenTxReqs: { name: 'proven_tx_reqs', keys: ['provenTxReqId'], booleans: ['notified', 'wasBroadcast'] },
+  // The published getProvenTxReqsForUser/exportBRC38 path normalizes notified
+  // only. Keep wasBroadcast's original SQL 0/1 spelling in the archive.
+  provenTxReqs: { name: 'proven_tx_reqs', keys: ['provenTxReqId'], booleans: ['notified'] },
   outputBaskets: { name: 'output_baskets', keys: ['basketId'], booleans: ['isDeleted'] },
   transactions: { name: 'transactions', keys: ['transactionId'], booleans: ['isOutgoing'] },
   commissions: { name: 'commissions', keys: ['commissionId'], booleans: ['isRedeemed'] },
@@ -384,8 +386,8 @@ async function page(context: PageContext, k: Knex, table: WalletSnapshotTable, a
   if (sqliteOrdinal) {
     if (names.some(name => ['_rowid_', '__portableordinal'].includes(name.toLowerCase())))
       throw new TypeError('Unsupported BRC-38 certificate source ordinal schema')
-    // The original unpaged SQLite finder retains rowid scan order for locale
-    // ties. Keep its exact signed 64-bit ordinal private, as text before it
+    // Keep the physical identity for resolving the original finder's locale
+    // ties, as exact signed 64-bit text before it
     // crosses the driver; never place this key in portable archive bytes.
     void payload.select(k.raw('cast(?? as text) as ??', [`${schema.name}._rowid_`, '__portableOrdinal']))
   }
@@ -454,12 +456,22 @@ function certificateOrder(first: SourceRow, second: SourceRow): number {
   if (first.ordinal > second.ordinal) return 1
   return 0
 }
-async function* groupedEntries(rows: AsyncIterable<SourceRow>, maximum: number): AsyncGenerator<SourceRow> {
+async function* groupedEntries(
+  rows: AsyncIterable<SourceRow>,
+  maximum: number,
+  resolveTies: (group: SourceRow[]) => Promise<void>
+): AsyncGenerator<SourceRow> {
   let id: unknown,
     bytes = 0,
     group: SourceRow[] = []
-  function* ordered() {
+  async function* ordered() {
     group.sort(certificateOrder)
+    if (
+      group.some((value, index) => index > 0 && value.row.fieldName.localeCompare(group[index - 1].row.fieldName) === 0)
+    ) {
+      await resolveTies(group)
+      group.sort(certificateOrder)
+    }
     yield* group
   }
   for await (const source of rows) {
@@ -471,7 +483,8 @@ async function* groupedEntries(rows: AsyncIterable<SourceRow>, maximum: number):
     }
     id = row.certificateId
     const charge =
-      128 +
+      // Reserve the bounded ordinal query, detached text and rank map too.
+      1024 +
       rowCharge(row) +
       256 * (Object.keys(source.texts ?? {}).length + Object.keys(source.structured ?? {}).length)
     if (charge > maximum - bytes)
@@ -481,15 +494,19 @@ async function* groupedEntries(rows: AsyncIterable<SourceRow>, maximum: number):
   }
   yield* ordered()
 }
-async function* grouped(rows: AsyncIterable<SourceRow>, maximum: number): AsyncGenerator<Row> {
-  for await (const source of groupedEntries(rows, maximum)) yield source.row
+async function* grouped(
+  rows: AsyncIterable<SourceRow>,
+  maximum: number,
+  resolveTies: (group: SourceRow[]) => Promise<void>
+): AsyncGenerator<Row> {
+  for await (const source of groupedEntries(rows, maximum, resolveTies)) yield source.row
 }
 /** Coherent SQL source. Supply a dedicated reader provider so an idle
  * file consumer does not occupy the foreground/writer pool. All metadata,
  * closure checks and thirteen keyset streams own the same retained transaction.
  * Portable order may need different SQL indexes; no performance or capability
  * claim is made by constructing this source. SQLite locale ties retain the
- * original rowid order; other provider collation still requires qualification. */
+ * original finder scan order; other provider collation still requires qualification. */
 export async function openBrc38KnexSource(
   storage: StorageKnex,
   identityKey: string,
@@ -603,6 +620,49 @@ export async function openBrc38KnexSource(
     if (user.identityKey !== identityKey || sourceStorage.chain !== storage.chain)
       throw new Error('BRC-38 source profile or network changed')
     const context: PageContext = { storage, userId, options }
+    const resolveCertificateTies = async (group: SourceRow[]): Promise<void> => {
+      if (storage.dbtype !== 'SQLite') return
+      active()
+      await view.read(async trx => {
+        const k = storage.toDb(trx),
+          original = storage.findCertificateFieldsQuery({ partial: { userId } }).toSQL(),
+          plan: Array<{ detail: string }> = await k.raw('EXPLAIN QUERY PLAN ' + original.sql, original.bindings)
+        // The unpaged finder is one table scan. Its chosen index (including
+        // custom index direction/collation), or its rowid scan, determines the
+        // stable order before the legacy locale sort. Do not fetch its payload.
+        if (plan.length !== 1 || typeof plan[0].detail !== 'string' || plan[0].detail.length > 1024)
+          throw new Error('Unsupported BRC-38 certificate finder plan')
+        const indexed = /^(?:SCAN|SEARCH) certificate_fields USING (?:COVERING )?INDEX (.+?)(?: \(|$)/.exec(
+          plan[0].detail
+        )
+        if (indexed === null && plan[0].detail !== 'SCAN certificate_fields')
+          throw new Error('Unsupported BRC-38 certificate finder order')
+        const table =
+          indexed === null
+            ? k.raw('?? NOT INDEXED', ['certificate_fields'])
+            : k.raw('?? INDEXED BY ??', ['certificate_fields', indexed[1]])
+        const ordinals: Array<{ ordinal: string }> = await k
+          .select(k.raw('cast(?? as text) as ??', ['certificate_fields._rowid_', 'ordinal']))
+          .from(table)
+          .where({ userId, certificateId: group[0].row.certificateId })
+          .limit(group.length + 1)
+        if (ordinals.length !== group.length) throw new Error('BRC-38 certificate finder membership changed')
+        const ranks = new Map<bigint, bigint>()
+        for (const [index, item] of ordinals.entries()) {
+          if (typeof item.ordinal !== 'string' || !/^-?\d{1,19}$/.test(item.ordinal))
+            throw new Error('Invalid BRC-38 certificate finder identity')
+          const id = BigInt(item.ordinal)
+          if (ranks.has(id)) throw new Error('Duplicate BRC-38 certificate finder identity')
+          ranks.set(id, BigInt(index))
+        }
+        for (const source of group) {
+          const rank = source.ordinal === undefined ? undefined : ranks.get(source.ordinal)
+          if (rank === undefined) throw new Error('BRC-38 certificate finder identity changed')
+          source.ordinal = rank
+        }
+        active()
+      })
+    }
     const completed = new Set<WalletSnapshotTable>()
     const snapshotId = Utils.toHex(Random(32))
     const binaryReader = createKnexWalletSnapshotBinaryReader(storage, userId, snapshotId, view)
@@ -679,7 +739,7 @@ export async function openBrc38KnexSource(
                 // The same grouping bound and stable SQLite ordinal stay intact.
                 const entries =
                   table === 'certificateFields'
-                    ? groupedEntries(rawRows(table), options.maximumCertificateGroupBytes)
+                    ? groupedEntries(rawRows(table), options.maximumCertificateGroupBytes, resolveCertificateTies)
                     : rawRows(table)
                 for await (const source of entries) {
                   const token = {}
@@ -929,7 +989,8 @@ export async function openBrc38KnexSource(
         reading = true
         try {
           const rows = rawRows(table)
-          if (table === 'certificateFields') yield* grouped(rows, options.maximumCertificateGroupBytes)
+          if (table === 'certificateFields')
+            yield* grouped(rows, options.maximumCertificateGroupBytes, resolveCertificateTies)
           else for await (const source of rows) yield source.row
           completed.add(table)
         } finally {

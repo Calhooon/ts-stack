@@ -30,6 +30,27 @@ test('arbitrary table order keeps references provisional until all tables are co
   expect(result.sealed).toBe(1)
   expect(result.rows.size).toBe(13)
 })
+test.each([false, true, 0, 1])('historical request flag %p retains its exact archive spelling', async value => {
+  const data = semanticStageFixture()
+  data.tables.provenTxReqs[0].wasBroadcast = value
+  const result = await importToMemoryStage(data)
+  expect(result.sealed).toBe(1)
+  expect(result.rows.get(JSON.stringify(['provenTxReqs', 0]))?.wasBroadcast).toBe(value)
+})
+test.each([-1, 2, null, '1', {}, []])('invalid historical request flag %p refuses and discards', async value => {
+  const data = semanticStageFixture(),
+    state = memoryStageStore()
+  data.tables.provenTxReqs[0].wasBroadcast = value
+  await expect(
+    readBrc38JsonStream(source(data), new Brc38SemanticStage(state.store, options), {
+      maximumArchiveBytes: 1048576,
+      maximumRowAllocationBytes: 65536
+    })
+  ).rejects.toThrow('wasBroadcast must be a boolean or 0/1')
+  expect(state.sealed).toBe(0)
+  expect(state.discarded).toBe(1)
+  expect(state.rows.size).toBe(0)
+})
 test.each(brc38StageTables)('duplicate primary/composite key refuses %s and discards private data', async table => {
   const data = semanticStageFixture(),
     state = memoryStageStore()

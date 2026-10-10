@@ -1656,3 +1656,27 @@ Binary corruption uses the actual persisted bounded chunk length, rather than
 assuming every chunk is 64 KiB. The same-size postimage passes the unrelated
 length constraint and exercises the retained read-digest refusal after both
 physical guards have been exactly restored. Full affected validation follows.
+
+### Legacy archive flags and certificate order
+
+The published SQLite `getProvenTxReqsForUser` getter leaves optional
+`wasBroadcast` as SQL `0`/`1`; the separate typed finder returns booleans.
+The new SQL archive source preserves the existing getter's numeric spelling.
+Semantic staging accepts exactly either booleans or `0`/`1`, retains the
+original archive value, and rejects other flags. The existing native restore
+admission converts both admitted representations to the physical SQL flag.
+
+Certificate-field names retain the legacy locale sort. For distinct names
+that compare equal, a bounded row-identity read inside the retained snapshot
+uses the original unpaged finder's chosen SQLite index or table scan. This
+preserves scan direction, custom index direction and insertion order without
+fetching the full original payload. The group allocation policy reserves the
+query results and ordinal map as well as detached rows. Complete archive
+comparisons cover both insertion permutations, the stock import index, table
+scans, custom descending indexes and reverse unordered scans.
+
+A separate actual native measurement on source289 confirms the distinction:
+legacy request flag `1`, typed request flag `true`, and a certificate table
+scan whose locale ties retain insertion order. Its full composed fixture
+returned in 235.3 seconds under the explicit 300-second fixture allowance;
+this is diagnostic setup evidence, not complete system qualification.

@@ -260,8 +260,15 @@ function validateOptionalFields(row: Readonly<PortableRow>, form: Form, path: st
     'string',
     path
   )
-  if ('wasBroadcast' in row && typeof row.wasBroadcast !== 'boolean')
-    throw new Error(`BRC-38 ${path}.wasBroadcast must be a boolean`)
+  // Historical SQLite archives retain the optional SQL flag as 0/1; typed
+  // providers emit booleans. Preserve either spelling until restore admission.
+  if (
+    'wasBroadcast' in row &&
+    typeof row.wasBroadcast !== 'boolean' &&
+    row.wasBroadcast !== 0 &&
+    row.wasBroadcast !== 1
+  )
+    throw new Error(`BRC-38 ${path}.wasBroadcast must be a boolean or 0/1`)
 }
 function validateHistoryNote(note: unknown, path: string): void {
   if (typeof note !== 'object' || note === null || Array.isArray(note))

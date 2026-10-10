@@ -13,7 +13,7 @@ test('actual native export preserves all13 tables, all22 TEXT cells and legacy r
       const preimage = await withComposedFixtureRead(fixture.manager, readIndependentNativeInventory)
       try {
         const expected = independentNativePortableFixture(preimage, '2026-10-08T00:00:00.000Z')
-        expect(expected.tables.provenTxReqs[0].wasBroadcast).toBe(true)
+        expect(expected.tables.provenTxReqs[0].wasBroadcast).toBe(1)
         expect(Object.keys(expected.tables)).toHaveLength(13)
         await verifyBrc38NativeSourcePayloadText(fixture.storage, {
           expected,

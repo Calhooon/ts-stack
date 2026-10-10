@@ -478,6 +478,49 @@ test.each([
   expect(await archive(source, original.exportedAt)).toEqual(original)
 })
 
+test.each(['table', 'reverse-table', 'descending-index', 'reverse-index'] as const)(
+  'locale ties retain the legacy finder with %s scan',
+  async mode => {
+    const { source, userId, otherId } = await fixture()
+    await seedClosure(source, userId, otherId)
+    await source.knex('certificate_fields').where({ certificateId: 1 }).del()
+    await source.knex.raw('DROP INDEX brc38_import_target_certificateFields')
+    if (mode.endsWith('index'))
+      await source.knex.raw('CREATE INDEX ?? ON certificate_fields(userId, fieldName DESC, certificateId)', [
+        'legacy "descending" finder'
+      ])
+    if (mode.startsWith('reverse')) await source.knex.raw('PRAGMA reverse_unordered_selects = ON')
+    for (const names of [
+      ['é', 'e\u0301'],
+      ['e\u0301', 'é']
+    ]) {
+      await source.knex('certificate_fields').where({ certificateId: 1 }).del()
+      await runInSeries(names, fieldName =>
+        source
+          .knex('certificate_fields')
+          .insert({
+            ...timestamp,
+            certificateId: 1,
+            userId,
+            fieldName,
+            fieldValue: fieldName,
+            masterKey: 'original'
+          })
+          .then(() => undefined)
+      )
+      const query = source.findCertificateFieldsQuery({ partial: { userId } }).toSQL(),
+        plan: Array<{ detail: string }> = await source.knex.raw('EXPLAIN QUERY PLAN ' + query.sql, query.bindings)
+      expect(plan).toHaveLength(1)
+      expect(plan[0].detail).toContain(
+        mode.endsWith('index') ? 'legacy "descending" finder' : 'SCAN certificate_fields'
+      )
+      const original = await exportBRC38(source, identity, { requireSnapshot: true })
+      expect(original.tables.provenTxReqs[0].wasBroadcast).toBe(1)
+      expect(await archive(source, original.exportedAt)).toEqual(original)
+    }
+  }
+)
+
 test.each([
   ['maximumPageRows', 1000],
   ['maximumPageBytes', 16777216],
