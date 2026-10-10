@@ -1916,3 +1916,16 @@ Production defaults are unchanged. The failed run peaked at1818038272 container
 bytes with zero memory-limit or OOM events; container RSS is separate from
 explicit component allocation accounting. The allocation selection requires
 full original customer/restart/repeat qualification and is not production sizing.
+
+The same original source313 customer run committed its header checkpoint
+(nextRow1/14, operation194), then refused the next provenTxs page after489.350s.
+The8MiB attempted envelope still omitted the complete proof/field/current-map
+pipeline: binary scratch, key/current allowances, proof validation scratch and
+retained decoded metadata precede checkpoint scratch and writer revalidation.
+Source314 selects the existing supported16MiB decoded/working ceiling for the
+complete composed fixture. Its row allocation ceiling follows that owner;
+original native heap/address formulas continue to enforce the admitted bound.
+Empty restore remains2MiB. Physical/logical quotas, original customer bytes,
+rows, independent oracles, finite expiry, cancellation and cleanup remain.
+This is a qualification envelope, not a product default or production sizing.
+Complete original import/restart/repeat validation is still required.

@@ -88,7 +88,8 @@ export async function composedNativeFixture(
     proof = restoreProofFixture(selected.proofBytes ?? measurement?.rawBytes),
     sourceData = semanticStageFixture(),
     incomingData = semanticStageFixture(),
-    working = new Brc38WorkingAllocation(measurement === undefined ? 8388608 : 16777216),
+    // Full occupied proof/field/checkpoint preparation shares one bounded ceiling.
+    working = new Brc38WorkingAllocation(16777216),
     physical = measurement === undefined ? 16777216 : 134217728,
     logical = measurement === undefined ? 1048576 : 67108864,
     maximumRows = measurement === undefined ? 1000 : 24000,
@@ -309,7 +310,7 @@ export async function composedNativeFixture(
         maximumStepRows: 16,
         // Occupied merge includes checkpoint scratch, existing-state planning
         // and retained decoded metadata; the empty restore allowance is smaller.
-        maximumStepBytes: 8388608,
+        maximumStepBytes: 16777216,
         maximumMappedIds: maximumRows,
         maximumJournalLogicalBytes,
         maximumLocalRows: maximumRows,
