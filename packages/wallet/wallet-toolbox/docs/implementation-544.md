@@ -1891,3 +1891,18 @@ ceiling or suppress a timeout. A fresh exact native build must pass the original
 standalone native contracts before registry admission. Full customer timing
 and correctness remain unqualified; the source308 CPU observations support an
 experiment, not a speedup claim or final production sizing.
+
+
+The fresh source311 Linuxarm64 native15 candidate passed all13 original
+standalone modes: runtime, WAL/DELETE/descriptors, profile, private stage,
+range, committed writer loss/recovery, shared quota, cell comparisons and the
+four observer/pointer families. The original assertions, heap/address/file/IPC
+bounds and physical fixture/process cleanup are unchanged. Source312 admits
+only its exact1353576-byte build, SHA256
+cae4b83968b782cc9047fc69cab0df35f74632d890506964ffd574830ba36a5f.
+No unqualified platform entry is added. The same source309 native read-mode
+regression passed against source310 (182ms; unchanged reader failed160ms),
+including original full UTF8/NUL/NULL and ownership/cancellation controls.
+The complete customer, restart, repeat, performance, platform, consumer and
+exact-head CI/review obligations remain open. No standalone result is a
+full-system or production sizing claim.
