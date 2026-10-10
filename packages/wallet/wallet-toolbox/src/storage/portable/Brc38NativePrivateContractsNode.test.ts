@@ -221,7 +221,8 @@ test('actual occupied request source preserves uppercase indexed identity and re
     undefined,
     16777216,
     data => {
-      data.tables.provenTxReqs[0].txid = 'A'.repeat(64)
+      for (const table of ['provenTxs', 'provenTxReqs', 'transactions'] as const)
+        data.tables[table][0].txid = 'A'.repeat(64)
     }
   )
 }, 30000)
