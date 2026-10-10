@@ -455,7 +455,7 @@ describe('WalletStorageManager tests', () => {
   })
 
   test('2_internalizes concurrent AtomicBEEF payments within the supported batch', async () => {
-    for (const { wallet } of ctxs) {
+    for (const { wallet, services } of ctxs) {
       const fred = await _tu.createSQLiteTestWallet({
         chain: 'test',
         databaseName: 'syncTest2Fred',
@@ -465,52 +465,106 @@ describe('WalletStorageManager tests', () => {
       // Keep this concurrency test independent of public chaintracks availability.
       // AtomicBEEF proof validity is covered separately; this case verifies that
       // parallel internalization stays within the supported writer batch.
-      const getChainTracker = jest.fn(async () => ({
+      const sourceChainTracker = jest.spyOn(services, 'getChainTracker').mockResolvedValue({
         isValidRootForHeight: async (_root: string, _height: number) => true,
         currentHeight: async () => 1_000_000
-      }))
-      fred.services.getChainTracker = getChainTracker
-      const promises: Array<Promise<number>> = []
-      const result: Array<{ i: number; r: any }> = []
-      const crs1: bsv.CreateActionResult[] = []
-      const maxI = 6
+      })
+      const getChainTracker = jest.spyOn(fred.services, 'getChainTracker').mockResolvedValue({
+        isValidRootForHeight: async (_root: string, _height: number) => true,
+        currentHeight: async () => 1_000_000
+      })
+      try {
+        const promises: Array<Promise<number>> = []
+        const result: Array<{ i: number; r: any }> = []
+        const crs1: bsv.CreateActionResult[] = []
+        const maxI = 6
 
-      const makeWriter2 = async (
-        fred: TestWalletNoSetup,
-        cr: bsv.CreateActionResult,
-        i: number,
-        result: Array<{ i: number; r: any }>
-      ): Promise<number> => {
-        logger(`writer${i}`)
-        const internalizeArgs: bsv.InternalizeActionArgs = {
-          tx: cr.tx!,
-          outputs: [
-            {
-              outputIndex: 0,
-              protocol: 'basket insertion',
-              insertionRemittance: {
-                basket: 'payments',
-                customInstructions: JSON.stringify({ root, repeat: 8 }),
-                tags: ['test', 'again']
+        const makeWriter2 = async (
+          fred: TestWalletNoSetup,
+          cr: bsv.CreateActionResult,
+          i: number,
+          result: Array<{ i: number; r: any }>
+        ): Promise<number> => {
+          logger(`writer${i}`)
+          const internalizeArgs: bsv.InternalizeActionArgs = {
+            tx: cr.tx!,
+            outputs: [
+              {
+                outputIndex: 0,
+                protocol: 'basket insertion',
+                insertionRemittance: {
+                  basket: 'payments',
+                  customInstructions: JSON.stringify({ root, repeat: 8 }),
+                  tags: ['test', 'again']
+                }
               }
-            }
-          ],
-          description: `paid ${i}`
+            ],
+            description: `paid ${i}`
+          }
+          const r = await fred.wallet.internalizeAction(internalizeArgs)
+          expect(r.accepted).toBe(true)
+          result.push({ r, i })
+          return i
         }
-        const r = await fred.wallet.internalizeAction(internalizeArgs)
-        expect(r.accepted).toBe(true)
-        result.push({ r, i })
-        return i
-      }
 
-      for (let i = 0; i < maxI; i++) {
-        const createArgs: bsv.CreateActionArgs = {
-          description: `${kp.address} of ${root}`,
+        for (let i = 0; i < maxI; i++) {
+          const createArgs: bsv.CreateActionArgs = {
+            description: `${kp.address} of ${root}`,
+            outputs: [
+              {
+                satoshis: 1,
+                lockingScript: _tu.getLockP2PKH(fredsAddress).toHex(),
+                outputDescription: 'pay fred'
+              }
+            ],
+            options: {
+              returnTXIDOnly: false,
+              randomizeOutputs: false,
+              signAndProcess: true,
+              noSend: true
+            }
+          }
+          const cr = await wallet.createAction(createArgs)
+          expect(cr.tx).toBeTruthy()
+          crs1.push(cr)
+        }
+        let j = 0
+        for (let i = 0; i < maxI; i++) promises.push(makeWriter2(fred, crs1[j++], i, result))
+        await Promise.all(promises)
+        expect(result).toHaveLength(maxI)
+        expect(getChainTracker).toHaveBeenCalled()
+      } finally {
+        sourceChainTracker.mockRestore()
+        getChainTracker.mockRestore()
+        await fred.wallet.destroy()
+      }
+    }
+  })
+
+  test('3_internalize same-wallet payment while transaction is sending', async () => {
+    for (const { wallet, activeStorage, identityKey, userId, services } of ctxs) {
+      const getChainTracker = jest.spyOn(services, 'getChainTracker').mockResolvedValue({
+        isValidRootForHeight: async (_root: string, _height: number) => true,
+        currentHeight: async () => 1_000_000
+      })
+      try {
+        const outputSatoshis = 5
+        const derivationPrefix = Buffer.from('same-wallet-invoice').toString('base64')
+        const derivationSuffix = Buffer.from('utxo-0').toString('base64')
+        const brc29ProtocolID: bsv.WalletProtocol = [2, '3241645161d8']
+        const derivedPublicKey = wallet.keyDeriver.derivePublicKey(
+          brc29ProtocolID,
+          `${derivationPrefix} ${derivationSuffix}`,
+          identityKey
+        )
+
+        const cr = await wallet.createAction({
+          description: 'same-wallet payment pending send',
           outputs: [
             {
-              satoshis: 1,
-              lockingScript: _tu.getLockP2PKH(fredsAddress).toHex(),
-              outputDescription: 'pay fred'
+              satoshis: outputSatoshis,
+              lockingScript: new bsv.P2PKH().lock(derivedPublicKey.toAddress()).toHex(),
+              outputDescription: 'pay same wallet'
             }
           ],
           options: {
@@ -519,99 +573,50 @@ describe('WalletStorageManager tests', () => {
             signAndProcess: true,
             noSend: true
           }
-        }
-        const cr = await wallet.createAction(createArgs)
+        })
         expect(cr.tx).toBeTruthy()
-        crs1.push(cr)
-      }
-      let j = 0
-      for (let i = 0; i < maxI; i++) promises.push(makeWriter2(fred, crs1[j++], i, result))
-      await Promise.all(promises)
-      expect(result).toHaveLength(maxI)
-      expect(getChainTracker).toHaveBeenCalled()
-      await fred.wallet.destroy()
-    }
-  })
+        expect(cr.txid).toBeTruthy()
+        if (cr.tx == null || cr.txid == null) throw new Error('createAction did not return a signed transaction')
 
-  test('3_internalize same-wallet payment while transaction is sending', async () => {
-    for (const { wallet, activeStorage, identityKey, userId } of ctxs) {
-      const outputSatoshis = 5
-      const derivationPrefix = Buffer.from('same-wallet-invoice').toString('base64')
-      const derivationSuffix = Buffer.from('utxo-0').toString('base64')
-      const brc29ProtocolID: bsv.WalletProtocol = [2, '3241645161d8']
-      const derivedPublicKey = wallet.keyDeriver.derivePublicKey(
-        brc29ProtocolID,
-        `${derivationPrefix} ${derivationSuffix}`,
-        identityKey
-      )
+        const existingTx = (
+          await activeStorage.findTransactions({
+            partial: { userId, txid: cr.txid }
+          })
+        )[0]
+        expect(existingTx).toBeTruthy()
+        await activeStorage.updateTransaction(existingTx.transactionId, { status: 'sending' })
 
-      const cr = await wallet.createAction({
-        description: 'same-wallet payment pending send',
-        outputs: [
+        const ir = await activeStorage.internalizeAction(
+          { userId, identityKey },
           {
-            satoshis: outputSatoshis,
-            lockingScript: new bsv.P2PKH().lock(derivedPublicKey.toAddress()).toHex(),
-            outputDescription: 'pay same wallet'
-          }
-        ],
-        options: {
-          returnTXIDOnly: false,
-          randomizeOutputs: false,
-          signAndProcess: true,
-          noSend: true
-        }
-      })
-      expect(cr.tx).toBeTruthy()
-      expect(cr.txid).toBeTruthy()
-      if (cr.tx == null || cr.txid == null) throw new Error('createAction did not return a signed transaction')
-
-      const existingTx = (
-        await activeStorage.findTransactions({
-          partial: { userId, txid: cr.txid }
-        })
-      )[0]
-      expect(existingTx).toBeTruthy()
-      await activeStorage.updateTransaction(existingTx.transactionId, { status: 'sending' })
-
-      // Mock chaintracker responses for AtomicBEEF validation to avoid flakiness from
-      // live chaintracks endpoints. This test exercises the 'sending' merge path for a
-      // same-wallet internalize before monitor completion; it is not testing proof validity
-      // (createAction + other tests cover BEEF construction/validation).
-      activeStorage.setServices({
-        getChainTracker: async () => ({
-          isValidRootForHeight: async (_root: string, _height: number) => true,
-          currentHeight: async () => 1_000_000
-        })
-      } as any)
-
-      const ir = await activeStorage.internalizeAction(
-        { userId, identityKey },
-        {
-          tx: cr.tx,
-          outputs: [
-            {
-              outputIndex: 0,
-              protocol: 'wallet payment',
-              paymentRemittance: {
-                derivationPrefix,
-                derivationSuffix,
-                senderIdentityKey: identityKey
+            tx: cr.tx,
+            outputs: [
+              {
+                outputIndex: 0,
+                protocol: 'wallet payment',
+                paymentRemittance: {
+                  derivationPrefix,
+                  derivationSuffix,
+                  senderIdentityKey: identityKey
+                }
               }
-            }
-          ],
-          description: 'received same-wallet payment before monitor completion'
-        }
-      )
+            ],
+            description: 'received same-wallet payment before monitor completion'
+          }
+        )
 
-      expect(ir.accepted).toBe(true)
-      expect(ir.isMerge).toBe(true)
+        expect(ir.accepted).toBe(true)
+        expect(ir.isMerge).toBe(true)
 
-      const updatedTx = (
-        await activeStorage.findTransactions({
-          partial: { transactionId: existingTx.transactionId }
-        })
-      )[0]
-      expect(updatedTx.status).toBe('sending')
+        const updatedTx = (
+          await activeStorage.findTransactions({
+            partial: { transactionId: existingTx.transactionId }
+          })
+        )[0]
+        expect(updatedTx.status).toBe('sending')
+      } finally {
+        getChainTracker.mockRestore()
+      }
     }
   })
 

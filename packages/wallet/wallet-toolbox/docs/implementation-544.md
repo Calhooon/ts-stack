@@ -14,8 +14,18 @@ missing browser hash declarations in their compiler inputs. The dedicated worker
 example now uses an explicit `.mts` module and the same fixed client entry, with
 Node-compatible `.js` relative imports. The example configuration retains every
 existing TypeScript input and includes the existing precise hash declarations.
-These corrections still require a fresh full root typecheck; no compiler option,
-runtime contract or worker resource limit is relaxed.
+The fresh original full Linux root typecheck passes across all workspace
+projects, including the client, mobile, examples and operator. Full root lint and
+formatting also pass. No compiler option, runtime contract or worker resource
+limit is relaxed. The complete root control suite passes 372 of 374 cases; two
+test-governance corrections remain pending shared ownership coordination.
+
+The complete 27-case storage-manager cohort executes 25 passing cases and two
+external-fetch failures, then fails to exit before its supervisor deadline.
+The existing intended synthetic chain tracker is now established before signing
+in those two cases, and the owned test wallet and service spies use `finally`
+cleanup. All original cases, operations and assertions remain. Fresh runtime
+qualification of that correction is still required; the failed run is retained.
 
 ## Coordinator and storage
 
