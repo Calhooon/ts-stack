@@ -1766,3 +1766,24 @@ maximumRows rather than silently increasing capacity. Existing generation,
 disabled-epoch recovery, quotas, expiry and custody checks remain. All original
 customer assertions and720/750-second integration allowance are unchanged;
 complete runtime qualification remains pending.
+
+
+The source298 complete original customer case cleared prior-import capture and
+ledger bootstrap, then failed after254.439s at the packed-row identity read-back.
+The installed Knex query builder retains only its first argument when that
+argument is a column array; the separate physical-rowid argument was omitted.
+The exact identity check therefore rejected a missing projection. Source299
+places every metadata column and the physical-rowid expression in one array.
+The original bigint identity and complete metadata equality, field descriptors,
+source/writer ownership, quotas, expiry and savepoint rollback remain unchanged.
+All93 original customer assertions and records are retained. Fresh complete
+customer qualification of this correction is pending; source presence and the
+private diagnostic do not establish readiness.
+
+Resource ceilings should protect a named resource and support the intended
+customer workload with measured concurrency, recovery and peak headroom. Review
+the engineering and maintenance cost of further optimization against the value
+of a ceiling. The authorized30percent browser artifact increase is reviewed
+after the full goal. The measured16GiBVM/12GiBcontainer admission is qualification
+capacity, not production sizing. Correctness, authentication, atomicity and
+cleanup checks remain mandatory when a resource allowance changes.

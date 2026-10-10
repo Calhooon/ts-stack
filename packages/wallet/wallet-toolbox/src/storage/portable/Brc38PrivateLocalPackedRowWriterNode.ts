@@ -188,7 +188,7 @@ export async function writeBrc38PrivateLocalPackedRow(
     }
     const rows = (await k(table)
       .whereRaw('rowid=?', [rowId])
-      .select(metadataNames, k.raw('rowid AS __physicalRowId'))
+      .select([...metadataNames, k.raw('rowid AS __physicalRowId')])
       .limit(2)
       .options({ safeIntegers: true })) as Array<Record<string, unknown>>
     if (rows.length !== 1) invalid()
