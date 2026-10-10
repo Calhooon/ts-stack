@@ -30,7 +30,7 @@ export async function readBrc38NativeLocalFieldBytes(
   actual(trx)
   const rows = (await trx.raw(
     'SELECT brc38_local_field_protocol() AS abi,brc38_local_field_extent_bytes(?,?,?) AS bytes',
-    [coordinate[0], coordinate[1], input.rowId]
+    [BigInt(coordinate[0]), BigInt(coordinate[1]), BigInt(input.rowId)]
   )) as Array<{ abi: number; bytes: number | null }>
   signal?.throwIfAborted()
   actual(trx)

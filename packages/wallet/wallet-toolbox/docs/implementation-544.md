@@ -1767,7 +1767,6 @@ disabled-epoch recovery, quotas, expiry and custody checks remain. All original
 customer assertions and720/750-second integration allowance are unchanged;
 complete runtime qualification remains pending.
 
-
 The source298 complete original customer case cleared prior-import capture and
 ledger bootstrap, then failed after254.439s at the packed-row identity read-back.
 The installed Knex query builder retains only its first argument when that
@@ -1787,3 +1786,17 @@ of a ceiling. The authorized30percent browser artifact increase is reviewed
 after the full goal. The measured16GiBVM/12GiBcontainer admission is qualification
 capacity, not production sizing. Correctness, authentication, atomicity and
 cleanup checks remain mandatory when a resource allowance changes.
+
+The source299 original complete customer case cleared the packed-row identity
+check and progressed through real baseline copying. It then failed after575.207s
+at the raw `monitor_events.details` length API, without timeout or OOM. The
+native ABI requires INTEGER coordinates; the JavaScript bridge deliberately
+binds ordinary numbers as REAL. Source300 binds the already validated safe
+table, field and row coordinates as bigint in both local and raw TEXT metadata
+readers. It preserves the native INTEGER guard, coordinate validation, original
+transaction ownership, ABI, UTF-8/NULL/length rules, quotas and scoped wiping.
+A genuine authenticated private-native regression uses independently authored
+raw UTF-8/NUL/NULL cells, compares complete bytes, and verifies REAL-coordinate,
+copied-actor and cancellation refusals. This lower transport control is not a
+complete composed profile or system qualification. Current full customer and
+all supported-platform/resource/consumer/exact-head evidence remain required.

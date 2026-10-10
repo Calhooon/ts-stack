@@ -54,9 +54,9 @@ export async function readBrc38NativeTextBytes(
     return descriptor?.bytes ?? null
   }
   const rows = (await trx.raw('SELECT brc38_text_read_protocol() AS abi,brc38_text_extent_bytes(?,?,?) AS bytes', [
-    coordinate[0],
-    coordinate[1],
-    rowId
+    BigInt(coordinate[0]),
+    BigInt(coordinate[1]),
+    BigInt(rowId)
   ])) as Array<{ abi: number; bytes: number | null }>
   signal?.throwIfAborted()
   actual(trx)

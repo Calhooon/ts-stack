@@ -73,7 +73,9 @@ import {
 } from './Brc38ImportTargetIndexes'
 
 import { readSnapshotJournalSqliteGeneration } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
-import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
+import { previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
+import { readBrc38NativeLocalFieldBytes, withBrc38NativeLocalFieldExtent } from './Brc38NativeLocalFieldReadNode'
+import { readBrc38NativeTextBytes, readBrc38NativeTextExtent } from './Brc38NativeTextReadNode'
 import {
   SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
   snapshotJournalSqliteObserverSql,
@@ -1391,3 +1393,100 @@ test('native reply fencing preserves original statement failure through migratio
     expect(Object.keys(failure)).not.toContain('cause')
   }
 }, 30000)
+
+test('native raw field metadata preserves integer coordinates and complete UTF8 cells', async () => {
+  const fixture = await previewPrivateFixture(undefined, undefined, 65536, 16777216, 16777216)
+  try {
+    const { root, value, selected } = fixture
+    await value.reservation.store.close()
+    const reservation = await root.resumeNative(
+      value.reservation.id,
+      selected.limits,
+      selected.binding,
+      '/work/native-contract'
+    )
+    fixture.held.push(reservation)
+    const store = reservation.store,
+      text = 'independent raw \u0000雪😀',
+      expected = Buffer.from(text, 'utf8'),
+      local = { table: 'monitor_events', field: 'details', rowId: 400 } as const,
+      ordinary = { table: 'transactions', field: 'description', rowId: 9 } as const,
+      working = new Brc38WorkingAllocation(65536)
+    // Only lower transport is admitted here. These independent raw cells are
+    // not a composed profile, primary provider or complete wallet schema.
+    await store.withAuthenticatedPrivateDestination(async () => {
+      await store.withPrivateNativeDatabase(
+        false,
+        async database =>
+          await database.transaction(async trx => {
+            store.assertPrivateNativeWriteTransaction(trx)
+            await trx.raw('CREATE TABLE monitor_events(id INTEGER PRIMARY KEY,details TEXT)')
+            await trx.raw('CREATE TABLE transactions(transactionId INTEGER PRIMARY KEY,description TEXT)')
+            await trx('monitor_events').insert([
+              { id: 400, details: text },
+              { id: 401, details: null }
+            ])
+            await trx('transactions').insert([
+              { transactionId: 9, description: text },
+              { transactionId: 10, description: null }
+            ])
+          })
+      )
+      await store.withPrivateNativeDatabase(
+        true,
+        async database =>
+          await database.transaction(async trx => {
+            store.assertPrivateNativeReadTransaction(trx)
+            expect(await readBrc38NativeLocalFieldBytes(trx, local)).toBe(expected.length)
+            expect(await readBrc38NativeLocalFieldBytes(trx, { ...local, rowId: 401 })).toBeNull()
+            expect(await readBrc38NativeTextBytes(trx, ordinary)).toBe(expected.length)
+            expect(await readBrc38NativeTextBytes(trx, { ...ordinary, rowId: 10 })).toBeNull()
+            let escaped: Uint8Array | undefined
+            await withBrc38NativeLocalFieldExtent(
+              trx,
+              { ...local, offset: 0, length: expected.length, totalBytes: expected.length },
+              working,
+              async bytes => {
+                escaped = bytes
+                expect(Buffer.from(bytes)).toEqual(expected)
+                expect(working.used).toBe(4096 + 32 * expected.length)
+              }
+            )
+            expect(working.used).toBe(0)
+            expect(escaped?.every(byte => byte === 0)).toBe(true)
+            const bytes = await readBrc38NativeTextExtent(trx, {
+              ...ordinary,
+              offset: 0,
+              length: expected.length,
+              totalBytes: expected.length
+            })
+            try {
+              expect(Buffer.from(bytes)).toEqual(expected)
+            } finally {
+              bytes.fill(0)
+            }
+            // Number bindings really are REAL in this driver. The native ABI
+            // must continue rejecting them; only validated coordinates bind INTEGER.
+            await expect(
+              trx.raw('SELECT brc38_local_field_extent_bytes(?,?,?) AS bytes', [13, 0, 400])
+            ).rejects.toMatchObject({ code: 'SQLITE_MISUSE' })
+            await expect(readBrc38NativeLocalFieldBytes(trx, { ...local, rowId: 400.5 })).rejects.toThrow(TypeError)
+            const raw = jest.fn(),
+              copied = { raw } as unknown as Parameters<typeof readBrc38NativeLocalFieldBytes>[0]
+            await expect(readBrc38NativeLocalFieldBytes(copied, local)).rejects.toThrow('actual retained native')
+            await expect(readBrc38NativeTextBytes(copied, ordinary)).rejects.toThrow('actual retained native')
+            expect(raw).not.toHaveBeenCalled()
+            const controller = new AbortController(),
+              reason = new Error('Independent raw-field cancellation')
+            controller.abort(reason)
+            await expect(readBrc38NativeLocalFieldBytes(trx, local, controller.signal)).rejects.toBe(reason)
+            await expect(readBrc38NativeTextBytes(trx, ordinary, controller.signal)).rejects.toBe(reason)
+            store.assertPrivateNativeReadTransaction(trx)
+          })
+      )
+    })
+    expect(working.used).toBe(0)
+  } finally {
+    await fixture.close()
+  }
+})
