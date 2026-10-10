@@ -2047,3 +2047,25 @@ remain. The fixture's three-minute default and one-hour maximum, original
 production defaults, native enforcement and all data/fault oracles are unchanged.
 These deliberately bounded test allowances require complete runtime validation
 and measured review; they are not production latency targets or qualification.
+
+### Complete original composed CI cohorts
+
+Ordinary wallet coverage provisions the existing pinned native test executable
+on the qualified LinuxARM64 runner with exact Node24.18.0. Four ordinary file
+shards and both original HTTP scenarios remain. All21 original composed cases
+run in20 separate named cohorts; the identically named live/expired COMPLETED
+cases remain together with multiplicity two. Each cohort compares the complete
+original case inventory and requires every selected case to pass; unexpected
+execution, skips, failures, missing names or empty selection refuse. The coverage
+aggregate requires every cohort exactly once, bound to the current Git head,
+test-file bytes and routing-plan bytes. Their complete LCOV joins the existing
+coverage input and unchanged patch/global gates.
+
+The three-worker limit and at-most-three parallel wallet jobs bound contention.
+Finite recovery job allowances include bounded native delivery/setup overhead;
+they are qualification allowances, not production performance claims. Routing is
+authored until actual full cohort and aggregate qualification succeeds.
+Mutation/dependent routing and full supported-host qualification remain unfinished;
+the large mutation selections need measured review before repeating full real-expiry
+workflows in each baseline. No original composed body, assertion, fault or real
+expiry check was edited by this routing change.

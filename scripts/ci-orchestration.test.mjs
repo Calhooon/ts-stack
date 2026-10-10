@@ -7,6 +7,7 @@ import test from 'node:test'
 import { REPOSITORY_ROOT } from './repository-health.mjs'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import { partitionedMutationTargets, partitionMutationTarget } from './mutation-partitions.mjs'
+import { walletCoverageMatrix } from './wallet-composed-native-ci.mjs'
 
 const CI_PATH = join(REPOSITORY_ROOT, '.github/workflows/ci.yml')
 const MUTATION_PATH = join(REPOSITORY_ROOT, '.github/workflows/mutation-tests.yml')
@@ -397,19 +398,23 @@ test('every HTTP latency scenario retains its own required coverage execution', 
     'utf8'
   )
   const latencies = JSON.parse(suite.match(/test\.each\((\[[\d, ]+\])\)/)[1])
-  const selected = [...wallet.matchAll(/id: sync-http-(\d+), latency: (\d+)/g)]
+  const matrix = walletCoverageMatrix().include
+  const selected = matrix.filter(value => value.latency !== undefined)
   assert.deepEqual(
-    selected.map(match => Number(match[2])),
+    selected.map(value => value.latency),
     latencies
   )
-  assert.ok(selected.every(match => match[1] === match[2]))
-  assert.equal(wallet.match(/id: shard-\d, shard: \d/g).length, 4)
+  assert.ok(selected.every(value => value.id === 'sync-http-' + value.latency))
+  assert.equal(matrix.filter(value => value.shard).length, 4)
   assert.match(
     wallet,
-    /--runInBand --runTestsByPath src\/storage\/sync\/syncTransferHttp\.test\.ts/
+    /--runInBand\n\s+--runTestsByPath src\/storage\/sync\/syncTransferHttp\.test\.ts/
   )
   assert.match(wallet, /--testNamePattern="with \$SYNC_LATENCY ms request latency"/)
-  assert.match(wallet, /args=\(--coverage --coverageDirectory=coverage\/\$\{\{ matrix\.id \}\}\)/)
+  assert.match(
+    wallet,
+    /args=\(--coverage --coverageDirectory=coverage\/\$\{\{ matrix\.id \}\} --maxWorkers=3\)/
+  )
   assert.match(wallet, /name: coverage-wallet-\$\{\{ matrix\.id \}\}/)
   assert.doesNotMatch(wallet, /continue-on-error|passWithNoTests/)
 })
@@ -437,15 +442,24 @@ function onlyFixtureStep(steps, command) {
 
 function assertNativeWalletJob(wallet) {
   assert.match(wallet, /^ {4}needs: prepare$/m)
-  assert.match(wallet, /^ {4}timeout-minutes: 40$/m)
-  assert.match(wallet, /^ {4}permissions:\n {6}contents: read\n {4}strategy:/m)
-  assert.doesNotMatch(wallet, /continue-on-error/)
-  // This gate runs before dependency installation; validate the governed native
-  // job's explicit matrix and service block without loading a workspace parser.
   assert.match(
     wallet,
-    /^ {4}strategy:\n {6}fail-fast: false\n {6}matrix:\n {8}include:\n {10}- \{ id: shard-1, shard: 1 \}\n {10}- \{ id: shard-2, shard: 2 \}\n {10}- \{ id: shard-3, shard: 3 \}\n {10}- \{ id: shard-4, shard: 4 \}\n {10}- \{ id: sync-http-0, latency: 0 \}\n {10}- \{ id: sync-http-1000, latency: 1000 \}\n {4}services:$/m
+    /^ {4}timeout-minutes: \$\{\{ matrix\.native_cohort == 'completed' && 265 \|\| matrix\.native_cohort != '' && 145 \|\| 40 \}\}$/m
   )
+  assert.match(wallet, /^ {4}runs-on: ubuntu-24\.04-arm$/m)
+  assert.match(wallet, /^ {4}permissions:\n {6}contents: read\n {4}strategy:/m)
+  assert.doesNotMatch(wallet, /continue-on-error/)
+  assert.match(
+    wallet,
+    /^ {4}strategy:\n {6}fail-fast: false\n {6}max-parallel: 3\n {6}matrix: \$\{\{ fromJSON\(needs\.prepare\.outputs\.wallet-test-matrix\) \}\}\n {4}services:$/m
+  )
+  assert.match(wallet, /node-version: 24\.18\.0/)
+  assert.match(wallet, /run: bash scripts\/provision-wallet-native-tests\.sh/)
+  assert.match(wallet, /wallet-composed-native-ci\.mjs capture/)
+  const workflow = readFileSync(CI_PATH, 'utf8')
+  assert.match(workflow, /wallet-test-matrix: \$\{\{ steps\.wallet-matrix\.outputs\.matrix \}\}/)
+  assert.match(workflow, /wallet-composed-native-ci\.mjs matrix/)
+  assert.match(workflow, /wallet-composed-native-ci\.mjs verify \.coverage-artifacts/)
   assert.match(
     wallet,
     /^ {6}postgres:\n {8}image: postgres@sha256:d5daad18926b71c3d663f358af0aea798670cb79fb550c106d19662a9d1627ef(?: #[^\n]*)?$/m
