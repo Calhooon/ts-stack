@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REPOSITORY_ROOT } from '../repository-health.mjs'
@@ -24,7 +24,11 @@ test('actual scope Bash routes every affected wallet to complete coverage exactl
   ]) {
     const directory = mkdtempSync(join(tmpdir(), 'wallet-ci-scope-'))
     try {
-      symlinkSync(join(REPOSITORY_ROOT, 'scripts'), join(directory, 'scripts'), 'dir')
+      mkdirSync(join(directory, 'scripts'))
+      copyFileSync(
+        join(REPOSITORY_ROOT, 'scripts/run-ci-tests.mjs'),
+        join(directory, 'scripts/run-ci-tests.mjs')
+      )
       const output = join(directory, 'output')
       const summary = join(directory, 'summary')
       const result = spawnSync('/bin/bash', ['-e', '-c', script], {
