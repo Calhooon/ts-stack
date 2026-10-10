@@ -2065,7 +2065,7 @@ The three-worker limit and at-most-three parallel wallet jobs bound contention.
 Finite recovery job allowances include bounded native delivery/setup overhead;
 they are qualification allowances, not production performance claims. Routing is
 authored until actual full cohort and aggregate qualification succeeds.
-Mutation/dependent routing and full supported-host qualification remain unfinished;
+Mutation routing and full supported-host qualification remain unfinished;
 the large mutation selections need measured review before repeating full real-expiry
 workflows in each baseline. No original composed body, assertion, fault or real
 expiry check was edited by this routing change.
@@ -2076,3 +2076,11 @@ metadata alone is insufficient. The case report must identify the complete
 expected package-relative test path. The root orchestration contract separately
 checks the exact finite per-cohort job allowance while preserving numeric bounds
 for every unrelated job.
+
+Every affected wallet now uses the same complete coverage lane, including when
+only one of its dependencies changed. The generic dependent lane removes wallet
+only when that dedicated lane is selected; all other dependent tests retain their
+original selection. Wallet dependency changes require the coverage aggregate and
+its complete native case union. The real workflow scope Bash is exercised for
+direct, dependent, mixed and absent wallet selections. Full runtime qualification
+remains pending.

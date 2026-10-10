@@ -284,7 +284,7 @@ jobs:
         run: node scripts/check-sdk-peer.mjs
 
       - name: Determine changed scope
-        # Coverage suites run only for directly changed package importers.
+        # Coverage suites run for direct importers and every affected wallet.
         # Regression/type compatibility expands through dependents; builds also
         # include their prerequisites.
         # The preceding repository-health dependency prevents expensive work
@@ -298,10 +298,12 @@ jobs:
           AFFECTED=$(jq -r '.[].name' <<<"$AFFECTED_PROJECTS")
           printf '%s\n' "$DIRECT_PROJECTS" > .ci-direct-packages.json
           printf '%s\n' "$AFFECTED_PROJECTS" > .ci-affected-packages.json
+          WALLET_SELECTED=$(jq -r 'any(.[]; .name == "@bsv/wallet-toolbox")' <<<"$AFFECTED_PROJECTS")
           DEPENDENT_PROJECTS=$(jq -n -c \
             --argjson affected "$AFFECTED_PROJECTS" \
             --argjson direct "$DIRECT_PROJECTS" \
-            '$direct | map(.name) as $directNames | $affected | map(select(.name as $name | ($directNames | index($name) | not)))')
+            --argjson walletSelected "$WALLET_SELECTED" \
+            '$direct | map(.name) as $directNames | $affected | map(select(.name as $name | ($directNames | index($name) | not)) | select($walletSelected == false or .name != "@bsv/wallet-toolbox"))')
           printf '%s\n' "$DEPENDENT_PROJECTS" > .ci-dependent-packages.json
 
           DEPENDENT_TEST_PACKAGES=$(node scripts/run-ci-tests.mjs \
@@ -334,16 +336,16 @@ jobs:
           echo "browser-matrix=$BROWSER_MATRIX" >> "$GITHUB_OUTPUT"
 
           COVERAGE_REQUIRED=false
-          if [ "$COVERAGE_OTHER_PACKAGES" != "[]" ] ||
+          if [ "$WALLET_SELECTED" = "true" ] || [ "$COVERAGE_OTHER_PACKAGES" != "[]" ] ||
              grep -Eq '^(@bsv/did|@bsv/sdk|@bsv/verifast|@bsv/wallet-toolbox)$' <<<"$DIRECT"; then
             COVERAGE_REQUIRED=true
           fi
           echo "coverage-required=$COVERAGE_REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "wallet=$WALLET_SELECTED" >> "$GITHUB_OUTPUT"
 
           for entry in \
             "sdk:@bsv/sdk" \
             "did:@bsv/did" \
-            "wallet:@bsv/wallet-toolbox" \
             "verifast:@bsv/verifast"; do
             key="${entry%%:*}"
             package="${entry#*:}"
