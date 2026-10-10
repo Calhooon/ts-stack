@@ -288,7 +288,7 @@ test('nonprivate and symlink parents refuse before creating index files', async 
   await symlink(selected.privateParent, alias)
   try {
     await expect(Brc38NodeJsonIndex.open({ ...selected, privateParent: alias })).rejects.toThrow(
-      /private.*(?:owned|ownership)/i
+      'Actual private file type or link count differs'
     )
   } finally {
     await unlink(alias)

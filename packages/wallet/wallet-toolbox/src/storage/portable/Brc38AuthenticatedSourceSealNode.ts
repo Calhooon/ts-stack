@@ -49,6 +49,23 @@ function definitions(binary: boolean, json = false, canonical = false, text = fa
 function invalid(): never {
   throw new Error('Authenticated private source write protection differs')
 }
+/** Compare the complete fixed family inside SQLite in one fresh statement.
+ * Only the count crosses the boundary; no trigger SQL payloads or verdicts are
+ * retained. Each unique expected name still requires exact type, table and SQL. */
+async function verifyDefinitions(k: Knex, expected: readonly Definition[]): Promise<void> {
+  const actual = (await k('sqlite_schema')
+    .where(query => {
+      for (const definition of expected)
+        void query.orWhere(match => {
+          void match
+            .where({ name: definition.name, type: 'trigger', tbl_name: definition.table })
+            .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
+        })
+    })
+    .count({ count: '*' })
+    .first()) as { count: unknown } | undefined
+  if (actual?.count !== expected.length) invalid()
+}
 async function selected(k: Knex): Promise<Definition[]> {
   const rows: Array<{ name: string }> = await k('sqlite_schema')
     .where({ type: 'table' })
@@ -127,16 +144,10 @@ export async function verifyBrc38SourceSealFieldDefinitions(
     .first()) as { count: unknown } | undefined
   if (row?.count === 0) return 0
   if (row?.count !== 6) invalid()
-  for (const table of tables)
-    for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
-      const definition = refusal(table, operation),
-        actual = (await k('sqlite_schema')
-          .where({ name: definition.name, type: 'trigger', tbl_name: table })
-          .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
-          .count({ count: '*' })
-          .first()) as { count: unknown } | undefined
-      if (actual?.count !== 1) invalid()
-    }
+  await verifyDefinitions(
+    k,
+    tables.flatMap(table => ['INSERT', 'UPDATE', 'DELETE'].map(operation => refusal(table, operation)))
+  )
   return 6
 }
 export async function verifyBrc38AuthenticatedSourceSeal(k: Knex): Promise<void> {
@@ -157,16 +168,7 @@ export async function verifyBrc38AuthenticatedSourceSeal(k: Knex): Promise<void>
   if (expected.some(value => value.table === texts[0]))
     prefixes += await verifyBrc38SqlStructuredPrefixGuards(k, 'text')
   if (actual?.count !== expected.length + prefixes) invalid()
-  // Source definitions are DATA; actual schema is freshly checked per call.
-  // Do not collect all trigger SQL strings in an original small allocation.
-  for (const definition of expected) {
-    const row = (await k('sqlite_schema')
-      .where({ name: definition.name, type: 'trigger', tbl_name: definition.table })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
-      .count({ count: '*' })
-      .first()) as { count: unknown } | undefined
-    if (row?.count !== 1) invalid()
-  }
+  await verifyDefinitions(k, expected)
 }
 /** Installation belongs to the same transaction as successful whole-envelope
  * authentication, AFTER all source rows/fields/semantic closure have settled.

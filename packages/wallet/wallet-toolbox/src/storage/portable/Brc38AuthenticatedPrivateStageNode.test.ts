@@ -1,3 +1,7 @@
+import {
+  verifyBrc38AuthenticatedSourceSeal,
+  verifyBrc38SourceSealFieldDefinitions
+} from './Brc38AuthenticatedSourceSealNode'
 import { fork, type ChildProcess } from 'node:child_process'
 import {
   authenticatedStagePassword,
@@ -515,6 +519,23 @@ test('whole-envelope authentication permanently protects actual source fields, r
       streamedFields: { maximumBinaryBytes: 262144, maximumChunkBytes: 65536 }
     }),
     store = value.reservation.store
+  // A successful earlier comparison must never admit an altered or missing
+  // physical guard. Restore its exact SQL between each independent refusal.
+  const guardName = 'brc38_source_seal_private_binary_chunks_update',
+    guard = await store.knex('sqlite_schema').where({ name: guardName, type: 'trigger' }).first('sql')
+  expect(typeof guard?.sql).toBe('string')
+  await verifyBrc38AuthenticatedSourceSeal(store.knex)
+  expect(await verifyBrc38SourceSealFieldDefinitions(store.knex, 'binary')).toBe(6)
+  await store.knex.raw('DROP TRIGGER ??', [guardName])
+  await expect(verifyBrc38AuthenticatedSourceSeal(store.knex)).rejects.toThrow('write protection')
+  await expect(verifyBrc38SourceSealFieldDefinitions(store.knex, 'binary')).rejects.toThrow('write protection')
+  await store.knex.raw(`CREATE TRIGGER ${guardName} BEFORE UPDATE ON private_binary_chunks BEGIN SELECT 1; END`)
+  await expect(verifyBrc38AuthenticatedSourceSeal(store.knex)).rejects.toThrow('write protection')
+  await expect(verifyBrc38SourceSealFieldDefinitions(store.knex, 'binary')).rejects.toThrow('write protection')
+  await store.knex.raw('DROP TRIGGER ??', [guardName])
+  await store.knex.raw(guard.sql)
+  await verifyBrc38AuthenticatedSourceSeal(store.knex)
+  expect(await verifyBrc38SourceSealFieldDefinitions(store.knex, 'binary')).toBe(6)
   const protectedCells = [
     ['rows', 'position'],
     ['table_counts', 'rows'],

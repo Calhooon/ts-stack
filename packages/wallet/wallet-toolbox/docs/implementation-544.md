@@ -1611,3 +1611,14 @@ These changes do not resolve the remaining offline chain authority, controlled
 sealed-storage corruption fixtures, legacy export ordering/boolean compatibility,
 or composed native setup/resource qualification. Full qualification and the
 remaining #544 acceptance rows are still open; #569 remains held and unmerged.
+
+Fresh structured-source validation reads all thirteen fixed table counters in
+one bounded statement. Authenticated source guards now compare their complete
+fixed name/type/table/SQL predicates inside one fresh SQLite count query, with
+all family/object-count checks retained. No schema verdict is cached, no owner
+is inferred from metadata, and no product or original case limit is increased.
+The actual sealed-source case now independently drops, alters, restores and
+rechecks a physical guard after a successful comparison. This targets measured
+repeated setup queries; full native timing and system qualification remain
+pending. The symlink refusal oracle names the actual file-type/link-count
+boundary while retaining refusal and no-file-creation assertions.

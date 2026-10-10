@@ -1272,9 +1272,18 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     )
       throw new Error('Structured source current binding or physical page allowance differs')
     const meta = await this.#metadata(database)
+    // Read all fixed counters from the current borrowed database in one bounded
+    // statement. This is fresh comparison data, never a retained owner verdict.
+    const values: TableCount[] = await database<TableCount>('table_counts')
+      .whereIn('tableName', [...brc38StageTables])
+      .whereRaw("typeof(rows) = 'integer'")
+      .select('tableName', 'rows')
+      .limit(brc38StageTables.length + 1)
+    const counts = new Map(values.map(value => [value.tableName, value]))
+    if (counts.size !== values.length) throw new Error('Structured source current table count is absent')
     let total = 0
     for (const table of brc38StageTables) {
-      const value = await tableCount(database, table)
+      const value = counts.get(table)
       if (value === undefined) throw new Error('Structured source current table count is absent')
       integer(value.rows, 0, this.limits.maximumRows)
       total += value.rows
