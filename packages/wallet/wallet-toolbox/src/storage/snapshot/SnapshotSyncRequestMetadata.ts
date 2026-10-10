@@ -140,7 +140,8 @@ function requestMetadata(
   }
 }
 
-/** Shared private request identity preparation; caller validates archived metadata. */
+/** Preserve the archived key spelling for the existing exact indexed lookup.
+ * Cryptographic comparisons and same-page alias detection normalize separately. */
 export function brc38ImportRequestIdentity<Row extends { readonly txid: string }>(row: Row): Readonly<Row> {
-  return Object.freeze({ ...row, txid: row.txid.toLowerCase() })
+  return Object.freeze({ ...row })
 }
