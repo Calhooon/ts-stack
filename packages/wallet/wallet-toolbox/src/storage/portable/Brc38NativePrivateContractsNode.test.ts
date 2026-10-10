@@ -1,3 +1,4 @@
+import { brc38PrivateRequestTxidAccepted } from './Brc38PrivateOccupiedRequestSourcesNode'
 import { brc38PrivateRequestPostimageMetadata } from './Brc38PrivateRequestInventoryNode'
 import { brc38ImportRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
@@ -90,6 +91,21 @@ import {
 import { Brc38PrivateDerivedTextLifetimes } from './Brc38PrivateDerivedTextLifetimesNode'
 import { withBrc38PrivateContentVersion } from './Brc38PrivateContentVersionNode'
 import { compareBrc38PrivateDerivedText } from './Brc38PrivateDerivedTextComparisonNode'
+
+test.each([
+  { name: 'lowercase', txid: 'ab'.repeat(32), accepted: true },
+  { name: 'uppercase', txid: 'AB'.repeat(32), accepted: true },
+  { name: 'mixed case', txid: 'aB'.repeat(32), accepted: true },
+  { name: 'short', txid: 'ab'.repeat(31), accepted: false },
+  { name: 'long', txid: 'ab'.repeat(33), accepted: false },
+  { name: 'nonhex', txid: 'ag'.repeat(32), accepted: false },
+  { name: 'leading space', txid: ' ' + 'ab'.repeat(32), accepted: false },
+  { name: 'trailing space', txid: 'ab'.repeat(32) + ' ', accepted: false },
+  { name: 'final newline', txid: 'ab'.repeat(32) + '\n', accepted: false },
+  { name: 'nonASCII', txid: '\u0430b'.repeat(32), accepted: false }
+])('occupied request source accepts exactly the portable HEX grammar: $name', ({ txid, accepted }) => {
+  expect(brc38PrivateRequestTxidAccepted(txid)).toBe(accepted)
+})
 
 test.each([
   { name: 'omitted', fields: {}, expected: { wasBroadcast: 0, rebroadcastAttempts: 0 } },

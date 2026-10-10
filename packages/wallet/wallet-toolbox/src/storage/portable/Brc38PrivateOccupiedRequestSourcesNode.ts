@@ -58,6 +58,10 @@ function invalid(): never {
   )
 }
 
+export function brc38PrivateRequestTxidAccepted(txid: string): boolean {
+  return /^[0-9a-f]{64}$/.test(txid)
+}
+
 export async function withBrc38PrivateOccupiedRequestSources<T>(
   store: KnexBrc38StagingStore,
   storage: StorageKnex,
@@ -217,7 +221,7 @@ async function withBrc38PrivateRequestSources<T>(
     sourcePosition < 0 ||
     sourcePosition >= store.limits.maximumRows ||
     (currentRequestId !== undefined && (!Number.isSafeInteger(currentRequestId) || currentRequestId < 1)) ||
-    !/^[0-9a-f]{64}$/.test(txid) ||
+    !brc38PrivateRequestTxidAccepted(txid) ||
     projectionPolicy.expiresAt !== store.limits.expiresAt ||
     sourcePolicy.expiresAt !== store.limits.expiresAt ||
     projectionPolicy.signal !== sourcePolicy.signal ||
