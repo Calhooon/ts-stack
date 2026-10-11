@@ -400,7 +400,7 @@ A genuine regression waits for the existing fixture's original three-minute
 UTC expiry, checks the actual retained TEXT hold and refused writer, and
 requires the working charge to survive callback closure until physical owner
 drainage and fixture directory removal. The Linux before/after regression passed:
-the old implementation retained the TEXT charge, while all 49 current native
+the old implementation retained the TEXT charge, while the prior 49 native
 private contracts passed, including real original expiry. Root checks, all five
 comparison cases, both copy-owner cases, native delivery regressions and the
 complete offline packed consumer also passed. This is scoped cleanup evidence.
@@ -426,3 +426,12 @@ authenticated EOF and final full-byte postimage comparisons remain. No source
 or activation verdict is cached and no production limit or expiry changes.
 The original one-hour customer failure remains evidence; current performance
 and complete customer qualification of the batching change are pending.
+
+After successful physical disposal, a failed metadata observer remains queued.
+Both `discard()` and `close()` now retry that metadata release without repeating
+SQL teardown, kernel release or filesystem removal. The store stays closed and
+its original expiry remains unchanged. Two native fault controls use real finite
+expiry and require the 8 KiB working charge to survive the failure, then drain
+after retry; persisted catalog quota remains until explicit collection. These
+controls supplement the unchanged original three-minute expiry regression.
+Full customer, platform, fault and exact-head qualification remain open.

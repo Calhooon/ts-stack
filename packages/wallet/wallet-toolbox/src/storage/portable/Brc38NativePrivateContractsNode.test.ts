@@ -1,4 +1,9 @@
 import { nativeTestExecutable } from './Brc38NativeTestPath'
+import { promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Brc38StagingAdmissionNode } from './Brc38StagingAdmissionNode'
+import { resumeBinding, resumeLimits } from './Brc38ResumeFixture'
 import {
   brc38PrivateRequestTxidAccepted,
   withBrc38PrivateOccupiedRequestSources
@@ -742,6 +747,66 @@ test('actual original native expiry retains derived TEXT charges until physical 
     code: 'ENOENT'
   })
 }, 240000)
+
+test.each(['discard', 'close'] as const)(
+  'actual expired native disposal retries retained metadata through %s without repeating physical removal',
+  async retry => {
+    const directory = await fs.mkdtemp(join(tmpdir(), 'brc38-native-disposal-retry-')),
+      root = await Brc38StagingAdmissionNode.create(directory, {
+        maximumImports: 1,
+        maximumPhysicalBytes: 7340032,
+        maximumLogicalBytes: 1048576
+      })
+    let native: Awaited<ReturnType<typeof root.resumeNative>> | undefined
+    try {
+      const limits = { ...resumeLimits(), expiresAt: Date.now() + 10000 },
+        first = await root.admit(limits, resumeBinding())
+      await first.store.close()
+      native = await root.resumeNative(first.id, limits, resumeBinding(), nativeTestExecutable())
+      const store = native.store,
+        working = new Brc38WorkingAllocation(limits.maximumRowAllocationBytes),
+        charge = working.claim(8192),
+        fault = new Error('original metadata observer refusal'),
+        release = jest.fn((): void => {
+          if (release.mock.calls.length === 1) throw fault
+          charge.close()
+        })
+      expect(store.deferExpiredPrivatePhysicalRelease(release)).toBe(false)
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, limits.expiresAt - Date.now()) + 25))
+      expect(Date.now()).toBeGreaterThanOrEqual(limits.expiresAt)
+      expect(store.limits.expiresAt).toBe(limits.expiresAt)
+      expect(store.deferExpiredPrivatePhysicalRelease(release)).toBe(true)
+      const removal = jest.spyOn(fs, 'rm')
+      try {
+        await expect(store.discard(fault)).rejects.toBe(fault)
+        expect(release).toHaveBeenCalledTimes(1)
+        expect(working.used).toBe(8192)
+        expect(await fs.readdir(directory)).toEqual(['brc38-admission.sqlite'])
+        expect(() => store.assertPrivateNativeDestination(store.knex)).toThrow()
+        expect((await root.usage()).imports).toBe(1)
+        await expect(retry === 'close' ? store.close() : store.discard(fault)).resolves.toBeUndefined()
+        expect(release).toHaveBeenCalledTimes(2)
+        expect(working.used).toBe(0)
+        expect(removal).toHaveBeenCalledTimes(1)
+        await store.close()
+        await store.discard(fault)
+        expect(release).toHaveBeenCalledTimes(2)
+        expect(removal).toHaveBeenCalledTimes(1)
+      } finally {
+        removal.mockRestore()
+      }
+      // JS metadata release does not refund persisted catalog reservations.
+      expect((await root.usage()).imports).toBe(1)
+      expect(await root.collectExpired(1)).toBe(1)
+      expect(await root.usage()).toEqual({ imports: 0, physicalBytes: 3145728, logicalBytes: 0 })
+    } finally {
+      await native?.store.close()
+      await root.close()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  },
+  30000
+)
 
 test('complete native journal owns compact key trees and refuses an extra attached clock consumer', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {

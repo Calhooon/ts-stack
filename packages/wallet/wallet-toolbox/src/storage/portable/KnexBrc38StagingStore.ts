@@ -3704,7 +3704,10 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
   /** Retain private state for an explicit next owner, preserving original expiry. */
   async close(): Promise<void> {
     if (this.#busy) throw new Error('Wait for owned private BRC-38 SQL I/O before close')
-    if (this.#discarded) return
+    if (this.#discarded) {
+      this.#releasePhysicalMetadata()
+      return
+    }
     if (this.#ownerReleased) {
       this.#releasePhysicalMetadata()
       return
@@ -3763,7 +3766,10 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     }
   }
   async discard(_cause: unknown): Promise<void> {
-    if (this.#discarded) return
+    if (this.#discarded) {
+      this.#releasePhysicalMetadata()
+      return
+    }
     if (this.#busy) throw new Error('Wait for owned private BRC-38 SQL I/O before disposal')
     if (this.#ownerReleased && this.#deletionDirectory === undefined)
       throw new Error('Private BRC-38 ownership was handed off; reclaim before disposal')
