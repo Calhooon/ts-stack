@@ -735,12 +735,6 @@ export async function collectBrc38NativePackedContent(
   }>
   if (rows.length !== 1 || (rows[0].nextFamily !== 0 && rows[0].nextFamily !== 1)) invalid()
   const next = rows[0].nextFamily
-  if (
-    (await k(names.progress)
-      .where({ slot: 1, nextFamily: next })
-      .update({ nextFamily: 1 - next })) !== 1
-  )
-    invalid()
   const collect = [collectBrc38NativePackedGarbage, collectBrc38NativePackedTextGarbage] as const,
     first = await collect[next](k, maximumChunks, signal)
   let chunks = first.chunks
@@ -757,5 +751,15 @@ export async function collectBrc38NativePackedContent(
   const complete =
     (await k(nativePackedTables.garbage).first('sha256')) === undefined &&
     (await k(names.garbage).first('sha256')) === undefined
+  // Alternate while either family has work. At quiescence there is no queue to
+  // favor; keep one stable state so another inspection cannot change its image.
+  const following = complete ? 0 : 1 - next
+  if (
+    following !== next &&
+    (await k(names.progress).where({ slot: 1, nextFamily: next }).update({ nextFamily: following })) !== 1
+  )
+    invalid()
+  signal?.throwIfAborted()
+  requireBrc38PackedWriter(k)
   return Object.freeze({ chunks, complete })
 }

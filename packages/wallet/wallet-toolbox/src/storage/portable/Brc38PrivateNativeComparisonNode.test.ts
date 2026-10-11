@@ -310,90 +310,111 @@ describe('actual private native comparison phase', () => {
       fixture.check()
     })
   }, 120000)
-  test('actual empty frozen collector changes the complete SQL image through its scheduling bit', async () => {
-    const fixture = await previewPrivateFixture(undefined, undefined, 65536, 16777216, 16777216, true)
-    try {
-      const { selected, value, root } = fixture
-      await value.reservation.store.close()
-      const reservation = await root.resumeNative(
-        value.reservation.id,
-        selected.limits,
-        selected.binding,
-        nativeTestExecutable()
-      )
-      fixture.held.push(reservation)
-      const store = reservation.store,
-        working = new Brc38WorkingAllocation(store.limits.maximumRowAllocationBytes),
-        storage = new StorageKnex({
-          ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
-          knex: store.knex,
-          snapshotSync: false
-        })
-      await store.withAuthenticatedPrivateStructuredDestination(async () => {
-        await installBrc38PrivateNativeCandidateSchema(
-          storage,
-          store,
-          selected.binding.targetStorageIdentityKey,
-          {
-            receiptPolicy: previewReceiptPolicy,
-            maximumStepRows: 16,
-            maximumStepBytes: 65536,
-            maximumMappedIds: 1000,
-            maximumJournalLogicalBytes: 516096
-          },
-          true,
-          true,
-          true
+  test.each([0, 1])(
+    'quiescent frozen collector preserves the complete SQL image (%i retired chunks)',
+    async chunks => {
+      const fixture = await previewPrivateFixture(undefined, undefined, 65536, 16777216, 16777216, true)
+      try {
+        const { selected, value, root } = fixture
+        await value.reservation.store.close()
+        const reservation = await root.resumeNative(
+          value.reservation.id,
+          selected.limits,
+          selected.binding,
+          nativeTestExecutable()
         )
-      })
-      await store.beginPrivateNativeComparison()
-      await store.withAuthenticatedPrivateStructuredDestination(async () => {
-        const capture = async () =>
-          await store.withPrivateNativeDatabase(
+        fixture.held.push(reservation)
+        const store = reservation.store,
+          working = new Brc38WorkingAllocation(store.limits.maximumRowAllocationBytes),
+          storage = new StorageKnex({
+            ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
+            knex: store.knex,
+            snapshotSync: false
+          })
+        await store.withAuthenticatedPrivateStructuredDestination(async () => {
+          await installBrc38PrivateNativeCandidateSchema(
+            storage,
+            store,
+            selected.binding.targetStorageIdentityKey,
+            {
+              receiptPolicy: previewReceiptPolicy,
+              maximumStepRows: 16,
+              maximumStepBytes: 65536,
+              maximumMappedIds: 1000,
+              maximumJournalLogicalBytes: 516096
+            },
             true,
-            async db =>
-              await db.transaction(async trx => {
-                store.assertPrivateNativeReadTransaction(trx)
-                const image = await readBrc38ComposedDatabaseImage(
-                  trx,
-                  {
-                    maximumPhysicalBytes: store.limits.maximumPhysicalBytes,
-                    maximumReadBytes: 16384,
-                    expiresAt: store.operationExpiresAt,
-                    workingAllocation: working
-                  },
-                  () => store.assertPrivateNativeReadTransaction(trx)
-                )
-                const progress = await trx('brc38_native_text_gc_progress').select('slot', 'nextFamily')
-                return { image, progress }
-              })
+            true,
+            true
           )
-        const collect = async () =>
-          await store.withPrivateNativeDatabase(
-            false,
-            async db =>
-              await db.transaction(async trx => {
-                store.assertPrivateNativeWriteTransaction(trx)
-                const result = await collectBrc38NativePackedContent(trx, 1)
-                store.assertPrivateNativeWriteTransaction(trx)
-                return result
-              })
-          )
-        const first = await capture()
-        expect(await collect()).toEqual({ chunks: 0, complete: true })
-        const second = await capture()
-        expect(second.progress).toEqual([{ slot: 1, nextFamily: 1 - first.progress[0].nextFamily }])
-        expect(second.image).not.toEqual(first.image)
-        expect({ ...second.image, sha256: first.image.sha256 }).toEqual(first.image)
-        expect(await collect()).toEqual({ chunks: 0, complete: true })
-        const third = await capture()
-        expect(third).toEqual(first)
-        expect(working.used).toBe(0)
-        expect(store.limits).toEqual(selected.limits)
-      })
-      await store.requirePrivateNativeComparison()
-    } finally {
-      await fixture.close()
-    }
-  }, 120000)
+        })
+        if (chunks === 1)
+          await store.withAuthenticatedPrivateStructuredDestination(async () => {
+            const bytes = new Uint8Array([65]),
+              sha256 = createHash('sha256').update(bytes).digest('hex')
+            await withBrc38PrivateContentVersion(
+              'binary',
+              store,
+              { expiresAt: store.operationExpiresAt, maximumBytes: 1, workingAllocation: working },
+              { maximum: working.maximum, remaining: working.maximum },
+              async version => {
+                await version.begin({ bytes: 1, sha256 })
+                await version.append(0, bytes)
+                await version.finish()
+              }
+            )
+          })
+        await store.beginPrivateNativeComparison()
+        await store.withAuthenticatedPrivateStructuredDestination(async () => {
+          const capture = async () =>
+            await store.withPrivateNativeDatabase(
+              true,
+              async db =>
+                await db.transaction(async trx => {
+                  store.assertPrivateNativeReadTransaction(trx)
+                  const image = await readBrc38ComposedDatabaseImage(
+                    trx,
+                    {
+                      maximumPhysicalBytes: store.limits.maximumPhysicalBytes,
+                      maximumReadBytes: 16384,
+                      expiresAt: store.operationExpiresAt,
+                      workingAllocation: working
+                    },
+                    () => store.assertPrivateNativeReadTransaction(trx)
+                  )
+                  const progress = await trx('brc38_native_text_gc_progress').select('slot', 'nextFamily')
+                  return { image, progress }
+                })
+            )
+          const collect = async () =>
+            await store.withPrivateNativeDatabase(
+              false,
+              async db =>
+                await db.transaction(async trx => {
+                  store.assertPrivateNativeWriteTransaction(trx)
+                  const result = await collectBrc38NativePackedContent(trx, 1)
+                  store.assertPrivateNativeWriteTransaction(trx)
+                  return result
+                })
+            )
+          const first = await capture()
+          expect(first.progress).toEqual([{ slot: 1, nextFamily: 0 }])
+          expect(await collect()).toEqual({ chunks, complete: true })
+          const second = await capture()
+          expect(second.progress).toEqual([{ slot: 1, nextFamily: 0 }])
+          if (chunks === 0) expect(second).toEqual(first)
+          else expect(second.image).not.toEqual(first.image)
+          expect(await collect()).toEqual({ chunks: 0, complete: true })
+          const third = await capture()
+          expect(third).toEqual(second)
+          expect(working.used).toBe(0)
+          expect(store.limits).toEqual(selected.limits)
+        })
+        await store.requirePrivateNativeComparison()
+      } finally {
+        await fixture.close()
+      }
+    },
+    120000
+  )
 })

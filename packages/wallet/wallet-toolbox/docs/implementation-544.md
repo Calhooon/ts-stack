@@ -2510,10 +2510,12 @@ Full customer, platform, fault and exact-head qualification remain open.
 ### Composed image and comparison scheduling
 
 A complete frozen native SQL image includes the persisted content-collector
-scheduling bit. Even an empty collection advances that bit. A genuine native
-control reads all 122 tables and 811 schema objects: one empty call changes the
-image hash, and a second restores the exact image without collecting a chunk.
-This is legitimate comparison work, not a changed wallet or a resource failure.
+scheduling bit. The previous collector advanced it even with no work, so a
+native control changed and restored the full image without retiring a chunk.
+Collection now alternates while either queue has work and returns to zero when
+both queues are empty. Empty calls leave that quiescent state unchanged, including
+after an odd retirement page. All schema, reference, writer and page bounds
+remain; the complete image still includes the scheduler.
 
 Cutover now checks the original private image against the receiving-copy receipt
 before fresh reconstruction and collection. The kernel must already be in its
@@ -2527,6 +2529,11 @@ verdict becomes authority, and no API, wire, schema, limit or expiry changes.
 The previous original customer run passed all three checkpoint comparisons in
 34.4–34.5 seconds, compared with about 624 seconds before batching, then stopped
 at the image consistency check before retirement and activation. The current
-ordering correction still needs original customer write/restart/repeat and
-complete system qualification; the native scheduling control alone does not
-prove cutover or production performance.
+ordering correction alone did not complete the workflow: another original run
+passed three checkpoint comparisons in about 35 seconds and then failed the
+full-image consistency check at cutover. No timeout or memory-limit event caused
+that failure. Two genuine native regressions cover empty and odd-page
+quiescence; original customer write/restart/repeat and complete qualification
+remain required. The correction changes no image oracle, capacity or deadline. Supported workload, measured
+headroom and total engineering cost must justify discretionary limits; these
+fixture measurements do not establish production sizing.
