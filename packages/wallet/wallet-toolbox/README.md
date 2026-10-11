@@ -5232,9 +5232,10 @@ are still required, and the measured latency remains a performance baseline.
 
 ## Mutation test compiler configuration
 
-Jest resolves `tsconfig.jest.json` from the source checkout before Stryker
-relocates the test root. It inherits the package's strict compiler settings and
+The canonical mutation configuration captures the original source checkout
+path to `tsconfig.jest.json` before Stryker copies Jest and its test root. It inherits the package's strict compiler settings and
 preserves the existing CommonJS/bundler test transform. The relocated-root
-regression uses the real TypeScript transformer. Compiler configuration changes
+regression copies and loads Jest at the new root and uses the real TypeScript
+transformer. Compiler configuration changes
 select every owning wallet Jest mutation target; no diagnostic or score exemption
 is introduced.

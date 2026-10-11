@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
+import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 
 const wallet = resolve(import.meta.dirname, '../packages/wallet/wallet-toolbox')
 const require = createRequire(join(wallet, 'package.json'))
@@ -19,8 +20,13 @@ test('wallet TypeScript transform retains its compiler configuration in a reloca
       join(sandbox, 'tsconfig.json'),
       JSON.stringify({ extends: './missing-shared-config.json' })
     )
-    const config = await require(join(wallet, 'jest.config.cjs'))()
-    config.rootDir = sandbox
+    copyFileSync(join(wallet, 'jest.config.cjs'), join(sandbox, 'jest.config.cjs'))
+    copyFileSync(join(wallet, 'tsconfig.jest.json'), join(sandbox, 'tsconfig.jest.json'))
+    const copiedConfig = await require(join(sandbox, 'jest.config.cjs'))()
+    const target = buildMutationTargets(resolve(import.meta.dirname, '..'))[
+      'wallet-current-brc38-authenticated-private-stage-node'
+    ]
+    const config = { ...copiedConfig, ...target.runnerOptions.jest.config, rootDir: sandbox }
     const source = 'export const result: number = 6 * 7'
     const filename = join(sandbox, 'example.ts')
     writeFileSync(filename, source)
@@ -39,14 +45,14 @@ test('wallet TypeScript transform retains its compiler configuration in a reloca
     const exports = {}
     runInNewContext(transformed.code, { exports })
     assert.equal(exports.result, 42)
-    const oldCompiler = { tsconfig: { module: 'commonjs', moduleResolution: 'bundler' } }
-    const oldConfig = { ...config, transform: { '^.+\\.ts$': ['ts-jest', oldCompiler] } }
+    const copiedOptions = { ...copiedConfig, rootDir: sandbox }
+    const [, copiedCompiler] = copiedConfig.transform['^.+\\.ts$']
     assert.throws(
       () =>
-        createTransformer(oldCompiler).process(source, filename, {
+        createTransformer(copiedCompiler).process(source, filename, {
           ...options,
-          config: oldConfig,
-          configString: JSON.stringify(oldConfig)
+          config: copiedOptions,
+          configString: JSON.stringify(copiedOptions)
         }),
       /missing-shared-config/
     )

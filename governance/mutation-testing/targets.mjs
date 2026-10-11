@@ -7813,6 +7813,18 @@ export function buildMutationTargets(repositoryRoot) {
       target.packageDirectory === 'packages/wallet/wallet-toolbox' &&
       target.runnerOptions?.jest
     ) {
+      target.runnerOptions.jest.config = {
+        ...(target.runnerOptions.jest.config ?? {}),
+        transform: {
+          '^.+\\.ts$': [
+            'ts-jest',
+            {
+              rootDir: '.',
+              tsconfig: resolve(repositoryRoot, target.packageDirectory, 'tsconfig.jest.json')
+            }
+          ]
+        }
+      }
       target.configurationInputs = [
         ...new Set([
           ...(target.configurationInputs ?? []),
