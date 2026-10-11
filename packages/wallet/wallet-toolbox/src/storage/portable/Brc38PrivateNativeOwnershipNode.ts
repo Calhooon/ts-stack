@@ -250,6 +250,11 @@ export class Brc38PrivateNativeOwnershipNode {
     this.assertLive()
     return this.#recoveryCheck !== undefined
   }
+  /** Original clock exhaustion only, for post-expiry resource cleanup. This
+   * does not establish liveness, grant SQL access or renew either deadline. */
+  get operationExpired(): boolean {
+    return Date.now() >= this.expiresAt || performance.now() >= this.#deadline
+  }
   assertLive(): void {
     this.#recoveryCheck?.()
     if (

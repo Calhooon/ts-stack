@@ -619,11 +619,32 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
    * Deferred callbacks release bounded JS metadata, never run SQL or unlink. */
   deferRecoveryPhysicalRelease(work: () => void): boolean {
     if (!this.#recoveryComparison) return false
+    return this.#deferPhysicalRelease(work)
+  }
+  /** An expired ORIGINAL native stage cannot run another cleanup writer.
+   * Persisted holds/chunks stay in its charged private database; only bounded
+   * JS metadata is released after its real SQL and kernel owners drain. */
+  deferExpiredPrivatePhysicalRelease(work: () => void): boolean {
+    if (
+      !(this.owner instanceof Brc38PrivateNativeOwnershipNode) ||
+      this.#recoveryComparison ||
+      !this.owner.operationExpired
+    )
+      return false
+    return this.#deferPhysicalRelease(work)
+  }
+  #deferPhysicalRelease(work: () => void): boolean {
     if (typeof work !== 'function' || this.#recoveryPhysicalRelease.size >= 256)
       throw new Error('Recovery physical cleanup observer bound reached')
     if (this.#ownerReleased && this.#destroyed) work()
     else this.#recoveryPhysicalRelease.add(work)
     return true
+  }
+  #releasePhysicalMetadata(): void {
+    for (const work of this.#recoveryPhysicalRelease) {
+      work()
+      this.#recoveryPhysicalRelease.delete(work)
+    }
   }
   assertRecoverySharedWorking(working: Brc38WorkingAllocation): void {
     this.#available()
@@ -3685,10 +3706,7 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     if (this.#busy) throw new Error('Wait for owned private BRC-38 SQL I/O before close')
     if (this.#discarded) return
     if (this.#ownerReleased) {
-      for (const work of this.#recoveryPhysicalRelease) {
-        work()
-        this.#recoveryPhysicalRelease.delete(work)
-      }
+      this.#releasePhysicalMetadata()
       return
     }
     this.#busy = true
@@ -3697,10 +3715,7 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       await this.#teardown()
       await this.owner?.release()
       this.#ownerReleased = true
-      for (const work of this.#recoveryPhysicalRelease) {
-        work()
-        this.#recoveryPhysicalRelease.delete(work)
-      }
+      this.#releasePhysicalMetadata()
     } finally {
       this.#busy = false
     }
@@ -3771,6 +3786,7 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       this.#ownerReleased = true
       await rm(this.#deletionDirectory, { recursive: true, force: true })
       this.#discarded = true
+      this.#releasePhysicalMetadata()
     } finally {
       this.#busy = false
     }

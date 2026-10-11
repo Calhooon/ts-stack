@@ -5621,3 +5621,27 @@ The existing 145-minute hosted native lane remains. An actual two-family native
 collector comparison measured about 749 ms at 32 chunks versus 225 ms at 256,
 with longer writer transactions at the larger batch. Batching stays unchanged;
 that component result does not explain the complete workflow cost.
+
+### Original-stage expiry cleanup
+
+An expired original native stage cannot acquire another writer to release its
+derived TEXT holds. The store now retains the bounded JavaScript metadata
+charge until its same SQL facade and physical kernel owner have drained, as
+recovery-copy cleanup already does. Persisted holds and chunks remain charged
+in the original private database; this releases no database quota, grants no
+SQL access, removes no foreign hold, and renews no deadline. A live original
+stage cannot use the deferred expiry path. Physical drainage failures retain
+the callback and charge for explicit retry; successful disposal also releases
+the pending metadata.
+
+A genuine regression waits for the existing fixture's original three-minute
+UTC expiry, checks the actual retained TEXT hold and refused writer, and
+requires the working charge to survive callback closure until physical owner
+drainage and fixture directory removal. Before/after Linux proof is pending.
+The measured one-hour full customer failure remains unqualified. Review the
+supported workload and repeated checkpoint costs together before choosing a
+proportionate optimization or measured time allowance. The one-hour ceiling
+is not a proved production requirement; expiry cleanup must work for any
+chosen allowance. The authorized 30% browser increase remains until review
+after the full goal is achieved. Full customer, platform, mutation and
+exact-head CI qualification remain open.

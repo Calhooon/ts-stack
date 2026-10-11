@@ -631,6 +631,9 @@ test('native content subleases preserve the original deadline and refuse renewal
       descriptor = Object.freeze({ bytes: 2, sha256: '7'.repeat(64) }),
       rejected = jest.fn(async () => undefined)
     expect(await fixture.store.knex.raw('PRAGMA foreign_keys')).toEqual([{ foreign_keys: 1 }])
+    const released = jest.fn()
+    expect(fixture.store.deferExpiredPrivatePhysicalRelease(released)).toBe(false)
+    expect(released).not.toHaveBeenCalled()
     for (const expiresAt of [NaN, Infinity, Date.now() - 1, fixture.store.operationExpiresAt + 1]) {
       const policy = { expiresAt, workingAllocation: working }
       await expect(Brc38PrivateDerivedTextLifetimes.with(fixture.store, policy, rejected)).rejects.toThrow()
@@ -680,6 +683,65 @@ test('native content subleases preserve the original deadline and refuse renewal
     expect(working.used).toBe(0)
   })
 }, 30000)
+
+test('actual original native expiry retains derived TEXT charges until physical owner drainage', async () => {
+  let working: Brc38WorkingAllocation | undefined,
+    lifetimeClosed = false,
+    privateDirectory: string | undefined
+  await expect(
+    withBrc38NativePrivateContractFixture(async fixture => {
+      privateDirectory = fixture.privateIndexParent
+      working = new Brc38WorkingAllocation(fixture.store.limits.maximumRowAllocationBytes)
+      const expiresAt = fixture.store.limits.expiresAt,
+        policy = { expiresAt, workingAllocation: working },
+        bytes = Buffer.from('{}'),
+        descriptor = { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+        rejectedWriter = jest.fn(async () => undefined)
+      await expect(
+        Brc38PrivateDerivedTextLifetimes.with(fixture.store, policy, async lifetimes => {
+          await withBrc38PrivateContentVersion(
+            'structured-text',
+            fixture.store,
+            { ...policy, maximumBytes: bytes.length },
+            { maximum: working!.maximum, remaining: working!.maximum },
+            async version => {
+              await version.begin(descriptor)
+              await version.append(0, bytes)
+              expect(await version.finish()).toEqual(descriptor)
+            },
+            undefined,
+            lifetimes
+          )
+          expect(working!.used).toBe(8192)
+          await fixture.withRead(async trx => {
+            const holds = await trx('brc38_native_prepared_fields').select('family', 'sha256', 'expiresAt')
+            expect(holds).toEqual([{ family: 'text', sha256: descriptor.sha256, expiresAt }])
+          })
+          // Wait for the real original three-minute admission. No fake clock,
+          // renewed reservation, shorter sublease or changed fixture default.
+          await new Promise(resolve => setTimeout(resolve, Math.max(0, expiresAt - Date.now()) + 25))
+          expect(Date.now()).toBeGreaterThanOrEqual(expiresAt)
+          expect(fixture.store.limits.expiresAt).toBe(expiresAt)
+          expect(() => lifetimes.assertOwner(fixture.store, expiresAt)).toThrow()
+          await expect(fixture.store.withPrivateNativeDatabase(false, rejectedWriter)).rejects.toThrow('expired')
+          expect(rejectedWriter).not.toHaveBeenCalled()
+        })
+      ).resolves.toBeUndefined()
+      lifetimeClosed = true
+      // The lifetime callback has ended, but the real store's kernel and SQL
+      // facade still belong to the fixture. Expiry alone refunds no metadata.
+      expect(working.used).toBe(8192)
+      expect(() => fixture.store.assertPrivateNativeDestination(fixture.store.knex)).toThrow()
+    })
+  ).rejects.toThrow(/expired|original finite lifetime/)
+  expect(lifetimeClosed).toBe(true)
+  expect(working).toBeDefined()
+  expect(working!.used).toBe(0)
+  expect(privateDirectory).toBeDefined()
+  await expect(import('node:fs/promises').then(async fs => await fs.stat(privateDirectory!))).rejects.toMatchObject({
+    code: 'ENOENT'
+  })
+}, 240000)
 
 test('complete native journal owns compact key trees and refuses an extra attached clock consumer', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {

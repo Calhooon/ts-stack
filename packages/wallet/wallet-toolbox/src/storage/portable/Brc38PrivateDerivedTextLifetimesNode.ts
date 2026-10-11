@@ -222,15 +222,15 @@ export class Brc38PrivateDerivedTextLifetimes {
         )
       } catch (cause) {
         if (cause instanceof Brc38StagingCleanupError) throw cause
-        // On the NEW disposable comparison copy, process exit and scratch
-        // deletion retire these holds. Keep JS/resource charges until that
-        // actual physical owner drains; never renew an expired SQL lease.
-        if (
-          this.store.deferRecoveryPhysicalRelease(() => {
-            this.#holds.clear()
-            this.reservation.close()
-          })
-        )
+        // Recovery copies and expired original stages cannot use another SQL
+        // lease. Their persisted data remains charged. Release JS metadata
+        // only after the SAME actual SQL/kernel owner drains, never on expiry
+        // alone and never by renewing an operation or deleting foreign holds.
+        const release = (): void => {
+          this.#holds.clear()
+          this.reservation.close()
+        }
+        if (this.store.deferRecoveryPhysicalRelease(release) || this.store.deferExpiredPrivatePhysicalRelease(release))
           return
         throw cause
       }
