@@ -154,7 +154,8 @@ export async function inspectBrc38PrivateCheckpointInventory(
     logicalBytes = 0n,
     original: Local | undefined,
     originalCharge: Brc38WorkingCharge | undefined,
-    headerCharge: Brc38WorkingCharge | undefined
+    headerCharge: Brc38WorkingCharge | undefined,
+    batchCharge: Brc38WorkingCharge | undefined
   const fence = async (k: Knex.Transaction): Promise<void> => {
       check()
       store.assertPrivateNativeReadTransaction(k)
@@ -328,6 +329,42 @@ export async function inspectBrc38PrivateCheckpointInventory(
       store,
       { expiresAt: store.operationExpiresAt, workingAllocation: working, signal },
       async lifetimes => {
+        // The journal remains the independent source of every delta. Retain
+        // only a charged finite window, never a cached source/activation verdict.
+        const pending: Brc38CheckpointSyncMapDelta[] = []
+        let pendingMappings = 0
+        batchCharge = working.claim(0)
+        const flush = async (): Promise<string | undefined> => {
+          if (pending.length === 0) return undefined
+          const current = fields?.syncMap
+          if (
+            current === undefined ||
+            (current.origin !== 'local' && current.origin !== 'version') ||
+            current.bytes === null
+          )
+            invalid()
+          const reconstructed = await prepareBrc38PrivateReconstructedCheckpointText(
+            store,
+            storage,
+            source,
+            current.origin === 'local'
+              ? { localRowId: current.sourceRowId }
+              : { version: { bytes: current.bytes, sha256: current.sha256 } },
+            sourcePolicy,
+            pending,
+            budget(),
+            lifetimes
+          )
+          fields = Object.freeze({ ...fields, syncMap: Object.freeze({ origin: 'version', ...reconstructed.output }) })
+          pending.length = 0
+          pendingMappings = 0
+          batchCharge!.resize(0)
+          await read(async () => undefined)
+          await lifetimes.releaseExcept([{ family: 'text', sha256: reconstructed.output.sha256 }])
+          await collect()
+          await read(async () => undefined)
+          return reconstructed.maximumUpdatedAt
+        }
         for (;;) {
           const records = await read(
             async k =>
@@ -479,36 +516,35 @@ export async function inspectBrc38PrivateCheckpointInventory(
                 errorOther: Object.freeze({ origin: 'null' })
               })
             } else {
-              const current = fields?.syncMap
-              if (
-                current === undefined ||
-                (current.origin !== 'local' && current.origin !== 'version') ||
-                current.bytes === null
-              )
-                invalid()
               const delta: Brc38CheckpointSyncMapDelta = Object.freeze({
-                  entity,
-                  count: entity === undefined ? 0 : step.rows,
-                  mappings: Object.freeze(mappings),
-                  maximumUpdatedAt: maximum,
-                  done
-                }),
-                reconstructed = await prepareBrc38PrivateReconstructedCheckpointText(
-                  store,
-                  storage,
-                  source,
-                  current.origin === 'local'
-                    ? { localRowId: current.sourceRowId }
-                    : { version: { bytes: current.bytes, sha256: current.sha256 } },
-                  sourcePolicy,
-                  delta,
-                  budget(),
-                  lifetimes
-                )
-              fields = Object.freeze({
-                ...fields,
-                syncMap: Object.freeze({ origin: 'version', ...reconstructed.output })
+                entity,
+                count: entity === undefined ? 0 : step.rows,
+                mappings: Object.freeze(mappings),
+                maximumUpdatedAt: maximum,
+                done
               })
+              // A single existing page may contain up to 4,000 mappings; keep
+              // that contract, but flush it alone. Ordinary inventory batches
+              // retain at most 128 mappings/pages within the same working cap.
+              const retainedBytes = (pages: number, ids: number): number => 8192 + 4096 * pages + 4096 * ids,
+                retained = pending.length === 0 ? 0 : retainedBytes(pending.length, pendingMappings),
+                allowance = Math.floor((working.maximum - working.used + retained) / 4)
+              if (
+                pending.length >= 128 ||
+                pendingMappings + mappings.length > 128 ||
+                retainedBytes(pending.length + 1, pendingMappings + mappings.length) > allowance
+              )
+                await flush()
+              // A larger single page is already retained by deltaCharge until
+              // its immediate flush; do not charge that same array twice. A
+              // tighter existing working budget also falls back to one page.
+              const immediate =
+                mappings.length > 128 ||
+                retainedBytes(1, mappings.length) > Math.floor((working.maximum - working.used) / 4)
+              batchCharge!.resize(immediate ? 0 : retainedBytes(pending.length + 1, pendingMappings + mappings.length))
+              pending.push(delta)
+              pendingMappings += mappings.length
+              const maximumUpdatedAt = done || immediate || pendingMappings >= 128 ? await flush() : undefined
               const originalInit = typeof expected!.init === 'bigint' ? integer(expected!.init) : expected!.init
               expected = {
                 ...expected,
@@ -522,18 +558,21 @@ export async function inspectBrc38PrivateCheckpointInventory(
                 storageName: layout.settings.storageName,
                 updated_at: observation.timestamp
               }
-              if (done) expected.when = importedWhen?.toISOString() ?? reconstructed.maximumUpdatedAt ?? null
+              if (done) expected.when = importedWhen?.toISOString() ?? maximumUpdatedAt ?? null
             }
             await read(async () => undefined)
-            const map = fields?.syncMap
-            await lifetimes.releaseExcept(map?.origin === 'version' ? [{ family: 'text', sha256: map.sha256 }] : [])
-            await collect()
+            if (observation.mode === 'NEW') {
+              const map = fields?.syncMap
+              await lifetimes.releaseExcept(map?.origin === 'version' ? [{ family: 'text', sha256: map.sha256 }] : [])
+              await collect()
+            }
             await read(async () => undefined)
           } finally {
             deltaCharge.close()
           }
           afterPage = page.fromRow
         }
+        await flush()
         if (expected === undefined || fields === undefined || syncStateId === undefined || pages < 1) invalid()
         let afterSource: number | null = null,
           afterActual: number | null = null,
@@ -658,6 +697,7 @@ export async function inspectBrc38PrivateCheckpointInventory(
     check()
     return Object.freeze({ rows, pages, logicalBytes: logicalBytes.toString() })
   } finally {
+    batchCharge?.close()
     originalCharge?.close()
     headerCharge?.close()
     frame.close()

@@ -241,6 +241,120 @@ test.each(['missing entity', 'missing count', 'missing map', 'bad count', 'bad m
     expect(working.used).toBe(0)
   }
 )
+test('ordered checkpoint pages share one reconstruction and preserve resets, dates, mappings and unknown JSON', async () => {
+  const map = createSyncMap()
+  map.output.count = 19
+  map.transaction.count = 7
+  map.output.idMap[-7] = 20
+  map.output.maxUpdated_at = new Date('2026-10-01T00:00:00.000Z')
+  const current = { ...JSON.parse(JSON.stringify(map)), future: { nested: [null, false, '😀', '\\ud800'] } },
+    expected = JSON.parse(JSON.stringify(current)),
+    deltas: import('./Brc38CheckpointSyncMap').Brc38CheckpointSyncMapDelta[] = [
+      {
+        entity: 'output',
+        count: 2,
+        mappings: [{ incomingId: -7, localId: 20 }],
+        maximumUpdatedAt: new Date('2026-10-07T00:00:00Z'),
+        done: false
+      },
+      { entity: 'transaction', count: 3, mappings: [{ incomingId: 8, localId: 99 }], done: false },
+      {
+        entity: 'output',
+        count: 1,
+        mappings: [
+          { incomingId: -7, localId: 20 },
+          { incomingId: 2, localId: 30 }
+        ],
+        done: true
+      },
+      {
+        entity: 'transaction',
+        count: 4,
+        mappings: [{ incomingId: 9, localId: 100 }],
+        maximumUpdatedAt: new Date('2026-10-05T00:00:00Z'),
+        done: false
+      }
+    ]
+  // Independent ordinary-value oracle; no codec output supplies the expectation.
+  for (const delta of deltas) {
+    if (delta.entity !== undefined) {
+      const entry = expected[delta.entity]
+      entry.count += delta.count
+      for (const value of delta.mappings) entry.idMap[value.incomingId] = value.localId
+      if (
+        delta.maximumUpdatedAt !== undefined &&
+        (entry.maxUpdated_at === undefined || new Date(entry.maxUpdated_at) < delta.maximumUpdatedAt)
+      )
+        entry.maxUpdated_at = delta.maximumUpdatedAt.toISOString()
+    }
+    if (delta.done) for (const name of Object.keys(map)) expected[name].count = 0
+  }
+  const fixture = source(JSON.stringify(current), 'utf16le'),
+    working = new Brc38WorkingAllocation(1048576)
+  expect(
+    JSON.parse(
+      await text(
+        checkpointBrc38SyncMap(
+          fixture.result,
+          { ...policy, maximumDateCodeUnits: 8192, workingAllocation: working },
+          deltas
+        )
+      )
+    )
+  ).toEqual(expected)
+  expect(fixture.indexes).toHaveLength(1)
+  expect(fixture.indexes[0].closed).toBe(true)
+  expect(working.used).toBe(0)
+})
+test.each([
+  'duplicate within page',
+  'cross-page conflict',
+  'overflow before reset',
+  'overflow after reset',
+  'empty batch',
+  'too many pages',
+  'changed source',
+  'cancellation'
+])('batched checkpoints retain provisional refusal and complete cleanup: %s', async defect => {
+  const map = createSyncMap(),
+    working = new Brc38WorkingAllocation(1048576),
+    controller = new AbortController(),
+    deltas: import('./Brc38CheckpointSyncMap').Brc38CheckpointSyncMapDelta[] = [
+      { entity: 'output', count: 1, mappings: [{ incomingId: 4, localId: 123 }], done: false },
+      { entity: 'output', count: 0, mappings: [], done: true }
+    ]
+  if (defect === 'duplicate within page')
+    deltas[0] = {
+      ...deltas[0],
+      mappings: [
+        { incomingId: 4, localId: 123 },
+        { incomingId: 4, localId: 123 }
+      ]
+    }
+  if (defect === 'cross-page conflict') deltas[1] = { ...deltas[1], mappings: [{ incomingId: 4, localId: 124 }] }
+  if (defect === 'overflow before reset') map.output.count = Number.MAX_SAFE_INTEGER
+  if (defect === 'overflow after reset')
+    deltas.push(
+      { entity: 'output', count: Number.MAX_SAFE_INTEGER, mappings: [], done: false },
+      { entity: 'output', count: 1, mappings: [], done: true }
+    )
+  if (defect === 'empty batch') deltas.length = 0
+  if (defect === 'too many pages') while (deltas.length <= 128) deltas.push({ count: 0, mappings: [], done: false })
+  if (defect === 'cancellation') controller.abort(new Error('original checkpoint cancellation'))
+  const fixture = source(JSON.stringify(map)),
+    iterator = checkpointBrc38SyncMap(
+      fixture.result,
+      { ...policy, maximumDateCodeUnits: 8192, workingAllocation: working, signal: controller.signal },
+      deltas
+    )
+  if (defect === 'changed source') {
+    expect((await iterator.next()).done).toBe(false)
+    fixture.bytes[fixture.bytes.length - 1] = 32
+  }
+  await expect(text(iterator)).rejects.toThrow()
+  expect(fixture.indexes.every(index => index.closed)).toBe(true)
+  expect(working.used).toBe(0)
+})
 test('current checkpoint remains provisional through changed source, explicit budgets and cancellation', async () => {
   const current = JSON.stringify(createSyncMap()),
     fixture = source(current),

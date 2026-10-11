@@ -7,7 +7,7 @@ import {
   withBrc38PrivateReconstructedCheckpointDatabaseDelta,
   type Brc38PrivateCurrentStructuredPolicy
 } from './Brc38PrivateCurrentStructuredSourceNode'
-import type { Brc38CheckpointSyncMapDelta } from './Brc38CheckpointSyncMap'
+import type { Brc38CheckpointSyncMapDeltas } from './Brc38CheckpointSyncMap'
 import {
   withBrc38PrivateDerivedTextVersion,
   type Brc38PrivateDerivedTextDescriptor
@@ -29,7 +29,7 @@ export async function prepareBrc38PrivateReconstructedCheckpointText(
   source: Brc38NativeLocalBaselineSource,
   current: Current,
   selected: Brc38PrivateCurrentStructuredPolicy,
-  delta: Brc38CheckpointSyncMapDelta,
+  delta: Brc38CheckpointSyncMapDeltas,
   budget: Brc38ImportDecodedBudget,
   lifetimes: Brc38PrivateDerivedTextLifetimes
 ): Promise<Readonly<{ output: Readonly<Brc38PrivateDerivedTextDescriptor>; maximumUpdatedAt?: string }>> {

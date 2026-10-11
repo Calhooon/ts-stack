@@ -5637,7 +5637,11 @@ the pending metadata.
 A genuine regression waits for the existing fixture's original three-minute
 UTC expiry, checks the actual retained TEXT hold and refused writer, and
 requires the working charge to survive callback closure until physical owner
-drainage and fixture directory removal. Before/after Linux proof is pending.
+drainage and fixture directory removal. The Linux before/after regression passed:
+the old implementation retained the TEXT charge, while all 49 current native
+private contracts passed, including real original expiry. Root checks, all five
+comparison cases, both copy-owner cases, native delivery regressions and the
+complete offline packed consumer also passed. This is scoped cleanup evidence.
 The measured one-hour full customer failure remains unqualified. Review the
 supported workload and repeated checkpoint costs together before choosing a
 proportionate optimization or measured time allowance. The one-hour ceiling
@@ -5645,3 +5649,18 @@ is not a proved production requirement; expiry cleanup must work for any
 chosen allowance. The authorized 30% browser increase remains until review
 after the full goal is achieved. Full customer, platform, mutation and
 exact-head CI qualification remain open.
+
+### Bounded checkpoint reconstruction batches
+
+Independent checkpoint inventory still validates every original journal page,
+row, observation and mapped ID. It now reconstructs the complete sync map at a
+completion boundary or after a bounded window of at most 128 pages/mappings,
+rather than after every page. Retained delta metadata is explicitly charged;
+tighter working headroom falls back to individual reconstruction. Existing
+larger pages retain their individual path. Ordered counter resets and overflow
+before a reset, per-page duplicate refusal, cross-page mapping conflicts, dates
+and all unknown JSON members remain checked. Both original-source passes,
+authenticated EOF and final full-byte postimage comparisons remain. No source
+or activation verdict is cached and no production limit or expiry changes.
+The original one-hour customer failure remains evidence; current performance
+and complete customer qualification of the batching change are pending.

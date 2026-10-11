@@ -22,7 +22,11 @@ import { measureBrc38StructuredFilesystem } from './Brc38StructuredFilesystemNod
 import type { Brc38JsonMemberIndex, Brc38StreamedStructured } from './Brc38StructuredJson'
 import type { Brc38NativeTextRead } from './Brc38NativeBlobProtocol'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
-import { checkpointBrc38SyncMap, type Brc38CheckpointSyncMapDelta } from './Brc38CheckpointSyncMap'
+import {
+  checkpointBrc38SyncMap,
+  type Brc38CheckpointSyncMapDelta,
+  type Brc38CheckpointSyncMapDeltas
+} from './Brc38CheckpointSyncMap'
 
 export interface Brc38PrivateCurrentStructuredPolicy extends Brc38PrivateStructuredPolicy {
   readonly expiresAt: number
@@ -564,7 +568,7 @@ export async function withBrc38PrivateReconstructedCheckpointDatabaseDelta<T>(
   source: Brc38NativeLocalBaselineSource,
   current: Readonly<{ localRowId: number }> | Readonly<{ version: Readonly<{ bytes: number; sha256: string }> }>,
   policy: Brc38PrivateCurrentStructuredPolicy,
-  delta: Brc38CheckpointSyncMapDelta,
+  delta: Brc38CheckpointSyncMapDeltas,
   work: (chunks: AsyncIterable<Uint8Array>, prior: Readonly<{ bytes: number; sha256: string }>) => Promise<T>,
   additionalTemporaryFileBytes = 0
 ): Promise<CheckpointDeltaResult<T>> {
@@ -611,7 +615,7 @@ type CheckpointDeltaResult<T> = Readonly<{
 }>
 async function withCheckpointDelta<T>(
   policy: Brc38PrivateCurrentStructuredPolicy,
-  delta: Brc38CheckpointSyncMapDelta,
+  delta: Brc38CheckpointSyncMapDeltas,
   work: (chunks: AsyncIterable<Uint8Array>, prior: Readonly<{ bytes: number; sha256: string }>) => Promise<T>,
   withSource: (
     operation: (
@@ -625,18 +629,31 @@ async function withCheckpointDelta<T>(
     expiresAt: policy.expiresAt,
     maximumCombinedTemporaryBytes: policy.maximumCombinedTemporaryBytes
   })
-  if (!Array.isArray(delta.mappings) || delta.mappings.length > 4000) invalid()
-  const captureCharge = selectedPolicy.workingAllocation?.claim(8192 + 1024 * delta.mappings.length)
+  const deltas: readonly Brc38CheckpointSyncMapDelta[] = Array.isArray(delta)
+    ? delta
+    : [delta as Brc38CheckpointSyncMapDelta]
+  if (deltas.length < 1 || deltas.length > 128) invalid()
+  let mappings = 0
+  for (const page of deltas) {
+    if (!Array.isArray(page.mappings) || page.mappings.length > 4000) invalid()
+    mappings += page.mappings.length
+    if (mappings > 4000) invalid()
+  }
+  const captureCharge = selectedPolicy.workingAllocation?.claim(8192 + 1024 * mappings + 1024 * (deltas.length - 1))
   try {
-    const selectedDelta = Object.freeze({
-      entity: delta.entity,
-      count: delta.count,
-      done: delta.done,
-      maximumUpdatedAt: delta.maximumUpdatedAt === undefined ? undefined : new Date(delta.maximumUpdatedAt.getTime()),
-      mappings: Object.freeze(
-        delta.mappings.map(value => Object.freeze({ incomingId: value.incomingId, localId: value.localId }))
+    const selectedDelta = Object.freeze(
+      deltas.map(page =>
+        Object.freeze({
+          entity: page.entity,
+          count: page.count,
+          done: page.done,
+          maximumUpdatedAt: page.maximumUpdatedAt === undefined ? undefined : new Date(page.maximumUpdatedAt.getTime()),
+          mappings: Object.freeze(
+            page.mappings.map(value => Object.freeze({ incomingId: value.incomingId, localId: value.localId }))
+          )
+        })
       )
-    })
+    )
     return await withSource(async (source, prior) => {
       const output = new Brc38OwnedImportReads(),
         iterator = checkpointBrc38SyncMap(
