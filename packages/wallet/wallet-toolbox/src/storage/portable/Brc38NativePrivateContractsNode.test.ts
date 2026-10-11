@@ -732,7 +732,7 @@ test('actual original native expiry retains derived TEXT charges until physical 
       // facade still belong to the fixture. Expiry alone refunds no metadata.
       expect(working.used).toBe(8192)
       expect(() => fixture.store.assertPrivateNativeDestination(fixture.store.knex)).toThrow()
-    })
+    }, 'after-journal')
   ).rejects.toThrow(/expired|original finite lifetime/)
   expect(lifetimeClosed).toBe(true)
   expect(working).toBeDefined()
