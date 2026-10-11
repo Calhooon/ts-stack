@@ -658,8 +658,9 @@ test('every reviewed component selection names an exact tracked path on case-sen
       'utf8'
     )
   )
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
   for (const [id, files] of Object.entries(selections)) {
-    for (const file of files)
+    for (const file of [...files, ...targets[id].componentTestUniverse])
       assert.ok(tracked.has('packages/wallet/wallet-toolbox/' + file), id + ': ' + file)
   }
 })
