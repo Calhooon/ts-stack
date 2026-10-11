@@ -125,6 +125,61 @@ function portableStreamMutationTargets(repositoryRoot) {
 // Additive held569 registrations for the current generated property suites.
 // Original targets, source ranges, case sets and qualification limits remain
 // unchanged. Source selection is not a coverage or campaign-admission receipt.
+const walletComponentSelectionPath = 'governance/mutation-testing/wallet-component-tests.json'
+const nativeBrowserComponentTest = 'src/storage/portable/Brc38NativeBrowserComponents.test.cjs'
+const nativeBrowserWorkerTest = 'src/utility/BrowserArgon2idWorker.native.test.cjs'
+
+// A reviewed selection is execution topology, not a coverage exemption. Keep
+// the original broader test universe as affected inputs and bind this source
+// configuration into the qualification identity. No canonical mutant changes.
+export function applyWalletComponentTests(targets, selections) {
+  const ids = Object.keys(targets).sort()
+  if (
+    !selections ||
+    typeof selections !== 'object' ||
+    Array.isArray(selections) ||
+    JSON.stringify(Object.keys(selections).sort()) !== JSON.stringify(ids)
+  )
+    throw new Error('Component selections must contain every exact current wallet target')
+  for (const id of ids) {
+    const target = targets[id]
+    const selected = selections[id]
+    const original =
+      target.componentTestUniverse ??
+      target.runnerOptions.jest.config.testMatch.map(file => file.replace(/^<rootDir>\//, ''))
+    const browser = target.mutate.some(file => file.includes('Idb') || file.includes('Browser'))
+    const worker = target.mutate.includes('src/utility/BrowserArgon2idWorker.ts')
+    const allowed = new Set([
+      ...original,
+      ...(browser ? [nativeBrowserComponentTest] : []),
+      ...(worker ? [nativeBrowserWorkerTest] : [])
+    ])
+    if (
+      !Array.isArray(selected) ||
+      selected.length === 0 ||
+      new Set(selected).size !== selected.length ||
+      selected.some(
+        file =>
+          typeof file !== 'string' ||
+          !allowed.has(file) ||
+          file.split('/').some(part => part === '.' || part === '..') ||
+          requiredNativeFunctionalTests.has('<rootDir>/' + file)
+      )
+    )
+      throw new Error(`Invalid or undeclared component test selection for ${id}`)
+    const property = target.propertyTest.slice(target.packageDirectory.length + 1)
+    if (!selected.includes(property)) throw new Error(`Missing registered property suite for ${id}`)
+    if (browser && !selected.includes(nativeBrowserComponentTest))
+      throw new Error(`Missing genuine native browser components for ${id}`)
+    if (worker && !selected.includes(nativeBrowserWorkerTest))
+      throw new Error(`Missing genuine native worker components for ${id}`)
+    target.componentTestUniverse = [...allowed]
+    target.configurationInputs = [walletComponentSelectionPath]
+    target.runnerOptions.jest.config.testMatch = selected.map(file => '<rootDir>/' + file)
+  }
+  return targets
+}
+
 function currentWalletMutationTargets(repositoryRoot) {
   const targets = {
     'wallet-current-brc38-authenticated-private-stage-node': {
@@ -6350,6 +6405,10 @@ function currentWalletMutationTargets(repositoryRoot) {
       )
     }
   }
+  applyWalletComponentTests(
+    targets,
+    JSON.parse(readFileSync(resolve(repositoryRoot, walletComponentSelectionPath), 'utf8'))
+  )
   // Real browser cases launch a native Node driver outside Jest's VM. Include
   // the complete controller bridge in every current target that selects them;
   // the original target definitions and all case/resource controls stay intact.
@@ -6359,7 +6418,8 @@ function currentWalletMutationTargets(repositoryRoot) {
       !cases.some(
         path =>
           path.endsWith('/PackedIdbCurrentStructuredRead.test.ts') ||
-          path.endsWith('/BrowserArgon2idWorker.native.test.cjs')
+          path.endsWith('/BrowserArgon2idWorker.native.test.cjs') ||
+          path.endsWith('/Brc38NativeBrowserComponents.test.cjs')
       )
     )
       continue
@@ -6373,7 +6433,12 @@ function currentWalletMutationTargets(repositoryRoot) {
         'client/test/portable-program-browser.ts',
         'client/test/argon2id-coverage-browser.cjs',
         'client/test/argon2id-coverage-browser.ts',
-        'client/test/argon2id-coverage-worker.ts'
+        'client/test/argon2id-coverage-worker.ts',
+        'client/argon2id-worker.ts',
+        'client/build-argon2id-worker.mjs',
+        'src/storage/portable/*.browser.case.ts',
+        'src/storage/snapshot/*.browser.case.ts',
+        'src/utility/*.browser.case.ts'
       ])
     ]
   }

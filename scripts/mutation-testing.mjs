@@ -75,10 +75,12 @@ function targetInputPatterns(target) {
   }
   for (const input of [
     ...(target.additionalInputs ?? []),
-    ...(target.requiredFunctionalTests ?? [])
+    ...(target.requiredFunctionalTests ?? []),
+    ...(target.componentTestUniverse ?? [])
   ]) {
     patterns.push(`${packageDirectory}/${normalized(input)}`)
   }
+  for (const input of target.configurationInputs ?? []) patterns.push(normalized(input))
   if (typeof target.propertyTest === 'string') patterns.push(normalized(target.propertyTest))
   const jest = target.runnerOptions?.jest
   const vitest = target.runnerOptions?.vitest

@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
+import {
+  applyWalletComponentTests,
+  buildMutationTargets
+} from '../governance/mutation-testing/targets.mjs'
 
 import {
   calculateMutationMetrics,
@@ -516,4 +519,111 @@ test('full native functional files retain affected-target ownership outside muta
     selectAffectedMutationTargets(precise, ['packages/example/test/full.test.ts.extra']),
     []
   )
+})
+
+test('reviewed component routing preserves properties, broader input ownership and native browser coverage', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)
+  const current = Object.fromEntries(
+    Object.entries(canonical).filter(([id]) => id.startsWith('wallet-current-'))
+  )
+  const registryPath = 'governance/mutation-testing/wallet-component-tests.json'
+  const selections = JSON.parse(readFileSync(`${REPOSITORY_ROOT}/${registryPath}`, 'utf8'))
+  assert.equal(Object.keys(current).length, 40)
+  assert.deepEqual(
+    selectAffectedMutationTargets(canonical, [registryPath]).sort(),
+    Object.keys(current).sort()
+  )
+  assert.deepEqual(selectAffectedMutationTargets(canonical, [registryPath + '.extra']), [])
+  for (const [id, target] of Object.entries(current)) {
+    const selected = target.runnerOptions.jest.config.testMatch.map(file =>
+      file.replace(/^<rootDir>\//, '')
+    )
+    assert.deepEqual(selected, selections[id])
+    assert.ok(selected.includes(target.propertyTest.slice(target.packageDirectory.length + 1)))
+    assert.ok(selected.every(file => target.componentTestUniverse.includes(file)))
+    for (const file of target.componentTestUniverse) {
+      assert.ok(
+        selectAffectedMutationTargets({ [id]: target }, [
+          target.packageDirectory + '/' + file
+        ]).includes(id)
+      )
+    }
+    if (target.mutate.some(file => file.includes('Idb') || file.includes('Browser'))) {
+      assert.ok(selected.includes('src/storage/portable/Brc38NativeBrowserComponents.test.cjs'))
+      assert.ok(
+        selectAffectedMutationTargets({ [id]: target }, [
+          target.packageDirectory + '/src/storage/portable/Brc38PrivateIdbStage.browser.case.ts'
+        ]).includes(id)
+      )
+    }
+  }
+})
+
+test('component registries reject missing targets, duplicate tests, removed properties and undeclared substitutes', () => {
+  const all = buildMutationTargets(REPOSITORY_ROOT)
+  const current = Object.fromEntries(
+    Object.entries(all).filter(([id]) => id.startsWith('wallet-current-'))
+  )
+  const registry = JSON.parse(
+    readFileSync(
+      `${REPOSITORY_ROOT}/governance/mutation-testing/wallet-component-tests.json`,
+      'utf8'
+    )
+  )
+  const id = Object.keys(current)[0]
+  const check = (change, message) => {
+    const selected = structuredClone(registry)
+    change(selected)
+    assert.throws(() => applyWalletComponentTests(structuredClone(current), selected), message)
+  }
+  check(selected => {
+    delete selected[id]
+  }, /every exact/)
+  check(selected => {
+    selected.unknown = []
+  }, /every exact/)
+  check(selected => selected[id].push(selected[id][0]), /Invalid/)
+  check(selected => {
+    selected[id] = selected[id].filter(
+      file => !file.endsWith('Brc38AuthenticatedPrivateStageNode.property.test.ts')
+    )
+  }, /registered property/)
+  check(selected => selected[id].push('src/storage/portable/Imaginary.test.ts'), /Invalid/)
+  check(
+    selected => selected[id].push('src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts'),
+    /Invalid/
+  )
+  check(selected => {
+    selected[id] = selected[id].filter(
+      file => !file.endsWith('Brc38NativeBrowserComponents.test.cjs')
+    )
+  }, /genuine native browser/)
+  check(selected => {
+    selected[id] = selected[id].filter(
+      file => !file.endsWith('BrowserArgon2idWorker.native.test.cjs')
+    )
+  }, /genuine native worker/)
+})
+
+test('native component bridge delegates all original browser cases without replacing their oracles', () => {
+  const wallet = `${REPOSITORY_ROOT}/packages/wallet/wallet-toolbox`
+  const catalog = readFileSync(`${wallet}/client/test/portable-program-browser.ts`, 'utf8')
+  const wrapper = readFileSync(
+    `${wallet}/src/storage/portable/Brc38NativeBrowserComponents.test.cjs`,
+    'utf8'
+  )
+  const original = [...catalog.matchAll(/id: '([^']+)',\s+source: '([^']+)'/g)].map(match => [
+    match[1],
+    match[2]
+  ])
+  const selected = [...wrapper.matchAll(/\[\s*'([^']+)',\s*'([^']+)'\s*\]/g)].map(match => [
+    match[1],
+    match[2]
+  ])
+  assert.equal(original.length, 60)
+  assert.equal(new Set(original.map(([, source]) => source)).size, 19)
+  assert.deepEqual(selected, original)
+  assert.match(wrapper, /await runPortableBrowserCase\(id\)/)
+  assert.match(wrapper, /completeCatalogueRun\)\.toBe\(false\)/)
+  assert.match(wrapper, /processTreeQualified\)\.toBe\(false\)/)
 })

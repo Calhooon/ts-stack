@@ -5184,3 +5184,19 @@ mutant ranges, minimum300 property runs, global score ratchets and zero
 uncovered/invalid/unexecuted gates are unchanged. Coverage gaps remain failures
 that require meaningful component tests; this source routing is not a claim
 that the mutation program or full system has passed.
+
+Current wallet mutation targets use reviewed explicit component selections in
+`governance/mutation-testing/wallet-component-tests.json`. The original wider
+component universe remains an affected input, every registered property is
+mandatory, and the registry bytes and resulting configuration are bound to the
+exact-head qualification identity. Related-test discovery was measured to keep
+368 of371 suites for a broad target; shared imports do not provide a useful
+resource boundary. Selection narrows repeated execution, never the canonical
+mutant inventory or score/zero-uncovered/invalid/unexecuted gates. Every target
+with browser-owned source includes a bridge to all60 original cases across19
+native browser case files, and the KDF worker target retains its dedicated real
+worker coverage bridge. These tests delegate to the existing native controller
+and relay only actual per-test instrumentation counters. The full original
+browser catalogue remains independently mandatory. Neither selected test
+presence nor a scoped native pass establishes full coverage, process-tree
+qualification or completion; holes require meaningful component tests.
