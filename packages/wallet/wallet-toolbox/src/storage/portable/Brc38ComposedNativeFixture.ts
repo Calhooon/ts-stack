@@ -72,16 +72,14 @@ export async function composedNativeFixture(
 ) {
   if (measurement !== undefined && !snapshotMeasurementCases.includes(measurement))
     throw new RangeError('Composed measurement must select an immutable declared shape')
-  // Full setup measured 230.8s; a twelve-minute customer workflow lease
-  // expired during the first baseline after 46 drained operations. A selected
-  // whole-workflow measurement may admit at most one hour, including
-  // both complete imports and current recovery. Recovery/cancellation cases
-  // explicitly select that same envelope: setup alone measured 74-231s and the
-  // first full attempt reached 1057s before a functional refusal. Real-expiry
-  // recovery waits out the original packet; it never renews its admission.
-  // This is not a production SLO. Every actual UTC/monotonic check remains;
-  // the default stays three minutes.
-  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 3600000)
+  // The full customer attempt measured 2509s before first publication. Two
+  // complete imports plus current recovery need a measured test envelope above
+  // one hour. Only that customer case selects two hours; cancellation/recovery
+  // cases keep their original one-hour admission and actual-expiry checks.
+  // Establish one original deadline before setup and never renew it. This
+  // finite qualification allowance is not a product default or performance
+  // SLO; the default remains three minutes.
+  if (!Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 7200000)
     throw new RangeError('Composed fixture requires one finite original lifetime')
   const maximumReadBytes = selected.maximumReadBytes ?? 1024
   if (!Number.isSafeInteger(maximumReadBytes) || maximumReadBytes < 1 || maximumReadBytes > 16384)

@@ -51,6 +51,10 @@ const composedNativeFixture = (...args: Parameters<typeof originalComposedNative
 // original authenticated packet. These are test allowances, not product SLOs.
 const composedWorkflowLifetimeMs = 3600000
 const composedRecoveryCaseTimeoutMs = 2 * composedWorkflowLifetimeMs + 30000
+// First comparison/copy alone measured 2509s; both imports plus current
+// recovery cannot fit the former one-hour fixture. Select one initial two-hour
+// customer allowance, preserving all data/oracles and separate expiry cases.
+const customerWorkflowLifetimeMs = 7200000
 
 // Authored UNQUALIFIED. This is the first genuine occupied structured controller /
 // current restart integration with nonempty all47 coverage and independent
@@ -96,7 +100,7 @@ test('actual occupied import, current restart and repeat import preserve a later
         incoming.tables.transactions[0].description = incomingDescription
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
       },
-      3600000
+      customerWorkflowLifetimeMs
     )
   observe('fixture-ready')
   try {
@@ -273,7 +277,7 @@ test('actual occupied import, current restart and repeat import preserve a later
     await fixture.close()
     observe('physically-closed')
   }
-}, 3630000)
+}, customerWorkflowLifetimeMs + 30000)
 
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',

@@ -2433,3 +2433,20 @@ copy owner. No admission is renewed, SQL facade reopened or resource ceiling
 changed. The failed full workflow and its physical cleanup are retained; current
 complete customer, recovery, repeat-import and whole-system qualification remain
 pending. Native source, recipes and genuinely qualified ARM/x64 pins are unchanged.
+
+### Measured complete-customer qualification allowance
+
+The complete source405 customer attempt took 2,509 seconds before its first
+publication callback, without reaching the later customer write, current
+recovery or repeat import. Only the complete customer case now selects one
+initial two-hour fixture admission, with a separate 30-second test cleanup
+margin. This is a finite qualification allowance, not a production default or
+performance SLO. The three-minute helper default, one-hour cancellation and
+recovery admissions, all original data and semantic oracles, separate actual
+expiry cases, and UTC/monotonic checks remain. No admission is renewed. The
+existing 145-minute hosted native lane remains; current full customer validation
+is pending. An actual native collector comparison measured about 749 ms at
+32 chunks versus 225 ms at 256 for identical two-family content; larger pages
+also held each writer longer. Batching remains unchanged because this component
+measurement does not explain the full workflow cost or establish foreground
+latency. Independent phase measurements will guide the next performance work.
