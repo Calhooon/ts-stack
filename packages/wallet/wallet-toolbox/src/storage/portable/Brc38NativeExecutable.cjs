@@ -16,7 +16,7 @@ const componentBuild = Object.freeze({
   platform: 'linux',
   architecture: 'arm64',
   bytes: 1353576,
-  sha256: '38f6ea837fa8430dfa864cf27322c3fcfdcd1a1d58aca1a270a98ba29ad77401'
+  sha256: 'cddb4023f8b073d2eab1c48a001c53e90373befaf04de62cfd05e3f450bc3746'
 })
 // Only qualified exact builds belong here. Candidate build receipts cannot
 // populate this registry at runtime or replace a missing platform entry.

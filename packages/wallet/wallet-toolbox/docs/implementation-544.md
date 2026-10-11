@@ -2171,3 +2171,10 @@ The replacement executable must pass all13 original native component modes
 and the actual all13 fixture before admission or runtime qualification is
 claimed. This unreleased feature's fixture budget is not a production sizing
 recommendation.
+
+The measured-heap candidate passed all13 original native component modes on
+LinuxARM64, including the explicit4MiB exhaustion and committed-writer recovery
+controls. The exact 1353576-byte replacement is pinned at
+`cddb4023f8b073d2eab1c48a001c53e90373befaf04de62cfd05e3f450bc3746`. All compiler and contract groups drained and
+frozen inputs remained exact. Actual all13 application inventory, complete
+mutation, other supported hosts and full-system qualification remain pending.
