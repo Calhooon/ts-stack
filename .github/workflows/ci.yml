@@ -533,6 +533,10 @@ jobs:
       - name: Restore build outputs
         run: tar --extract --gzip --file .ci-artifacts/build-outputs.tar.gz
 
+      - name: Deliver the pinned native browser for selected wallet component tests
+        if: matrix.wallet_native
+        run: node scripts/provision-wallet-native-browser.mjs --target "${{ matrix.target }}"
+
       - name: Provision the qualified native wallet test executable
         if: matrix.wallet_native
         run: bash scripts/provision-wallet-native-tests.sh
@@ -1084,6 +1088,9 @@ jobs:
         env:
           TS_STACK_SNAPSHOT_HOSTED_MYSQL: '1'
         run: node test/storage/runSnapshotJournalMysql.cjs
+      - name: Deliver the pinned native browser for ordinary wallet shards
+        if: startsWith(matrix.id, 'shard-')
+        run: node scripts/provision-wallet-native-browser.mjs
       - name: Deliver the exactly pinned qualified native test executable
         run: bash scripts/provision-wallet-native-tests.sh
       - name: Preserve native component delivery evidence

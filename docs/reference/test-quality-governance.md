@@ -352,3 +352,16 @@ and relay only actual per-test instrumentation counters. The full original
 browser catalogue remains independently mandatory. Neither selected test
 presence nor a scoped native pass establishes full coverage, process-tree
 qualification or completion; holes require meaningful component tests.
+
+Wallet component CI explicitly delivers the source-pinned official Chrome for
+Testing155.0.8059.39 ARM64 archive. Its measured198202003-byte archive expands
+to415397541 bytes across306 entries; the archive and289475976-byte executable
+are checked against separate fixed SHA256 pins. Transport is bounded, extraction
+stays inside an owned private directory, and changed bytes, lengths, paths or
+symlink substitutes fail. The installer never disables the browser sandbox or
+changes host security settings. It exposes `CHROME_BIN` for the enclosing job;
+its receipt is delivery-only and grants no runtime or process-tree qualification.
+Mutation setup follows the actual selected tests, avoiding the download for
+node-only targets; ordinary wallet shards also receive the native browser.
+Complete real browser/controller/Stryker coverage and cleanup qualification are
+still required, with no skipped cases or substituted browser.

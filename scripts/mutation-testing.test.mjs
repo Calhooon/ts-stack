@@ -664,3 +664,30 @@ test('every reviewed component selection names an exact tracked path on case-sen
       assert.ok(tracked.has('packages/wallet/wallet-toolbox/' + file), id + ': ' + file)
   }
 })
+
+test('native browser delivery controls select genuine browser execution without expanding node-only campaigns', () => {
+  const browser = {
+    packageDirectory: 'packages/wallet/wallet-toolbox',
+    testRunner: 'jest',
+    mutate: ['src/value.ts'],
+    runnerOptions: {
+      jest: {
+        config: {
+          testMatch: ['<rootDir>/src/storage/portable/Brc38NativeBrowserComponents.test.cjs']
+        }
+      }
+    }
+  }
+  const node = {
+    ...browser,
+    runnerOptions: { jest: { config: { testMatch: ['<rootDir>/src/value.test.ts'] } } }
+  }
+  const targets = { browser, node }
+  for (const file of [
+    'scripts/provision-wallet-native-browser.mjs',
+    'scripts/wallet-native-browser.json'
+  ]) {
+    assert.deepEqual(selectAffectedMutationTargets(targets, [file]), ['browser'])
+    assert.deepEqual(selectAffectedMutationTargets(targets, [file + '.extra']), [])
+  }
+})
