@@ -39,11 +39,15 @@ test('wallet TypeScript transform retains its compiler configuration in a reloca
     const exports = {}
     runInNewContext(transformed.code, { exports })
     assert.equal(exports.result, 42)
+    const oldCompiler = { tsconfig: { module: 'commonjs', moduleResolution: 'bundler' } }
+    const oldConfig = { ...config, transform: { '^.+\\.ts$': ['ts-jest', oldCompiler] } }
     assert.throws(
       () =>
-        createTransformer({
-          tsconfig: { module: 'commonjs', moduleResolution: 'bundler' }
-        }).process(source, filename, options),
+        createTransformer(oldCompiler).process(source, filename, {
+          ...options,
+          config: oldConfig,
+          configString: JSON.stringify(oldConfig)
+        }),
       /missing-shared-config/
     )
   } finally {
