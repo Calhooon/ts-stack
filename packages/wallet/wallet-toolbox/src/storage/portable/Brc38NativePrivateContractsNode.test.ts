@@ -655,7 +655,6 @@ test('frozen native comparison collects both scratch families while preserving s
         'users',
         'brc38_native_binary_fields',
         'brc38_native_text_fields',
-        'brc38_local_baseline_clock',
         'snapshot_journal_clock'
       ],
       before = await fixture.withRead(async trx => {
