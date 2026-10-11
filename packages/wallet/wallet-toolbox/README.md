@@ -1821,6 +1821,14 @@ New authenticated large-field, relation, identity and duplicate-key integration
 cases are authored and unrun; structured history still uses the existing bounded
 metadata parser. This is source implementation, not qualification evidence.
 
+The authenticated Node stage's `maximumCiphertextChunks` bounds caller input
+chunks, including empty inputs. The frame can emit two plaintext pieces per
+input while retaining the trailing authentication tag, so its private JSON
+parser uses a derived ceiling of twice that count. Archive bytes, individual
+chunk bytes, physical reservations, original expiry and authentication checks
+remain independently bounded. This admits the selected fragmentation without
+changing the caller's input cap or materializing extra plaintext.
+
 The working native candidate now has traceable in-repository C source and an
 internal incremental blob ABI. One operation carries a fixed coordinate header
 and <=65,536 bytes, accepts only the actual leased wallet writer transaction,

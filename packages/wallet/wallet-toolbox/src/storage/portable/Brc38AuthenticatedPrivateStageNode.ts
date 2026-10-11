@@ -272,7 +272,9 @@ async function runAuthenticatedBrc39PrivateImport(
       maximumRowAllocationBytes: limits.maximumRowAllocationBytes,
       maximumMetadataAllocationBytes,
       maximumInputChunkBytes: crypto.policy.maximumChunkBytes,
-      maximumInputChunks: maximumCiphertextChunks,
+      // The frame emits at most two pieces per input: retained tag-tail bytes
+      // and bytes from the new chunk. Keep the external ciphertext cap below.
+      maximumInputChunks: 2 * maximumCiphertextChunks,
       signal: crypto.signal,
       streamedFields: fieldPolicy,
       streamedStructuredFields: structuredPolicy,

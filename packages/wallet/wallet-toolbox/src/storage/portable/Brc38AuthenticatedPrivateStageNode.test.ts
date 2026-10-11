@@ -21,6 +21,7 @@ import type { Brc38AuthenticatedStreamedImportReader } from './KnexBrc38StagingS
 import { createHash } from 'node:crypto'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { Script, Transaction } from '@bsv/sdk'
+import { Brc38PrivateChunkPipe } from './Brc38PrivateChunkPipe'
 import { inspectBrc38AuthenticatedRawTransaction } from './Brc38AuthenticatedRawTransactionNode'
 
 /** Controlled corruption fixture: ordinary callers cannot change sealed data.
@@ -268,6 +269,44 @@ test('source failure retains exact identity, awaits parser/reader cleanup and ne
   }
   await expect(stageAuthenticatedBrc39PrivateImport(source(), password, root, options(bytes))).rejects.toBe(reason)
   expect(closed).toBe(true)
+  await empty()
+})
+test.each([true, false])('fragmented ciphertext keeps its original input cap (admitted: %s)', async admitted => {
+  const bytes = await encrypted(),
+    inputChunks = Math.ceil(bytes.length / 137),
+    selected = { ...options(bytes), maximumCiphertextChunks: inputChunks - (admitted ? 0 : 1) },
+    originalAppend = Brc38PrivateChunkPipe.prototype.append
+  let plaintextChunks = 0,
+    ciphertextChunks = 0
+  jest.spyOn(Brc38PrivateChunkPipe.prototype, 'append').mockImplementation(async function (input) {
+    plaintextChunks++
+    await originalAppend.call(this, input)
+  })
+  async function* source() {
+    for await (const input of chunks(bytes)) {
+      ciphertextChunks++
+      yield input
+    }
+  }
+  if (admitted) {
+    const value = await stageAuthenticatedBrc39PrivateImport(source(), password, root, selected)
+    expect(ciphertextChunks).toBe(inputChunks)
+    expect(plaintextChunks).toBeGreaterThan(inputChunks)
+    expect(plaintextChunks).toBeLessThanOrEqual(2 * inputChunks)
+    expect(value.archiveSha256).toBe(selected.binding.archiveSha256)
+    expect(value.fileBytes).toBe(bytes.length)
+    expect(value.plaintextBytes).toBe(Buffer.byteLength(JSON.stringify(semanticStageFixture())))
+    expect(Object.values(value.document.counts)).toEqual(Array(13).fill(1))
+    expect(await value.reservation.store.knex('metadata').where({ slot: 1 }).first('state')).toEqual({
+      state: 'sealed'
+    })
+    await root.discard(value.reservation, new Error('fragmented input boundary closeout'))
+  } else {
+    await expect(stageAuthenticatedBrc39PrivateImport(source(), password, root, selected)).rejects.toThrow(
+      'Authenticated archive chunk policy reached'
+    )
+    expect(ciphertextChunks).toBe(inputChunks)
+  }
   await empty()
 })
 test('empty encrypted chunks are bounded independently of the archive byte quota', async () => {

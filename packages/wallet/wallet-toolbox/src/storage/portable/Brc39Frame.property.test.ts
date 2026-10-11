@@ -53,6 +53,7 @@ test('independent envelope bytes retain exactly ciphertext/tag under arbitrary b
           const count = schedule[step++ % schedule.length]
           const chunk = file.subarray(offset, offset + count)
           const emitted = frame.accept(chunk)
+          expect(emitted.length).toBeLessThanOrEqual(2)
           expect(emitted.every(value => value.length <= 128)).toBe(true)
           output.push(...emitted)
           offset += count
