@@ -1677,8 +1677,15 @@ test('listing public-arithmetic mutations include the bounded-retention regressi
     'RevenueListingKeys.test.ts',
     'RevenueListingProfile.test.ts',
     'RevenueListing.property.test.ts'
-  ])
+  ]) {
     assert.ok(selection.includes(`<rootDir>/src/script/templates/__tests/${file}`))
+    assert.ok(
+      readFileSync(
+        resolve(REPOSITORY_ROOT, 'packages/sdk/src/script/templates/__tests', file),
+        'utf8'
+      ).length > 0
+    )
+  }
   assert.equal(
     target.propertyTest,
     'packages/sdk/src/script/templates/__tests/RevenueListing.property.test.ts'
