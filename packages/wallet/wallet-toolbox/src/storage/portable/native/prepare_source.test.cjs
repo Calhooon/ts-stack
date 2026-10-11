@@ -702,11 +702,11 @@ function windowsHostFixture() {
     guestActorSid: 'S-1-5-21-111-222-333-1001',
     hostController: { bytes: 123, sha256: '1'.repeat(64) },
     guestController: {
-      filename: 'C:\Source\tools\Brc38WindowsBootstrapController.ps1',
+      filename: 'C:\\Source\\tools\\Brc38WindowsBootstrapController.ps1',
       bytes: 456,
       sha256: '2'.repeat(64)
     },
-    guestConfiguration: { filename: 'C:\Private\worker-options.json', bytes: 789, sha256: '3'.repeat(64) }
+    guestConfiguration: { filename: 'C:\\Private\\worker-options.json', bytes: 789, sha256: '3'.repeat(64) }
   }
 }
 test.each(['arm64', 'x64'])(
@@ -767,12 +767,12 @@ test.each([
   else if (defect === 'source-digest') input.hostController.sha256 = 'bad'
   else if (defect === 'source-size') input.hostController.bytes = 1048577
   else if (defect === 'guest-size') input.guestConfiguration.bytes = 1.5
-  else if (defect === 'controller') input.guestController.filename = 'C:\Source\tools\Other.ps1'
+  else if (defect === 'controller') input.guestController.filename = 'C:\\Source\\tools\\Other.ps1'
   else if (defect === 'same-input') input.guestConfiguration.filename = input.guestController.filename
-  else if (defect === 'UNC') input.guestConfiguration.filename = '\\server\private\options.json'
-  else if (defect === 'traversal') input.guestConfiguration.filename = 'C:\Private\..\options.json'
+  else if (defect === 'UNC') input.guestConfiguration.filename = '\\\\server\\private\\options.json'
+  else if (defect === 'traversal') input.guestConfiguration.filename = 'C:\\Private\\..\\options.json'
   else if (defect === 'stream') input.guestConfiguration.filename += ':alternate'
-  else if (defect === 'reserved') input.guestConfiguration.filename = 'C:\Private\NUL'
+  else if (defect === 'reserved') input.guestConfiguration.filename = 'C:\\Private\\NUL'
   else if (defect === 'control') input.guestConfiguration.filename += String.fromCharCode(0)
   else input.limits = { memoryBytes: 1 }
   expect(() => require('../../../../tools/Brc38WindowsBootstrapHost.cjs').bootstrapHostPlan(input)).toThrow(
