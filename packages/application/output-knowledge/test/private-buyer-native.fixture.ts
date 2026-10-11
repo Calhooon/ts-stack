@@ -49,16 +49,10 @@ export async function nativeBuyerFixture() {
       0
     )
   await seed.sign()
-  await f.native.wallet.internalizeAction({
-    tx: seed.toAtomicBEEF(),
-    outputs: [
-      {
-        outputIndex: 0,
-        protocol: 'wallet payment',
-        paymentRemittance: { senderIdentityKey, derivationPrefix: prefix, derivationSuffix: suffix }
-      }
-    ],
-    description: 'Disposable synthetic buyer funding'
+  await f.native.creditFunding(seed, 0, {
+    senderIdentityKey,
+    derivationPrefix: prefix,
+    derivationSuffix: suffix
   })
   const originator = 'buyer-reference.local'
   async function installed(native = f.native, create = false) {

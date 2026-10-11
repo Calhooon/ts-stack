@@ -1,14 +1,16 @@
-import { afterEach, jest } from '@jest/globals'
+import { afterEach, expect, jest } from '@jest/globals'
 import { createRequire } from 'node:module'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ChainTracker } from '@bsv/sdk'
+import type { ChainTracker, Transaction } from '@bsv/sdk'
 import { WalletToolboxAcquisitionFunding } from '../src/private/WalletToolboxAcquisitionFunding.js'
 // Canonical integration uses the installed workspace development dependency.
 // Wallet receipt ownership uses its public CJS exports and fresh local SQLite.
 const requireWallet = createRequire(import.meta.url)
-const { PrivateKey, CachedKeyDeriver } = requireWallet('@bsv/sdk') as typeof import('@bsv/sdk', {
+const { PrivateKey, CachedKeyDeriver, outputPacketDigest, Utils } = requireWallet(
+  '@bsv/sdk'
+) as typeof import('@bsv/sdk', {
   with: { 'resolution-mode': 'require' }
 })
 const { StorageKnex } = requireWallet(
@@ -117,7 +119,51 @@ export async function acquisitionNativeWalletFixture(
     }
     opened.delete(closeKnex)
     opened.add(close)
-    return { active, wallet, controller, identities, bridge, services, close }
+    // Synthetic fixture funding uses the explicit durable local custody port.
+    // Ordinary BRC-100 internalization now publishes unmined payments; the
+    // fixture must retain its broadcast-refusal guard and never contact a network.
+    async function creditFunding(
+      transaction: Transaction,
+      outputIndex: number,
+      payment: { senderIdentityKey: string; derivationPrefix: string; derivationSuffix: string }
+    ) {
+      const funding = { chain: { ...chain }, txid: transaction.id('hex'), outputIndex },
+        acquisitionId = outputPacketDigest('acquisition', {
+          buyer: payment.senderIdentityKey,
+          seller: identities.wallet,
+          funding
+        }),
+        operation = {
+          id: outputPacketDigest('wallet-funding', {
+            seller: identities.wallet,
+            acquisitionId,
+            funding
+          }),
+          acquisitionId,
+          funding,
+          buyer: payment.senderIdentityKey,
+          seller: identities.wallet,
+          satoshis: String(transaction.outputs[outputIndex].satoshis),
+          derivationPrefix: payment.derivationPrefix,
+          derivationSuffix: payment.derivationSuffix,
+          beef: Utils.toBase64(transaction.toAtomicBEEF())
+        },
+        result = await controller.internalizeOnce(operation)
+      expect(result).toMatchObject({
+        state: 'accepted',
+        funding,
+        receipt: {
+          protocol: 'wallet-funding-recovery-v1',
+          operationId: operation.id,
+          satoshis: operation.satoshis,
+          walletIdentity: identities.wallet,
+          storageIdentity: identities.storage
+        }
+      })
+      expect(await controller.getInternalization(operation.id)).toEqual(result)
+      return result
+    }
+    return { active, wallet, controller, identities, bridge, services, close, creditFunding }
   }
   const close = async () => {
     await Array.from(opened).reduce(

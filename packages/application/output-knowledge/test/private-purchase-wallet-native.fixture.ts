@@ -101,16 +101,10 @@ export async function nativePurchaseWalletFixture(
       0
     )
   await genesis.sign()
-  await native.native.wallet.internalizeAction({
-    tx: genesis.toAtomicBEEF(),
-    outputs: [
-      {
-        outputIndex: 1,
-        protocol: 'wallet payment',
-        paymentRemittance: { senderIdentityKey, derivationPrefix, derivationSuffix }
-      }
-    ],
-    description: 'Disclosed synthetic covenant funding'
+  await native.native.creditFunding(genesis, 1, {
+    senderIdentityKey,
+    derivationPrefix,
+    derivationSuffix
   })
   const point = { chain: selected, txid: genesis.id('hex'), outputIndex: 0 },
     sellerKey = application?.sellerKey ?? new PrivateKey(41),

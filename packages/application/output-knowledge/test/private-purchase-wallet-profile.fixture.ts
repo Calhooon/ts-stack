@@ -396,16 +396,10 @@ export async function nativeProfilePurchaseWalletFixture(
     .unlock(new PrivateKey(fixture.testActors.funding.scalar))
     .sign(active, 1)
   preparedActivation.assertFinalLayout(active)
-  await native.native.wallet.internalizeAction({
-    tx: genesis.toAtomicBEEF(),
-    outputs: [
-      {
-        outputIndex: 2,
-        protocol: 'wallet payment',
-        paymentRemittance: { senderIdentityKey, derivationPrefix, derivationSuffix }
-      }
-    ],
-    description: 'Disclosed synthetic current-profile purchase funding'
+  await native.native.creditFunding(genesis, 2, {
+    senderIdentityKey,
+    derivationPrefix,
+    derivationSuffix
   })
   const point = { chain: selected, txid: genesis.id('hex'), outputIndex: 0 },
     sellerKey = application?.sellerKey ?? new PrivateKey(fixture.testActors.seller.scalar),

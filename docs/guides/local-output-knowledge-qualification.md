@@ -37,6 +37,14 @@ rebuild only audited tools. Keep browser, native, mobile, platform, packed
 consumer, coverage, conformance and documentation evidence explicit: one runtime
 or a pure controller test does not establish another profile's result.
 
+Native synthetic funding must use the installed durable local funding controller
+when its purpose is local custody without network publication. Ordinary BRC-100
+internalization publishes unmined payments under current upstream wallet behavior.
+The reference fixtures retain that production behavior and their broadcast-refusal
+guards; they bind each fixture payment to one durable operation, verify its actual
+Script/SPV evidence and assert the persisted ownership receipt independently of
+publication. This is isolated synthetic evidence, not a real-chain funding claim.
+
 ## Bind the complete local mutation campaign
 
 The additive local adapter reuses the existing canonical target, partition,
