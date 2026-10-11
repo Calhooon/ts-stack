@@ -6413,7 +6413,10 @@ function currentWalletMutationTargets(repositoryRoot) {
   // the complete controller bridge in every current target that selects them;
   // the original target definitions and all case/resource controls stay intact.
   for (const target of Object.values(targets)) {
-    const cases = target.runnerOptions?.jest?.config?.testMatch ?? []
+    const cases = [
+      ...(target.runnerOptions?.jest?.config?.testMatch ?? []),
+      ...(target.componentTestUniverse ?? [])
+    ]
     if (
       !cases.some(
         path =>

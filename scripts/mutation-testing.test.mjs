@@ -627,3 +627,22 @@ test('native component bridge delegates all original browser cases without repla
   assert.match(wrapper, /completeCatalogueRun\)\.toBe\(false\)/)
   assert.match(wrapper, /processTreeQualified\)\.toBe\(false\)/)
 })
+
+test('narrow execution retains the original native controller inputs of the broader component universe', () => {
+  const id = 'wallet-current-brc38-import-merge-checkpoint-node'
+  const target = buildMutationTargets(REPOSITORY_ROOT)[id]
+  const original = 'src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts'
+  assert.ok(target.componentTestUniverse.includes(original))
+  assert.ok(!target.runnerOptions.jest.config.testMatch.includes('<rootDir>/' + original))
+  for (const file of [
+    'client/test/native-browser-driver.cjs',
+    'client/test/native-browser-session.cjs',
+    'client/test/portable-program-browser.cjs'
+  ]) {
+    assert.ok(target.additionalInputs.includes(file))
+    assert.deepEqual(
+      selectAffectedMutationTargets({ [id]: target }, [target.packageDirectory + '/' + file]),
+      [id]
+    )
+  }
+})
