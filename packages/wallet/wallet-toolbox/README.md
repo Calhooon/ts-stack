@@ -5173,3 +5173,14 @@ hash and plan hash. Missing, stale, duplicated, skipped or altered evidence fail
 These source changes do not yet qualify the full18 cases or the complete system;
 the separate original21 composed cases and six real-UTC expiry cases remain
 mandatory, and mutation inventories and scoring gates are unchanged.
+
+Mutation targets retain both complete native functional files as explicit
+`requiredFunctionalTests` affected inputs, while their baselines execute the
+remaining genuine component suites and original registered properties. Six
+one-hour expiry waits cannot be repeated inside a hosted mutation baseline.
+The independent required CI lanes preserve all original21 composed and18 pair
+cases and verify the complete actual report union at the current head. Canonical
+mutant ranges, minimum300 property runs, global score ratchets and zero
+uncovered/invalid/unexecuted gates are unchanged. Coverage gaps remain failures
+that require meaningful component tests; this source routing is not a claim
+that the mutation program or full system has passed.

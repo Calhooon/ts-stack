@@ -467,3 +467,53 @@ test('Stryker runs cannot append per-mutant test reports to the job summary', ()
   assert.equal(environment.PATH, '/bin')
   assert.equal(environment.TS_STACK_MUTATION_TARGET, 'one')
 })
+
+test('full native functional files retain affected-target ownership outside mutation baselines', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)
+  const files = [
+    'src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts',
+    'src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts'
+  ]
+  const routed = Object.entries(canonical).filter(
+    ([, target]) => target.requiredFunctionalTests?.length
+  )
+  assert.ok(routed.length >= 19)
+  for (const [id, target] of routed) {
+    assert.equal(target.packageDirectory, 'packages/wallet/wallet-toolbox')
+    const cases = target.runnerOptions.jest.config.testMatch
+    assert.ok(cases.length > 0)
+    assert.ok(cases.every(file => !files.some(original => file === '<rootDir>/' + original)))
+    assert.ok(
+      cases.includes('<rootDir>/' + target.propertyTest.slice(target.packageDirectory.length + 1))
+    )
+    for (const file of target.requiredFunctionalTests) {
+      assert.ok(files.includes(file))
+      assert.ok(
+        selectAffectedMutationTargets(canonical, [target.packageDirectory + '/' + file]).includes(
+          id
+        )
+      )
+    }
+  }
+  const precise = {
+    selected: {
+      packageDirectory: 'packages/example',
+      mutate: ['src/component.ts'],
+      requiredFunctionalTests: ['test/full.test.ts'],
+      runnerOptions: { jest: { config: { testMatch: ['<rootDir>/test/component.test.ts'] } } }
+    },
+    other: {
+      packageDirectory: 'packages/other',
+      mutate: ['src/component.ts'],
+      requiredFunctionalTests: ['test/full.test.ts'],
+      runnerOptions: { jest: { config: { testMatch: ['<rootDir>/test/component.test.ts'] } } }
+    }
+  }
+  assert.deepEqual(selectAffectedMutationTargets(precise, ['packages/example/test/full.test.ts']), [
+    'selected'
+  ])
+  assert.deepEqual(
+    selectAffectedMutationTargets(precise, ['packages/example/test/full.test.ts.extra']),
+    []
+  )
+})

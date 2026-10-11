@@ -17,12 +17,34 @@ function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker
   return `${filePath}:${startIndex + 1}-${endIndex}`
 }
 
+// The original full native functional cases have mandatory exact-head CI
+// lanes and receipt-union gates. Six real expiry waits alone take at least6h;
+// repeating these complete files in a mutation baseline cannot fit a hosted
+// job. Component tests must still cover every canonical mutant, with the same
+// global score and zero uncovered/invalid/unexecuted gates. Retain the full
+// functional files as affected inputs, so this routing cannot hide changes.
+const requiredNativeFunctionalTests = new Set([
+  '<rootDir>/src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts',
+  '<rootDir>/src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts'
+])
+
 function jestTarget(
   configFile,
   testMatch,
   { esm = false, config = {}, findRelated = false, buildCommand, maxTestRunnerReuse } = {}
 ) {
+  const functionalTests = testMatch?.filter(file => requiredNativeFunctionalTests.has(file)) ?? []
+  const componentTests = testMatch?.filter(file => !requiredNativeFunctionalTests.has(file))
+  if (functionalTests.length !== 0 && componentTests.length === 0)
+    throw new Error(
+      'Mutation target requires genuine component tests in addition to functional lanes'
+    )
   return {
+    ...(functionalTests.length === 0
+      ? {}
+      : {
+          requiredFunctionalTests: functionalTests.map(file => file.replace(/^<rootDir>\//, ''))
+        }),
     testRunner: 'jest',
     runnerOptions: {
       ...(buildCommand ? { buildCommand } : {}),
@@ -36,7 +58,7 @@ function jestTarget(
           : {
               config: {
                 ...config,
-                testMatch
+                testMatch: componentTests
               }
             })
       },

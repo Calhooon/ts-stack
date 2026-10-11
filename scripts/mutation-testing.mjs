@@ -73,7 +73,10 @@ function targetInputPatterns(target) {
   for (const mutate of target.mutate ?? []) {
     patterns.push(`${packageDirectory}/${mutate.replace(/:\d+(?:-\d+)?$/, '')}`)
   }
-  for (const input of target.additionalInputs ?? []) {
+  for (const input of [
+    ...(target.additionalInputs ?? []),
+    ...(target.requiredFunctionalTests ?? [])
+  ]) {
     patterns.push(`${packageDirectory}/${normalized(input)}`)
   }
   if (typeof target.propertyTest === 'string') patterns.push(normalized(target.propertyTest))

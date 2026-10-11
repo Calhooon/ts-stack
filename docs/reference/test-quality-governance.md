@@ -318,3 +318,21 @@ Before running a governed non-PR suite, read its policy prerequisites. After the
 run, perform its cleanup and attach evidence to the tracker or release record.
 No private credential, production wallet data, or secret output belongs in CI
 logs.
+
+## Required native functional lanes and mutation admission
+
+The original composed recovery and native snapshot pair files now execute in
+mandatory wallet CI lanes. Each lane retains the complete original case-name
+inventory; the required aggregate gate checks actual Jest bytes, exact source
+identity and the complete cohort union. The composed file still includes all21
+original cases and six real-UTC expiry waits; the pair file still includes all18
+original independent-profile cases. These files are not mutation baselines:
+the expiry waits alone exceed a hosted job, before any mutant runs. Targets
+retain them as `requiredFunctionalTests` affected inputs alongside their genuine
+component test selection. A functional test change still selects its owning
+mutation targets. All canonical implementation ranges, registered property
+suites, minimum300 runs, seeds, global score ratchets and zero uncovered,
+invalid or unexecuted mutant gates remain unchanged. No functional pass can
+replace mutation evidence, and no mutation pass qualifies the full system.
+Current routing is source implementation; full functional and mutation execution
+must independently pass at the same head before a completion claim.
