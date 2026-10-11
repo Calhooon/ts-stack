@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
+import * as nativeRouting from './wallet-composed-native-ci.mjs'
 import {
   composedNativeTestFile,
   composedNativeCohorts,
@@ -48,8 +49,8 @@ test('routing preserves all21 original cases including both identical completed 
   assert.equal(composedNativeCaseNames.length, 21)
   assert.equal(composedNativeCohorts.length, 20)
   const matrix = walletCoverageMatrix().include
-  assert.equal(matrix.length, 44)
-  assert.equal(new Set(matrix.map(value => value.id)).size, 44)
+  assert.equal(matrix.length, 50)
+  assert.equal(new Set(matrix.map(value => value.id)).size, 50)
   assert.deepEqual(
     matrix.filter(value => value.shard).map(value => value.shard),
     [1, 2, 3, 4]
@@ -64,6 +65,29 @@ test('routing preserves all21 original cases including both identical completed 
     assert.ok(names.every(value => value === cohort.name))
     assert.equal(new RegExp(cohort.pattern).test(cohort.name + ' changed'), false)
     assert.equal(validateComposedNativeReport(report(cohort), cohort.id).passedCases, cohort.cases)
+  }
+})
+
+test('all6 original native merge contracts have disjoint mandatory lanes and bounded allowances', () => {
+  assert.equal(nativeRouting.nativeMergeCohorts?.length, 6)
+  assert.equal(nativeRouting.nativeMergeCaseNames.length, 6)
+  assert.equal(new Set(nativeRouting.nativeMergeCaseNames).size, 6)
+  const selected = walletCoverageMatrix().include.filter(value => value.native_merge_cohort)
+  assert.deepEqual(
+    selected.map(value => value.native_merge_cohort),
+    nativeRouting.nativeMergeCohorts.map(value => value.id)
+  )
+  for (const cohort of nativeRouting.nativeMergeCohorts) {
+    assert.deepEqual(
+      nativeRouting.nativeMergeCaseNames.filter(name => new RegExp(cohort.pattern).test(name)),
+      [cohort.name]
+    )
+    assert.equal(new RegExp(cohort.pattern).test(cohort.name + ' changed'), false)
+    assert.equal(cohort.minutes, cohort.id.startsWith('proof-') ? 40 : 90)
+    assert.equal(
+      selected.find(value => value.native_merge_cohort === cohort.id).native_merge_minutes,
+      cohort.minutes
+    )
   }
 })
 
@@ -104,6 +128,15 @@ for (const family of [
     report: validateNativePairReport,
     receipts: validateNativePairReceipts,
     bytes: validateNativePairReceiptReport
+  },
+  {
+    label: 'merge',
+    file: nativeRouting.nativeMergeTestFile,
+    cohorts: nativeRouting.nativeMergeCohorts,
+    names: nativeRouting.nativeMergeCaseNames,
+    report: nativeRouting.validateNativeMergeReport,
+    receipts: nativeRouting.validateNativeMergeReceipts,
+    bytes: nativeRouting.validateNativeMergeReceiptReport
   }
 ]) {
   const composedNativeTestFile = family.file

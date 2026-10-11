@@ -18,10 +18,13 @@ The finite implementation inventory covers all 24 required behavior families,
 including #542 and #543, with no known missing production components or wiring.
 Integration, consumer entry points and delivery/rollback documentation are
 present. All eleven whole-program acceptance rows remain open. The complete
-native foreground-refold contract passes; the committed-ACK-loss/reopen contract
-still needs fresh full validation after correcting numeric-key ordering in its
-independent expected-JSON helper. This checkpoint does not establish merge or
-production readiness.
+native foreground-refold contract passes; the committed-ACK-loss/reopen/refold
+contract now also passes with both complete 47-family comparisons and consumed-ID
+preservation after correcting numeric-key ordering in its independent expected
+JSON helper. All six native merge contracts have separate mandatory CI coverage
+lanes and complete original-report verification. Their combined measured runtime
+cannot fit one ordinary 40-minute shard. This checkpoint does not establish merge
+or production readiness.
 
 Core, client and mobile source compiler checks pass. The original core composite
 build, fixed C/CJS source-asset copier and strict declaration consumer also pass,

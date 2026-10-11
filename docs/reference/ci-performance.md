@@ -375,3 +375,22 @@ All prior allowances and the 45-minute default remain; source/test unions,
 property settings, workers and the original global gates are unchanged. Record
 actual hosted setup/execution overhead before drawing performance conclusions.
 This is an execution allowance, not a measured speedup or full #544 acceptance.
+
+### Complete native merge coverage lanes
+
+The six original `Brc38NativeMergeContractsNode.test.ts` cases run in six
+mandatory wallet coverage lanes. Three complete runner/refold/committed-ACK-loss
+cases measured 49.9 minutes together on isolated Linux before native delivery,
+proof cases and coverage, exceeding a single ordinary 40-minute file shard.
+Each full one-hour case now has a bounded 90-minute job allowance, including its
+original 3,630-second Jest bound, two existing 600-second native delivery steps
+and installation/reporting/cleanup headroom. Proof lanes retain 40 minutes.
+Existing ordinary, HTTP, monitor, 21 composed and 18 native-pair cases, their
+145/265/40-minute bounds and three wallet parallel slots are unchanged.
+
+Each lane retains all six original names in its raw Jest report. The required
+aggregate gate verifies their complete union and exact source/plan/head identity,
+including raw report hashes; missing, duplicate, skipped, failed or stale cases
+cannot satisfy it. This is complete scheduling with finite containment, not a
+measured speedup, production latency promise or permission to omit local checks.
+Whole-system and exact-head hosted qualification remain required.

@@ -1020,7 +1020,8 @@ jobs:
     # Keep both original COMPLETED cases together, each with its finite bound.
     # One pair case fits the existing40m limit:660s plus two600s delivery steps.
     # Include bounded native provisioning and dependency installation overhead.
-    timeout-minutes: ${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || 40 }}
+    # Full merge contracts each keep their own one-hour admission; proof lanes40m.
+    timeout-minutes: ${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || matrix.native_merge_minutes || 40 }}
     env:
       NODE_OPTIONS: --max-old-space-size=1536
     permissions:
@@ -1109,6 +1110,7 @@ jobs:
           SYNC_LATENCY: ${{ matrix.latency }}
           NATIVE_COHORT: ${{ matrix.native_cohort }}
           NATIVE_PAIR_COHORT: ${{ matrix.native_pair_cohort }}
+          NATIVE_MERGE_COHORT: ${{ matrix.native_merge_cohort }}
           POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # The two real-HTTP latency scenarios run in independent processes;
@@ -1126,12 +1128,18 @@ jobs:
               --runTestsByPath src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts
               --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs pair-pattern "$NATIVE_PAIR_COHORT")"
               --json --outputFile="$GITHUB_WORKSPACE/native-pair-result.json")
+          elif [ -n "$NATIVE_MERGE_COHORT" ]; then
+            # Retain all six original names and verify every lane in the union.
+            args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
+              --runTestsByPath src/storage/portable/Brc38NativeMergeContractsNode.test.ts
+              --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs merge-pattern "$NATIVE_MERGE_COHORT")"
+              --json --outputFile="$GITHUB_WORKSPACE/native-merge-result.json")
           elif [ -n "$WALLET_SHARD" ]; then
             export RUNPOSTGRES=1
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
@@ -1149,6 +1157,9 @@ jobs:
           elif [ -n "$NATIVE_PAIR_COHORT" ]; then
             node scripts/wallet-composed-native-ci.mjs pair-capture "$NATIVE_PAIR_COHORT" \
               native-pair-result.json ".coverage-output/${{ matrix.id }}.native-pair.json"
+          elif [ -n "$NATIVE_MERGE_COHORT" ]; then
+            node scripts/wallet-composed-native-ci.mjs merge-capture "$NATIVE_MERGE_COHORT" \
+              native-merge-result.json ".coverage-output/${{ matrix.id }}.native-merge.json"
           fi
           cp packages/wallet/wallet-toolbox/coverage/${{ matrix.id }}/lcov.info \
             .coverage-output/wallet-${{ matrix.id }}.lcov.info
@@ -1396,6 +1407,9 @@ jobs:
       - name: Verify all original native pair cases at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-composed-native-ci.mjs pair-verify .coverage-artifacts
+      - name: Verify all original native merge contracts at this exact head
+        if: needs.prepare.outputs.wallet == 'true'
+        run: node scripts/wallet-composed-native-ci.mjs merge-verify .coverage-artifacts
       - name: Compose Codecov inputs
         id: cov
         run: |

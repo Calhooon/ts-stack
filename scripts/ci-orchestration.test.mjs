@@ -433,6 +433,21 @@ function nativeWalletFixtureSteps() {
   return { wallet, steps }
 }
 
+test('actual wallet timeout expression preserves existing lanes and bounds every original merge case', () => {
+  const { wallet } = nativeWalletFixtureSteps()
+  const expression = wallet.match(/^ {4}timeout-minutes: \$\{\{ (.*?) \}\}$/m)[1]
+  const evaluate = new Function('matrix', `return (${expression})`)
+  for (const lane of walletCoverageMatrix().include) {
+    // GitHub treats absent matrix keys as empty values.
+    const minutes = evaluate({ native_cohort: '', native_merge_minutes: 0, ...lane })
+    let expected = 40
+    if (lane.native_cohort) expected = lane.native_cohort === 'completed' ? 265 : 145
+    else if (lane.native_merge_cohort && !lane.native_merge_cohort.startsWith('proof-'))
+      expected = 90
+    assert.equal(minutes, expected, lane.id)
+  }
+})
+
 function onlyFixtureStep(steps, command) {
   const matches = steps.filter(step => step.split('\n').includes(`        run: ${command}`))
   assert.equal(matches.length, 1)
@@ -447,7 +462,7 @@ function assertNativeWalletJob(wallet) {
   assert.match(wallet, /^ {4}needs: prepare$/m)
   assert.match(
     wallet,
-    /^ {4}timeout-minutes: \$\{\{ matrix\.native_cohort == 'completed' && 265 \|\| matrix\.native_cohort != '' && 145 \|\| 40 \}\}$/m
+    /^ {4}timeout-minutes: \$\{\{ matrix\.native_cohort == 'completed' && 265 \|\| matrix\.native_cohort != '' && 145 \|\| matrix\.native_merge_minutes \|\| 40 \}\}$/m
   )
   assert.match(wallet, /^ {4}runs-on: ubuntu-24\.04-arm$/m)
   assert.match(wallet, /^ {4}permissions:\n {6}contents: read\n {4}strategy:/m)
@@ -461,6 +476,17 @@ function assertNativeWalletJob(wallet) {
   assert.match(wallet, /wallet-composed-native-ci\.mjs capture/)
   assert.match(wallet, /wallet-composed-native-ci\.mjs pair-capture/)
   assert.match(wallet, /wallet-composed-native-ci\.mjs pair-pattern/)
+  assert.match(wallet, /wallet-composed-native-ci\.mjs merge-capture/)
+  assert.match(wallet, /wallet-composed-native-ci\.mjs merge-pattern/)
+  assert.match(
+    wallet,
+    /--runTestsByPath src\/storage\/portable\/Brc38NativeMergeContractsNode\.test\.ts/
+  )
+  assert.match(
+    wallet,
+    /testPathIgnorePatterns=.*src\/storage\/portable\/Brc38NativeMergeContractsNode\.test\.ts/
+  )
+  assert.match(wallet, /NATIVE_MERGE_COHORT: \$\{\{ matrix\.native_merge_cohort \}\}/)
   assert.match(
     wallet,
     /--runTestsByPath src\/storage\/snapshot\/NativeSnapshotMergeContractsNode\.test\.ts/
@@ -475,6 +501,7 @@ function assertNativeWalletJob(wallet) {
   assert.match(workflow, /wallet-composed-native-ci\.mjs matrix/)
   assert.match(workflow, /wallet-composed-native-ci\.mjs verify \.coverage-artifacts/)
   assert.match(workflow, /wallet-composed-native-ci\.mjs pair-verify \.coverage-artifacts/)
+  assert.match(workflow, /wallet-composed-native-ci\.mjs merge-verify \.coverage-artifacts/)
   assert.match(
     wallet,
     /^ {6}postgres:\n {8}image: postgres@sha256:d5daad18926b71c3d663f358af0aea798670cb79fb550c106d19662a9d1627ef(?: #[^\n]*)?$/m

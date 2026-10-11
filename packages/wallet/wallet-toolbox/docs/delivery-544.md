@@ -576,3 +576,47 @@ all-47 inventory, original data, mutation, repeated-result, policy-resume and
 reopen assertions remain. This corrects a phase-inappropriate probe, not a
 production refold change. The corrected selection and committed-ACK-loss case
 still require actual qualification; the failed probe receipt is retained.
+
+### Complete recovery evidence and native merge CI routing
+
+The original committed-ACK-loss/reopen/refold case passes on source422 in
+1,041.285 seconds, with no diagnostic observer or assertion override. Both
+independent complete 47-family metadata/full-byte inventories pass, together
+with real committed response loss, reservation reopen, source mutation, immutable
+historical journals and consumed incoming-ID preservation. The previous failed
+comparison and diagnostic remain retained. The independent expected JSON
+canonicalizer correction is therefore exercised by the original full workflow;
+no production runtime change follows from this fixture correction. Peak memory
+was 774,238,208 bytes, with 26 PIDs and zero OOM or CPU throttling. These are
+isolated synthetic contract measurements, not production sizing or latency SLOs.
+
+The three full native merge cases measured 783.690, 1,166.027 and 1,041.285
+seconds: 49.9 minutes before proof regressions, installation, native delivery and
+coverage. Keeping the complete file in one ordinary 40-minute CI shard cannot
+accommodate that measured work. Each of the six original cases now has its own
+mandatory coverage lane. Every report retains the complete six-name inventory,
+with its selected case passing and the other five pending. Aggregate validation
+requires all six distinct receipts, rereads their original raw Jest reports and
+binds the exact head, test source and routing plan. Missing, duplicate, changed,
+failed, skipped or stale evidence fails the gate. No original case, data, assertion,
+expiry or property strength changes.
+
+Full one-hour cases have a 90-minute job bound: their original 3,630-second Jest
+allowance, the existing two 600-second delivery steps, and bounded installation,
+coverage/reporting and cleanup headroom. The three proof lanes retain 40 minutes.
+All previous ordinary/HTTP/monitor lanes, 21 composed cases, 18 native pairs,
+145/265-minute composed allowances and three parallel wallet slots remain.
+This schedules complete work; it does not demonstrate a speedup or full-system
+qualification. Hosted execution overhead and whole-program cost remain to be
+measured. No production API, wire, persistence, native binary, default resource
+limit or consumer migration changes. The authorized 30 percent browser allowance
+is reviewed after the full goal is achieved.
+
+The finite feature inventory is integrated and documented with no known missing
+production components. Later qualification must still cover the complete
+21-customer/18-pair/six real-UTC recovery matrix, faults and concurrency, original
+300-case properties, all 97 mutation targets, provider/HTTP/browser/mobile and
+portable consumers, actual supported native hosts, workload/performance/headroom,
+and exact-head CI/analyzers/review. All eleven acceptance rows remain open.
+PR569 stays open, draft and unmerged; no package publication or deployment is
+established by this implementation checkpoint.

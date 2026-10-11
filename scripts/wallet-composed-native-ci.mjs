@@ -103,6 +103,36 @@ export const nativePairCaseNames = Object.freeze(
   nativePairCohorts.map(cohort => cohort.name).sort()
 )
 
+export const nativeMergeTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeMergeContractsNode.test.ts'
+
+// The three full cases alone measured 49.9 minutes, excluding installation,
+// delivery and proof regressions. They cannot share an ordinary40m shard.
+// One fresh one-hour case plus the existing two600s native delivery steps,
+// installation, coverage and cleanup fits a bounded90m lane. Proof cases keep40m.
+export const nativeMergeCohorts = Object.freeze(
+  [
+    ...[false, true].map(refold => ({
+      id: refold ? 'runner-refold' : 'runner',
+      name: `complete native runner drains scopes and independently compares all47 rows; refold=${refold}`,
+      minutes: 90
+    })),
+    {
+      id: 'lost-ack-refold',
+      name: 'actual committed ACK loss reopens the same reservation and refolds without reusing incoming IDs',
+      minutes: 90
+    },
+    ...['upper', 'lower', 'mixed'].map(spelling => ({
+      id: `proof-${spelling}`,
+      name: `actual occupied proof merge preserves the exact ${spelling} transaction identity without inserting a duplicate`,
+      minutes: 40
+    }))
+  ].map(value => Object.freeze({ ...value, cases: 1, pattern: `^${escapePattern(value.name)}$` }))
+)
+export const nativeMergeCaseNames = Object.freeze(
+  nativeMergeCohorts.map(cohort => cohort.name).sort()
+)
+
 // COMPLETED has the same original name for live and expired admissions. Keep
 // both in one cohort, with multiplicity two; neither original case is renamed.
 export const composedNativeCohorts = Object.freeze(
@@ -134,6 +164,11 @@ const pairPlan = {
   cohorts: nativePairCohorts,
   names: nativePairCaseNames
 }
+const mergePlan = {
+  testFile: nativeMergeTestFile,
+  cohorts: nativeMergeCohorts,
+  names: nativeMergeCaseNames
+}
 
 export function walletCoverageMatrix() {
   return {
@@ -147,6 +182,11 @@ export function walletCoverageMatrix() {
       ...nativePairCohorts.map(cohort => ({
         id: `native-pair-${cohort.id}`,
         native_pair_cohort: cohort.id
+      })),
+      ...nativeMergeCohorts.map(cohort => ({
+        id: `native-merge-${cohort.id}`,
+        native_merge_cohort: cohort.id,
+        native_merge_minutes: cohort.minutes
       }))
     ]
   }
@@ -232,17 +272,23 @@ function validateNativeReceiptReport(receipt, bytes, plan) {
 }
 export const composedNativeCohort = id => nativeCohort(id, composedPlan)
 export const nativePairCohort = id => nativeCohort(id, pairPlan)
+export const nativeMergeCohort = id => nativeCohort(id, mergePlan)
 export const validateComposedNativeReport = (report, id) =>
   validateNativeReport(report, id, composedPlan)
 export const validateNativePairReport = (report, id) => validateNativeReport(report, id, pairPlan)
+export const validateNativeMergeReport = (report, id) => validateNativeReport(report, id, mergePlan)
 export const validateComposedNativeReceipts = (receipts, identity) =>
   validateNativeReceipts(receipts, identity, composedPlan)
 export const validateNativePairReceipts = (receipts, identity) =>
   validateNativeReceipts(receipts, identity, pairPlan)
+export const validateNativeMergeReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, mergePlan)
 export const validateComposedNativeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, composedPlan)
 export const validateNativePairReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, pairPlan)
+export const validateNativeMergeReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, mergePlan)
 function identity(root, plan) {
   return {
     head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
@@ -258,15 +304,32 @@ function receiptFiles(directory, suffix) {
   })
 }
 
+function commandFamily(command) {
+  if (command?.startsWith('pair-'))
+    return { prefix: 'pair-', plan: pairPlan, suffix: '.native-pair.json', label: 'native pair' }
+  if (command?.startsWith('merge-'))
+    return {
+      prefix: 'merge-',
+      plan: mergePlan,
+      suffix: '.native-merge.json',
+      label: 'native merge'
+    }
+  return {
+    prefix: '',
+    plan: composedPlan,
+    suffix: '.composed-native.json',
+    label: 'composed native'
+  }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     const [requestedCommand, ...args] = process.argv.slice(2)
-    const pair = requestedCommand?.startsWith('pair-') === true
-    const command = pair ? requestedCommand.slice(5) : requestedCommand
-    const plan = pair ? pairPlan : composedPlan
-    const suffix = pair ? '.native-pair.json' : '.composed-native.json'
+    const family = commandFamily(requestedCommand)
+    const command = requestedCommand?.slice(family.prefix.length)
+    const { plan, suffix } = family
     const root = fileURLToPath(new URL('..', import.meta.url))
-    if (command === 'matrix' && !pair && args.length === 0) {
+    if (command === 'matrix' && family.prefix === '' && args.length === 0) {
       console.log(JSON.stringify(walletCoverageMatrix()))
     } else if (command === 'pattern' && args.length === 1) {
       console.log(nativeCohort(args[0], plan).pattern)
@@ -291,11 +354,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
         return receipt
       })
       console.log(
-        `All ${validateNativeReceipts(receipts, identity(root, plan), plan)} original ${pair ? 'native pair' : 'composed native'} cases passed`
+        `All ${validateNativeReceipts(receipts, identity(root, plan), plan)} original ${family.label} cases passed`
       )
     } else
       throw new Error(
-        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs'
+        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs or merge- for native merge contracts'
       )
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))
