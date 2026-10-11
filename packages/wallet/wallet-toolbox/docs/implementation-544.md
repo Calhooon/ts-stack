@@ -2420,7 +2420,6 @@ remain required. No public API, wire format, schema, existing admission, native
 resource formula or browser limit changes. Existing unreleased minor-version
 and host-specific migration requirements still apply.
 
-
 ### Closed-facade copy deadline
 
 The full occupied customer workflow passes final native comparison and its
