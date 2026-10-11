@@ -2212,3 +2212,18 @@ actual-field accounting, explicitly capped at64 fields. Every actual UTF-8
 conversion keeps its original512-plus16-times-byte precharge. Retained copies,
 validation and original65,536-byte admission remain; full inventory/runtime
 qualification is not inferred from these source corrections.
+
+### Separate measured128KiB initial workload profile
+
+The unchanged64KiB reference still refuses the output-table page: its next
+retained metadata clone needs8272 bytes with4792 available, after temporary
+scratch has drained. A separate128KiB profile now selects that allowance before
+authentication, native handoff and restore; it never renews a saved admission.
+It uses the same complete13-table fixture, data, mappings, exact bytes, proof,
+cleanup and transfer widths64/256/1024. The independent oracle checks the exact
+initial128KiB allocation throughout. The original64KiB positive reference and
+its independent exact64KiB oracle remain unchanged and unqualified. Small-budget
+refusal/cancellation/concurrency controls remain. The new measured profile has
+the same original180-second source lifetime and an enclosing180-second test
+allowance; old64KiB tests retain their original30-second allowance. This is a
+sizing experiment, not a default/admission policy change or qualification claim.

@@ -26,6 +26,40 @@ export async function verifyOriginal64KiBNativeInventoryOracle(
   }>,
   assertCurrent: () => void
 ): Promise<void> {
+  return await verifyInitialNativeInventoryOracle(k, admission, runtime, policy, selected, assertCurrent, 65536)
+}
+
+/** Separate measured128KiB initial admission. Original64KiB reference remains exact. */
+export async function verifyMeasured128KiBNativeInventoryOracle(
+  k: Knex.Transaction,
+  admission: Readonly<Brc38ImportJournalAdmission>,
+  runtime: 'private' | 'published-native' | 'published-copy',
+  policy: Brc38StructuredNativeFieldInventoryPolicy,
+  selected: Readonly<{
+    tableCounts: Readonly<Record<Brc38StageTable, number>>
+    rows: number
+    mappedIds: number
+    binaryBytes: number
+  }>,
+  assertCurrent: () => void
+): Promise<void> {
+  return await verifyInitialNativeInventoryOracle(k, admission, runtime, policy, selected, assertCurrent, 131072)
+}
+
+async function verifyInitialNativeInventoryOracle(
+  k: Knex.Transaction,
+  admission: Readonly<Brc38ImportJournalAdmission>,
+  runtime: 'private' | 'published-native' | 'published-copy',
+  policy: Brc38StructuredNativeFieldInventoryPolicy,
+  selected: Readonly<{
+    tableCounts: Readonly<Record<Brc38StageTable, number>>
+    rows: number
+    mappedIds: number
+    binaryBytes: number
+  }>,
+  assertCurrent: () => void,
+  originalAllocationBytes: 65536 | 131072
+): Promise<void> {
   requireBrc38StructuredProjectionRead(k)
   const limits = JSON.parse(admission.originalLimitsJson) as unknown,
     expected = Object.freeze({
@@ -40,7 +74,7 @@ export async function verifyOriginal64KiBNativeInventoryOracle(
   if (
     !Array.isArray(limits) ||
     limits.length !== 6 ||
-    limits[4] !== 65536 ||
+    limits[4] !== originalAllocationBytes ||
     window === undefined ||
     !Number.isSafeInteger(window) ||
     window < 64 ||
@@ -53,7 +87,7 @@ export async function verifyOriginal64KiBNativeInventoryOracle(
     ) ||
     brc38ImportTableOrder.reduce((total, table) => total + expected.tableCounts[table], 1) !== expected.rows
   )
-    throw new RangeError('Independent all13 original 64KiB fixture and explicit transfer window required')
+    throw new RangeError('Independent all13 original allocation and explicit transfer window required')
   let transfers = 0
   const observe = (response: unknown): void => {
     for (const row of Array.isArray(response) ? response : [response]) {
@@ -90,7 +124,7 @@ export async function verifyOriginal64KiBNativeInventoryOracle(
       const count = (await k('table_counts').where({ tableName: table }).first('rows')) as { rows: unknown } | undefined
       if (count?.rows !== expected.tableCounts[table]) throw new Error('Independent all13 source fixture count differs')
     }
-    if (JSON.parse(admission.originalLimitsJson)[4] !== 65536)
+    if (JSON.parse(admission.originalLimitsJson)[4] !== originalAllocationBytes)
       throw new Error('Original inventory allocation was renewed')
     assertCurrent()
   } finally {
