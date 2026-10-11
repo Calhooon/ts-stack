@@ -2408,3 +2408,12 @@ negative controls. The complete customer workflow exposed this omission after
 all 14 rows committed; it did not complete publication, restart or repeat import.
 This correction changes no resource limit or admission. Fresh native artifacts,
 the regression and the complete customer workflow require actual qualification.
+
+The actual corrected Linux ARM candidate now passes all thirteen original native
+contracts. Its immutable pin is 1,353,552 bytes with SHA-256
+`295ae7b2511b7565dd49ed352ba9e8de5cf6b924c89cb021e1d9ec5bcac929dd`.
+The previous executable independently fails the new drained-lifecycle regression
+at the observed progress update. Corrected SDK regression and complete customer
+qualification are pending. The existing Linux x64 executable predates this C
+correction and requires a fresh build and qualification before replacement.
+No existing admission, runtime resource formula or browser limit changes.
