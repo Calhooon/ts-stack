@@ -2599,3 +2599,28 @@ The selection changes no production resource ceiling, original customer data,
 existing fixture defaults, or already-admitted expiry. Every actual UTC and
 monotonic expiry check, finite operation guard, cleanup owner and complete proof
 byte/metadata assertion remains. These test allowances are not production SLOs.
+
+### Native runner qualification allowances
+
+The three original runner/refold/lost-ACK contract cases now select fresh
+one-hour fixture admissions and the existing 16 KiB native read allowance,
+with a 30-second outer runner cleanup margin. The old source-only 30-second
+runner timeout and default three-minute fixture could not accommodate genuine
+all-47 candidate preparation: measured partial proof cases took 360.523–361.225
+seconds, and the unchanged full customer import/write/restart/repeat case took
+2,364.459 seconds. These cases also perform repeated independent full inventories
+and real refolds/reopens. All original test data, operations, assertions,
+4096-operation guards, policy-resume checks, actual UTC/monotonic expiry and
+cleanup owners remain. No expired packet is renewed. Production ceilings,
+defaults and the original customer case are unchanged. These fresh contract
+selections remain unqualified until their actual runs; one-hour admissions are
+test containment, not production latency promises. Worst-case sequential
+qualification can consume three hours plus bounded setup/cleanup; actual cost,
+including failed runs and agent/operator effort, must be recorded.
+
+The preceding source419 proof-spelling regressions all passed on Linux ARM,
+and the unchanged original customer case completed both imports, its later
+write and current restart recovery, all 47 semantic/auxiliary/provenance checks,
+and eight independent complete checkpoint reconstructions. Its other 20
+customer scenarios and the broader fault/platform/performance and exact-head
+qualification remain open. Passing one workflow does not prove those gates.

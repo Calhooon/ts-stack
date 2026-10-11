@@ -15,6 +15,12 @@ import { reserveBrc38NativeIncomingIds } from './Brc38NativeIncomingIdReservatio
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Full all47 preparation measured minutes and the unchanged customer workflow
+// took 39.4 minutes. These three cases admit fresh instances under the existing
+// one-hour fixture and 16 KiB read selection, with 30s outer cleanup headroom.
+// Original operations/oracles and actual expiry remain; no packet is renewed.
+// These test allowances are not production latency promises.
+
 /** Source-only genuine runner wiring. The declared graph contains all47
  * nonempty local families, an occupied incoming transaction, all13 archive
  * families and inert original provenance. These cases remain UNRUN. */
@@ -132,6 +138,8 @@ test.each([false, true])(
         }
       },
       {
+        lifetimeMs: 3600000,
+        maximumNativeReadBytes: 16384,
         customize: (_source, incoming) => {
           incoming.tables.transactions[0].description = description
           incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
@@ -139,7 +147,7 @@ test.each([false, true])(
       }
     )
   },
-  30000
+  3630000
 )
 
 test('actual committed ACK loss reopens the same reservation and refolds without reusing incoming IDs', async () => {
@@ -225,6 +233,8 @@ test('actual committed ACK loss reopens the same reservation and refolds without
       }
     },
     {
+      lifetimeMs: 3600000,
+      maximumNativeReadBytes: 16384,
       customize: (_source, incoming) => {
         const original = incoming.tables.outputBaskets[0]
         incoming.tables.outputBaskets.push({
@@ -237,7 +247,7 @@ test('actual committed ACK loss reopens the same reservation and refolds without
       }
     }
   )
-}, 30000)
+}, 3630000)
 
 // Exercise the real occupied proof page before later families can hide an
 // identity error. The independent preimage includes complete raw/proof bytes.
