@@ -20,6 +20,10 @@ fc.configureGlobal({
   ),
   seed: Number(process.env.FAST_CHECK_SEED ?? process.env.FC_SEED ?? 3242026)
 })
+// The complete 300-run campaign may use its 150-second property allowance;
+// leave another 30 seconds for original physical-owner cleanup. Each import
+// keeps its own original reservation deadline, including authenticated replay.
+const propertyCaseMilliseconds = 180000
 const controls = {
   interruptAfterTimeLimit: 150000,
   markInterruptAsFailure: true,
@@ -82,182 +86,194 @@ async function* partition(bytes: Uint8Array, widths: readonly number[], emptyEve
 }
 
 describe('actual complete authenticated private staging lifecycle', () => {
-  test('generated independent envelopes and partitions preserve all thirteen rows and original charged replay', async () => {
-    const target = await fixture()
-    try {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.record({
-            widths: fc.array(fc.integer({ min: 32, max: 1024 }), { minLength: 1, maxLength: 8 }),
-            emptyEvery: fc.integer({ min: 0, max: 7 }),
-            nfc: fc.boolean(),
-            description: fc.array(fc.constantFrom('x', 'é', '中', '😀', '"', '\\'), {
-              maxLength: 12
-            })
-          }),
-          async generated => {
-            const expected = semanticStageFixture()
-            Object.assign(expected.tables.transactions[0], {
-              description: 'case-' + generated.description.join('')
-            })
-            // Independent array AEAD/Argon2id writer; production streaming reader
-            // authenticates the original supported historical-import envelope.
-            const bytes = await encrypted(expected),
-              selected = authenticatedStageOptions(bytes),
-              before = JSON.stringify(selected)
-            let checkedBeforeAuthentication = false,
-              sourceSettled = false
-            async function* source() {
-              try {
-                yield* partition(bytes, generated.widths, generated.emptyEvery)
-                const owner = target.held.at(-1)!
-                expect(await owner.store.knex('metadata').where({ slot: 1 }).first('state')).toEqual({
-                  state: 'staging'
-                })
-                expect((await target.root.usage()).imports).toBe(1)
-                checkedBeforeAuthentication = true
-              } finally {
-                sourceSettled = true
+  test(
+    'generated independent envelopes and partitions preserve all thirteen rows and original charged replay',
+    async () => {
+      const target = await fixture()
+      try {
+        await fc.assert(
+          fc.asyncProperty(
+            fc.record({
+              widths: fc.array(fc.integer({ min: 32, max: 1024 }), { minLength: 1, maxLength: 8 }),
+              emptyEvery: fc.integer({ min: 0, max: 7 }),
+              nfc: fc.boolean(),
+              description: fc.array(fc.constantFrom('x', 'é', '中', '😀', '"', '\\'), {
+                maxLength: 12
+              })
+            }),
+            async generated => {
+              const expected = semanticStageFixture()
+              Object.assign(expected.tables.transactions[0], {
+                description: 'case-' + generated.description.join('')
+              })
+              // Independent array AEAD/Argon2id writer; production streaming reader
+              // authenticates the original supported historical-import envelope.
+              const bytes = await encrypted(expected),
+                selected = authenticatedStageOptions(bytes),
+                before = JSON.stringify(selected)
+              let checkedBeforeAuthentication = false,
+                sourceSettled = false
+              async function* source() {
+                try {
+                  yield* partition(bytes, generated.widths, generated.emptyEvery)
+                  const owner = target.held.at(-1)!
+                  expect(await owner.store.knex('metadata').where({ slot: 1 }).first('state')).toEqual({
+                    state: 'staging'
+                  })
+                  expect((await target.root.usage()).imports).toBe(1)
+                  checkedBeforeAuthentication = true
+                } finally {
+                  sourceSettled = true
+                }
               }
-            }
-            const value = await stageAuthenticatedBrc39PrivateImport(
-              source(),
-              generated.nfc ? authenticatedStagePassword.normalize('NFC') : authenticatedStagePassword,
-              target.root,
-              selected
-            )
-            expect(checkedBeforeAuthentication && sourceSettled).toBe(true)
-            expect(value.archiveSha256).toBe(selected.binding.archiveSha256)
-            expect(value.fileBytes).toBe(bytes.length)
-            expect(value.plaintextBytes).toBe(Buffer.byteLength(JSON.stringify(expected)))
-            expect(Object.values(value.document.counts)).toEqual(Array(13).fill(1))
-            for (const table of brc38StageTables) {
-              expect(await value.reservation.store.count(table)).toBe(1)
-              expect(await value.reservation.store.row(table, 0)).toEqual(expected.tables[table][0])
-            }
-            const metadata = await value.reservation.store.knex('metadata').where({ slot: 1 }).first()
-            expect(metadata.state).toBe('sealed')
-            expect((await stat(value.reservation.store.directory)).mode & 0o777).toBe(0o700)
-            expect((await stat(join(value.reservation.store.directory, 'stage.sqlite'))).mode & 0o777).toBe(0o600)
-            await value.reservation.store.close()
-            const replay = await stageAuthenticatedBrc39PrivateImport(
-              partition(bytes, [...generated.widths].reverse(), generated.emptyEvery),
-              authenticatedStagePassword,
-              target.root,
-              { ...selected, reservationId: value.reservation.id }
-            )
-            expect(replay.reservation.id).toBe(value.reservation.id)
-            expect(replay.document).toEqual(value.document)
-            expect(replay.reservation.store.limits.expiresAt).toBe(selected.limits.expiresAt)
-            expect(await replay.reservation.store.knex('metadata').where({ slot: 1 }).first()).toEqual(metadata)
-            expect((await target.root.usage()).imports).toBe(1)
-            expect(JSON.stringify(selected)).toBe(before)
-            await target.root.discard(replay.reservation, new Error('completed synthetic generated import'))
-            await target.empty()
-          }
-        ),
-        controls
-      )
-    } finally {
-      await target.close()
-    }
-  }, 30000)
-
-  test('generated ordinary authentication and semantic refusals release physical capacity before rejection', async () => {
-    const target = await fixture(),
-      valid = await encrypted()
-    try {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.constantFrom('tag', 'password', 'digest', 'truncated', 'relation'),
-          fc.integer({ min: 32, max: 1024 }),
-          async (kind, width) => {
-            let bytes: Uint8Array = valid.slice()
-            if (kind === 'relation') {
-              const data = semanticStageFixture()
-              data.tables.outputs[0].transactionId = 999
-              bytes = await encrypted(data)
-            }
-            if (kind === 'tag') bytes[bytes.length - 1] ^= 1
-            if (kind === 'truncated') bytes = bytes.slice(0, -1)
-            const selected = authenticatedStageOptions(bytes)
-            if (kind === 'digest') selected.binding = { ...selected.binding, archiveSha256: 'a'.repeat(64) }
-            let sourceSettled = false
-            async function* source() {
-              try {
-                yield* partition(bytes, [width], 0)
-              } finally {
-                sourceSettled = true
-              }
-            }
-            await expect(
-              stageAuthenticatedBrc39PrivateImport(
+              const value = await stageAuthenticatedBrc39PrivateImport(
                 source(),
-                kind === 'password' ? 'different synthetic password' : authenticatedStagePassword,
+                generated.nfc ? authenticatedStagePassword.normalize('NFC') : authenticatedStagePassword,
                 target.root,
                 selected
               )
-            ).rejects.toThrow()
-            expect(sourceSettled).toBe(true)
-            await target.empty()
-          }
-        ),
-        controls
-      )
-    } finally {
-      await target.close()
-    }
-  }, 30000)
-
-  test('generated source failure, cancellation and pre-admission refusal retain exact reasons and settle original ownership', async () => {
-    const target = await fixture(),
-      bytes = await encrypted()
-    try {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.constantFrom('source', 'cancel', 'pre-abort', 'policy'),
-          fc.integer({ min: 1, max: bytes.length - 1 }),
-          async (kind, position) => {
-            const reason = new Error('synthetic generated staging stop ' + position),
-              controller = new AbortController(),
-              selected = authenticatedStageOptions(bytes),
-              heldBefore = target.held.length
-            selected.crypto.signal = controller.signal
-            if (kind === 'pre-abort') controller.abort(reason)
-            if (kind === 'policy') selected.maximumMetadataAllocationBytes = 65537
-            let entered = false,
-              settled = false
-            async function* source() {
-              entered = true
-              try {
-                yield* partition(bytes.slice(0, position), [137], 0)
-                if (kind === 'cancel') {
-                  controller.abort(reason)
-                  yield new Uint8Array()
-                } else throw reason
-              } finally {
-                settled = true
+              expect(checkedBeforeAuthentication && sourceSettled).toBe(true)
+              expect(value.archiveSha256).toBe(selected.binding.archiveSha256)
+              expect(value.fileBytes).toBe(bytes.length)
+              expect(value.plaintextBytes).toBe(Buffer.byteLength(JSON.stringify(expected)))
+              expect(Object.values(value.document.counts)).toEqual(Array(13).fill(1))
+              for (const table of brc38StageTables) {
+                expect(await value.reservation.store.count(table)).toBe(1)
+                expect(await value.reservation.store.row(table, 0)).toEqual(expected.tables[table][0])
               }
+              const metadata = await value.reservation.store.knex('metadata').where({ slot: 1 }).first()
+              expect(metadata.state).toBe('sealed')
+              expect((await stat(value.reservation.store.directory)).mode & 0o777).toBe(0o700)
+              expect((await stat(join(value.reservation.store.directory, 'stage.sqlite'))).mode & 0o777).toBe(0o600)
+              await value.reservation.store.close()
+              const replay = await stageAuthenticatedBrc39PrivateImport(
+                partition(bytes, [...generated.widths].reverse(), generated.emptyEvery),
+                authenticatedStagePassword,
+                target.root,
+                { ...selected, reservationId: value.reservation.id }
+              )
+              expect(replay.reservation.id).toBe(value.reservation.id)
+              expect(replay.document).toEqual(value.document)
+              expect(replay.reservation.store.limits.expiresAt).toBe(selected.limits.expiresAt)
+              expect(await replay.reservation.store.knex('metadata').where({ slot: 1 }).first()).toEqual(metadata)
+              expect((await target.root.usage()).imports).toBe(1)
+              expect(JSON.stringify(selected)).toBe(before)
+              await target.root.discard(replay.reservation, new Error('completed synthetic generated import'))
+              await target.empty()
             }
-            const work = stageAuthenticatedBrc39PrivateImport(
-              source(),
-              authenticatedStagePassword,
-              target.root,
-              selected
-            )
-            if (kind === 'policy') await expect(work).rejects.toThrow('policy')
-            else await expect(work).rejects.toBe(reason)
-            if (kind === 'policy' || kind === 'pre-abort') {
-              expect(entered).toBe(false)
-              expect(target.held.length).toBe(heldBefore)
-            } else expect(entered && settled).toBe(true)
-            await target.empty()
-          }
-        ),
-        controls
-      )
-    } finally {
-      await target.close()
-    }
-  }, 30000)
+          ),
+          controls
+        )
+      } finally {
+        await target.close()
+      }
+    },
+    propertyCaseMilliseconds
+  )
+
+  test(
+    'generated ordinary authentication and semantic refusals release physical capacity before rejection',
+    async () => {
+      const target = await fixture(),
+        valid = await encrypted()
+      try {
+        await fc.assert(
+          fc.asyncProperty(
+            fc.constantFrom('tag', 'password', 'digest', 'truncated', 'relation'),
+            fc.integer({ min: 32, max: 1024 }),
+            async (kind, width) => {
+              let bytes: Uint8Array = valid.slice()
+              if (kind === 'relation') {
+                const data = semanticStageFixture()
+                data.tables.outputs[0].transactionId = 999
+                bytes = await encrypted(data)
+              }
+              if (kind === 'tag') bytes[bytes.length - 1] ^= 1
+              if (kind === 'truncated') bytes = bytes.slice(0, -1)
+              const selected = authenticatedStageOptions(bytes)
+              if (kind === 'digest') selected.binding = { ...selected.binding, archiveSha256: 'a'.repeat(64) }
+              let sourceSettled = false
+              async function* source() {
+                try {
+                  yield* partition(bytes, [width], 0)
+                } finally {
+                  sourceSettled = true
+                }
+              }
+              await expect(
+                stageAuthenticatedBrc39PrivateImport(
+                  source(),
+                  kind === 'password' ? 'different synthetic password' : authenticatedStagePassword,
+                  target.root,
+                  selected
+                )
+              ).rejects.toThrow()
+              expect(sourceSettled).toBe(true)
+              await target.empty()
+            }
+          ),
+          controls
+        )
+      } finally {
+        await target.close()
+      }
+    },
+    propertyCaseMilliseconds
+  )
+
+  test(
+    'generated source failure, cancellation and pre-admission refusal retain exact reasons and settle original ownership',
+    async () => {
+      const target = await fixture(),
+        bytes = await encrypted()
+      try {
+        await fc.assert(
+          fc.asyncProperty(
+            fc.constantFrom('source', 'cancel', 'pre-abort', 'policy'),
+            fc.integer({ min: 1, max: bytes.length - 1 }),
+            async (kind, position) => {
+              const reason = new Error('synthetic generated staging stop ' + position),
+                controller = new AbortController(),
+                selected = authenticatedStageOptions(bytes),
+                heldBefore = target.held.length
+              selected.crypto.signal = controller.signal
+              if (kind === 'pre-abort') controller.abort(reason)
+              if (kind === 'policy') selected.maximumMetadataAllocationBytes = 65537
+              let entered = false,
+                settled = false
+              async function* source() {
+                entered = true
+                try {
+                  yield* partition(bytes.slice(0, position), [137], 0)
+                  if (kind === 'cancel') {
+                    controller.abort(reason)
+                    yield new Uint8Array()
+                  } else throw reason
+                } finally {
+                  settled = true
+                }
+              }
+              const work = stageAuthenticatedBrc39PrivateImport(
+                source(),
+                authenticatedStagePassword,
+                target.root,
+                selected
+              )
+              if (kind === 'policy') await expect(work).rejects.toThrow('policy')
+              else await expect(work).rejects.toBe(reason)
+              if (kind === 'policy' || kind === 'pre-abort') {
+                expect(entered).toBe(false)
+                expect(target.held.length).toBe(heldBefore)
+              } else expect(entered && settled).toBe(true)
+              await target.empty()
+            }
+          ),
+          controls
+        )
+      } finally {
+        await target.close()
+      }
+    },
+    propertyCaseMilliseconds
+  )
 })

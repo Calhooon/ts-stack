@@ -1828,6 +1828,10 @@ parser uses a derived ceiling of twice that count. Archive bytes, individual
 chunk bytes, physical reservations, original expiry and authentication checks
 remain independently bounded. This admits the selected fragmentation without
 changing the caller's input cap or materializing extra plaintext.
+The complete authenticated staging property cases allow 180 seconds for the
+existing 150-second, minimum-300-run campaign and physical cleanup. Each import
+and its replay still share the original reservation deadline; a harness timeout
+cannot renew it. This aligns the enclosing test budget with its admitted work.
 
 The working native candidate now has traceable in-repository C source and an
 internal incremental blob ABI. One operation carries a fixed coordinate header
