@@ -2194,3 +2194,13 @@ data/oracles and native pin remain unchanged. Concurrent reservation, refusal,
 idempotence and cancellation controls cover the original accounting ceiling.
 The original all13 inventory and wider qualification still require current
 runtime evidence; this accounting correction is not a production sizing claim.
+
+The drained-scratch correction advances the original inventory to actual SQL
+metadata preparation. Its blanket16384-byte descriptor reservation charged
+small rows as though they held the maximum64 fields, in addition to unchanged
+per-value normalization/SQL-copy charges. Metadata now reserves1024 bytes for
+its own-key/descriptor containers plus256 per actual field (still at most64),
+then retains every existing512-byte/16-times-string per-value charge. The
+bounded key array is reused. Original65,536-byte page/row/working limits,
+semantic validation, native transactions and negative controls remain. Runtime
+validation of the complete inventory and wider system is still pending.

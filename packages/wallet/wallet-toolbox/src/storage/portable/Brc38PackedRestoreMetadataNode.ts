@@ -274,7 +274,6 @@ async function prepareBrc38PackedPrivateMetadata(
     !(await hasBrc38NativePackedSchema(trx)) ||
     metadata === null ||
     typeof metadata !== 'object' ||
-    Reflect.ownKeys(metadata).length > 64 ||
     binaryFields.length > 3 ||
     new Set(binaryFields).size !== binaryFields.length ||
     textFields.length > 7 ||
@@ -282,6 +281,8 @@ async function prepareBrc38PackedPrivateMetadata(
     textFields.some(field => binaryFields.includes(field))
   )
     invalid()
+  const keys = Reflect.ownKeys(metadata)
+  if (keys.length > 64) invalid()
   if (
     textFields.length !== 0 &&
     (!(await hasBrc38NativePackedTextSchema(trx)) ||
@@ -291,10 +292,13 @@ async function prepareBrc38PackedPrivateMetadata(
   // The original page's combined budget pays for descriptor/row/SQL encoding
   // copies. It remains consumed after a rollback; a SQL rollback cannot refund
   // JavaScript allocations or authorize a larger retry on the same page.
-  chargeBrc38ImportDecodedBudget(budget, 16384)
+  // Bound the actual own-key/descriptor containers, rather than charging every
+  // small row as if it retained the maximum64 descriptors. Per-value copies
+  // below remain separately charged before normalization and SQL encoding.
+  chargeBrc38ImportDecodedBudget(budget, 1024 + 256 * keys.length)
   const descriptors = Object.getOwnPropertyDescriptors(metadata),
     row: Record<string, unknown> = {}
-  for (const key of Reflect.ownKeys(metadata)) {
+  for (const key of keys) {
     if (typeof key !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) invalid()
     const descriptor = descriptors[key]
     if (descriptor === undefined || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) invalid()
