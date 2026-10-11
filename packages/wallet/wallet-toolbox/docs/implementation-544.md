@@ -2590,3 +2590,12 @@ The independent final inventory checks the exact stored identity as well as all
 proof bytes. No wire, schema, resource-limit or data migration is introduced.
 This correction remains unqualified until the actual regression and complete
 customer workflow pass; source presence is not a release or production verdict.
+
+The targeted proof-spelling qualification explicitly selects the existing
+16 KiB native read allowance and a fresh fifteen-minute fixture admission.
+All three initial five-minute packets expired during complete candidate
+preparation before the proof oracle ran; that failed evidence is retained.
+The selection changes no production resource ceiling, original customer data,
+existing fixture defaults, or already-admitted expiry. Every actual UTC and
+monotonic expiry check, finite operation guard, cleanup owner and complete proof
+byte/metadata assertion remains. These test allowances are not production SLOs.

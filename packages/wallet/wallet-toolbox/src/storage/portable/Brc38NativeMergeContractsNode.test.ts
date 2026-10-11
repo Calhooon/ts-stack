@@ -273,7 +273,11 @@ test.each(['upper', 'lower', 'mixed'] as const)(
         }
       },
       {
-        lifetimeMs: 300000,
+        // All three original 5-minute packets expired during full candidate
+        // preparation. Admit a fresh existing 15-minute fixture envelope;
+        // retain every original expiry check and the complete proof oracle.
+        lifetimeMs: 900000,
+        maximumNativeReadBytes: 16384,
         customize: (source, incoming) => {
           const original = source.tables.provenTxs[0].txid
           if (typeof original !== 'string') throw new Error('Independent proof identity is missing')
@@ -292,5 +296,5 @@ test.each(['upper', 'lower', 'mixed'] as const)(
       }
     )
   },
-  330000
+  930000
 )

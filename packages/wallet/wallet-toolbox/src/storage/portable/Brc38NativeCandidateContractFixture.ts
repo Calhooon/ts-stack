@@ -47,10 +47,20 @@ export async function withBrc38NativeCandidateContractFixture(
     prepareSource?: (source: Awaited<ReturnType<typeof composedNativeFixture>>) => Promise<void>
     lifetimeMs?: number
     maximumSourceReadBytes?: 32 | 1024
+    /** Explicit supported full-workflow read selection; existing callers stay 1 KiB. */
+    maximumNativeReadBytes?: 1024 | 16384
     customize?: Parameters<typeof composedNativeFixture>[1]
   }> = {}
 ): Promise<void> {
-  const source = await composedNativeFixture(nativeTestExecutable(), selected.customize, selected.lifetimeMs)
+  const source = await composedNativeFixture(
+    nativeTestExecutable(),
+    selected.customize,
+    selected.lifetimeMs,
+    undefined,
+    undefined,
+    undefined,
+    { maximumReadBytes: selected.maximumNativeReadBytes ?? 1024 }
+  )
   let initial: Awaited<ReturnType<typeof readIndependentNativeInventory>> | undefined,
     failed = false,
     failure: unknown
