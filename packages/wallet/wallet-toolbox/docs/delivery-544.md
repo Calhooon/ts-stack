@@ -127,11 +127,23 @@ and retirement protocol. The browser's branch-only 30 percent allowance does
 not change native resource or page-geometry limits.
 
 `tools/Brc38NativeQualification.cjs` is an unpublished maintainer component
-delivery tool. In a separately attested Linux ARM64 Node24.18.0 ABI137 worker,
-its intended CLI accepts only `--sqlite-source /absolute/sqlite3.c` and
+delivery tool. In a separately attested Linux ARM64/x64 Node24.18.0 ABI137 worker
+with an existing qualified static build for that exact target,
+its delivery CLI accepts only `--sqlite-source /absolute/sqlite3.c` and
 `--destination /private/absolute/native-contract`. The destination parent must
 be owned/private; existing destinations refuse. Ordinary source build/copier
 output is required before using the compiled static pin and descriptor launcher.
+`--check-host` is a separate preflight mode: it checks the actual Node target and
+static registry, then emits only its Docker target (`linux/arm64` or
+`linux/amd64`). Provisioning compares that target with the actual kernel
+architecture before private allocation, dependency downloads or compiler work.
+This metadata check does not attest worker isolation or enroll a missing build.
+Only Linux ARM64 currently has a qualified static entry; x64 refuses before
+filesystem/compiler work until genuine host qualification supplies its entry.
+The provisioner selects build and run targets from the actual worker, with no
+caller override or emulated-platform substitution. Native resource limits,
+original thirteen contract modes and exclusive pinned-descriptor delivery stay
+unchanged. No consumer API, wire or database migration is introduced.
 The tool runs the original runtime and six independent components, retains
 failed evidence, and never edits a pin or enrolls a wallet. Its source and
 negative cases now pass all16 in a separately frozen Linux cohort with0skip.

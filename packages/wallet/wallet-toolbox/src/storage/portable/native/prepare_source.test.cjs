@@ -16,6 +16,107 @@ afterEach(async () => {
   await fs.rm(directory, { recursive: true, force: true })
 })
 
+test.each(['arm64', 'x64'])(
+  'Linux %s qualification target planning is immutable DATA with an explicit Docker target',
+  architecture => {
+    const { planLinuxQualificationHost } = require('../../../../tools/Brc38NativeQualification.cjs'),
+      noCompiler = jest.spyOn(require('node:child_process'), 'spawn'),
+      plan = planLinuxQualificationHost('linux', architecture, 'v24.18.0', '137')
+    expect(plan).toEqual({
+      platform: 'linux',
+      architecture,
+      nodeVersion: 'v24.18.0',
+      nodeABI: '137',
+      dockerPlatform: architecture === 'arm64' ? 'linux/arm64' : 'linux/amd64'
+    })
+    expect(Object.isFrozen(plan)).toBe(true)
+    expect(noCompiler).not.toHaveBeenCalled()
+  }
+)
+test.each([
+  ['darwin', 'arm64', 'v24.18.0', '137'],
+  ['win32', 'x64', 'v24.18.0', '137'],
+  ['linux', 'ia32', 'v24.18.0', '137'],
+  ['linux', 'x86_64', 'v24.18.0', '137'],
+  ['linux', 'arm64', 'v24.17.0', '137'],
+  ['linux', 'arm64', 'v24.18.0', '136']
+])('unsupported qualification worker %s/%s/%s/%s refuses before host work', (...host) => {
+  const { planLinuxQualificationHost } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    noCompiler = jest.spyOn(require('node:child_process'), 'spawn')
+  expect(() => planLinuxQualificationHost(...host)).toThrow('admitted Linux ARM64/x64 Node24.18.0 ABI137 worker')
+  expect(noCompiler).not.toHaveBeenCalled()
+})
+test('qualified component lookup returns the immutable original static build metadata only', async () => {
+  const owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    pin = owner.qualifiedNativeComponentBuild('linux', 'arm64')
+  expect(pin).toBe(owner.componentBuild)
+  expect(pin).toEqual({
+    platform: 'linux',
+    architecture: 'arm64',
+    bytes: 1353576,
+    sha256: 'cddb4023f8b073d2eab1c48a001c53e90373befaf04de62cfd05e3f450bc3746'
+  })
+  expect(Object.isFrozen(pin)).toBe(true)
+  await expect(owner.pinnedNativeLaunchPath(pin)).rejects.toThrow('original pinned executable descriptor')
+})
+test.each([
+  ['linux', 'x64'],
+  ['darwin', 'arm64'],
+  ['darwin', 'x64'],
+  ['win32', 'arm64'],
+  ['win32', 'x64'],
+  ['linux', 'arm64/../x64']
+])('currently unqualified %s/%s component lookup never falls back to the ARM64 pin', (platform, architecture) => {
+  const owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs')
+  expect(owner.qualifiedNativeComponentBuild(platform, architecture)).toBeUndefined()
+})
+test('actual qualifier preflight binds the original Linux Node target and static pin without host attestation', () => {
+  const { inspectNativeQualificationHost } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    host = inspectNativeQualificationHost()
+  expect(host.platform).toBe(process.platform)
+  expect(host.architecture).toBe(process.arch)
+  expect(host.nodeVersion).toBe(process.version)
+  expect(host.nodeABI).toBe(process.versions.modules)
+  expect(host.pin).toBe(owner.qualifiedNativeComponentBuild())
+  expect(host.outerWorkerAttested).toBe(false)
+  expect(host.fullSystemQualified).toBe(false)
+  expect(Object.isFrozen(host)).toBe(true)
+})
+test.each(['missing', 'mismatched'])(
+  'qualifier %s static pin refuses before destination I/O or compilation',
+  async defect => {
+    const owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+      { qualifyBrc38NativeCandidate } = require('../../../../tools/Brc38NativeQualification.cjs'),
+      noFiles = jest.spyOn(fs, 'lstat'),
+      noCompiler = jest.spyOn(require('node:child_process'), 'spawn')
+    jest
+      .spyOn(owner, 'qualifiedNativeComponentBuild')
+      .mockReturnValue(defect === 'missing' ? undefined : { ...owner.componentBuild, architecture: 'not-the-worker' })
+    await expect(
+      qualifyBrc38NativeCandidate({ sqliteSource: '/absent/sqlite3.c', destination: '/absent/native-contract' })
+    ).rejects.toThrow('component platform is not qualified')
+    expect(noFiles).not.toHaveBeenCalled()
+    expect(noCompiler).not.toHaveBeenCalled()
+  }
+)
+test('host-check CLI returns the actual admitted Docker target while extra arguments remain invalid', () => {
+  const cp = require('node:child_process'),
+    tool = path.resolve(__dirname, '../../../../tools/Brc38NativeQualification.cjs'),
+    checked = cp.spawnSync(process.execPath, [tool, '--check-host'], { timeout: 5000, maxBuffer: 65536 }),
+    invalid = cp.spawnSync(process.execPath, [tool, '--check-host', '--destination'], {
+      timeout: 5000,
+      maxBuffer: 65536
+    })
+  expect(checked.status).toBe(0)
+  expect(checked.signal).toBeNull()
+  expect(checked.stdout.toString()).toBe(process.arch === 'arm64' ? 'linux/arm64\n' : 'linux/amd64\n')
+  expect(checked.stderr.length).toBe(0)
+  expect(invalid.status).toBe(1)
+  expect(invalid.stdout.length).toBe(0)
+  expect(invalid.stderr.toString()).toContain('Usage: --sqlite-source')
+})
+
 test('a missing pinned dependency removes only its owned source directory and preserves neighboring input', async () => {
   const neighbor = path.join(directory, 'neighbor')
   await fs.writeFile(neighbor, 'preserved', { flag: 'wx' })

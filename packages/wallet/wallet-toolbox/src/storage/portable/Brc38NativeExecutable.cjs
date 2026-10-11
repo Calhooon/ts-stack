@@ -22,6 +22,12 @@ const componentBuild = Object.freeze({
 // populate this registry at runtime or replace a missing platform entry.
 /** @type {Readonly<Record<string, typeof componentBuild | undefined>>} */
 const componentBuilds = Object.freeze({ 'linux/arm64': componentBuild })
+/** Read-only build metadata for maintainer preflight, never executable admission.
+ * Only the original file factory can capture a runtime launch descriptor.
+ * @param {string} platform @param {string} architecture */
+function qualifiedNativeComponentBuild(platform = process.platform, architecture = process.arch) {
+  return componentBuilds[`${platform}/${architecture}`]
+}
 // Independently qualified compiler supervisor, never the wallet kernel. Empty
 // until fresh Windows toolchain/controller qualification binds exact bytes.
 /** @type {Readonly<Record<string, typeof componentBuild | undefined>>} */
@@ -228,5 +234,6 @@ module.exports = {
   openPinnedWindowsBuildSupervisor,
   pinnedNativeLaunchPath,
   closePinnedNativeExecutable,
+  qualifiedNativeComponentBuild,
   componentBuild
 }

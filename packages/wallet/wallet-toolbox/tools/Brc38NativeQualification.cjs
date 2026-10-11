@@ -43,6 +43,37 @@ function parseQualificationArguments(args) {
   return Object.freeze({ sqliteSource: args[1], destination: args[3] })
 }
 
+/** Pure worker-target DATA. Callers cannot pass this plan to admit a host.
+ * Actual qualification always reads the original process and static registry. */
+function planLinuxQualificationHost(platform, architecture, nodeVersion, nodeABI) {
+  if (
+    platform !== 'linux' ||
+    !['arm64', 'x64'].includes(architecture) ||
+    nodeVersion !== 'v24.18.0' ||
+    nodeABI !== '137'
+  )
+    throw new Error('Native qualification requires its admitted Linux ARM64/x64 Node24.18.0 ABI137 worker')
+  return Object.freeze({
+    platform,
+    architecture,
+    nodeVersion,
+    nodeABI,
+    dockerPlatform: architecture === 'arm64' ? 'linux/arm64' : 'linux/amd64'
+  })
+}
+
+/** Preflight before filesystem, dependency download or compiler work. This
+ * checks the real Node target and existing immutable registry only; it cannot
+ * attest worker isolation or manufacture a missing platform build. */
+function inspectNativeQualificationHost() {
+  const host = planLinuxQualificationHost(process.platform, process.arch, process.version, process.versions.modules),
+    owner = require('../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    pin = owner.qualifiedNativeComponentBuild()
+  if (pin === undefined || pin.platform !== host.platform || pin.architecture !== host.architecture)
+    throw new Error('Native qualification component platform is not qualified')
+  return Object.freeze({ ...host, pin, outerWorkerAttested: false, fullSystemQualified: false })
+}
+
 /** One bounded actual file, not a pathname verdict or build-receipt grant. */
 async function readActual(filename, maximum, digestOnly = false) {
   const file = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -307,14 +338,8 @@ async function originalComponent(owner, file, cwd, name, args, calendar, committ
  * Exact static build DATA must match; original runtime and all eleven contracts
  * run against the genuine pinned descriptor before exclusive delivery. */
 async function qualifyBrc38NativeCandidate(options) {
-  if (
-    process.platform !== 'linux' ||
-    process.arch !== 'arm64' ||
-    process.version !== 'v24.18.0' ||
-    process.versions.modules !== '137'
-  )
-    throw new Error('Native qualification requires its admitted Linux ARM64 Node24.18.0 ABI137 worker')
-  const parsed = parseQualificationArguments([
+  const host = inspectNativeQualificationHost(),
+    parsed = parseQualificationArguments([
       '--sqlite-source',
       options.sqliteSource,
       '--destination',
@@ -338,9 +363,7 @@ async function qualifyBrc38NativeCandidate(options) {
     if (cause.code !== 'ENOENT') throw cause
   }
   const owner = require('../out/src/storage/portable/Brc38NativeExecutable.cjs'),
-    pin = owner.componentBuild
-  if (pin.platform !== process.platform || pin.architecture !== process.arch)
-    throw new Error('Native qualification static component platform differs')
+    pin = host.pin
   const inputs = { sqliteSource: { filename: parsed.sqliteSource, bytes: sqlite.bytes, sha256: sqlite.sha256 } }
   for (const name of sources) {
     const filename = path.join(__dirname, '../src/storage/portable/native', name),
@@ -598,6 +621,7 @@ async function qualifyBrc38NativeCandidate(options) {
       inputs,
       build,
       pin,
+      host,
       records,
       originalRuntimePassed: true,
       originalComponentsPassed: 6,
@@ -700,11 +724,20 @@ async function qualifyBrc38NativeCandidate(options) {
     )
 }
 
-module.exports = { parseQualificationArguments, qualifyBrc38NativeCandidate }
+module.exports = {
+  parseQualificationArguments,
+  planLinuxQualificationHost,
+  inspectNativeQualificationHost,
+  qualifyBrc38NativeCandidate
+}
 if (require.main === module) {
   Promise.resolve()
-    .then(() => qualifyBrc38NativeCandidate(parseQualificationArguments(process.argv.slice(2))))
-    .then(receipt => process.stdout.write(JSON.stringify(receipt) + '\n'))
+    .then(() => {
+      const args = process.argv.slice(2)
+      if (args.length === 1 && args[0] === '--check-host') return inspectNativeQualificationHost().dockerPlatform
+      return qualifyBrc38NativeCandidate(parseQualificationArguments(args))
+    })
+    .then(receipt => process.stdout.write((typeof receipt === 'string' ? receipt : JSON.stringify(receipt)) + '\n'))
     .catch(cause => {
       process.stderr.write(JSON.stringify(qualificationFailureData(cause)) + '\n')
       process.exitCode = 1

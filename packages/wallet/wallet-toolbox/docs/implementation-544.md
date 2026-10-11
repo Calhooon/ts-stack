@@ -1,5 +1,13 @@
 # #544 implementation map (unpublished candidate)
 
+Linux native qualification selects immutable build metadata by the actual
+ARM64/x64 Node24.18.0 ABI137 target. The provisioner checks `--check-host` against
+the real kernel architecture before allocating or downloading compiler inputs.
+Missing or mismatched static entries refuse before destination filesystem or
+compiler work. Only Linux ARM64 currently has an entry; this source wiring is
+not x64 host qualification. Original runtime/resource/contract assertions and
+pinned-descriptor delivery remain unchanged, with no consumer migration.
+
 This map accounts for the authored source of all 24 required behavior families.
 The original full occupied customer workflow on source316 committed12/14 rows
 before failing the actual non-null broadcast-column constraint. Legacy request

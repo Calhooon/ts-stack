@@ -5357,6 +5357,16 @@ this component result does not qualify the complete program or all hosts.
 
 ### Complete native source recipes
 
+The Linux qualification/provisioning path selects the static component entry
+for the actual ARM64/x64 Node24.18.0 ABI137 worker. Its separate `--check-host`
+mode emits the actual Docker target only after the immutable registry check;
+the provisioner compares it with the kernel architecture before allocation,
+downloads or compiler work. Build metadata never grants a runtime descriptor or
+worker attestation. Only Linux ARM64 is currently pinned; missing x64 entries
+refuse without a fallback. Real x64 qualification and fixed bytes remain required
+before that delivery route can run. The original thirteen native contracts,
+resource limits and exclusive pinned delivery are unchanged.
+
 Native driver source inputs, the exact SQLite dependency cohort, Windows addon
 source inputs and original Unix compiler arguments share one immutable internal
 `native/source_recipe.cjs`. Source preparation previously omitted four included
