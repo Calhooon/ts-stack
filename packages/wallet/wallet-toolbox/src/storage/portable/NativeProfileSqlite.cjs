@@ -250,7 +250,9 @@ function integer(value, minimum, maximum, label) {
 function budget(rowAllocation) {
   integer(rowAllocation, 1, 16777216, 'Original native row allocation differs')
   const frame = rowAllocation + 65536
-  const heap = Math.max(4194304, rowAllocation * 3 + 1048576)
+  // Four simultaneous connections retain their own schemas and page caches.
+  // A row transfer limit does not bound that independent SQLite workload.
+  const heap = Math.max(8388608, rowAllocation * 3 + 1048576)
   return Object.freeze({
     frame,
     heap,

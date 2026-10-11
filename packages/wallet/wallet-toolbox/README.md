@@ -5259,3 +5259,18 @@ together. This test configuration correction does not establish full native
 inventory or resident-memory qualification. The retained-chunk negative test
 checks that sealed SQL updates refuse and injects a changed actual scoped read
 to exercise the independent byte/hash refusal without disabling the seal.
+
+### Measured native connection heap admission
+
+The complete small all13 fixture reached a genuine `SQLITE_NOMEM` opening
+the retained reader (operation1, slot3), after6956 native requests. Its observed
+address peak was8728KiB against32MiB, and simultaneous JavaScript working
+charges peaked at31852 bytes against the original65536-byte owner. The
+SQLite heap minimum is now8MiB for four simultaneous connection schemas and
+page caches, with the existing larger-row derivation unchanged. The 64KiB
+row/working, IPC, address, descriptor, disk and lifetime allowances remain
+unchanged. Explicit4MiB allocator exhaustion controls remain independent.
+The replacement executable must pass all13 original native component modes
+and the actual all13 fixture before admission or runtime qualification is
+claimed. This unreleased feature's fixture budget is not a production sizing
+recommendation.

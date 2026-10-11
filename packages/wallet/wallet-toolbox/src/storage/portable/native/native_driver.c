@@ -1346,8 +1346,10 @@ int main(int argc, char **argv) {
       row < 1 || row > 16777216)
     return 2;
   sqlite3_int64 heap = (sqlite3_int64)(row * 3 + 1048576);
-  if (heap < 4194304)
-    heap = 4194304;
+  /* Keep connection/schema admission separate from the row transfer ceiling.
+   * The complete retained-reader fixture needs four simultaneously open slots. */
+  if (heap < 8388608)
+    heap = 8388608;
   driverMaximum = (size_t)row + 65536;
   driverDecodedMaximum = row * 2 + 65536;
   sqlite3_int64 address =
