@@ -7814,7 +7814,7 @@ export function buildMutationTargets(repositoryRoot) {
       target.runnerOptions?.jest
     ) {
       target.runnerOptions.jest.config = {
-        ...(target.runnerOptions.jest.config ?? {}),
+        ...target.runnerOptions.jest.config,
         transform: {
           '^.+\\.ts$': [
             'ts-jest',
