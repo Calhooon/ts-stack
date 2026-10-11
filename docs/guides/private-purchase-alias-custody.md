@@ -37,6 +37,15 @@ original terms and recipient binding for every incoming candidate. The coordinat
 also verifies a proposed cumulative BEEF independently before retaining it. A
 parser, native journal or chain inclusion adapter cannot replace that verifier.
 
+The exemplar retains at most 128 successful public root/child calculations for
+its fixed BRC-42/BRC-29 key profile. Each call still validates the root's canonical
+identity syntax; the first calculation also validates the curve point and the
+nondegenerate child link. Only immutable public strings are retained. Invalid
+roots are never retained, and eviction merely requires the same calculation
+again. This arithmetic optimization conveys no listing authority or verification
+result: every candidate still requires the complete independent Bitcoin, Script,
+authorized-genesis, purchase, selected-chain and custody checks described here.
+
 `SQLitePrivatePurchaseAliases` preserves the first candidate, bounded unconfirmed
 candidates, durable pending external operations, an independently selected-chain
 candidate and the historical release candidate. An unconfirmed cache is separate

@@ -14,12 +14,21 @@ export const REVENUE_LISTING_FAMILY = 'https://bsv.brc.dev/tokens/0197#revenue-l
 export const REVENUE_LISTING_AUTHORITY_PROTOCOL = Object.freeze([2, '3241645161d8'] as const)
 export const REVENUE_LISTING_AUTHORITY_KEY_ID = 'brc197 authority'
 
+// Only immutable public arithmetic belongs here. A hit establishes no listing,
+// genesis, Script, recipient, payment, custody, admission or chain-view verdict.
+// Retain at most 128 successful root/child pairs; invalid roots are never stored.
+const publicChildren = new Map<string, string>()
+const maximumPublicChildren = 128
+
 /** Public derivation only. With `anyone` (G), the BRC-42 shared point is the
  * identity point itself; the HMAC tweak is public. This calculation
  * establishes neither authorized genesis nor the on-chain activation proof.
  */
 export function revenueListingChildPublicKey(rootIdentity: string): string {
-  const root = PublicKey.fromString(identity(rootIdentity))
+  const normalizedRoot = identity(rootIdentity)
+  const remembered = publicChildren.get(normalizedRoot)
+  if (remembered !== undefined) return remembered
+  const root = PublicKey.fromString(normalizedRoot)
   const invoice = `${REVENUE_LISTING_AUTHORITY_PROTOCOL[0]}-${REVENUE_LISTING_AUTHORITY_PROTOCOL[1]}-${REVENUE_LISTING_AUTHORITY_KEY_ID}`
   const curve = new Curve()
   const tweak = new BigNumber(sha256hmac(root.encode(true), toArray(invoice, 'utf8'))).umod(curve.n)
@@ -28,5 +37,9 @@ export function revenueListingChildPublicKey(rootIdentity: string): string {
     !child.isInfinity() && !child.getX().eq(root.getX()),
     'Degenerate listing child link'
   )
-  return child.encode(true, 'hex') as string
+  const encoded = child.encode(true, 'hex') as string
+  if (publicChildren.size >= maximumPublicChildren)
+    publicChildren.delete(publicChildren.keys().next().value!)
+  publicChildren.set(normalizedRoot, encoded)
+  return encoded
 }
