@@ -6429,6 +6429,7 @@ function currentWalletMutationTargets(repositoryRoot) {
     target.additionalInputs = [
       ...new Set([
         ...(target.additionalInputs ?? []),
+        'client/test/native-browser-budgets.cjs',
         'client/test/native-browser-driver.cjs',
         'client/test/native-browser-session.cjs',
         'client/test/native-browser-executable.cjs',

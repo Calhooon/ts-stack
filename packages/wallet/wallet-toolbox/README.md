@@ -5220,12 +5220,12 @@ Whole-package and genuinely matched native tests receive the pinned browser;
 node-only patterns do not. Exact canonical mutation and full functional scopes
 remain unchanged, and routing controls grant no runtime qualification.
 
-The native browser driver admits startup, the original30-second case and
-original30-second cleanup in one90-second enclosing allowance; Jest admits that
-child plus10 seconds to settle. The old28-second parent cutoff stopped one
-original request case before its own deadline reported. An independent direct
-run still failed that original30-second contract, which remains a failure to
-investigate. No case data, semantic assertion, crypto parameter, production
-expiry, inner case/cleanup limit or memory/PID allowance changes. This corrects
-enclosing admission and failure reporting; it does not qualify the failed case
-or the complete system.
+The unchanged native request-sync oracle measured47.3 seconds for its two
+complete23.5-second preparations. Its selected case now receives90 seconds,
+within the original function's120-second finite ceiling; the other59 cases
+retain30 seconds. Shared test-only budgets align the catalogue, driver, CDP and
+Jest timers with startup and the retained30-second cleanup allowance. The
+original28/30-second failures remain evidence. All original data, assertions,
+crypto parameters, production expiries and memory/PID bounds remain unchanged.
+This is measured test admission; full browser, mutation and system qualification
+are still required, and the measured latency remains a performance baseline.

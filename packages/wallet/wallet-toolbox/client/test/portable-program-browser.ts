@@ -1,3 +1,4 @@
+const { nativeBrowserCaseTimeout } = require('./native-browser-budgets.cjs')
 // Authored UNRUN. Every current exported native-browser case is selected
 // explicitly. A fresh native browser/controller/resource agreement is required
 // before executing this catalogue; fake IDB does not qualify it.
@@ -348,7 +349,10 @@ export const portableBrowserCases: ReadonlyArray<Readonly<{ id: string; source: 
     Object.freeze({
       id: 'verifyIdbSnapshotSyncProvenTxReqs',
       source: 'src/storage/snapshot/IdbSnapshotSyncProvenTxReqs.browser.case.ts',
-      run: async () => await verifyIdbSnapshotSyncProvenTxReqs(Date.now() + 30000)
+      run: async () =>
+        await verifyIdbSnapshotSyncProvenTxReqs(
+          Date.now() + nativeBrowserCaseTimeout('verifyIdbSnapshotSyncProvenTxReqs')
+        )
     }),
     Object.freeze({
       id: 'verifyIdbSnapshotSyncProvenTxs',

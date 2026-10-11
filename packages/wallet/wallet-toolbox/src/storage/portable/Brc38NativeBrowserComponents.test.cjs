@@ -180,6 +180,6 @@ for (const [id, source] of cases) {
       expect(result.completeCatalogueRun).toBe(false)
       expect(result.processTreeQualified).toBe(false)
     },
-    nativeBrowserTestTimeout
+    nativeBrowserTestTimeout(id)
   )
 }

@@ -54,5 +54,5 @@ test(
     namespace.mutantCoverage ??= { static: {}, perTest: {} }
     accept(namespace.mutantCoverage, cumulative, false)
   },
-  nativeBrowserTestTimeout
+  nativeBrowserTestTimeout()
 )

@@ -19,5 +19,5 @@ test(
     expect(result.completeCatalogueRun).toBe(false)
     expect(result.processTreeQualified).toBe(false)
   },
-  nativeBrowserTestTimeout
+  nativeBrowserTestTimeout('verifyOccupiedPackedIdbHistoryStaging')
 )

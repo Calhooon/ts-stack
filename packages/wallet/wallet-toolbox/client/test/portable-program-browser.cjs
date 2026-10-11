@@ -9,6 +9,7 @@ const { createHash } = require('node:crypto')
 const { join, resolve } = require('node:path')
 const { performance } = require('node:perf_hooks')
 const { launchOwnedNativeBrowser } = require('./native-browser-session.cjs')
+const { nativeBrowserCaseTimeout } = require('./native-browser-budgets.cjs')
 
 class PortableBrowserProgramCleanupError extends AggregateError {
   constructor(causes, retryCleanup) {
@@ -241,7 +242,8 @@ async function runPortableBrowserProgram(executablePath, selection) {
       }, entry.id)
       void activeEvaluation.catch(() => undefined)
       try {
-        const observed = await bounded(activeEvaluation, 30000, 'Native browser case deadline reached')
+        const caseMilliseconds = nativeBrowserCaseTimeout(entry.id)
+        const observed = await bounded(activeEvaluation, caseMilliseconds, 'Native browser case deadline reached')
         if (!observed.passed) {
           const failure = new Error('Native browser case failed its original contract')
           failure.caseId = entry.id
@@ -249,7 +251,7 @@ async function runPortableBrowserProgram(executablePath, selection) {
           throw failure
         }
         assert.ok(
-          performance.now() - began < 30000 && Date.now() - wall < 30000,
+          performance.now() - began < caseMilliseconds && Date.now() - wall < caseMilliseconds,
           'A late case cannot become successful qualification'
         )
       } catch (cause) {

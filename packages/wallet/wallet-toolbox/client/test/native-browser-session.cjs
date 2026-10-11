@@ -8,6 +8,8 @@ const { join } = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { promisify } = require('node:util')
 
+const { nativeBrowserProtocolTimeout } = require('./native-browser-budgets.cjs')
+
 const execute = promisify(execFile)
 class NativeBrowserSessionCleanupError extends AggregateError {
   constructor(causes, retryCleanup) {
@@ -154,7 +156,7 @@ async function launchOwnedNativeBrowser(executablePath) {
     // detached:false alone does not prove a Job Object or descendant cleanup.
     const endpoint = await nativeProcess.waitForLineOutput(CDP_WEBSOCKET_ENDPOINT_REGEX, 10000)
     assert.equal(outputFailure, undefined)
-    browser = await puppeteer.connect({ browserWSEndpoint: endpoint, protocolTimeout: 30000 })
+    browser = await puppeteer.connect({ browserWSEndpoint: endpoint, protocolTimeout: nativeBrowserProtocolTimeout })
     return Object.freeze({ browser, child, childClosed, close: cleanup, processGroup })
   } catch (cause) {
     failure = cause

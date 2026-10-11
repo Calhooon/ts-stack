@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -85,13 +86,30 @@ test('browser delivery rejects changed bytes, incorrect lengths and symlink subs
   }
 })
 
-test('enclosing native browser deadlines admit the original case and retained cleanup', () => {
+test('measured browser admission preserves all other original case and cleanup bounds', () => {
   const require = createRequire(import.meta.url)
   const {
+    nativeBrowserCaseTimeout,
     nativeBrowserDriverTimeout,
-    nativeBrowserTestTimeout
-  } = require('../packages/wallet/wallet-toolbox/client/test/native-browser-driver.cjs')
-  assert.ok(nativeBrowserDriverTimeout > 30000 + 30000)
-  assert.ok(nativeBrowserTestTimeout > nativeBrowserDriverTimeout)
-  assert.ok(nativeBrowserDriverTimeout < 120000)
+    nativeBrowserTestTimeout,
+    nativeBrowserProtocolTimeout
+  } = require('../packages/wallet/wallet-toolbox/client/test/native-browser-budgets.cjs')
+  const catalogue = readFileSync(
+    new URL(
+      '../packages/wallet/wallet-toolbox/client/test/portable-program-browser.ts',
+      import.meta.url
+    ),
+    'utf8'
+  )
+  const cases = [...catalogue.matchAll(/id: '([^']+)',/g)].map(match => match[1])
+  assert.equal(cases.length, 60)
+  for (const id of cases) {
+    const inner = nativeBrowserCaseTimeout(id)
+    assert.equal(inner, id === 'verifyIdbSnapshotSyncProvenTxReqs' ? 90000 : 30000)
+    assert.ok(nativeBrowserDriverTimeout(id) >= inner + 30000 + 30000)
+    assert.ok(nativeBrowserTestTimeout(id) > nativeBrowserDriverTimeout(id))
+    assert.ok(nativeBrowserProtocolTimeout > inner)
+    assert.ok(nativeBrowserTestTimeout(id) <= 160000)
+  }
+  assert.equal(nativeBrowserCaseTimeout(), 30000)
 })

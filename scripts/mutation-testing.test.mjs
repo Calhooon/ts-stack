@@ -636,6 +636,7 @@ test('narrow execution retains the original native controller inputs of the broa
   assert.ok(target.componentTestUniverse.includes(original))
   assert.ok(!target.runnerOptions.jest.config.testMatch.includes('<rootDir>/' + original))
   for (const file of [
+    'client/test/native-browser-budgets.cjs',
     'client/test/native-browser-driver.cjs',
     'client/test/native-browser-session.cjs',
     'client/test/portable-program-browser.cjs'
