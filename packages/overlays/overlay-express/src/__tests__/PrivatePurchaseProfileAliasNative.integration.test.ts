@@ -33,7 +33,9 @@ async function retryClockConflict<T>(operation: () => Promise<T>, remaining = 8)
 
 // The complete native composition can exhaust one buyer work interval after
 // signing. That outcome is unknown delivery, not authority for another payment.
-// Drain both owners, reopen their original custody and recover once, read-only.
+// Drain both owners and reopen their original custody before reconciliation.
+// Recovery is free; only an explicitly prepared seller outcome may authorize
+// resubmitting the original retained bytes, never another wallet action.
 async function advanceOriginal(f: Fixture) {
   let owner = await f.openBuyer(true)
   try {
@@ -49,13 +51,29 @@ async function advanceOriginal(f: Fixture) {
     expect(await owner.buyer.status()).toBe('funded')
     expect(f.native.counts.prepare).toBe(1)
     expect(f.native.counts.finalize).toBe(1)
+    const original = canonicalOutputJSON(await owner.retainedCandidate())
     await owner.close()
     await f.reopenSeller()
-    const original = canonicalOutputJSON(loadOriginal(f).candidate)
     owner = await f.openBuyer(false)
-    const result = await retryClockConflict(() => owner.buyer.recover())
+    expect(canonicalOutputJSON(await owner.retainedCandidate())).toBe(original)
+    let result = await retryClockConflict(() => owner.buyer.recover())
     expect(result).toBeDefined()
     if (result === undefined) throw new Error('Original funded purchase remains unresolved')
+    if (result.result.status === 'prepared') {
+      // A free query found no seller-side submission. Explicit advance resumes
+      // this already signed candidate; it cannot prepare or finalize it again.
+      result = await retryClockConflict(() => owner.buyer.advance())
+      expect(f.native.counts.prepare).toBe(1)
+      expect(f.native.counts.finalize).toBe(1)
+      expect(canonicalOutputJSON(await owner.retainedCandidate())).toBe(original)
+    }
+    if (result.result.status === 'admission-pending') {
+      // Pending is an unknown topical outcome, not rejection or usable rights.
+      // One fresh free query consults the original retained admission job.
+      result = await retryClockConflict(() => owner.buyer.recover())
+      expect(result).toBeDefined()
+      if (result === undefined) throw new Error('Original admission remains unresolved')
+    }
     expect(['delivered', 'admitted-delivery-pending']).toContain(result.result.status)
     expect(canonicalOutputJSON(loadOriginal(f).candidate)).toBe(original)
     expect(f.native.counts.prepare).toBe(1)

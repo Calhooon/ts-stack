@@ -330,15 +330,23 @@ retryable `unavailable` refusal with `Purchase buyer deadline` reports an unknow
 delivery outcome; it does not undo a signed payment or authorize another one.
 The current reference scenario requires that the original buyer already be
 funded, stops and physically joins both buyer and seller work, and reopens their
-original durable owners. It then calls free, read-only `recover` once on that
-same purchase. Recovery must return the original delivery or its pending-release
+original durable owners. It independently reads the original buyer's protected
+candidate before close and after reopen and requires byte-identical custody.
+A seller-side candidate cannot be assumed to exist: an interruption can precede
+the first submission. The buyer first calls free, read-only `recover`. If the
+seller still reports `prepared`, an explicit `advance` resumes only that retained,
+already signed transaction; it cannot prepare or finalize another payment. An
+`admission-pending` response permits one further free recovery query of the
+original retained topical job. Neither status proves rejection or usable rights.
+The bounded scenario must then obtain the original delivery or its pending-release
 state, retain the exact candidate bytes, and leave preparation and signature
 counts at one. All later Script, admission, release, License, alias-currentness
 and playback assertions still apply. Any other refusal, missing original
-custody, unresolved recovery or second deadline fails the scenario. This is
+custody, still-pending admission or second deadline fails the scenario. This is
 explicit bounded reconciliation, with no increase to buyer, HTTP, verification
 or test-case limits and no replacement transaction. Applications must preserve
-unknown outcomes and their original owners when handling the same interruption.
+unknown outcomes and their original owners when handling the same interruption;
+free recovery alone must never be described as submitting an unreceived candidate.
 
 The separate current wallet-route demonstration retains the native wallet's
 ordinary finality gate. It signs an expiry route at an earlier selected tip, then

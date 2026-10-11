@@ -21,6 +21,8 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import {
   CompletedProtoWallet,
+  Hash,
+  parseOutputPurchaseSubmit,
   outputAssert,
   canonicalOutputJSON,
   decodeOutputBytes,
@@ -805,6 +807,32 @@ export async function privatePurchaseProfileAliasNativeFixture(
       buyer,
       state,
       aliasCurrentness,
+      // Inspect the original protected public transaction independently of the
+      // seller: a signed candidate can exist before its first submission arrives.
+      async retainedCandidate() {
+        const format = 'private-purchase-buyer/1',
+          digest = (domain: string, value: unknown) =>
+            Utils.toHex(
+              Hash.sha256(
+                Utils.toArray(format + '\0' + domain + '\0' + canonicalOutputJSON(value), 'utf8')
+              )
+            ),
+          installation = digest('installation', buyerBinding),
+          role = 'candidate',
+          saved = await objects.read(digest('object', { installation, role }), {
+            format,
+            installation,
+            role
+          })
+        outputAssert(saved.state === 'stored', 'Original buyer candidate is unavailable')
+        try {
+          return parseOutputPurchaseSubmit(
+            JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(saved.bytes))
+          )
+        } finally {
+          saved.bytes.fill(0)
+        }
+      },
       close: async () => {
         await closeBuyer()
         await closeState()
