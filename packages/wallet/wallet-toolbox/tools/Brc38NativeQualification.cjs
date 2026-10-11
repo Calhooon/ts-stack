@@ -8,6 +8,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const cp = require('node:child_process')
 const { NativeCandidateBuildCleanupError, sources, sqlite } = require('./Brc38NativeCandidateBuild.cjs')
+const { assertNativeCandidateTarget } = require('../src/storage/portable/native/source_recipe.cjs')
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
@@ -41,6 +42,153 @@ function parseQualificationArguments(args) {
       throw new Error('Qualification paths must be normalized absolute paths')
   if (args[1] === args[3]) throw new Error('Qualification destination must differ from its SQLite input')
   return Object.freeze({ sqliteSource: args[1], destination: args[3] })
+}
+
+function parseBootstrapQualificationArguments(args) {
+  if (args.length !== 4 || args[0] !== '--sqlite-source' || args[2] !== '--output-parent')
+    throw new Error('Usage: --sqlite-source /absolute/sqlite3.c --output-parent /private/absolute/directory')
+  for (const value of [args[1], args[3]])
+    if (typeof value !== 'string' || !path.isAbsolute(value) || path.normalize(value) !== value || value.includes('\0'))
+      throw new Error('Bootstrap paths must be normalized absolute paths')
+  if (args[1] === args[3]) throw new Error('Bootstrap output parent must differ from its SQLite input')
+  return Object.freeze({ sqliteSource: args[1], outputParent: args[3] })
+}
+
+/** Maintainer standalone-test ownership only. This private factory is never
+ * used by the installed wallet or its qualified executable registry. A build
+ * receipt supplies comparison DATA; the actual original inode is captured,
+ * hashed and retained independently before any contract process is launched. */
+function standaloneContractOwner(build, root) {
+  const host = planLinuxQualificationHost(process.platform, process.arch, process.version, process.versions.modules)
+  if (
+    build.protocol !== 'brc38-native-candidate-build/v1' ||
+    build.platform !== host.platform ||
+    build.architecture !== host.architecture ||
+    build.engineExecuted !== false ||
+    build.qualified !== false ||
+    build.runtimePinChanged !== false ||
+    build.publicationOrDeployment !== false ||
+    !Number.isSafeInteger(build.candidate?.bytes) ||
+    build.candidate.bytes < 64 ||
+    build.candidate.bytes > 2097152 ||
+    !/^[a-f0-9]{64}$/.test(build.candidate.sha256) ||
+    typeof build.candidate.path !== 'string' ||
+    !path.isAbsolute(build.candidate.path) ||
+    path.normalize(build.candidate.path) !== build.candidate.path ||
+    path.dirname(path.dirname(build.candidate.path)) !== root ||
+    path.basename(build.candidate.path) !== 'native-candidate'
+  )
+    throw new Error('Standalone contract build DATA differs from its owned Linux source build')
+  const expected = Object.freeze({ ...build.candidate }),
+    files = new WeakMap()
+  const fields = ['dev', 'ino', 'size', 'mode', 'uid', 'nlink', 'mtimeNs', 'ctimeNs']
+  const originalFile = async file => {
+    const original = files.get(file)
+    if (original === undefined) throw new Error('Standalone contract requires its original captured descriptor')
+    const actual = await file.stat({ bigint: true })
+    if (file.fd < 0 || fields.some(key => actual[key] !== original[key]) || actual.nlink !== 1n)
+      throw new Error('Standalone contract executable identity changed')
+    return original
+  }
+  const postimage = async file => {
+    await originalFile(file)
+    const hash = crypto.createHash('sha256'),
+      chunk = Buffer.alloc(Math.min(65536, expected.bytes)),
+      header = Buffer.alloc(64)
+    let offset = 0
+    while (offset < expected.bytes) {
+      const read = await file.read(chunk, 0, Math.min(chunk.length, expected.bytes - offset), offset)
+      if (read.bytesRead === 0) throw new Error('Standalone contract executable was truncated')
+      if (offset < header.length) chunk.copy(header, offset, 0, Math.min(read.bytesRead, header.length - offset))
+      hash.update(chunk.subarray(0, read.bytesRead))
+      offset += read.bytesRead
+    }
+    if (
+      (await file.read(Buffer.alloc(1), 0, 1, expected.bytes)).bytesRead !== 0 ||
+      hash.digest('hex') !== expected.sha256
+    )
+      throw new Error('Standalone contract executable bytes differ from its actual source build')
+    assertNativeCandidateTarget(header, host.platform, host.architecture)
+    await originalFile(file)
+    return Object.freeze({ bytes: expected.bytes, sha256: expected.sha256 })
+  }
+  const close = async file => {
+    if (!files.has(file)) throw new Error('Standalone close requires its original captured descriptor')
+    const cleanup = async () => {
+      await file.close()
+      files.delete(file)
+    }
+    try {
+      await cleanup()
+    } catch (cause) {
+      throw new NativeCandidateBuildCleanupError(undefined, cause, cleanup)
+    }
+  }
+  return Object.freeze({
+    async open(filename) {
+      if (filename !== expected.path) throw new Error('Standalone capture requires its actual original build path')
+      await privateDirectory(path.dirname(filename))
+      const file = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
+      try {
+        const original = await file.stat({ bigint: true })
+        if (
+          !original.isFile() ||
+          original.nlink !== 1n ||
+          original.uid !== BigInt(process.getuid()) ||
+          original.size !== BigInt(expected.bytes) ||
+          (original.mode & 0o222n) !== 0n ||
+          (original.mode & 0o111n) === 0n
+        )
+          throw new Error('Standalone contract requires its immutable owned executable inode')
+        files.set(file, original)
+        await postimage(file)
+        return file
+      } catch (cause) {
+        const cleanup = async () => {
+          await file.close()
+          files.delete(file)
+        }
+        try {
+          await cleanup()
+        } catch (failure) {
+          throw new NativeCandidateBuildCleanupError(cause, failure, cleanup)
+        }
+        throw cause
+      }
+    },
+    async launchPath(file) {
+      await originalFile(file)
+      return '/proc/self/fd/4'
+    },
+    close,
+    postimage
+  })
+}
+
+/** A failed metadata write/close retains the concrete original descriptor. */
+async function writeQualificationRecord(filename, record) {
+  const bytes = Buffer.from(JSON.stringify(record, null, 2) + '\n')
+  if (bytes.length > 1048576) throw new Error('Qualification metadata exceeds its bounded receipt extent')
+  const file = await fs.open(
+    filename,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o400
+  )
+  let failed = false,
+    failure
+  try {
+    await file.writeFile(bytes)
+    await file.sync()
+  } catch (cause) {
+    failed = true
+    failure = cause
+  }
+  try {
+    await file.close()
+  } catch (cause) {
+    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, cause, () => file.close())
+  }
+  if (failed) throw failure
 }
 
 /** Pure worker-target DATA. Callers cannot pass this plan to admit a host.
@@ -216,7 +364,7 @@ async function privateDirectory(directory, expected) {
 async function originalComponent(owner, file, cwd, name, args, calendar, committedKill = false) {
   calendar.check()
   const launchParentPeakRSSBytes = process.resourceUsage().maxRSS * 1024
-  const launch = await owner.pinnedNativeLaunchPath(file),
+  const launch = await owner.launchPath(file),
     child = cp.spawn(launch, args, {
       cwd,
       detached: true,
@@ -330,22 +478,30 @@ async function originalComponent(owner, file, cwd, name, args, calendar, committ
     }
   if (!passed) throw new Error('Original native component failed: ' + name, { cause: { failure, record } })
   calendar.check()
-  await owner.pinnedNativeLaunchPath(file)
+  await owner.launchPath(file)
   return record
 }
 
-/** No platform substitution or execution from a receipt-selected candidate.
- * Exact static build DATA must match; original runtime and all eleven contracts
- * run against the genuine pinned descriptor before exclusive delivery. */
-async function qualifyBrc38NativeCandidate(options) {
-  const host = inspectNativeQualificationHost(),
-    parsed = parseQualificationArguments([
-      '--sqlite-source',
-      options.sqliteSource,
-      '--destination',
-      options.destination
-    ]),
-    parent = path.dirname(parsed.destination),
+/** Both maintainer modes build the actual reviewed source and share all thirteen
+ * original contracts. Delivery additionally requires the existing static pin;
+ * bootstrap evidence cannot enroll a runtime artifact or install one. */
+async function runNativeQualification(options, bootstrap) {
+  const host = bootstrap
+      ? Object.freeze({
+          ...planLinuxQualificationHost(process.platform, process.arch, process.version, process.versions.modules),
+          outerWorkerAttested: false,
+          fullSystemQualified: false
+        })
+      : inspectNativeQualificationHost(),
+    parsed = bootstrap
+      ? parseBootstrapQualificationArguments([
+          '--sqlite-source',
+          options.sqliteSource,
+          '--output-parent',
+          options.outputParent
+        ])
+      : parseQualificationArguments(['--sqlite-source', options.sqliteSource, '--destination', options.destination]),
+    parent = bootstrap ? parsed.outputParent : path.dirname(parsed.destination),
     parentIdentity = await privateDirectory(parent),
     utcDeadline = Date.now() + 360000,
     monotonicDeadline = performance.now() + 360000,
@@ -356,14 +512,16 @@ async function qualifyBrc38NativeCandidate(options) {
       }
     }
   // Existing and dangling-symlink destinations refuse before compilation.
-  try {
-    await fs.lstat(parsed.destination)
-    throw new Error('Native qualification destination already exists')
-  } catch (cause) {
-    if (cause.code !== 'ENOENT') throw cause
+  if (!bootstrap) {
+    try {
+      await fs.lstat(parsed.destination)
+      throw new Error('Native qualification destination already exists')
+    } catch (cause) {
+      if (cause.code !== 'ENOENT') throw cause
+    }
   }
-  const owner = require('../out/src/storage/portable/Brc38NativeExecutable.cjs'),
-    pin = host.pin
+  const runtimeFactory = bootstrap ? undefined : require('../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    pin = bootstrap ? undefined : host.pin
   const inputs = { sqliteSource: { filename: parsed.sqliteSource, bytes: sqlite.bytes, sha256: sqlite.sha256 } }
   for (const name of sources) {
     const filename = path.join(__dirname, '../src/storage/portable/native', name),
@@ -386,6 +544,7 @@ async function qualifyBrc38NativeCandidate(options) {
   await fs.mkdir(fixture, { mode: 0o700 })
   const fixtureIdentity = await privateDirectory(fixture)
   let executable,
+    owner,
     build,
     failed = false,
     failure,
@@ -395,10 +554,11 @@ async function qualifyBrc38NativeCandidate(options) {
   try {
     build = await isolatedBuild(parsed.sqliteSource, root, calendar)
     if (
-      build.candidate.bytes !== pin.bytes ||
-      build.candidate.sha256 !== pin.sha256 ||
-      build.engineExecuted !== false ||
-      build.runtimePinChanged !== false
+      !bootstrap &&
+      (build.candidate.bytes !== pin.bytes ||
+        build.candidate.sha256 !== pin.sha256 ||
+        build.engineExecuted !== false ||
+        build.runtimePinChanged !== false)
     )
       throw new Error('Native candidate differs from the independently qualified static pin')
     for (const [name, input] of Object.entries(build.inputs)) {
@@ -409,7 +569,14 @@ async function qualifyBrc38NativeCandidate(options) {
     if (Object.keys(build.inputs).length !== sources.length + 1)
       throw new Error('Native build source cohort is incomplete')
     await checkInputs()
-    executable = await owner.openPinnedNativeExecutable(build.candidate.path)
+    owner = bootstrap
+      ? standaloneContractOwner(build, root)
+      : Object.freeze({
+          open: filename => runtimeFactory.openPinnedNativeExecutable(filename),
+          launchPath: file => runtimeFactory.pinnedNativeLaunchPath(file),
+          close: file => runtimeFactory.closePinnedNativeExecutable(file)
+        })
+    executable = await owner.open(build.candidate.path)
     records.push(
       await originalComponent(owner, executable, fixture, 'original-runtime', ['--runtime-contract'], calendar)
     )
@@ -575,9 +742,39 @@ async function qualifyBrc38NativeCandidate(options) {
     await privateDirectory(root, rootIdentity)
     await privateDirectory(fixture, fixtureIdentity)
     if ((await fs.readdir(fixture)).length !== 0) throw new Error('Original native fixtures remain owned')
+    if (bootstrap) {
+      const candidate = await owner.postimage(executable)
+      await owner.close(executable)
+      executable = undefined
+      const receipt = {
+        protocol: 'brc38-native-standalone-bootstrap/v1',
+        finishedAt: new Date().toISOString(),
+        inputs,
+        build,
+        host,
+        candidate,
+        records,
+        originalRuntimePassed: true,
+        originalContractsPassed: 13,
+        originalFixturesDrained: true,
+        candidateDescriptorClosed: true,
+        runtimeQualified: false,
+        runtimePinChanged: false,
+        executableDelivered: false,
+        hostEnrolled: false,
+        outerWorkerAttested: false,
+        physicalRSSQualified: false,
+        providerQualified: false,
+        fullSystemQualified: false,
+        publicationOrDeployment: false
+      }
+      await writeQualificationRecord(path.join(root, 'bootstrap-contract-receipt.json'), receipt)
+      await checkInputs()
+      return receipt
+    }
     const bytes = await readActual(build.candidate.path, pin.bytes)
     if (bytes.length !== pin.bytes || sha(bytes) !== pin.sha256) throw new Error('Native candidate postimage differs')
-    await owner.closePinnedNativeExecutable(executable)
+    await owner.close(executable)
     executable = undefined
     const target = await fs.open(
       parsed.destination,
@@ -611,8 +808,8 @@ async function qualifyBrc38NativeCandidate(options) {
       throw new NativeCandidateBuildCleanupError(writeFailed ? writeFailure : undefined, cleanup, () => target.close())
     }
     if (writeFailed) throw writeFailure
-    executable = await owner.openPinnedNativeExecutable(parsed.destination)
-    await owner.closePinnedNativeExecutable(executable)
+    executable = await owner.open(parsed.destination)
+    await owner.close(executable)
     executable = undefined
     await checkInputs()
     const receipt = {
@@ -673,7 +870,7 @@ async function qualifyBrc38NativeCandidate(options) {
   }
   if (executable !== undefined) {
     try {
-      await owner.closePinnedNativeExecutable(executable)
+      await owner.close(executable)
     } catch (cause) {
       cleanup.push(cause)
     }
@@ -724,11 +921,23 @@ async function qualifyBrc38NativeCandidate(options) {
     )
 }
 
+async function qualifyBrc38NativeCandidate(options) {
+  return await runNativeQualification(options, false)
+}
+async function bootstrapBrc38NativeCandidate(options) {
+  return await runNativeQualification(options, true)
+}
+
 module.exports = {
   parseQualificationArguments,
+  parseBootstrapQualificationArguments,
+  standaloneContractOwner,
+  writeQualificationRecord,
   planLinuxQualificationHost,
   inspectNativeQualificationHost,
-  qualifyBrc38NativeCandidate
+  qualifyBrc38NativeCandidate,
+  bootstrapBrc38NativeCandidate,
+  qualificationFailureData
 }
 if (require.main === module) {
   Promise.resolve()

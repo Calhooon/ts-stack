@@ -2295,3 +2295,21 @@ token isolation and physical-host shutdown; Job completion is not VM shutdown.
 Real Windows helper/MSVC/Job/addon/supervisor, protected installation, provenance,
 replacement/handle and platform qualification remain. Source wiring and pure
 configuration/error/cleanup tests do not complete the host or full#544 system.
+
+### Linux first-artifact contract bootstrap
+
+In an independently controlled Linux ARM64/x64 Node24.18.0 ABI137 worker,
+`node tools/Brc38NativeBootstrapQualification.cjs --sqlite-source /input/sqlite3.c --output-parent /private/work`
+builds the reviewed pinned source and runs the same thirteen original contracts
+used by native delivery. It captures and rechecks the actual immutable executable
+descriptor, retains failed cleanup for concrete retry, and leaves a bounded
+exclusive receipt in its owned root. The worker owner must inspect the evidence
+and physically stop the worker before releasing its roots.
+
+This unpublished maintainer tool resolves first-artifact testing without an
+existing runtime pin. Its receipt is comparison data: it installs nothing,
+enrolls no host, and cannot authorize wallet execution. Real architecture-specific
+resource and worker qualification, reviewed static pins, and protected delivery
+remain required. Normal delivery still refuses an absent or mismatched pin.
+Limits remain attached to their named resources; first-artifact evidence does
+not establish production sizing or justify tighter arbitrary caps.

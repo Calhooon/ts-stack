@@ -760,3 +760,168 @@ test('a bootstrap process on the wrong host or outside its original root refuses
   expect(noExecution).not.toHaveBeenCalled()
   expect(await fs.readdir(directory)).toEqual([])
 })
+
+// Standalone bootstrap uses synthetic ELF DATA only in these I/O cases. No
+// synthetic image is executed, delivered, or enrolled in the SDK runtime.
+async function standaloneFixture() {
+  const bytes = targetHeader('linux', process.arch),
+    buildDirectory = path.join(directory, 'build'),
+    filename = path.join(buildDirectory, 'native-candidate')
+  await fs.mkdir(buildDirectory, { mode: 0o700 })
+  await fs.writeFile(filename, bytes, { flag: 'wx', mode: 0o500 })
+  const build = {
+    protocol: 'brc38-native-candidate-build/v1',
+    platform: process.platform,
+    architecture: process.arch,
+    engineExecuted: false,
+    qualified: false,
+    runtimePinChanged: false,
+    publicationOrDeployment: false,
+    candidate: {
+      path: filename,
+      bytes: bytes.length,
+      sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex')
+    }
+  }
+  return {
+    filename,
+    build,
+    owner: require('../../../../tools/Brc38NativeQualification.cjs').standaloneContractOwner(build, directory)
+  }
+}
+test('standalone bootstrap captures the actual immutable inode, handles partial reads, and grants no SDK authority', async () => {
+  const { filename, build, owner } = await standaloneFixture(),
+    originalOpen = fs.open
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const file = await originalOpen(...args),
+      read = file.read.bind(file)
+    if (args[0] === filename)
+      file.read = (buffer, offset, length, position) => read(buffer, offset, Math.min(length, 7), position)
+    return file
+  })
+  const file = await owner.open(filename),
+    runtime = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs')
+  try {
+    expect(await owner.postimage(file)).toEqual({ bytes: build.candidate.bytes, sha256: build.candidate.sha256 })
+    expect(await owner.launchPath(file)).toBe('/proc/self/fd/4')
+    await expect(runtime.pinnedNativeLaunchPath(file)).rejects.toThrow('original pinned executable descriptor')
+    await expect(owner.launchPath(build)).rejects.toThrow('original captured descriptor')
+  } finally {
+    await owner.close(file)
+  }
+  await expect(owner.launchPath(file)).rejects.toThrow('original captured descriptor')
+})
+test.each(['digest', 'writable', 'hardlink', 'symlink'])(
+  'standalone %s candidate refuses without launching any process',
+  async defect => {
+    const { filename, build, owner } = await standaloneFixture(),
+      noChild = jest.spyOn(require('node:child_process'), 'spawn')
+    if (defect === 'digest') {
+      await fs.chmod(filename, 0o700)
+      const bytes = await fs.readFile(filename)
+      bytes[63] ^= 1
+      await fs.writeFile(filename, bytes)
+      await fs.chmod(filename, 0o500)
+    } else if (defect === 'writable') await fs.chmod(filename, 0o700)
+    else if (defect === 'hardlink') await fs.link(filename, path.join(directory, 'alias'))
+    else {
+      await fs.rename(filename, path.join(directory, 'target'))
+      await fs.symlink(path.join(directory, 'target'), filename)
+    }
+    await expect(owner.open(build.candidate.path)).rejects.toThrow()
+    expect(noChild).not.toHaveBeenCalled()
+  }
+)
+test('standalone launch rechecks the captured inode after a mode change', async () => {
+  const { filename, owner } = await standaloneFixture(),
+    file = await owner.open(filename)
+  try {
+    await fs.chmod(filename, 0o700)
+    await expect(owner.launchPath(file)).rejects.toThrow('identity changed')
+  } finally {
+    await owner.close(file)
+  }
+})
+test('standalone descriptor-close failure retains the actual descriptor until its concrete retry', async () => {
+  const { filename, owner } = await standaloneFixture(),
+    file = await owner.open(filename),
+    actualClose = file.close.bind(file),
+    reason = new Error('close failed')
+  file.close = jest.fn().mockRejectedValueOnce(reason).mockImplementation(actualClose)
+  const failure = await owner.close(file).catch(error => error)
+  expect(failure.cleanupError).toBe(reason)
+  expect(file.fd).toBeGreaterThanOrEqual(0)
+  expect(await owner.launchPath(file)).toBe('/proc/self/fd/4')
+  await failure.retryCleanup()
+  await failure.retryCleanup()
+  expect(file.fd).toBe(-1)
+  expect(file.close).toHaveBeenCalledTimes(2)
+  await expect(owner.launchPath(file)).rejects.toThrow('original captured descriptor')
+})
+test('standalone failed postimage and close preserve both causes and the original retry descriptor', async () => {
+  const { filename, owner } = await standaloneFixture(),
+    actualOpen = fs.open,
+    readFailure = new Error('read failed'),
+    closeFailure = new Error('close failed')
+  let file
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const opened = await actualOpen(...args)
+    if (args[0] === filename) {
+      file = opened
+      const actualClose = opened.close.bind(opened)
+      opened.read = jest.fn().mockRejectedValue(readFailure)
+      opened.close = jest.fn().mockRejectedValueOnce(closeFailure).mockImplementation(actualClose)
+    }
+    return opened
+  })
+  const failure = await owner.open(filename).catch(error => error)
+  expect(failure.cause).toBe(readFailure)
+  expect(failure.cleanupError).toBe(closeFailure)
+  expect(file.fd).toBeGreaterThanOrEqual(0)
+  await failure.retryCleanup()
+  expect(file.fd).toBe(-1)
+})
+test('bootstrap receipt uses exclusive immutable output and preserves paired write/close failures', async () => {
+  const { writeQualificationRecord } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    filename = path.join(directory, 'receipt.json'),
+    actualOpen = fs.open,
+    writeFailure = new Error('write failed'),
+    closeFailure = new Error('close failed')
+  let file
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const opened = await actualOpen(...args)
+    if (args[0] === filename) {
+      file = opened
+      const actualClose = opened.close.bind(opened)
+      opened.writeFile = jest.fn().mockRejectedValue(writeFailure)
+      opened.close = jest.fn().mockRejectedValueOnce(closeFailure).mockImplementation(actualClose)
+    }
+    return opened
+  })
+  const failure = await writeQualificationRecord(filename, { runtimeQualified: false }).catch(error => error)
+  expect(failure.cause).toBe(writeFailure)
+  expect(failure.cleanupError).toBe(closeFailure)
+  expect(file.fd).toBeGreaterThanOrEqual(0)
+  await failure.retryCleanup()
+  expect(file.fd).toBe(-1)
+  expect((await fs.stat(filename)).mode & 0o777).toBe(0o400)
+  await expect(writeQualificationRecord(filename, {})).rejects.toThrow()
+})
+test('bootstrap and delivery CLIs keep distinct strict source-only arguments', () => {
+  const {
+    parseBootstrapQualificationArguments: bootstrap,
+    parseQualificationArguments: delivery
+  } = require('../../../../tools/Brc38NativeQualification.cjs')
+  expect(bootstrap(['--sqlite-source', '/input/sqlite3.c', '--output-parent', '/private/work'])).toEqual({
+    sqliteSource: '/input/sqlite3.c',
+    outputParent: '/private/work'
+  })
+  for (const args of [
+    ['--sqlite-source', '/input/sqlite3.c', '--destination', '/private/work'],
+    ['--candidate', '/input/native', '--output-parent', '/private/work'],
+    ['--sqlite-source', '/input/sqlite3.c', '--output-parent', '/private/../work'],
+    ['--sqlite-source', '/input/sqlite3.c', '--output-parent', '/private/work', '--skip-runtime']
+  ])
+    expect(() => bootstrap(args)).toThrow()
+  expect(() => delivery(['--sqlite-source', '/input/sqlite3.c', '--output-parent', '/private/work'])).toThrow()
+})
