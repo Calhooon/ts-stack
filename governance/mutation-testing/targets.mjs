@@ -1061,6 +1061,7 @@ export function buildMutationTargets(repositoryRoot) {
       ],
       ...jestTarget('jest.config.js', [
         '<rootDir>/src/script/templates/__tests/RevenueListing.test.ts',
+        '<rootDir>/src/script/templates/__tests/RevenueListingKeys.test.ts',
         '<rootDir>/src/script/templates/__tests/RevenueListingProfile.test.ts',
         '<rootDir>/src/script/templates/__tests/RevenueListing.property.test.ts'
       ])

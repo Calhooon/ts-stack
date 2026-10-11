@@ -1669,6 +1669,23 @@ test('current immutable listing qualification adds complete sources without chan
   )
 })
 
+test('listing public-arithmetic mutations include the bounded-retention regressions and original independent properties', () => {
+  const target = buildMutationTargets(REPOSITORY_ROOT)['sdk-revenue-listing']
+  const selection = target.runnerOptions.jest.config.testMatch
+  for (const file of [
+    'RevenueListing.test.ts',
+    'RevenueListingKeys.test.ts',
+    'RevenueListingProfile.test.ts',
+    'RevenueListing.property.test.ts'
+  ])
+    assert.ok(selection.includes(`<rootDir>/src/script/templates/__tests/${file}`))
+  assert.equal(
+    target.propertyTest,
+    'packages/sdk/src/script/templates/__tests/RevenueListing.property.test.ts'
+  )
+  assert.ok(target.mutate.includes('src/script/templates/RevenueListingKeys.ts'))
+})
+
 test('complete alias regression initial-suite allowances retain their exact fourteen-target scope', () => {
   const allowances = new Map([
     ['private-purchase-alias-state', 15],
