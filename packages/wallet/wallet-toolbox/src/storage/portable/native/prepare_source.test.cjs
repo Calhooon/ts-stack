@@ -692,6 +692,160 @@ test('bootstrap manifest write and close failures retain both errors and the act
   await failure.retryCleanup()
 })
 
+// Hyper-V work orders remain comparison DATA, not permission to operate a host.
+function windowsHostFixture() {
+  return {
+    protocol: 'brc38-windows-bootstrap-host-work-order/v1',
+    runId: '12345678-1234-1234-1234-123456789abc',
+    vmId: 'abcdef12-1234-1234-1234-123456789abc',
+    architecture: 'x64',
+    guestActorSid: 'S-1-5-21-111-222-333-1001',
+    hostController: { bytes: 123, sha256: '1'.repeat(64) },
+    guestController: {
+      filename: 'C:\Source\tools\Brc38WindowsBootstrapController.ps1',
+      bytes: 456,
+      sha256: '2'.repeat(64)
+    },
+    guestConfiguration: { filename: 'C:\Private\worker-options.json', bytes: 789, sha256: '3'.repeat(64) }
+  }
+}
+test.each(['arm64', 'x64'])(
+  'Hyper-V %s work order preserves exact run/VM/source DATA without claiming a real supported host',
+  async architecture => {
+    const input = windowsHostFixture(),
+      host = require('../../../../tools/Brc38WindowsBootstrapHost.cjs'),
+      execution = jest.spyOn(require('node:child_process'), 'spawn')
+    input.architecture = architecture
+    const plan = host.bootstrapHostPlan(input)
+    input.guestController.sha256 = '4'.repeat(64)
+    input.vmId = 'bad'
+    expect(plan.architecture).toBe(architecture)
+    expect(plan.vmName).toBe('ts569-native-windows-bootstrap-' + plan.runId)
+    expect(plan.guestController.sha256).toBe('2'.repeat(64))
+    expect(Object.isFrozen(plan.guestController)).toBe(true)
+    expect(Object.isFrozen(plan.limits)).toBe(true)
+    expect(plan.hostAdmitted).toBe(false)
+    expect(plan.qualified).toBe(false)
+    expect(plan.runtimePinChanged).toBe(false)
+    expect(execution).not.toHaveBeenCalled()
+    await expect(
+      require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').pinnedNativeLaunchPath(plan)
+    ).rejects.toThrow('original pinned executable descriptor')
+  }
+)
+test.each([
+  'protocol',
+  'run',
+  'zero-run',
+  'VM',
+  'zero-VM',
+  'architecture',
+  'SID',
+  'SID-overflow',
+  'source-digest',
+  'source-size',
+  'guest-size',
+  'controller',
+  'same-input',
+  'UNC',
+  'traversal',
+  'stream',
+  'reserved',
+  'control',
+  'limits-override'
+])('Hyper-V %s work-order refuses before any host operation', defect => {
+  const input = windowsHostFixture(),
+    execution = jest.spyOn(require('node:child_process'), 'spawn')
+  if (defect === 'protocol') input.protocol = 'other'
+  else if (defect === 'run') input.runId = 'unverified'
+  else if (defect === 'zero-run') input.runId = '00000000-0000-0000-0000-000000000000'
+  else if (defect === 'VM') input.vmId = 'not-a-guid'
+  else if (defect === 'zero-VM') input.vmId = '00000000-0000-0000-0000-000000000000'
+  else if (defect === 'architecture') input.architecture = 'ia32'
+  else if (defect === 'SID') input.guestActorSid = 'S-1-5-18'
+  else if (defect === 'SID-overflow') input.guestActorSid = 'S-1-5-21-4294967296-222-333-1001'
+  else if (defect === 'source-digest') input.hostController.sha256 = 'bad'
+  else if (defect === 'source-size') input.hostController.bytes = 1048577
+  else if (defect === 'guest-size') input.guestConfiguration.bytes = 1.5
+  else if (defect === 'controller') input.guestController.filename = 'C:\Source\tools\Other.ps1'
+  else if (defect === 'same-input') input.guestConfiguration.filename = input.guestController.filename
+  else if (defect === 'UNC') input.guestConfiguration.filename = '\\server\private\options.json'
+  else if (defect === 'traversal') input.guestConfiguration.filename = 'C:\Private\..\options.json'
+  else if (defect === 'stream') input.guestConfiguration.filename += ':alternate'
+  else if (defect === 'reserved') input.guestConfiguration.filename = 'C:\Private\NUL'
+  else if (defect === 'control') input.guestConfiguration.filename += String.fromCharCode(0)
+  else input.limits = { memoryBytes: 1 }
+  expect(() => require('../../../../tools/Brc38WindowsBootstrapHost.cjs').bootstrapHostPlan(input)).toThrow(
+    'Windows host'
+  )
+  expect(execution).not.toHaveBeenCalled()
+})
+test('actual bounded Hyper-V work-order capture closes its descriptor and preserves independent source DATA', async () => {
+  const input = windowsHostFixture(),
+    filename = path.join(directory, 'host-options.json')
+  await fs.writeFile(filename, JSON.stringify(input), { flag: 'wx' })
+  const plan = await require('../../../../tools/Brc38WindowsBootstrapHost.cjs').readBootstrapHostConfiguration(filename)
+  expect(plan.guestConfiguration.sha256).toBe(input.guestConfiguration.sha256)
+  expect(plan.hostAdmitted).toBe(false)
+  expect(JSON.parse(await fs.readFile(filename, 'utf8'))).toEqual(input)
+})
+test.each(['symlink', 'hard-link', 'too-large', 'UTF8'])(
+  'actual Hyper-V %s work-order refuses with real local files and no host execution',
+  async defect => {
+    const input = path.join(directory, 'host-input.json'),
+      execution = jest.spyOn(require('node:child_process'), 'spawn')
+    if (defect === 'symlink') await fs.symlink(path.join(directory, 'absent'), input)
+    else {
+      const bytes =
+        defect === 'too-large'
+          ? Buffer.alloc(1048577)
+          : defect === 'UTF8'
+            ? Buffer.from([0xff])
+            : Buffer.from(JSON.stringify(windowsHostFixture()))
+      await fs.writeFile(input, bytes, { flag: 'wx' })
+      if (defect === 'hard-link') await fs.link(input, path.join(directory, 'second-input.json'))
+    }
+    await expect(
+      require('../../../../tools/Brc38WindowsBootstrapHost.cjs').readBootstrapHostConfiguration(input)
+    ).rejects.toThrow()
+    expect(execution).not.toHaveBeenCalled()
+  }
+)
+test('failed actual Hyper-V input read/close retains both causes and retries its same original descriptor', async () => {
+  const input = path.join(directory, 'host-input.json'),
+    originalOpen = fs.open,
+    readFailure = new Error('synthetic bounded input read failure'),
+    closeFailure = new Error('synthetic original close failure')
+  await fs.writeFile(input, JSON.stringify(windowsHostFixture()), { flag: 'wx' })
+  let retained,
+    attempts = 0
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const file = await originalOpen(...args)
+    if (args[0] === input) {
+      retained = file
+      file.read = async () => {
+        throw readFailure
+      }
+      const close = file.close.bind(file)
+      file.close = async () => {
+        if (++attempts === 1) throw closeFailure
+        await close()
+      }
+    }
+    return file
+  })
+  const failure = await require('../../../../tools/Brc38WindowsBootstrapHost.cjs')
+    .readBootstrapHostConfiguration(input)
+    .catch(e => e)
+  expect(failure).toBeInstanceOf(NativeSourceCleanupError)
+  expect(failure.errors).toEqual([readFailure, closeFailure])
+  expect(retained.fd).toBeGreaterThanOrEqual(0)
+  await failure.retryCleanup()
+  await failure.retryCleanup()
+  expect(retained.fd).toBe(-1)
+  expect(attempts).toBe(2)
+})
+
 // Outer-worker source/data regressions. No synthetic observation is real Job
 // evidence, and these controls never invoke PowerShell, .NET or a compiler.
 async function windowsBootstrapWorkerFixture() {
