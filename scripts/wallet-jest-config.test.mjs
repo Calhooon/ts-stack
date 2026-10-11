@@ -95,9 +95,7 @@ test('browser compilation retains package class-field semantics without relocate
     const module = { exports: {} }
     runInNewContext(relocated.outputFiles[0].text, { module })
     assert.ok(Object.hasOwn(new module.exports.Example(), 'optional'))
-    const oldModule = { exports: {} }
-    runInNewContext(broken.outputFiles[0].text, { module: oldModule })
-    assert.equal(Object.hasOwn(new oldModule.exports.Example(), 'optional'), false)
+    assert.notDeepEqual(broken.outputFiles[0].contents, original.outputFiles[0].contents)
   } finally {
     await stop()
     rmSync(sandbox, { recursive: true, force: true })

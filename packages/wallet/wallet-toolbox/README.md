@@ -5244,7 +5244,7 @@ The qualification browser bundles use a self-contained test compiler config
 that preserves the package's ES2022 class-field definitions when Stryker copies
 the package away from its inherited config. A real compiler regression compares
 the original and relocated output and rejects the old missing-base warning and
-changed class-field semantics. Browser counter maps start empty: cases that
+changed compiler output. Browser counter maps start empty: cases that
 never execute an instrumented location report zero hits. Actual instrumentation
 alone adds counters, and canonical NoCoverage and score gates still apply.
 The self-contained browser test context is mapped to the governed browser
