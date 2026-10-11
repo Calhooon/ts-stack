@@ -128,7 +128,7 @@ export async function acquisitionNativeWalletFixture(
         raw = transaction.toHex(),
         original = services.postBeef,
         guardCalls = jest.mocked(broadcast).mock.calls.length,
-        publication = jest.fn<typeof services.postBeef>(async (beef, txids) => {
+        publication = jest.fn<InstanceType<typeof Services>['postBeef']>(async (beef, txids) => {
           expect(txids).toEqual([txid])
           expect(beef.findTxid(txid)?.tx?.toHex()).toBe(raw)
           return [
