@@ -45,8 +45,10 @@ guards; they bind each fixture payment to one durable operation, verify its actu
 Script/SPV evidence and assert the persisted ownership receipt independently of
 publication. Before spending fixture funding, they separately exercise the actual
 native publication pipeline with an exact-transaction, owned synthetic response
-and verify its persisted status. They restore the broadcast-refusal guard
-immediately afterwards. This evidence makes no real-chain funding or publication
+and verify its persisted status. Recipient fixture setup likewise exercises the
+first ordinary fixed-child payout internalization with an exact-transaction
+synthetic response. A separate stub restores the original broadcast-refusal
+function in `finally` and checks that its call history is untouched. This evidence makes no real-chain funding or publication
 claim.
 
 ## Bind the complete local mutation campaign

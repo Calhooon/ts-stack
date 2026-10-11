@@ -549,7 +549,12 @@ it.each(['auto', 'legacy'] as const)(
           description: 'Current-profile proportional child payout'
         }
         expect(
-          (await recipient.native.wallet.internalizeBrc197Action(args, originator)).satoshis
+          (
+            await recipient.native.withSyntheticPublication(
+              Transaction.fromAtomicBEEF(payout.beef),
+              () => recipient.native.wallet.internalizeBrc197Action(args, originator)
+            )
+          ).satoshis
         ).toBe(amount)
         await recipient.native.close()
         const reopened = await recipient.open()

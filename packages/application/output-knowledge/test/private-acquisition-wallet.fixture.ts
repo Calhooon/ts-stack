@@ -122,6 +122,35 @@ export async function acquisitionNativeWalletFixture(
     }
     opened.delete(closeKnex)
     opened.add(close)
+    /** Exact caller-owned synthetic publication; never reset or replace guard history. */
+    async function withSyntheticPublication<T>(transaction: Transaction, effect: () => Promise<T>) {
+      const txid = transaction.id('hex'),
+        raw = transaction.toHex(),
+        original = services.postBeef,
+        guardCalls = jest.mocked(broadcast).mock.calls.length,
+        publication = jest.fn<typeof services.postBeef>(async (beef, txids) => {
+          expect(txids).toEqual([txid])
+          expect(beef.findTxid(txid)?.tx?.toHex()).toBe(raw)
+          return [
+            {
+              name: 'owned-synthetic-fixture-no-network',
+              status: 'success',
+              txidResults: [{ txid, status: 'success' }]
+            }
+          ]
+        })
+      expect(original).toBe(broadcast)
+      services.postBeef = publication
+      try {
+        const result = await effect()
+        expect(publication).toHaveBeenCalledTimes(1)
+        return result
+      } finally {
+        services.postBeef = original
+        expect(services.postBeef).toBe(broadcast)
+        expect(broadcast).toHaveBeenCalledTimes(guardCalls)
+      }
+    }
     // Synthetic fixture funding uses the explicit durable local custody port.
     // Ordinary BRC-100 internalization now publishes unmined payments; the
     // fixture must retain its broadcast-refusal guard and never contact a network.
@@ -169,35 +198,29 @@ export async function acquisitionNativeWalletFixture(
       // before making this fixture's funding available to later wallet actions.
       const request = await EntityProvenTxReq.fromStorageTxid(active, funding.txid)
       expect(request?.status).toBe('unsent')
-      const publication = jest
-        .spyOn(services, 'postBeef')
-        .mockImplementation(async (beef, txids) => {
-          expect(txids).toEqual([funding.txid])
-          expect(beef.findTxid(funding.txid)?.tx?.toHex()).toBe(transaction.toHex())
-          return [
-            {
-              name: 'owned-synthetic-fixture-no-network',
-              status: 'success',
-              txidResults: [{ txid: funding.txid, status: 'success' }]
-            }
-          ]
-        })
-      try {
-        await active.attemptToPostReqsToNetwork([request!])
-        expect(publication).toHaveBeenCalledTimes(1)
-        expect((await active.findProvenTxReqs({ partial: { txid: funding.txid } }))[0].status).toBe(
-          'unmined'
-        )
-        expect((await active.findTransactions({ partial: { txid: funding.txid } }))[0].status).toBe(
-          'unproven'
-        )
-        expect(await controller.getInternalization(operation.id)).toEqual(result)
-      } finally {
-        publication.mockRestore()
-      }
+      await withSyntheticPublication(transaction, () =>
+        active.attemptToPostReqsToNetwork([request!])
+      )
+      expect((await active.findProvenTxReqs({ partial: { txid: funding.txid } }))[0].status).toBe(
+        'unmined'
+      )
+      expect((await active.findTransactions({ partial: { txid: funding.txid } }))[0].status).toBe(
+        'unproven'
+      )
+      expect(await controller.getInternalization(operation.id)).toEqual(result)
       return result
     }
-    return { active, wallet, controller, identities, bridge, services, close, creditFunding }
+    return {
+      active,
+      wallet,
+      controller,
+      identities,
+      bridge,
+      services,
+      close,
+      creditFunding,
+      withSyntheticPublication
+    }
   }
   const close = async () => {
     await Array.from(opened).reduce(
