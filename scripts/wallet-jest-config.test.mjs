@@ -8,7 +8,7 @@ import { runInNewContext } from 'node:vm'
 
 const wallet = resolve(import.meta.dirname, '../packages/wallet/wallet-toolbox')
 const require = createRequire(join(wallet, 'package.json'))
-const { createTransformer } = require('ts-jest')
+const { createTransformer } = require('ts-jest').default
 
 test('wallet TypeScript transform retains its compiler configuration in a relocated mutation sandbox', async () => {
   const sandbox = mkdtempSync(join(tmpdir(), 'wallet-jest-config-'))

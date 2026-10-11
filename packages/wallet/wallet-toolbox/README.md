@@ -5230,7 +5230,7 @@ crypto parameters, production expiries and memory/PID bounds remain unchanged.
 This is measured test admission; full browser, mutation and system qualification
 are still required, and the measured latency remains a performance baseline.
 
-# Mutation test compiler configuration
+## Mutation test compiler configuration
 
 Jest resolves `tsconfig.jest.json` from the source checkout before Stryker
 relocates the test root. It inherits the package's strict compiler settings and
