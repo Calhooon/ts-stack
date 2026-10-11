@@ -2002,7 +2002,7 @@ remains the default. All original native loader checks still apply, including
 qualified platform, exact executable bytes and immutable file identity. This
 setting never enrolls a build or activates a profile.
 
-After the frozen installation and ordinary wallet build, Linux ARM64 CI can
+After the frozen installation and ordinary wallet build, Linux ARM64/x64 CI can
 run `bash scripts/provision-wallet-native-tests.sh`. It uses the pinned Node
 24.18.0 Debian compiler image, captures the exact SQLite 3.53.4 source, and
 invokes the existing qualification tool. Delivery requires the static build
@@ -2014,8 +2014,16 @@ private temporary directory; the worker removes its own container at exit.
 This is delivery implementation, not a passing CI campaign. Workflow/cohort
 wiring, realistic recovery admission, complete original customer workflows
 and full affected qualification remain unfinished until demonstrated. Other
-platforms still require independent qualification; x64 is not silently
-substituted for the qualified ARM64 component.
+platforms still require independent qualification. Linux x64 has its own exact
+1381576-byte component entry, independently built with the pinned Node24.18.0,
+GCC12.2.0 and SQLite3.53.4 inputs and passing all thirteen original contracts.
+Its SHA256 is `64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b`;
+the ARM64 entry is unchanged. Original x64 container tasks and cgroups were
+verified absent before adopting this static entry. The isolated native build and
+contracts peaked at437366784 bytes inside a4GiB worker, with26 processes and a
+non-root128-process limit; the cgroup itself had no PID ceiling. No memory-limit
+events occurred. These measured component bounds do not establish production
+budgets, whole provisioning, other platforms or full-system qualification.
 
 The pinned Node base was observed to contain no `cc` or `gcc`, and the first
 delivery attempt failed before application tests. The delivery script now

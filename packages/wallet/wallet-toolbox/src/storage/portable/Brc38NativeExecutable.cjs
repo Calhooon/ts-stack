@@ -6,7 +6,7 @@ const path = require('node:path')
 const { runInSeries } = require('../../utility/runInSeries.js')
 const { acquireWindowsNativeImage } = require('./Brc38PrivateFilesystemNode.js')
 const { Brc38StagingCleanupError } = require('./Brc38StagingCleanupError.js')
-// Exact Linuxarm64 component build qualified by the original native runtime,
+// Exact Linux ARM64/x64 component builds qualified by the original native runtime,
 // WAL/DELETE, profile, private-stage, range and committed-writer recovery
 // contracts plus independent shared-quota, cell-comparison and old/new local
 // observer/pointer-group guard, rollback and drain contracts.
@@ -21,7 +21,15 @@ const componentBuild = Object.freeze({
 // Only qualified exact builds belong here. Candidate build receipts cannot
 // populate this registry at runtime or replace a missing platform entry.
 /** @type {Readonly<Record<string, typeof componentBuild | undefined>>} */
-const componentBuilds = Object.freeze({ 'linux/arm64': componentBuild })
+const componentBuilds = Object.freeze({
+  'linux/arm64': componentBuild,
+  'linux/x64': Object.freeze({
+    platform: 'linux',
+    architecture: 'x64',
+    bytes: 1381576,
+    sha256: '64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b'
+  })
+})
 /** Read-only build metadata for maintainer preflight, never executable admission.
  * Only the original file factory can capture a runtime launch descriptor.
  * @param {string} platform @param {string} architecture */

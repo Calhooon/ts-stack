@@ -138,8 +138,13 @@ static registry, then emits only its Docker target (`linux/arm64` or
 `linux/amd64`). Provisioning compares that target with the actual kernel
 architecture before private allocation, dependency downloads or compiler work.
 This metadata check does not attest worker isolation or enroll a missing build.
-Only Linux ARM64 currently has a qualified static entry; x64 refuses before
-filesystem/compiler work until genuine host qualification supplies its entry.
+Linux ARM64 and x64 have independently qualified, distinct static component
+entries. The original x64 source build passes all thirteen contracts with exact
+Node24.18.0, GCC12.2.0 and SQLite3.53.4 inputs, followed by actual original-worker
+task/cgroup drainage. Its 1381576 bytes have SHA256
+`64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b`.
+Missing Darwin/Windows entries still refuse before filesystem/compiler work.
+Component qualification does not attest a future worker or the complete provider.
 The provisioner selects build and run targets from the actual worker, with no
 caller override or emulated-platform substitution. Native resource limits,
 original thirteen contract modes and exclusive pinned-descriptor delivery stay

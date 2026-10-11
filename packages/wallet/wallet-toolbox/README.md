@@ -5362,9 +5362,12 @@ for the actual ARM64/x64 Node24.18.0 ABI137 worker. Its separate `--check-host`
 mode emits the actual Docker target only after the immutable registry check;
 the provisioner compares it with the kernel architecture before allocation,
 downloads or compiler work. Build metadata never grants a runtime descriptor or
-worker attestation. Only Linux ARM64 is currently pinned; missing x64 entries
-refuse without a fallback. Real x64 qualification and fixed bytes remain required
-before that delivery route can run. The original thirteen native contracts,
+worker attestation. Linux ARM64 and x64 now have distinct immutable component
+entries. The genuine x64 source build passes all thirteen original contracts;
+its 1381576 bytes have SHA256
+`64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b`.
+The original x64 worker's tasks and cgroups were verified absent after cleanup.
+Other platforms still refuse without a fallback. The original thirteen native contracts,
 resource limits and exclusive pinned delivery are unchanged.
 
 Native driver source inputs, the exact SQLite dependency cohort, Windows addon

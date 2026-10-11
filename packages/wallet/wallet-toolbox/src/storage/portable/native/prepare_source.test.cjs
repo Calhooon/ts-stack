@@ -59,8 +59,21 @@ test('qualified component lookup returns the immutable original static build met
   expect(Object.isFrozen(pin)).toBe(true)
   await expect(owner.pinnedNativeLaunchPath(pin)).rejects.toThrow('original pinned executable descriptor')
 })
+test('qualified x64 metadata is immutable, distinct from ARM64 and never a launch descriptor', async () => {
+  const owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    pin = owner.qualifiedNativeComponentBuild('linux', 'x64')
+  expect(pin).toEqual({
+    platform: 'linux',
+    architecture: 'x64',
+    bytes: 1381576,
+    sha256: '64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b'
+  })
+  expect(pin).not.toBe(owner.componentBuild)
+  expect(Object.isFrozen(pin)).toBe(true)
+  expect(Reflect.set(pin, 'sha256', owner.componentBuild.sha256)).toBe(false)
+  await expect(owner.pinnedNativeLaunchPath(pin)).rejects.toThrow('original pinned executable descriptor')
+})
 test.each([
-  ['linux', 'x64'],
   ['darwin', 'arm64'],
   ['darwin', 'x64'],
   ['win32', 'arm64'],
