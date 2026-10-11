@@ -1,6 +1,8 @@
 'use strict'
 // Maintainer-only first-artifact source contracts in an independently controlled
-// Linux worker. No candidate path argument, runtime pin, installed delivery,
+// Unix worker. Linux captures its proc-fd; Darwin rechecks its private build
+// pathname under the original worker owner's isolation. No candidate path
+// argument, runtime pin, protected installed delivery,
 // wallet admission or host enrollment. The original worker owner must attest
 // isolation/resources and physically stop the worker before releasing its roots.
 const {

@@ -59,7 +59,7 @@ function parseBootstrapQualificationArguments(args) {
  * receipt supplies comparison DATA; the actual original inode is captured,
  * hashed and retained independently before any contract process is launched. */
 function standaloneContractOwner(build, root) {
-  const host = planLinuxQualificationHost(process.platform, process.arch, process.version, process.versions.modules)
+  const host = planUnixBootstrapHost(process.platform, process.arch, process.version, process.versions.modules)
   if (
     build.protocol !== 'brc38-native-candidate-build/v1' ||
     build.platform !== host.platform ||
@@ -78,13 +78,14 @@ function standaloneContractOwner(build, root) {
     path.dirname(path.dirname(build.candidate.path)) !== root ||
     path.basename(build.candidate.path) !== 'native-candidate'
   )
-    throw new Error('Standalone contract build DATA differs from its owned Linux source build')
+    throw new Error('Standalone contract build DATA differs from its owned Unix source build')
   const expected = Object.freeze({ ...build.candidate }),
     files = new WeakMap()
   const fields = ['dev', 'ino', 'size', 'mode', 'uid', 'nlink', 'mtimeNs', 'ctimeNs']
   const originalFile = async file => {
-    const original = files.get(file)
-    if (original === undefined) throw new Error('Standalone contract requires its original captured descriptor')
+    const owned = files.get(file)
+    if (owned === undefined) throw new Error('Standalone contract requires its original captured descriptor')
+    const original = owned.original
     const actual = await file.stat({ bigint: true })
     if (file.fd < 0 || fields.some(key => actual[key] !== original[key]) || actual.nlink !== 1n)
       throw new Error('Standalone contract executable identity changed')
@@ -127,7 +128,7 @@ function standaloneContractOwner(build, root) {
   return Object.freeze({
     async open(filename) {
       if (filename !== expected.path) throw new Error('Standalone capture requires its actual original build path')
-      await privateDirectory(path.dirname(filename))
+      const directory = await privateDirectory(path.dirname(filename))
       const file = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
       try {
         const original = await file.stat({ bigint: true })
@@ -140,7 +141,7 @@ function standaloneContractOwner(build, root) {
           (original.mode & 0o111n) === 0n
         )
           throw new Error('Standalone contract requires its immutable owned executable inode')
-        files.set(file, original)
+        files.set(file, { original, directory })
         await postimage(file)
         return file
       } catch (cause) {
@@ -158,7 +159,11 @@ function standaloneContractOwner(build, root) {
     },
     async launchPath(file) {
       await originalFile(file)
-      return '/proc/self/fd/4'
+      if (host.platform === 'linux') return '/proc/self/fd/4'
+      // Darwin has no proc-fd launch. This private candidate belongs only to
+      // the original isolated maintainer worker. It cannot satisfy the wallet's
+      // protected root-owned installation contract or grant runtime admission.
+      return await standaloneBuildPath(file, expected.path, files.get(file).directory)
     },
     close,
     postimage
@@ -208,6 +213,47 @@ function planLinuxQualificationHost(platform, architecture, nodeVersion, nodeABI
     nodeABI,
     dockerPlatform: architecture === 'arm64' ? 'linux/arm64' : 'linux/amd64'
   })
+}
+
+/** Pure target DATA for reviewed first-artifact contracts, not host admission.
+ * Linux keeps its actual Docker target; Darwin uses a private build pathname
+ * under the independent worker owner's isolation, never a wallet install path. */
+function planUnixBootstrapHost(platform, architecture, nodeVersion, nodeABI) {
+  if (platform === 'linux')
+    return Object.freeze({
+      ...planLinuxQualificationHost(platform, architecture, nodeVersion, nodeABI),
+      launchMechanism: 'captured-linux-proc-fd'
+    })
+  if (
+    platform !== 'darwin' ||
+    !['arm64', 'x64'].includes(architecture) ||
+    nodeVersion !== 'v24.18.0' ||
+    nodeABI !== '137'
+  )
+    throw new Error('Native bootstrap requires its controlled Unix ARM64/x64 Node24.18.0 ABI137 worker')
+  return Object.freeze({ platform, architecture, nodeVersion, nodeABI, launchMechanism: 'private-darwin-build-path' })
+}
+
+/** Standalone pathname comparison only. It conveys no wallet executable
+ * authority and no atomic protection against another actor with the worker's
+ * UID. The original isolated worker owner must exclude such actors. */
+async function standaloneBuildPath(file, filename, expectedDirectory) {
+  if (file.fd < 0) throw new Error('Standalone build pathname requires its still-open original descriptor')
+  await privateDirectory(path.dirname(filename), expectedDirectory)
+  const original = await file.stat({ bigint: true }),
+    actual = await fs.lstat(filename, { bigint: true })
+  if (
+    !original.isFile() ||
+    !actual.isFile() ||
+    actual.isSymbolicLink() ||
+    ['dev', 'ino', 'size', 'mode', 'uid', 'nlink', 'mtimeNs', 'ctimeNs'].some(key => actual[key] !== original[key]) ||
+    actual.nlink !== 1n ||
+    actual.uid !== BigInt(process.getuid()) ||
+    (actual.mode & 0o222n) !== 0n ||
+    (actual.mode & 0o111n) === 0n
+  )
+    throw new Error('Standalone build pathname differs from its captured immutable inode')
+  return filename
 }
 
 /** Preflight before filesystem, dependency download or compiler work. This
@@ -488,7 +534,7 @@ async function originalComponent(owner, file, cwd, name, args, calendar, committ
 async function runNativeQualification(options, bootstrap) {
   const host = bootstrap
       ? Object.freeze({
-          ...planLinuxQualificationHost(process.platform, process.arch, process.version, process.versions.modules),
+          ...planUnixBootstrapHost(process.platform, process.arch, process.version, process.versions.modules),
           outerWorkerAttested: false,
           fullSystemQualified: false
         })
@@ -934,6 +980,8 @@ module.exports = {
   standaloneContractOwner,
   writeQualificationRecord,
   planLinuxQualificationHost,
+  planUnixBootstrapHost,
+  standaloneBuildPath,
   inspectNativeQualificationHost,
   qualifyBrc38NativeCandidate,
   bootstrapBrc38NativeCandidate,

@@ -5471,15 +5471,23 @@ Actual Windows end-to-end qualification and fixed trusted artifact entries
 remain required. These maintainer tools are repository-only, not public wallet
 exports or shipped runtime candidates.
 
-### Linux first-artifact contract bootstrap
+### Unix first-artifact contract bootstrap
 
-In an independently controlled Linux ARM64/x64 Node24.18.0 ABI137 worker,
+In an independently controlled Linux or Darwin ARM64/x64 Node24.18.0 ABI137 worker,
 `node tools/Brc38NativeBootstrapQualification.cjs --sqlite-source /input/sqlite3.c --output-parent /private/work`
 builds the reviewed pinned source and runs the same thirteen original contracts
 used by native delivery. It captures and rechecks the actual immutable executable
 descriptor, retains failed cleanup for concrete retry, and leaves a bounded
 exclusive receipt in its owned root. The worker owner must inspect the evidence
 and physically stop the worker before releasing its roots.
+
+Linux launches its retained proc-fd. Darwin compares its actual private build
+pathname and private directory to the still-open inode before and after each
+contract. The isolated worker owner must exclude other actors with its UID:
+these comparisons are not atomic pathname protection or a wallet installation.
+The existing macOS runtime still requires its protected root-owned chain. Real
+Darwin compilation, contract execution, resource behavior and protected delivery
+remain unqualified.
 
 This unpublished maintainer tool resolves first-artifact testing without an
 existing runtime pin. Its receipt is comparison data: it installs nothing,

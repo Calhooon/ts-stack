@@ -925,3 +925,91 @@ test('bootstrap and delivery CLIs keep distinct strict source-only arguments', (
     expect(() => bootstrap(args)).toThrow()
   expect(() => delivery(['--sqlite-source', '/input/sqlite3.c', '--output-parent', '/private/work'])).toThrow()
 })
+
+// Foreign target plans remain DATA. Path cases exercise real filesystem I/O on
+// the current controlled Linux worker, without executing any synthetic image.
+test.each(['arm64', 'x64'])(
+  'Darwin %s first-artifact plan uses its private build path and never invents a Docker target',
+  architecture => {
+    const { planUnixBootstrapHost } = require('../../../../tools/Brc38NativeQualification.cjs'),
+      noChild = jest.spyOn(require('node:child_process'), 'spawn'),
+      plan = planUnixBootstrapHost('darwin', architecture, 'v24.18.0', '137')
+    expect(plan).toEqual({
+      platform: 'darwin',
+      architecture,
+      nodeVersion: 'v24.18.0',
+      nodeABI: '137',
+      launchMechanism: 'private-darwin-build-path'
+    })
+    expect(Object.isFrozen(plan)).toBe(true)
+    expect(plan.dockerPlatform).toBeUndefined()
+    expect(noChild).not.toHaveBeenCalled()
+  }
+)
+test.each([
+  ['win32', 'arm64', 'v24.18.0', '137'],
+  ['win32', 'x64', 'v24.18.0', '137'],
+  ['darwin', 'ia32', 'v24.18.0', '137'],
+  ['darwin', 'x86_64', 'v24.18.0', '137'],
+  ['darwin', 'arm64', 'v24.17.0', '137'],
+  ['darwin', 'x64', 'v24.18.0', '136']
+])('unsupported Unix first-artifact target %s/%s/%s/%s refuses before process or path work', (...target) => {
+  const { planUnixBootstrapHost } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    noPath = jest.spyOn(fs, 'lstat'),
+    noChild = jest.spyOn(require('node:child_process'), 'spawn')
+  expect(() => planUnixBootstrapHost(...target)).toThrow('controlled Unix ARM64/x64 Node24.18.0 ABI137 worker')
+  expect(noPath).not.toHaveBeenCalled()
+  expect(noChild).not.toHaveBeenCalled()
+})
+test('standalone private path comparison binds the actual original inode and private directory without SDK authority', async () => {
+  const { filename } = await standaloneFixture(),
+    { standaloneBuildPath } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    file = await fs.open(filename, require('node:fs').constants.O_RDONLY | require('node:fs').constants.O_NOFOLLOW),
+    originalDirectory = await fs.lstat(path.dirname(filename), { bigint: true })
+  try {
+    expect(await standaloneBuildPath(file, filename, originalDirectory)).toBe(filename)
+    await expect(
+      require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').pinnedNativeLaunchPath(file)
+    ).rejects.toThrow('original pinned executable descriptor')
+  } finally {
+    await file.close()
+  }
+})
+test.each(['replacement', 'symlink', 'directory-replacement', 'writable'])(
+  'standalone private %s path cannot replace the original captured descriptor',
+  async defect => {
+    const { filename } = await standaloneFixture(),
+      { standaloneBuildPath } = require('../../../../tools/Brc38NativeQualification.cjs'),
+      file = await fs.open(filename, require('node:fs').constants.O_RDONLY | require('node:fs').constants.O_NOFOLLOW),
+      originalDirectory = await fs.lstat(path.dirname(filename), { bigint: true })
+    try {
+      if (defect === 'directory-replacement') {
+        const relocated = path.join(directory, 'relocated')
+        await fs.rename(path.dirname(filename), relocated)
+        await fs.mkdir(path.dirname(filename), { mode: 0o700 })
+        await fs.copyFile(path.join(relocated, 'native-candidate'), filename)
+        await fs.chmod(filename, 0o500)
+      } else if (defect === 'writable') await fs.chmod(filename, 0o700)
+      else {
+        const retained = path.join(directory, 'retained')
+        await fs.rename(filename, retained)
+        if (defect === 'replacement') {
+          await fs.copyFile(retained, filename)
+          await fs.chmod(filename, 0o500)
+        } else await fs.symlink(retained, filename)
+      }
+      await expect(standaloneBuildPath(file, filename, originalDirectory)).rejects.toThrow()
+      expect(file.fd).toBeGreaterThanOrEqual(0)
+    } finally {
+      await file.close()
+    }
+  }
+)
+test('standalone private path comparison refuses a descriptor after actual close', async () => {
+  const { filename } = await standaloneFixture(),
+    { standaloneBuildPath } = require('../../../../tools/Brc38NativeQualification.cjs'),
+    file = await fs.open(filename, 'r'),
+    originalDirectory = await fs.lstat(path.dirname(filename), { bigint: true })
+  await file.close()
+  await expect(standaloneBuildPath(file, filename, originalDirectory)).rejects.toThrow('still-open original descriptor')
+})
