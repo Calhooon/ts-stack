@@ -45,7 +45,7 @@ const {
 const flags = unixCompilerArguments('linux', 'arm64')
 /** Candidate recipe selection only; actual process and worker owner remain required. */
 function targetFlags() {
-  return unixCompilerArguments(process.platform, process.arch)
+  return [...unixCompilerArguments(process.platform, process.arch)]
 }
 /** @param {Uint8Array} bytes */
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')

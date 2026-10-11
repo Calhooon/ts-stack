@@ -86,6 +86,11 @@ test.each([
       expected = [...driverSources, ...windowsAddonSources, ...sqliteFiles.map(input => input.name)]
     expect(source).toEqual(prepared.source)
     expect(source.inputs.map(input => input.name)).toEqual(expected)
+    // The driver entry is independently required; matching shared lists alone
+    // must not conceal a missing entry point. Its actual transitive includes
+    // are checked below. SQLite amalgamation and Windows bootstrap policy have
+    // separate dependency/generated-input contracts.
+    expect(expected).toContain('native_driver.c')
     expect(new Set(expected).size).toBe(expected.length)
     expect(source.platform).toBe(platform)
     expect(source.architecture).toBe(architecture)
@@ -98,7 +103,7 @@ test.each([
       const actual = await fs.readFile(path.join(prepared.directory, input.name))
       expect(actual.length).toBe(input.bytes)
       expect(crypto.createHash('sha256').update(actual).digest('hex')).toBe(input.sha256)
-      if (input.name.endsWith('.c')) {
+      if (driverSources.includes(input.name) && input.name.endsWith('.c')) {
         for (const included of actual.toString('utf8').matchAll(/^#include "([^"/]+)"/gm))
           expect(expected).toContain(included[1])
       }
