@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -644,5 +645,21 @@ test('narrow execution retains the original native controller inputs of the broa
       selectAffectedMutationTargets({ [id]: target }, [target.packageDirectory + '/' + file]),
       [id]
     )
+  }
+})
+
+test('every reviewed component selection names an exact tracked path on case-sensitive workers', () => {
+  const tracked = new Set(
+    execFileSync('git', ['ls-files'], { cwd: REPOSITORY_ROOT, encoding: 'utf8' }).trim().split('\n')
+  )
+  const selections = JSON.parse(
+    readFileSync(
+      `${REPOSITORY_ROOT}/governance/mutation-testing/wallet-component-tests.json`,
+      'utf8'
+    )
+  )
+  for (const [id, files] of Object.entries(selections)) {
+    for (const file of files)
+      assert.ok(tracked.has('packages/wallet/wallet-toolbox/' + file), id + ': ' + file)
   }
 })
