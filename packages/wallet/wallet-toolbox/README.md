@@ -5571,18 +5571,20 @@ created by its reconstruction passes. The native authorizer permits only direct
 updates of the existing main-database collection progress `nextFamily` field;
 the source-owned SQL guards still require alternating families. Insert, delete,
 slot changes, schema/settings, wallet/source rows, pointers and clocks remain
-protected. A genuine native regression stages both binary and text scratch,
-collects one chunk per pass after freezing, and verifies cleanup plus those
-negative controls. The complete customer workflow exposed this omission after
-all 14 rows committed; it did not complete publication, restart or repeat import.
-This correction changes no resource limit or admission. Fresh native artifacts,
-the regression and the complete customer workflow require actual qualification.
+protected. The genuine drained-lifecycle regression stages both binary and text
+scratch, collects one chunk per pass after freezing, and verifies cleanup plus
+those negative controls. The previous executable fails at the observed progress
+update; all five actual comparison lifecycle cases pass on the corrected ARM
+executable. The full customer workflow exposed this omission after all 14 rows
+committed; publication, restart and repeat import still require a complete rerun.
 
-The actual corrected Linux ARM candidate now passes all thirteen original native
-contracts. Its immutable pin is 1,353,552 bytes with SHA-256
-`295ae7b2511b7565dd49ed352ba9e8de5cf6b924c89cb021e1d9ec5bcac929dd`.
-The previous executable independently fails the new drained-lifecycle regression
-at the observed progress update. Corrected SDK regression and complete customer
-qualification are pending. The existing Linux x64 executable predates this C
-correction and requires a fresh build and qualification before replacement.
-No existing admission, runtime resource formula or browser limit changes.
+Both corrected Linux ARM and x64 candidates pass all thirteen original native
+contracts, with original worker/process/cgroup cleanup verified before their
+static pins were adopted. ARM is 1,353,552 bytes with SHA-256
+`295ae7b2511b7565dd49ed352ba9e8de5cf6b924c89cb021e1d9ec5bcac929dd`;
+x64 is 1,381,576 bytes with SHA-256
+`4ae3984e9c4a89dd3628ae9ff86613f61c3813f281ac6c16dedbe98279dd4af1`.
+Current normal delivery, packaging and complete customer/platform qualification
+remain required. No public API, wire format, schema, existing admission, native
+resource formula or browser limit changes. Existing unreleased minor-version
+and host-specific migration requirements still apply.

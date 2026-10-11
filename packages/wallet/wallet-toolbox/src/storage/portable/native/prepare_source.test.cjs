@@ -66,7 +66,7 @@ test('qualified x64 metadata is immutable, distinct from ARM64 and never a launc
     platform: 'linux',
     architecture: 'x64',
     bytes: 1381576,
-    sha256: '64384ba37ba21adb443830876658097890d476182086a89b32a8a2cc4cf7266b'
+    sha256: '4ae3984e9c4a89dd3628ae9ff86613f61c3813f281ac6c16dedbe98279dd4af1'
   })
   expect(pin).not.toBe(owner.componentBuild)
   expect(Object.isFrozen(pin)).toBe(true)
