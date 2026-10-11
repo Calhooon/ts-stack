@@ -229,3 +229,132 @@ test('target checks preserve fixed ELF executable type and refuse unsupported se
     expect(() => check(bytes, platform, architecture, kind)).toThrow('image differs from its build target')
   expect(() => check({}, 'linux', 'arm64')).toThrow('image differs from its build target')
 })
+
+// Bootstrap capture tests use synthetic Node header/import-library DATA, and
+// actual authored C/SQLite bytes. They never compile or qualify Windows.
+async function windowsBootstrapFixture() {
+  const crypto = require('node:crypto'),
+    input = path.join(directory, 'bootstrap-inputs')
+  await fs.mkdir(input)
+  const names = ['node_api.h', 'node_api_types.h', 'js_native_api.h', 'js_native_api_types.h', 'node_version.h'],
+    headers = []
+  for (const name of names) {
+    const bytes = Buffer.from(
+      name === 'node_version.h'
+        ? '#define NODE_MAJOR_VERSION 24\n#define NODE_MINOR_VERSION 18\n#define NODE_PATCH_VERSION 0\n#define NODE_MODULE_VERSION 137\n'
+        : '/* synthetic header DATA; not a compilable Node dependency */\n'
+    )
+    await fs.writeFile(path.join(input, name), bytes, { flag: 'wx' })
+    headers.push({ path: name, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') })
+  }
+  const library = Buffer.from('synthetic import-library DATA; never linked')
+  await fs.writeFile(path.join(input, 'node.lib'), library, { flag: 'wx' })
+  return {
+    architecture: 'arm64',
+    outputDirectory: directory,
+    nodeHeaderDirectory: input,
+    nodeHeaders: headers,
+    sqliteSource: path.join(path.dirname(require.resolve('better-sqlite3/package.json')), 'deps/sqlite3/sqlite3.c'),
+    nodeImportLibrary: {
+      filename: path.join(input, 'node.lib'),
+      bytes: library.length,
+      sha256: crypto.createHash('sha256').update(library).digest('hex')
+    },
+    toolchain: {
+      compiler: 'C:\\BuildTools\\cl.exe',
+      include: 'C:\\BuildTools\\include;C:\\SDK\\include',
+      lib: 'C:\\BuildTools\\lib;C:\\SDK\\lib',
+      path: 'C:\\BuildTools\\bin;C:\\Windows\\System32'
+    }
+  }
+}
+test.each(['arm64', 'x64'])(
+  'first-artifact %s bootstrap captures the full real source cohort and exact dependency DATA without a pre-existing addon',
+  async architecture => {
+    const cp = require('node:child_process'),
+      noExecution = jest.spyOn(cp, 'spawn'),
+      { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+      recipe = require('./source_recipe.cjs'),
+      options = await windowsBootstrapFixture()
+    options.architecture = architecture
+    const prepared = await prepareWindowsBootstrapSource(options),
+      source = prepared.source,
+      expected = [
+        ...recipe.driverSources,
+        ...recipe.windowsAddonSources,
+        'sqlite3.c',
+        ...options.nodeHeaders.map(input => 'node-headers/' + input.path),
+        'node.lib',
+        'brc38_build_policy.h'
+      ]
+    expect(source.inputs.map(input => input.path)).toEqual(expected)
+    expect(expected).toContain('native_driver.c')
+    expect(expected).toContain('windows_build_supervisor.c')
+    expect(source.architecture).toBe(architecture)
+    expect(source.nodeVersion).toBe('24.18.0')
+    expect(source.nodeModules).toBe('137')
+    expect(source.compiled).toBe(false)
+    expect(source.engineOrAddonExecuted).toBe(false)
+    expect(source.qualified).toBe(false)
+    expect(source.runtimePinChanged).toBe(false)
+    expect(source.supervisorArguments).toContain('windows_build_supervisor.c')
+    expect(source.addonArguments).toContain('windows_bridge.c')
+    expect(source.addonArguments).toContain('/DNAPI_VERSION=8')
+    const crypto = require('node:crypto')
+    for (const input of source.inputs) {
+      const bytes = await fs.readFile(path.join(prepared.directory, input.path))
+      expect(bytes.length).toBe(input.bytes)
+      expect(crypto.createHash('sha256').update(bytes).digest('hex')).toBe(input.sha256)
+    }
+    expect(await fs.readFile(path.join(prepared.directory, 'brc38_build_policy.h'), 'utf8')).toContain(
+      source.policySha256
+    )
+    expect(JSON.parse(await fs.readFile(path.join(prepared.directory, 'bootstrap-source.json'), 'utf8'))).toEqual(
+      source
+    )
+    expect(noExecution).not.toHaveBeenCalled()
+  }
+)
+test.each(['duplicate-case', 'traversal', 'missing-required', 'oversize', 'bad-hash', 'unknown-arch', 'bad-library'])(
+  'invalid first-artifact dependency %s refuses before capture or execution',
+  async defect => {
+    const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+      options = await windowsBootstrapFixture(),
+      before = await fs.readdir(directory),
+      noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+    if (defect === 'duplicate-case') options.nodeHeaders.push({ ...options.nodeHeaders[0], path: 'NODE_API.h' })
+    else if (defect === 'traversal') options.nodeHeaders[0].path = '../node_api.h'
+    else if (defect === 'missing-required') options.nodeHeaders[0].path = 'other.h'
+    else if (defect === 'oversize') options.nodeHeaders[0].bytes = 2097153
+    else if (defect === 'bad-hash') options.nodeHeaders[0].sha256 = '00'
+    else if (defect === 'unknown-arch') options.architecture = 'ia32'
+    else options.nodeImportLibrary.bytes = 33554433
+    await expect(prepareWindowsBootstrapSource(options)).rejects.toThrow('Windows bootstrap')
+    expect(await fs.readdir(directory)).toEqual(before)
+    expect(noExecution).not.toHaveBeenCalled()
+  }
+)
+test('wrong captured Node ABI refuses the source plan and removes only its uncompiled owned root', async () => {
+  const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+    options = await windowsBootstrapFixture(),
+    crypto = require('node:crypto'),
+    filename = path.join(options.nodeHeaderDirectory, 'node_version.h'),
+    bytes = Buffer.from((await fs.readFile(filename, 'utf8')).replace('VERSION 137', 'VERSION 136'))
+  await fs.writeFile(filename, bytes)
+  Object.assign(
+    options.nodeHeaders.find(input => input.path === 'node_version.h'),
+    { bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') }
+  )
+  await expect(prepareWindowsBootstrapSource(options)).rejects.toThrow('captured Node version or ABI differs')
+  expect(await fs.readdir(directory)).toEqual(['bootstrap-inputs'])
+  expect(await fs.readFile(filename)).toEqual(bytes)
+})
+test('an unsupported worker target cannot compile first artifacts or run a private-directory helper', async () => {
+  const { buildWindowsBootstrap } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+    noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+  await expect(buildWindowsBootstrap({ architecture: 'ia32' })).rejects.toThrow(
+    'original isolated Windows Node24.18.0 ABI137 worker'
+  )
+  expect(noExecution).not.toHaveBeenCalled()
+  expect(await fs.readdir(directory)).toEqual([])
+})

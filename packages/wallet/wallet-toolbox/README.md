@@ -5387,3 +5387,38 @@ consistency check; they neither fully validate a loadable image nor grant runtim
 admission. Synthetic format regressions provide no foreign-host qualification.
 The existing runtime pins, protected-path checks and real host qualification
 remain required.
+
+### Windows first-artifact bootstrap
+
+`tools/Brc38WindowsBootstrapBuild.cjs` separates first-artifact preparation from
+the normal qualified Windows candidate builder. `prepareWindowsBootstrapSource`
+captures all actual driver/addon C inputs, fixed SQLite source, bounded exact
+Node24.18.0/ABI137 header/import-library inputs and the generated immutable MSVC
+policy. It rejects missing/duplicate headers and checks captured Node version
+macros. This preparation is pure source DATA on every host and runs no compiler or OS
+helper. Before actual Windows compilation the authored PowerShell helper creates a protected actor-only NTFS
+build directory before source bytes exist, refusing reparse ancestors and
+unprotected or differently owned build parents. Its pathname/ACL observations
+are build storage checks, not the runtime native HANDLE identity boundary.
+
+`buildWindowsBootstrap` requires the actual Windows ARM64/x64 Node worker and
+compiles the fixed supervisor and addon recipes directly through the reviewed
+MSVC path. It uses explicit arguments and environment, no shell, bounded parent
+output/deadlines and actual postimage/target checks. It does not require an addon
+or supervisor that has not yet been built, and it never runs the new candidates.
+The independently controlled isolated Windows worker must already enforce
+compiler-tree resources, a finite outer deadline and physical shutdown. A parent
+close or termination is explicitly not a compiler-tree drain receipt; every root
+is retained even on successful compilation until the original worker physically
+stops. A failed child prevents further work and requires that original shutdown.
+Preparation-only failure cleanup retries actual retained descriptors before
+removing only its own uncompiled source directory.
+
+Bootstrap receipts remain unqualified build DATA: no runtime/artifact/toolchain
+registry is populated, no host is enrolled, and no wallet capability is granted.
+Actual Windows compiler, DACL/helper, complete process tree, addon/supervisor,
+image/handle replacement and runtime cases must be qualified on that host before
+fixed artifact entries are committed. Pure capture regressions use real authored
+C/SQLite and explicitly synthetic Node dependency DATA, not Windows execution.
+The source recipe does not claim an end-to-end or production-qualified Windows
+route until the independent worker and actual platform qualification are proved.
