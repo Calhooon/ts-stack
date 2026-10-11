@@ -14,6 +14,8 @@ import { Brc38PrivateNativeMergeNode } from './Brc38PrivateNativeMergeNode'
 import { reserveBrc38NativeIncomingIds } from './Brc38NativeIncomingIdReservationNode'
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
+import { brc38NativeLocalBaselineTables } from './Brc38NativeLocalBaselineTables'
+import { brc38PrivateLocalCandidateStateTable } from './Brc38PrivateLocalCandidateJournalNode'
 
 // Full all47 preparation measured minutes and the unchanged customer workflow
 // took 39.4 minutes. These three cases admit fresh instances under the existing
@@ -68,7 +70,27 @@ test.each([false, true])(
                   wipeIndependentNativeInventory(source)
                 }
                 await fixture.withRead(async trx => {
-                  expect(await trx('users').select('userId').limit(2)).toHaveLength(1)
+                  const users = await trx('users').select('userId').limit(2)
+                  if (users.length === 0) {
+                    // Rebuilding an inactive candidate deliberately clears all
+                    // 47 families before copying users again. Read-slot drainage
+                    // must not require a completed image at this boundary.
+                    expect(mutate).toBe(true)
+                    const states = await trx(brc38PrivateLocalCandidateStateTable)
+                      .where({ slot: 1 })
+                      .select('phase', 'rebuilds', 'clearTable', 'copyTable', 'afterRowId', 'records')
+                      .limit(2)
+                    expect(states).toHaveLength(1)
+                    const state = states[0]
+                    expect(state.rebuilds).toBe(1)
+                    expect(state.records).toBe(0)
+                    expect(
+                      (state.phase === 'CLEAR' && (state.clearTable === 0 || state.clearTable === -1)) ||
+                        (state.phase === 'COPY' && state.copyTable === 0 && state.afterRowId === null)
+                    ).toBe(true)
+                    for (const table of brc38NativeLocalBaselineTables)
+                      expect(await trx(table).select(trx.raw('rowid AS rowId')).limit(1)).toHaveLength(0)
+                  } else expect(users).toHaveLength(1)
                 })
                 fixture.check()
               },

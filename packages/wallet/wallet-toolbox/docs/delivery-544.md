@@ -555,3 +555,20 @@ write and current restart recovery, all 47 semantic/auxiliary/provenance checks,
 and eight independent complete checkpoint reconstructions. Its other 20
 customer scenarios and the broader fault/platform/performance and exact-head
 qualification remain open. Passing one workflow does not prove those gates.
+
+The first full native runner contract passed on source420 in 783.690 seconds
+(788.011 seconds for its supervised Jest step), including scope drainage, all
+47 final families, unchanged repeat results, policy-resume refusal and real
+reservation reopen. The foreground-refold selection failed normally after
+576.509 seconds: its drain probe expected a completed candidate user at every
+yield, but the inactive refold deliberately clears every family before recopy.
+No timeout or resource limit was hit; the source user remained present.
+
+The drain probe now permits an empty candidate only for the first genuine
+rebuild's terminal CLEAR or initial COPY journal boundary, with zero records
+and an independent empty query against every physical family. Other boundaries
+still require one candidate user. Every source-user check and the final complete
+all-47 inventory, original data, mutation, repeated-result, policy-resume and
+reopen assertions remain. This corrects a phase-inappropriate probe, not a
+production refold change. The corrected selection and committed-ACK-loss case
+still require actual qualification; the failed probe receipt is retained.
