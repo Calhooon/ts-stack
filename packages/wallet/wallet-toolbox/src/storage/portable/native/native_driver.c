@@ -534,7 +534,12 @@ static int authorization(void *connection, int action, const char *a,
         const char *scratch[] = {"brc38_native_binary_budget", "brc38_native_binary_versions",
           "brc38_native_binary_chunks", "brc38_native_binary_garbage", "brc38_native_text_versions",
           "brc38_native_text_chunks", "brc38_native_text_garbage", "brc38_native_prepared_fields"};
-        int accepted = 0;
+        /* Collection fairness is scratch progress, not wallet authority. Its
+         * existing SQL guards permit only alternation of the original row.
+         * Never admit replacement, retirement, slot changes or trigger writes. */
+        int accepted = action == SQLITE_UPDATE && a && b && db && !trigger &&
+          !strcmp(db, "main") && !sqlite3_stricmp(a, "brc38_native_text_gc_progress") &&
+          !sqlite3_stricmp(b, "nextFamily");
         for (size_t i = 0; a && i < sizeof(scratch) / sizeof(scratch[0]); i++)
           accepted |= !sqlite3_stricmp(a, scratch[i]);
         if (!accepted) return SQLITE_DENY;

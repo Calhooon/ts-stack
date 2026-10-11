@@ -5563,3 +5563,17 @@ The ARM64 CI lane and all case/cleanup bounds are unchanged; source support and
 artifact capture do not qualify the complete x64 Docker provisioning script or
 the full system. That script requires an actual Docker-capable Linux worker; an
 existing containerd-only worker cannot be silently substituted.
+
+### Frozen comparison scratch collection
+
+Final authenticated native comparison may retire unreferenced scratch content
+created by its reconstruction passes. The native authorizer permits only direct
+updates of the existing main-database collection progress `nextFamily` field;
+the source-owned SQL guards still require alternating families. Insert, delete,
+slot changes, schema/settings, wallet/source rows, pointers and clocks remain
+protected. A genuine native regression stages both binary and text scratch,
+collects one chunk per pass after freezing, and verifies cleanup plus those
+negative controls. The complete customer workflow exposed this omission after
+all 14 rows committed; it did not complete publication, restart or repeat import.
+This correction changes no resource limit or admission. Fresh native artifacts,
+the regression and the complete customer workflow require actual qualification.

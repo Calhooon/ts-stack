@@ -8,7 +8,7 @@ import { brc38ImportRequestMetadata } from '../snapshot/SnapshotSyncRequestMetad
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
 import { insertBrc38PackedRestoreMetadata, updateBrc38PackedPrivateMetadata } from './Brc38PackedRestoreMetadataNode'
 import { writeBrc38NativePackedBytes } from './Brc38NativePackedFieldsNode'
-import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
+import { collectBrc38NativePackedContent, writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 import { hasBrc38NativeLocalPackedLayout } from './Brc38NativeLocalPackedLayoutNode'
 import { snapshotJournalNativeDestinationExtras } from '../snapshot/journal/SnapshotJournalNativeDestinationSchema'
 import { verifySnapshotJournalDestinationSchema } from '../snapshot/journal/SnapshotJournalDestinationSchema'
@@ -623,6 +623,104 @@ test('positional native journal preserves actual source events and occupied comp
     })
   }, 'after-journal')
 }, 30000)
+
+test('frozen native comparison collects both scratch families while preserving semantic and progress guards', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const working = new Brc38WorkingAllocation(fixture.store.limits.maximumRowAllocationBytes),
+      descriptors: Array<{ family: 'binary' | 'raw-text'; bytes: Uint8Array; sha256: string }> = [
+        { family: 'binary', bytes: new Uint8Array([65, 66]), sha256: '' },
+        { family: 'raw-text', bytes: new Uint8Array([67, 68]), sha256: '' }
+      ]
+    for (const descriptor of descriptors) {
+      descriptor.sha256 = createHash('sha256').update(descriptor.bytes).digest('hex')
+      await withBrc38PrivateContentVersion(
+        descriptor.family,
+        fixture.store,
+        { expiresAt: fixture.expiresAt, maximumBytes: 2, workingAllocation: working },
+        { maximum: working.maximum, remaining: working.maximum },
+        async version => {
+          await version.begin({ bytes: 2, sha256: descriptor.sha256 })
+          await version.append(0, descriptor.bytes.subarray(0, 1))
+          await version.append(1, descriptor.bytes.subarray(1))
+          await version.finish()
+        }
+      )
+    }
+    expect(working.used).toBe(0)
+    const protectedTables = [
+        'rows',
+        'metadata',
+        'private_binding',
+        'private_import',
+        'users',
+        'brc38_native_binary_fields',
+        'brc38_native_text_fields',
+        'brc38_local_baseline_clock',
+        'snapshot_journal_clock'
+      ],
+      before = await fixture.withRead(async trx => {
+        const rows = []
+        for (const table of protectedTables) rows.push(await trx(table).select('*'))
+        return rows
+      }),
+      reservedBefore = await fixture.withRead(
+        async trx => await trx('brc38_native_binary_budget').first('reservedBytes')
+      )
+    await fixture.store.beginPrivateNativeComparison()
+    let chunks = 0,
+      complete = false
+    for (let pass = 0; pass < 4; pass++) {
+      const result = await fixture.withWriter(async trx => {
+        expect(await trx('brc38_native_text_gc_progress').select('*')).toEqual([{ slot: 1, nextFamily: pass % 2 }])
+        const collected = await collectBrc38NativePackedContent(trx, 1)
+        expect(await trx('brc38_native_text_gc_progress').select('*')).toEqual([
+          { slot: 1, nextFamily: 1 - (pass % 2) }
+        ])
+        return collected
+      })
+      expect(result.chunks).toBe(1)
+      chunks += result.chunks
+      complete = result.complete
+    }
+    expect(chunks).toBe(4)
+    expect(complete).toBe(true)
+    await fixture.withWriter(async trx => {
+      for (const table of [
+        'brc38_native_binary_versions',
+        'brc38_native_text_versions',
+        'brc38_native_binary_chunks',
+        'brc38_native_text_chunks',
+        'brc38_native_binary_garbage',
+        'brc38_native_text_garbage'
+      ])
+        expect(await trx(table)).toEqual([])
+      expect((await trx('brc38_native_binary_budget').first('reservedBytes')).reservedBytes).toBeLessThan(
+        reservedBefore.reservedBytes
+      )
+      for (const effect of [
+        () => trx('brc38_native_text_gc_progress').update({ slot: 1 }),
+        () => trx('brc38_native_text_gc_progress').delete(),
+        () => trx('brc38_native_text_gc_progress').insert({ slot: 1, nextFamily: 0 }),
+        () => trx('users').update({ activeStorage: 'forbidden' }),
+        () => trx('private_binding').delete(),
+        () => trx('brc38_native_text_fields').delete(),
+        () => trx('snapshot_journal_clock').update({ revision: 0 }),
+        () => trx.raw('DROP TABLE brc38_native_text_gc_progress'),
+        () => trx.raw('PRAGMA query_only=OFF')
+      ])
+        await expect(effect()).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+      await expect(trx('brc38_native_text_gc_progress').update({ nextFamily: 0 })).rejects.toThrow('must alternate')
+      await expect(trx('brc38_native_text_gc_progress').update({ nextFamily: 2 })).rejects.toThrow()
+      expect(await trx('brc38_native_text_gc_progress').select('*')).toEqual([{ slot: 1, nextFamily: 0 }])
+    })
+    await fixture.withRead(async trx => {
+      for (let index = 0; index < protectedTables.length; index++)
+        expect(await trx(protectedTables[index]).select('*')).toEqual(before[index])
+    })
+    await fixture.store.requirePrivateNativeComparison()
+    fixture.check()
+  }, 'after-journal')
+}, 120000)
 
 test('native content subleases preserve the original deadline and refuse renewal or invalid bounds', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
