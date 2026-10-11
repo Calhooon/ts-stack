@@ -1,5 +1,10 @@
 import { nativeTestExecutable } from './Brc38NativeTestPath'
-import { previewPrivateFixture } from './Brc38ImportPreviewFixture'
+import { previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
+import { StorageKnex } from '../StorageKnex'
+import { StorageProvider } from '../StorageProvider'
+import { installBrc38PrivateNativeCandidateSchema } from './Brc38PrivateNativeRestoreNode'
+import { registerBrc38PrivateDestinationLease } from './Brc38PrivateDestinationLeaseNode'
+import { withBrc38KnexImportReadDestination } from './Brc38KnexDestinationFence'
 
 // UNRUN actual factory/kernel lifecycle cases. This small synthetic SQL table
 // proves admission and physical resume only; it does not qualify an all47 merge,
@@ -110,4 +115,59 @@ describe('actual private native comparison phase', () => {
       resumed.store.knex('comparison_probe').where({ id: 1 }).update({ value: 'cannot change frozen attempt' })
     ).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
   })
+  test('full-schema frozen native preparation verifies its actual read mode without attempting forbidden setters', async () => {
+    const { store, selected } = await open(true),
+      storage = new StorageKnex({
+        ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
+        knex: store.knex,
+        snapshotSync: false
+      }),
+      selection = {
+        identityKey: selected.binding.identityKey,
+        chain: selected.binding.chain,
+        targetStorageIdentityKey: selected.binding.targetStorageIdentityKey,
+        mode: 'merge' as const
+      }
+    await installBrc38PrivateNativeCandidateSchema(
+      storage,
+      store,
+      selection.targetStorageIdentityKey,
+      {
+        receiptPolicy: previewReceiptPolicy,
+        maximumStepRows: 16,
+        maximumStepBytes: 65536,
+        maximumMappedIds: 1000,
+        maximumJournalLogicalBytes: 516096
+      },
+      true,
+      true
+    )
+    await storage.makeAvailable()
+    registerBrc38PrivateDestinationLease(storage, store)
+    await store.beginPrivateNativeComparison()
+    await store.withAuthenticatedPrivateStructuredDestination(async () => {
+      const prepare = async () =>
+        await withBrc38KnexImportReadDestination(storage, selection, previewReceiptPolicy, async (trx, actual) => {
+          expect(actual).toMatchObject({ ...selection, userId: null, activeStorage: null })
+          expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+          expect(await trx('comparison_probe')).toEqual([{ id: 1, value: 'original semantic data' }])
+          await expect(trx.raw('PRAGMA query_only=OFF')).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+          await expect(trx('comparison_probe').where({ id: 1 }).update({ value: 'forbidden' })).rejects.toMatchObject({
+            code: 'SQLITE_AUTH'
+          })
+          return actual
+        })
+      const before = await prepare(),
+        stopped = new Error('Independent native preparation failure')
+      await expect(
+        withBrc38KnexImportReadDestination(storage, selection, previewReceiptPolicy, async () => {
+          throw stopped
+        })
+      ).rejects.toBe(stopped)
+      expect(await prepare()).toEqual(before)
+      expect(store.limits.expiresAt).toBe(selected.limits.expiresAt)
+    })
+    await store.requirePrivateNativeComparison()
+    await expect(store.knex.raw('PRAGMA query_only=ON')).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
+  }, 120000)
 })

@@ -440,12 +440,20 @@ export async function withBrc38KnexImportReadDestination<T>(
   return await withActualDestination(
     storage,
     async (k, backendSha256, expectedBackend) => {
-      await k.raw('PRAGMA query_only=ON')
+      // The owned native read connection sets this before installing its
+      // authorizer. Frozen comparison correctly refuses subsequent setters.
+      if (!isOwnedNativeSqlite(k)) await k.raw('PRAGMA query_only=ON')
       return await k.transaction(async trx => {
+        const assertReadOnly = async () => {
+          const rows: Array<{ query_only: number }> = await trx.raw('PRAGMA query_only')
+          if (rows.length !== 1 || rows[0].query_only !== 1) invalid()
+        }
+        await assertReadOnly()
         const connection = await trx.client.acquireConnection()
         const read = importFenceReader(storage, trx, connection, backendSha256, expectedBackend, selected, policy)
         const actual = await read(),
           value = await prepare(trx, actual)
+        await assertReadOnly()
         if (JSON.stringify(await read()) !== JSON.stringify(actual)) invalid()
         return value
       })

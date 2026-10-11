@@ -77,6 +77,19 @@ describe('actual owned read-only destination preparation', () => {
     })
     expect(await target.k('users')).toHaveLength(1)
   })
+  test('changing the actual read mode refuses preparation even when destination data stays unchanged', async () => {
+    await expect(
+      withBrc38KnexImportReadDestination(target.storage, selection, policy, async trx => {
+        await trx.raw('PRAGMA query_only=OFF')
+        expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 0 }])
+        return 'unchanged destination'
+      })
+    ).rejects.toThrow('complete enabled owned SQLite generation')
+    await withBrc38KnexImportReadDestination(target.storage, selection, policy, async trx => {
+      expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+    })
+    expect(await target.k('users')).toEqual([])
+  })
   test('away-and-back primary writes during a pinned preparation still refuse the subsequent stale writer', async () => {
     await target.storage.insertUser({
       userId: 7,
