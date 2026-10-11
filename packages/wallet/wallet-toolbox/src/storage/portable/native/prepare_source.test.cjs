@@ -365,3 +365,45 @@ test('an unsupported worker target cannot compile first artifacts or run a priva
   expect(noExecution).not.toHaveBeenCalled()
   expect(await fs.readdir(directory)).toEqual([])
 })
+
+test('bootstrap manifest write and close failures retain both errors and the actual descriptor until retry', async () => {
+  const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+    options = await windowsBootstrapFixture(),
+    originalOpen = fs.open,
+    writeFailure = new Error('synthetic bootstrap manifest write failure'),
+    closeFailure = new Error('synthetic bootstrap manifest close failure')
+  let retained
+  const opening = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const file = await originalOpen(...args)
+    if (String(args[0]).endsWith('bootstrap-source.json') && args[1] === 'wx') {
+      retained = file
+      const originalClose = file.close.bind(file)
+      let first = true
+      file.writeFile = async () => {
+        throw writeFailure
+      }
+      file.close = async () => {
+        if (first) {
+          first = false
+          throw closeFailure
+        }
+        await originalClose()
+      }
+    }
+    return file
+  })
+  const failure = await prepareWindowsBootstrapSource(options).then(
+    () => undefined,
+    error => error
+  )
+  expect(failure).toBeInstanceOf(NativeSourceCleanupError)
+  expect(failure.errors[0]).toBeInstanceOf(NativeSourceCleanupError)
+  expect(failure.errors[0].errors).toEqual([writeFailure, closeFailure])
+  expect(retained.fd).toBeGreaterThanOrEqual(0)
+  expect((await fs.readdir(directory)).filter(name => name.startsWith('brc38-windows-bootstrap-'))).toHaveLength(1)
+  opening.mockRestore()
+  await failure.retryCleanup()
+  expect(retained.fd).toBe(-1)
+  expect(await fs.readdir(directory)).toEqual(['bootstrap-inputs'])
+  await failure.retryCleanup()
+})
