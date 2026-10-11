@@ -51,233 +51,271 @@ const composedNativeFixture = (...args: Parameters<typeof originalComposedNative
 // original authenticated packet. These are test allowances, not product SLOs.
 const composedWorkflowLifetimeMs = 3600000
 const composedRecoveryCaseTimeoutMs = 2 * composedWorkflowLifetimeMs + 30000
-// First comparison/copy alone measured 2509s; both imports plus current
-// recovery cannot fit the former one-hour fixture. Select one initial two-hour
-// customer allowance, preserving all data/oracles and separate expiry cases.
-const customerWorkflowLifetimeMs = 7200000
+// First comparison/copy alone measured 2509s. The overall customer scenario
+// needs time for distinct recovery and repeat-import purposes. Every original
+// operation retains its one-hour admission; no reservation expiry is renewed.
+const customerScenarioTimeoutMs = 2 * composedWorkflowLifetimeMs + 30000
 
 // Authored UNQUALIFIED. This is the first genuine occupied structured controller /
 // current restart integration with nonempty all47 coverage and independent
 // auxiliary metadata/byte oracles. Full imported semantics/custody/clocks
 // and fault/resource campaigns remain separately required.
-test('actual occupied import, current restart and repeat import preserve a later full TEXT customer write', async () => {
-  const observe = (phase: string): void => {
-    console.log(JSON.stringify({ stage: 'composed-customer-workflow', phase, at: new Date().toISOString() }))
-  }
-  const progressObserver =
-    (attempt: 'first' | 'repeat'): NonNullable<Brc38AuthenticatedNativeMergeOptions['progress']> =>
-    value => {
-      console.log(
-        JSON.stringify({
-          stage: 'composed-customer-progress',
-          attempt,
-          phase: value.phase,
-          operation: value.operation?.operation,
-          elapsedMilliseconds: value.operation?.elapsedMilliseconds,
-          mergePhase: value.operation?.progress.phase,
-          episode:
-            value.operation !== undefined && 'episode' in value.operation.progress
-              ? value.operation.progress.episode
-              : undefined,
-          nextRow:
-            value.operation !== undefined && 'nextRow' in value.operation.progress
-              ? value.operation.progress.nextRow
-              : undefined,
-          totalRows:
-            value.operation !== undefined && 'totalRows' in value.operation.progress
-              ? value.operation.progress.totalRows
-              : undefined,
-          at: new Date().toISOString()
-        })
-      )
+test(
+  'actual occupied import, current restart and repeat import preserve a later full TEXT customer write',
+  async () => {
+    const observe = (phase: string): void => {
+      console.log(JSON.stringify({ stage: 'composed-customer-workflow', phase, at: new Date().toISOString() }))
     }
-  observe('started')
-  const incomingDescription = 'imported \u0000雪😀"\\\n'.repeat(9000),
-    customerDescription = 'customer \u0000雪😀"\\\n'.repeat(10000),
-    fixture = await composedNativeFixture(
-      nativeTestExecutable(),
-      (_source, incoming) => {
-        incoming.tables.transactions[0].description = incomingDescription
-        incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
-      },
-      customerWorkflowLifetimeMs
-    )
-  observe('fixture-ready')
-  try {
-    const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager)
-    await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
-    const priorImports = await captureComposedPriorImports(fixture.manager),
-      before = await captureComposedSemanticFixture(fixture.manager),
-      expectedImport = composedArchivePostimage(before, fixture.incomingData),
-      expectedCustomer = composedTransactionPostimage(expectedImport, customerDescription, '2026-10-05T00:00:00.000Z'),
-      expectedRepeat = composedArchivePostimage(expectedCustomer, fixture.incomingData)
-    const result = await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, {
-      storage: fixture.storage,
-      manager: fixture.manager,
-      sourceInventory: fixture.sourceInventory,
-      sourceProfile: fixture.sourceProfile,
-      targetInventory: fixture.targetInventory,
-      admission: fixture.admission,
-      source: fixture.source,
-      merge: fixture.merge,
-      executable: fixture.executable,
-      maximumOperations: 4096,
-      progress: progressObserver('first')
-    })
-    observe('first-import-completed')
-    expect(fixture.sourceProfile.ownershipReleased).toBe(true)
-    expect(fixture.manager.getActive()).toBe(result.provider)
-    expect(fixture.manager.isActiveEnabled).toBe(true)
-    expect(fixture.manager.getActiveStore()).toBe(fixture.source.binding.targetStorageIdentityKey)
-    await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
-    await assertComposedSemanticFixture(fixture.manager, expectedImport)
-    await assertComposedIncomingOriginals(fixture.manager, result.inventory.importId, fixture.incomingData)
-    await assertComposedPriorImports(fixture.manager, priorImports)
-    const imported = await fixture.manager.runAsStorageProvider(
-      async active =>
-        await active.findTransactions({ partial: { userId: fixture.manager.getActiveUser().userId }, noRawTx: true })
-    )
-    expect(imported).toHaveLength(1)
-    expect(imported[0].description).toBe(incomingDescription)
-    await fixture.manager.runAsStorageProvider(async active => {
+    const progressObserver =
+      (attempt: 'first' | 'repeat'): NonNullable<Brc38AuthenticatedNativeMergeOptions['progress']> =>
+      value => {
+        console.log(
+          JSON.stringify({
+            stage: 'composed-customer-progress',
+            attempt,
+            phase: value.phase,
+            operation: value.operation?.operation,
+            elapsedMilliseconds: value.operation?.elapsedMilliseconds,
+            mergePhase: value.operation?.progress.phase,
+            episode:
+              value.operation !== undefined && 'episode' in value.operation.progress
+                ? value.operation.progress.episode
+                : undefined,
+            nextRow:
+              value.operation !== undefined && 'nextRow' in value.operation.progress
+                ? value.operation.progress.nextRow
+                : undefined,
+            totalRows:
+              value.operation !== undefined && 'totalRows' in value.operation.progress
+                ? value.operation.progress.totalRows
+                : undefined,
+            at: new Date().toISOString()
+          })
+        )
+      }
+    observe('started')
+    const incomingDescription = 'imported \u0000雪😀"\\\n'.repeat(9000),
+      customerDescription = 'customer \u0000雪😀"\\\n'.repeat(10000),
+      fixture = await composedNativeFixture(
+        nativeTestExecutable(),
+        (_source, incoming) => {
+          incoming.tables.transactions[0].description = incomingDescription
+          incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
+        },
+        composedWorkflowLifetimeMs
+      )
+    observe('fixture-ready')
+    const originalSourceLimits = { ...fixture.source.limits },
+      originalProjectionExpiry = fixture.merge.structuredResources.projectionPolicy.expiresAt
+    try {
+      const auxiliary = await seedComposedAuxiliaryFixture(fixture.storage, fixture.manager)
+      await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
+      const priorImports = await captureComposedPriorImports(fixture.manager),
+        before = await captureComposedSemanticFixture(fixture.manager),
+        expectedImport = composedArchivePostimage(before, fixture.incomingData),
+        expectedCustomer = composedTransactionPostimage(
+          expectedImport,
+          customerDescription,
+          '2026-10-05T00:00:00.000Z'
+        ),
+        expectedRepeat = composedArchivePostimage(expectedCustomer, fixture.incomingData)
+      const result = await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, {
+        storage: fixture.storage,
+        manager: fixture.manager,
+        sourceInventory: fixture.sourceInventory,
+        sourceProfile: fixture.sourceProfile,
+        targetInventory: fixture.targetInventory,
+        admission: fixture.admission,
+        source: fixture.source,
+        merge: fixture.merge,
+        executable: fixture.executable,
+        maximumOperations: 4096,
+        progress: progressObserver('first')
+      })
+      observe('first-import-completed')
+      expect(fixture.sourceProfile.ownershipReleased).toBe(true)
+      expect(fixture.manager.getActive()).toBe(result.provider)
+      expect(fixture.manager.isActiveEnabled).toBe(true)
+      expect(fixture.manager.getActiveStore()).toBe(fixture.source.binding.targetStorageIdentityKey)
+      await assertComposedAuxiliaryFixture(fixture.manager, auxiliary)
+      await assertComposedSemanticFixture(fixture.manager, expectedImport)
+      await assertComposedIncomingOriginals(fixture.manager, result.inventory.importId, fixture.incomingData)
+      await assertComposedPriorImports(fixture.manager, priorImports)
+      const imported = await fixture.manager.runAsStorageProvider(
+        async active =>
+          await active.findTransactions({ partial: { userId: fixture.manager.getActiveUser().userId }, noRawTx: true })
+      )
+      expect(imported).toHaveLength(1)
+      expect(imported[0].description).toBe(incomingDescription)
+      await fixture.manager.runAsStorageProvider(async active => {
+        expect(
+          await active.updateTransaction(imported[0].transactionId, {
+            description: customerDescription,
+            updated_at: new Date('2026-10-05T00:00:00.000Z')
+          })
+        ).toBe(1)
+      })
+      observe('customer-write-completed')
+      await assertComposedSemanticFixture(fixture.manager, expectedCustomer)
+      const binding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
+      await fixture.targetInventory.closeNamedRecoveryManager(
+        result.inventory.importId,
+        binding.digest,
+        fixture.manager
+      )
+      let replayed = false
+      const noReplay: AsyncIterable<Uint8Array> = {
+        [Symbol.asyncIterator]() {
+          replayed = true
+          throw new Error('Completed wallet must not replay the original import')
+        }
+      }
+      // Completed-current restart is a distinct initial recovery purpose. Its
+      // clock grants no new time to the original source reservation.
+      const recoveryExpiresAt = Date.now() + composedWorkflowLifetimeMs,
+        current = await recoverBrc39ComposedNativeImport(noReplay, '', {
+          admission: fixture.admission,
+          source: { ...fixture.source, reservationId: result.reservationId },
+          merge: fixture.merge,
+          sourceInventory: fixture.sourceInventory,
+          sourceImportId: fixture.sourceImportId,
+          sourceBindingSha256: fixture.sourceBindingSha256,
+          targetInventory: fixture.targetInventory,
+          targetImportId: result.inventory.importId,
+          executable: fixture.executable,
+          services: fixture.proof.services,
+          recovery: {
+            privateParent: fixture.directory,
+            expiresAt: recoveryExpiresAt,
+            temporaryQuota: fixture.temporaryQuota
+          }
+        })
+      observe('current-recovery-completed')
+      expect(current.recovered).toBe('COMPLETED_CURRENT')
+      expect(current.manager).not.toBe(fixture.manager)
+      expect(current.manager.getActive()).toBeInstanceOf(StorageKnex)
+      expect(current.manager.getActiveStore()).toBe(fixture.source.binding.targetStorageIdentityKey)
+      const written = await current.manager.runAsStorageProvider(
+        async active =>
+          await active.findTransactions({ partial: { userId: current.manager.getActiveUser().userId }, noRawTx: true })
+      )
+      expect(written).toHaveLength(1)
+      expect(written[0].transactionId).toBe(imported[0].transactionId)
+      expect(written[0].description).toBe(customerDescription)
+      expect(written[0].updated_at).toEqual(new Date('2026-10-05T00:00:00.000Z'))
+      await assertComposedAuxiliaryFixture(current.manager, auxiliary)
+      await assertComposedSemanticFixture(current.manager, expectedCustomer)
+      await assertComposedIncomingOriginals(current.manager, result.inventory.importId, fixture.incomingData)
+      await assertComposedPriorImports(current.manager, priorImports)
+      expect(replayed).toBe(false)
+      expect(fixture.temporaryQuota.used).toBe(0)
+      expect(fixture.merge.workingAllocation.used).toBe(0)
+      const currentProvider = current.manager.getActive()
+      if (!(currentProvider instanceof StorageKnex))
+        throw new Error('Repeat import requires its actual current native provider')
+      const policy = {
+        workingAllocation: fixture.merge.workingAllocation,
+        maximumReadBytes: 1024,
+        expiresAt: recoveryExpiresAt
+      }
       expect(
-        await active.updateTransaction(imported[0].transactionId, {
-          description: customerDescription,
-          updated_at: new Date('2026-10-05T00:00:00.000Z')
-        })
-      ).toBe(1)
-    })
-    observe('customer-write-completed')
-    await assertComposedSemanticFixture(fixture.manager, expectedCustomer)
-    const binding = brc38StagingBinding(fixture.source.binding, fixture.source.limits)
-    await fixture.targetInventory.closeNamedRecoveryManager(result.inventory.importId, binding.digest, fixture.manager)
-    let replayed = false
-    const noReplay: AsyncIterable<Uint8Array> = {
-      [Symbol.asyncIterator]() {
-        replayed = true
-        throw new Error('Completed wallet must not replay the original import')
-      }
-    }
-    const current = await recoverBrc39ComposedNativeImport(noReplay, '', {
-      admission: fixture.admission,
-      source: { ...fixture.source, reservationId: result.reservationId },
-      merge: fixture.merge,
-      sourceInventory: fixture.sourceInventory,
-      sourceImportId: fixture.sourceImportId,
-      sourceBindingSha256: fixture.sourceBindingSha256,
-      targetInventory: fixture.targetInventory,
-      targetImportId: result.inventory.importId,
-      executable: fixture.executable,
-      services: fixture.proof.services,
-      recovery: {
-        privateParent: fixture.directory,
-        expiresAt: fixture.expiresAt,
-        temporaryQuota: fixture.temporaryQuota
-      }
-    })
-    observe('current-recovery-completed')
-    expect(current.recovered).toBe('COMPLETED_CURRENT')
-    expect(current.manager).not.toBe(fixture.manager)
-    expect(current.manager.getActive()).toBeInstanceOf(StorageKnex)
-    expect(current.manager.getActiveStore()).toBe(fixture.source.binding.targetStorageIdentityKey)
-    const written = await current.manager.runAsStorageProvider(
-      async active =>
-        await active.findTransactions({ partial: { userId: current.manager.getActiveUser().userId }, noRawTx: true })
-    )
-    expect(written).toHaveLength(1)
-    expect(written[0].transactionId).toBe(imported[0].transactionId)
-    expect(written[0].description).toBe(customerDescription)
-    expect(written[0].updated_at).toEqual(new Date('2026-10-05T00:00:00.000Z'))
-    await assertComposedAuxiliaryFixture(current.manager, auxiliary)
-    await assertComposedSemanticFixture(current.manager, expectedCustomer)
-    await assertComposedIncomingOriginals(current.manager, result.inventory.importId, fixture.incomingData)
-    await assertComposedPriorImports(current.manager, priorImports)
-    expect(replayed).toBe(false)
-    expect(fixture.temporaryQuota.used).toBe(0)
-    expect(fixture.merge.workingAllocation.used).toBe(0)
-    const currentProvider = current.manager.getActive()
-    if (!(currentProvider instanceof StorageKnex))
-      throw new Error('Repeat import requires its actual current native provider')
-    const policy = {
-      workingAllocation: fixture.merge.workingAllocation,
-      maximumReadBytes: 1024,
-      expiresAt: fixture.expiresAt
-    }
-    expect(
-      await fixture.targetInventory.currentNativeProfile(
-        result.inventory.importId,
-        binding.digest,
+        await fixture.targetInventory.currentNativeProfile(
+          result.inventory.importId,
+          binding.digest,
+          current.manager,
+          policy
+        )
+      ).toBe(current.profile)
+      await expect(
+        fixture.targetInventory.currentNativeProfile(result.inventory.importId, '0'.repeat(64), current.manager, policy)
+      ).rejects.toThrow()
+      await expect(
+        Brc38ProfileInventoryNode.prototype.currentNativeProfile.call(
+          { ...fixture.targetInventory },
+          result.inventory.importId,
+          binding.digest,
+          current.manager,
+          policy
+        )
+      ).rejects.toThrow()
+      for await (const _progress of bootstrapCurrentBrc38NativeObserver(
+        current.profile,
+        currentProvider,
         current.manager,
-        policy
-      )
-    ).toBe(current.profile)
-    await expect(
-      fixture.targetInventory.currentNativeProfile(result.inventory.importId, '0'.repeat(64), current.manager, policy)
-    ).rejects.toThrow()
-    await expect(
-      Brc38ProfileInventoryNode.prototype.currentNativeProfile.call(
-        { ...fixture.targetInventory },
-        result.inventory.importId,
-        binding.digest,
-        current.manager,
-        policy
-      )
-    ).rejects.toThrow()
-    for await (const _progress of bootstrapCurrentBrc38NativeObserver(
-      current.profile,
-      currentProvider,
-      current.manager,
-      fixture.targetInventory,
-      {
-        maximumRows: 1000,
-        ceiling: snapshotJournalRevision('1000000'),
-        maximumStepRows: 32,
-        maximumOperations: 256,
-        expiresAt: fixture.expiresAt,
-        workingAllocation: fixture.merge.workingAllocation
+        fixture.targetInventory,
+        {
+          maximumRows: 1000,
+          ceiling: snapshotJournalRevision('1000000'),
+          maximumStepRows: 32,
+          maximumOperations: 256,
+          expiresAt: recoveryExpiresAt,
+          workingAllocation: fixture.merge.workingAllocation
+        }
+      )) {
+        // Fresh current epoch belongs to this actual target; no source epoch or
+        // original import admission is transplanted or renewed for the repeat.
       }
-    )) {
-      // Fresh current epoch belongs to this actual target; no source epoch or
-      // original import admission is transplanted or renewed for the repeat.
+      const repeatPriorImports = await captureComposedPriorImports(current.manager),
+        // Re-importing the archive starts a new reservation and new initial
+        // admission. The old source limits and original reservation stay exact.
+        repeatExpiresAt = Date.now() + composedWorkflowLifetimeMs,
+        repeatSource = {
+          ...fixture.source,
+          limits: { ...fixture.source.limits, expiresAt: repeatExpiresAt }
+        },
+        repeatMerge = {
+          ...fixture.merge,
+          structuredResources: {
+            ...fixture.merge.structuredResources,
+            projectionPolicy: {
+              ...fixture.merge.structuredResources.projectionPolicy,
+              expiresAt: repeatExpiresAt
+            }
+          }
+        }
+      const repeated = await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, {
+        storage: currentProvider,
+        manager: current.manager,
+        sourceInventory: fixture.targetInventory,
+        sourceProfile: current.profile,
+        targetInventory: fixture.targetInventory,
+        admission: fixture.admission,
+        source: repeatSource,
+        merge: repeatMerge,
+        executable: fixture.executable,
+        maximumOperations: 4096,
+        progress: progressObserver('repeat')
+      })
+      expect(repeated.inventory.importId).not.toBe(result.inventory.importId)
+      expect(repeated.reservationId).not.toBe(result.reservationId)
+      expect(fixture.source.limits).toEqual(originalSourceLimits)
+      expect(fixture.merge.structuredResources.projectionPolicy.expiresAt).toBe(originalProjectionExpiry)
+      expect(repeatSource.limits.expiresAt).toBe(repeatExpiresAt)
+      expect(repeatSource.limits.expiresAt).toBeGreaterThan(originalSourceLimits.expiresAt)
+      observe('repeat-import-completed')
+      expect(repeated.profile).not.toBe(current.profile)
+      expect(current.profile.ownershipReleased).toBe(true)
+      expect(current.manager.getActive()).toBe(repeated.provider)
+      const retained = await current.manager.runAsStorageProvider(
+        async active =>
+          await active.findTransactions({ partial: { userId: current.manager.getActiveUser().userId }, noRawTx: true })
+      )
+      expect(retained).toHaveLength(1)
+      expect(retained[0].transactionId).toBe(imported[0].transactionId)
+      expect(retained[0].description).toBe(customerDescription)
+      expect(retained[0].updated_at).toEqual(new Date('2026-10-05T00:00:00.000Z'))
+      await assertComposedAuxiliaryFixture(current.manager, auxiliary)
+      await assertComposedSemanticFixture(current.manager, expectedRepeat)
+      await assertComposedIncomingOriginals(current.manager, repeated.inventory.importId, fixture.incomingData)
+      await assertComposedPriorImports(current.manager, repeatPriorImports)
+      expect(fixture.merge.workingAllocation.used).toBe(0)
+    } finally {
+      await fixture.close()
+      observe('physically-closed')
     }
-    const repeatPriorImports = await captureComposedPriorImports(current.manager)
-    const repeated = await importBrc39ComposedNativeProfile(fixture.chunks(), authenticatedStagePassword, {
-      storage: currentProvider,
-      manager: current.manager,
-      sourceInventory: fixture.targetInventory,
-      sourceProfile: current.profile,
-      targetInventory: fixture.targetInventory,
-      admission: fixture.admission,
-      source: fixture.source,
-      merge: fixture.merge,
-      executable: fixture.executable,
-      maximumOperations: 4096,
-      progress: progressObserver('repeat')
-    })
-    expect(repeated.inventory.importId).not.toBe(result.inventory.importId)
-    expect(repeated.reservationId).not.toBe(result.reservationId)
-    observe('repeat-import-completed')
-    expect(repeated.profile).not.toBe(current.profile)
-    expect(current.profile.ownershipReleased).toBe(true)
-    expect(current.manager.getActive()).toBe(repeated.provider)
-    const retained = await current.manager.runAsStorageProvider(
-      async active =>
-        await active.findTransactions({ partial: { userId: current.manager.getActiveUser().userId }, noRawTx: true })
-    )
-    expect(retained).toHaveLength(1)
-    expect(retained[0].transactionId).toBe(imported[0].transactionId)
-    expect(retained[0].description).toBe(customerDescription)
-    expect(retained[0].updated_at).toEqual(new Date('2026-10-05T00:00:00.000Z'))
-    await assertComposedAuxiliaryFixture(current.manager, auxiliary)
-    await assertComposedSemanticFixture(current.manager, expectedRepeat)
-    await assertComposedIncomingOriginals(current.manager, repeated.inventory.importId, fixture.incomingData)
-    await assertComposedPriorImports(current.manager, repeatPriorImports)
-    expect(fixture.merge.workingAllocation.used).toBe(0)
-  } finally {
-    await fixture.close()
-    observe('physically-closed')
-  }
-}, customerWorkflowLifetimeMs + 30000)
+  },
+  customerScenarioTimeoutMs
+)
 
 test.each(['AUTHENTICATED', 'IMPORT'] as const)(
   'cancellation after drained %s work preserves the serving wallet',

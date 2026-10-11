@@ -365,19 +365,21 @@ changed. The failed full workflow and its physical cleanup are retained; current
 complete customer, recovery, repeat-import and whole-system qualification remain
 pending. Native source, recipes and genuinely qualified ARM/x64 pins are unchanged.
 
-### Measured complete-customer qualification allowance
+### Measured complete-customer scenario allowance
 
 The complete source405 customer attempt took 2,509 seconds before its first
-publication callback, without reaching the later customer write, current
-recovery or repeat import. Only the complete customer case now selects one
-initial two-hour fixture admission, with a separate 30-second test cleanup
-margin. This is a finite qualification allowance, not a production default or
-performance SLO. The three-minute helper default, one-hour cancellation and
-recovery admissions, all original data and semantic oracles, separate actual
-expiry cases, and UTC/monotonic checks remain. No admission is renewed. The
-existing 145-minute hosted native lane remains; current full customer validation
-is pending. An actual native collector comparison measured about 749 ms at
-32 chunks versus 225 ms at 256 for identical two-family content; larger pages
-also held each writer longer. Batching remains unchanged because this component
-measurement does not explain the full workflow cost or establish foreground
-latency. Independent phase measurements will guide the next performance work.
+publication callback, without reaching customer write, current recovery or
+repeat import. The overall customer test now allows two hours plus 30 seconds
+for cleanup. Each original operation still has one fixed initial one-hour
+admission: first import, a distinct completed-current recovery purpose, and a
+new repeat import with a different reservation. The test preserves and asserts
+the first source limits and projection deadline; no old reservation is renewed.
+The three-minute helper default, one-hour component ceilings, cancellation and
+separate actual-expiry cases, original data/oracles and UTC/monotonic checks
+remain. This scenario allowance is not a production default or performance SLO.
+The source408 two-hour fixture experiment failed during setup at the unchanged
+JSON index ceiling and is withdrawn. Current full customer validation is pending.
+The existing 145-minute hosted native lane remains. An actual two-family native
+collector comparison measured about 749 ms at 32 chunks versus 225 ms at 256,
+with longer writer transactions at the larger batch. Batching stays unchanged;
+that component result does not explain the complete workflow cost.
