@@ -5745,3 +5745,17 @@ This implementation is authored and UNQUALIFIED. Protocol boundary controls,
 genuine occupied import/cancellation/resume/repeat/independent comparison,
 performance/resource measurements and complete platform qualification are still
 required. No production capacity or latency claim follows from the window.
+
+### Occupied proof identity compatibility
+
+Native occupied archive merge retains the exact incoming transaction ID spelling
+for the existing BINARY-index lookup and stored proof identity, matching the
+legacy entity and IDB paths. Hexadecimal proof comparisons remain case-insensitive,
+and case variants within one incoming page still trigger the alias guard. An
+unchanged proof reuses its original local ID, complete bytes and metadata; later
+rows map to that ID rather than a second normalized copy. Changed/new proofs
+still require full raw transaction, Merkle path and active-header verification.
+The independent final inventory checks the exact stored identity as well as all
+proof bytes. No wire, schema, resource-limit or data migration is introduced.
+This correction remains unqualified until the actual regression and complete
+customer workflow pass; source presence is not a release or production verdict.

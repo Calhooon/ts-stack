@@ -187,7 +187,7 @@ export class Brc38PreparedProofMerge {
               // The archive entity contract preserves its incoming timestamp;
               // operational chain reconciliation has a separate correction clock.
               updated_at: new Date(incoming.updated_at.getTime()),
-              txid: incoming.txid.toLowerCase(),
+              txid: incoming.txid,
               height: incoming.height,
               index: incoming.index,
               blockHash: incoming.blockHash.toLowerCase(),
@@ -330,8 +330,8 @@ export async function prepareBrc38ProofMerge(
   const keys = data.rows.map(row => {
     const txid = row.metadata.txid
     if (typeof txid !== 'string' || !/^[0-9a-f]{64}$/i.test(txid)) invalid()
-    // Identity metadata only; raw archived spelling stays in provenance.
-    return Object.freeze({ provenTxId: row.metadata.provenTxId, txid: txid.toLowerCase() })
+    // Match the legacy BINARY-index identity with its archived spelling.
+    return Object.freeze({ provenTxId: row.metadata.provenTxId, txid })
   })
   const targets = await prepareBrc38ImportEntityTargets(
       trx,
@@ -364,7 +364,7 @@ export async function prepareBrc38ProofMerge(
     check()
     chargeBrc38ImportDecodedBudget(budget, existing[index].allocationBytes + 8192)
     const target = targets[index],
-      key = JSON.stringify([target.index, target.key])
+      key = keys[index].txid.toLowerCase()
     if (identities.has(key)) throw new Brc38ImportAliasPageError(index)
     identities.add(key)
     const incoming = proof(

@@ -42,9 +42,12 @@ function integer(value: unknown, nonnegative = false): number {
     invalid()
   return n
 }
-function hash(value: unknown): string {
+function spelling(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/i.test(value)) invalid()
-  return value.toLowerCase()
+  return value
+}
+function hash(value: unknown): string {
+  return spelling(value).toLowerCase()
 }
 function date(value: unknown): string {
   if (!(value instanceof Date) && typeof value !== 'string' && typeof value !== 'number') invalid()
@@ -244,7 +247,7 @@ export async function inspectBrc38PrivateProofInventory(
                   provenTxId: BigInt(rowId),
                   created_at: date(data.created_at),
                   updated_at: date(data.updated_at),
-                  txid: hash(data.txid),
+                  txid: spelling(data.txid),
                   height: BigInt(integer(data.height, true)),
                   index: BigInt(integer(data.index, true)),
                   blockHash: hash(data.blockHash),

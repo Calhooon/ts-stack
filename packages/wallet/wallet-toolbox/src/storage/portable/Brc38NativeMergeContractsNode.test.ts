@@ -238,3 +238,59 @@ test('actual committed ACK loss reopens the same reservation and refolds without
     }
   )
 }, 30000)
+
+// Exercise the real occupied proof page before later families can hide an
+// identity error. The independent preimage includes complete raw/proof bytes.
+test.each(['upper', 'lower', 'mixed'] as const)(
+  'actual occupied proof merge preserves the exact %s transaction identity without inserting a duplicate',
+  async spelling => {
+    await withBrc38NativeCandidateContractFixture(
+      async fixture => {
+        expect(fixture.initial.proven_txs).toHaveLength(1)
+        await reserveBrc38NativeIncomingIds(
+          fixture.source.storage,
+          fixture.selection,
+          previewReceiptPolicy,
+          fixture.store,
+          { workingAllocation: fixture.options.workingAllocation }
+        )
+        let committed = false
+        for (let operation = 0; !committed && operation < 4096; operation++) {
+          await fixture.withSource(async source => {
+            await Brc38PrivateNativeMergeNode.with(fixture.store, source, fixture.options, async merge => {
+              const progress = await merge.step()
+              committed = progress.phase === 'IMPORT' && progress.nextRow === 2
+            })
+          })
+          fixture.check()
+        }
+        expect(committed).toBe(true)
+        const actual = await fixture.readCandidate()
+        try {
+          expect(actual.proven_txs).toEqual(fixture.initial.proven_txs)
+        } finally {
+          wipeIndependentNativeInventory(actual)
+        }
+      },
+      {
+        lifetimeMs: 300000,
+        customize: (source, incoming) => {
+          const original = source.tables.provenTxs[0].txid
+          if (typeof original !== 'string') throw new Error('Independent proof identity is missing')
+          const txid =
+            spelling === 'upper'
+              ? original.toUpperCase()
+              : spelling === 'lower'
+                ? original.toLowerCase()
+                : [...original]
+                    .map((value, index) => (index % 2 === 0 ? value.toUpperCase() : value.toLowerCase()))
+                    .join('')
+          for (const data of [source, incoming])
+            for (const table of ['provenTxs', 'provenTxReqs', 'transactions', 'outputs'] as const)
+              data.tables[table][0].txid = txid
+        }
+      }
+    )
+  },
+  330000
+)
