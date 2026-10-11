@@ -34,6 +34,9 @@ const { SQLiteFundingRecoveryStore } = requireWallet(
 const { RecoverableFundingController } = requireWallet(
   '@bsv/wallet-toolbox/out/src/signer/fundingRecovery/RecoverableFundingController'
 ) as typeof import('@bsv/wallet-toolbox/out/src/signer/fundingRecovery/RecoverableFundingController')
+const { EntityProvenTxReq } = requireWallet(
+  '@bsv/wallet-toolbox/out/src/storage/schema/entities/EntityProvenTxReq'
+) as typeof import('@bsv/wallet-toolbox/out/src/storage/schema/entities/EntityProvenTxReq')
 const { genesisHeader } = requireWallet(
   '@bsv/wallet-toolbox/out/src/services/chaintracker/chaintracks/util/blockHeaderUtilities'
 ) as typeof import('@bsv/wallet-toolbox/out/src/services/chaintracker/chaintracks/util/blockHeaderUtilities')
@@ -161,6 +164,37 @@ export async function acquisitionNativeWalletFixture(
         }
       })
       expect(await controller.getInternalization(operation.id)).toEqual(result)
+      // Custody is not publication. Exercise the actual native publication
+      // pipeline separately with an exact, owned synthetic no-network response
+      // before making this fixture's funding available to later wallet actions.
+      const request = await EntityProvenTxReq.fromStorageTxid(active, funding.txid)
+      expect(request?.status).toBe('unsent')
+      const publication = jest
+        .spyOn(services, 'postBeef')
+        .mockImplementation(async (beef, txids) => {
+          expect(txids).toEqual([funding.txid])
+          expect(beef.findTxid(funding.txid)?.tx?.toHex()).toBe(transaction.toHex())
+          return [
+            {
+              name: 'owned-synthetic-fixture-no-network',
+              status: 'success',
+              txidResults: [{ txid: funding.txid, status: 'success' }]
+            }
+          ]
+        })
+      try {
+        await active.attemptToPostReqsToNetwork([request!])
+        expect(publication).toHaveBeenCalledTimes(1)
+        expect((await active.findProvenTxReqs({ partial: { txid: funding.txid } }))[0].status).toBe(
+          'unmined'
+        )
+        expect((await active.findTransactions({ partial: { txid: funding.txid } }))[0].status).toBe(
+          'unproven'
+        )
+        expect(await controller.getInternalization(operation.id)).toEqual(result)
+      } finally {
+        publication.mockRestore()
+      }
       return result
     }
     return { active, wallet, controller, identities, bridge, services, close, creditFunding }
