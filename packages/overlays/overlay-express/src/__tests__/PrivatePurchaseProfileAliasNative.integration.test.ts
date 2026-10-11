@@ -31,6 +31,39 @@ async function retryClockConflict<T>(operation: () => Promise<T>, remaining = 8)
   }
 }
 
+// The complete native composition can exhaust one buyer work interval after
+// signing. That outcome is unknown delivery, not authority for another payment.
+// Drain both owners, reopen their original custody and recover once, read-only.
+async function advanceOriginal(f: Fixture) {
+  let owner = await f.openBuyer(true)
+  try {
+    return { owner, result: await retryClockConflict(() => owner.buyer.advance()) }
+  } catch (error) {
+    if (
+      !(error instanceof OutputProtocolError) ||
+      error.code !== 'unavailable' ||
+      !error.retryable ||
+      error.message !== 'Purchase buyer deadline'
+    )
+      throw error
+    expect(await owner.buyer.status()).toBe('funded')
+    expect(f.native.counts.prepare).toBe(1)
+    expect(f.native.counts.finalize).toBe(1)
+    await owner.close()
+    await f.reopenSeller()
+    const original = canonicalOutputJSON(loadOriginal(f).candidate)
+    owner = await f.openBuyer(false)
+    const result = await retryClockConflict(() => owner.buyer.recover())
+    expect(result).toBeDefined()
+    if (result === undefined) throw new Error('Original funded purchase remains unresolved')
+    expect(['delivered', 'admitted-delivery-pending']).toContain(result.result.status)
+    expect(canonicalOutputJSON(loadOriginal(f).candidate)).toBe(original)
+    expect(f.native.counts.prepare).toBe(1)
+    expect(f.native.counts.finalize).toBe(1)
+    return { owner, result }
+  }
+}
+
 function loadOriginal(f: Fixture) {
   const original = f.active.store.load(
     f.native.terms.body.acquisitionId,
@@ -105,8 +138,7 @@ async function submitAlias(
 it('composes the current immutable reserve/activation/purchase Script with native funding, actual topical admission, authenticated custody and licensed playback across reopen', async () => {
   const f = await privatePurchaseProfileAliasNativeFixture()
   try {
-    let owner = await f.openBuyer(true)
-    await retryClockConflict(() => owner.buyer.advance())
+    let { owner } = await advanceOriginal(f)
     expect(await owner.buyer.validate()).toBe('usable')
     const delivered = await owner.buyer.usableResult(),
       counts = { ...f.counts }
@@ -146,8 +178,7 @@ it('requires independently checked mined placement and actual admission of an eq
     confirmations: 1
   })
   try {
-    const owner = await f.openBuyer(true)
-    const pending = await retryClockConflict(() => owner.buyer.advance())
+    const { owner, result: pending } = await advanceOriginal(f)
     expect(pending.result.status).toBe('admitted-delivery-pending')
     expect('potatoes' in pending.result).toBe(false)
     expect(pending.releaseEvidence).toBeUndefined()
@@ -202,8 +233,7 @@ it('requires independently checked mined placement and actual admission of an eq
 it('admits a distinct valid raw transaction with the same full purchase commitment and independently reports its selected placement without changing the original private grant', async () => {
   const f = await privatePurchaseProfileAliasNativeFixture()
   try {
-    const owner = await f.openBuyer(true)
-    await retryClockConflict(() => owner.buyer.advance())
+    const { owner } = await advanceOriginal(f)
     expect(await owner.buyer.validate()).toBe('usable')
     const delivered = await owner.buyer.usableResult(),
       original = loadOriginal(f),
@@ -274,8 +304,7 @@ it('admits a distinct valid raw transaction with the same full purchase commitme
 it('refuses the seller-reported mined alias above the independently selected buyer tip while retaining historical License, POTATOES and settlement', async () => {
   const f = await privatePurchaseProfileAliasNativeFixture()
   try {
-    const owner = await f.openBuyer(true)
-    await retryClockConflict(() => owner.buyer.advance())
+    const { owner } = await advanceOriginal(f)
     expect(await owner.buyer.validate()).toBe('usable')
     const delivered = await owner.buyer.usableResult(),
       saved = await owner.state.read(),

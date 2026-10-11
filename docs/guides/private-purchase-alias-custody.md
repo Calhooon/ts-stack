@@ -315,6 +315,22 @@ production mining, a full production block body, miner fee/resource acceptance,
 public TLS deployment, wallet database portability or live economic delivery.
 Those remain separate qualification boundaries.
 
+The entire cold native purchase can exceed one buyer work interval even when
+each independent verification finishes within its own bound. A specific
+retryable `unavailable` refusal with `Purchase buyer deadline` reports an unknown
+delivery outcome; it does not undo a signed payment or authorize another one.
+The current reference scenario requires that the original buyer already be
+funded, stops and physically joins both buyer and seller work, and reopens their
+original durable owners. It then calls free, read-only `recover` once on that
+same purchase. Recovery must return the original delivery or its pending-release
+state, retain the exact candidate bytes, and leave preparation and signature
+counts at one. All later Script, admission, release, License, alias-currentness
+and playback assertions still apply. Any other refusal, missing original
+custody, unresolved recovery or second deadline fails the scenario. This is
+explicit bounded reconciliation, with no increase to buyer, HTTP, verification
+or test-case limits and no replacement transaction. Applications must preserve
+unknown outcomes and their original owners when handling the same interruption.
+
 The separate current wallet-route demonstration retains the native wallet's
 ordinary finality gate. It signs an expiry route at an earlier selected tip, then
 advances the disclosed synthetic header view before finalizing the wallet action.
