@@ -1227,7 +1227,10 @@ export class Brc38PrivateNativeMergeNode {
   ): Promise<T> {
     if (!actualMerges.has(merge) || merge.#store !== store) invalid()
     merge.#check()
-    const admission = admissionCopy(selectedAdmission)
+    // Copy drains the SQL facade. Retain its original clock value; the
+    // receiving callback still checks the actual physical owner afresh.
+    const admission = admissionCopy(selectedAdmission),
+      operationExpiresAt = store.operationExpiresAt
     return await merge.#copyComposedDatabase(
       target,
       maximumBytes,
@@ -1238,7 +1241,7 @@ export class Brc38PrivateNativeMergeNode {
               !actualMerges.has(merge) ||
               !merge.#live ||
               merge.#copyTarget !== target ||
-              Date.now() >= store.operationExpiresAt ||
+              Date.now() >= operationExpiresAt ||
               performance.now() >= merge.#deadline
             )
               invalid()
@@ -1249,7 +1252,7 @@ export class Brc38PrivateNativeMergeNode {
           policy = Object.freeze({
             maximumPhysicalBytes: store.limits.maximumPhysicalBytes,
             maximumReadBytes: merge.#options.maximumReadBytes,
-            expiresAt: store.operationExpiresAt,
+            expiresAt: operationExpiresAt,
             workingAllocation: merge.#options.workingAllocation,
             signal: merge.#options.signal
           })

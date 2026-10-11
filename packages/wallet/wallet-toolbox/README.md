@@ -5588,3 +5588,18 @@ Current normal delivery, packaging and complete customer/platform qualification
 remain required. No public API, wire format, schema, existing admission, native
 resource formula or browser limit changes. Existing unreleased minor-version
 and host-specific migration requirements still apply.
+
+
+### Closed-facade copy deadline
+
+The full occupied customer workflow passes final native comparison and its
+physical copy, then reaches a retained receiving callback after the SQL facade
+has intentionally closed. Reading the facade's live-operation deadline getter
+there wrongly refuses the handoff. The merge captures the same original absolute
+deadline before copying and retains it as clock data. Each receiving callback
+still checks actual actor and target membership, cancellation, its original
+monotonic deadline, shared working ownership and the physically drained native
+copy owner. No admission is renewed, SQL facade reopened or resource ceiling
+changed. The failed full workflow and its physical cleanup are retained; current
+complete customer, recovery, repeat-import and whole-system qualification remain
+pending. Native source, recipes and genuinely qualified ARM/x64 pins are unchanged.
