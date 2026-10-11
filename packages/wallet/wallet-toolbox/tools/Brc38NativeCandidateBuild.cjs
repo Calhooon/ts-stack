@@ -40,7 +40,8 @@ class NativeCandidateBuildCleanupError extends Error {
 const {
   sqlite,
   driverSources: sources,
-  unixCompilerArguments
+  unixCompilerArguments,
+  assertNativeCandidateTarget
 } = require('../src/storage/portable/native/source_recipe.cjs')
 const flags = unixCompilerArguments('linux', 'arm64')
 /** Candidate recipe selection only; actual process and worker owner remain required. */
@@ -217,6 +218,7 @@ async function buildBrc38NativeCandidate(options) {
     const filename = path.join(root, 'native-candidate')
     await fs.chmod(filename, 0o500)
     const bytes = await readSource(filename, 2097152)
+    assertNativeCandidateTarget(bytes, process.platform, process.arch)
     const receipt = {
       protocol: 'brc38-native-candidate-build/v1',
       startedAt,

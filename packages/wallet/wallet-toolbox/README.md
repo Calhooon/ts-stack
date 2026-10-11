@@ -5364,8 +5364,9 @@ local observer/pointer contract files; it now captures the complete same driver
 cohort as candidate compilation and packaged artifact copying. Every source plan
 records platform, architecture and owned compiler working directory; its relative
 arguments use the original candidate recipe and stay within the captured root.
-Pure plans cover Linux and Darwin on ARM64/x64. Darwin omits only the Linux
-`-D_GNU_SOURCE` and `-ldl` flags, preserving its existing candidate-build behavior.
+Pure plans cover Linux and Darwin on ARM64/x64. Darwin selects the worker
+architecture explicitly with `-arch arm64` or `-arch x86_64` and omits the Linux
+`-D_GNU_SOURCE` and `-ldl` flags. Linux compiler arguments remain unchanged.
 The controlled preparation worker accepts those actual Unix platforms/architectures
 with the unchanged Node24.18.0/ABI137 requirement. Windows source capture uses the
 same driver/addon cohort through its separate original qualified-toolchain route.
@@ -5375,3 +5376,14 @@ artifacts/toolchains/supervisors and real qualification remain required. New
 regressions inspect every actual captured source/SQLite digest and transitive
 include, plus unsupported-target refusal before filesystem work. Compilers and
 other operating systems are not executed by those pure plan regressions.
+
+Candidate builders also check the architecture and executable kind encoded in
+actual captured ELF64, thin Mach-O64 or PE32+ image headers before recording a
+successful build receipt. Windows checks the staged driver's/addon's actual
+bytes against its captured hash and requires the matching executable/DLL kind.
+This catches compiler target mismatches, including a Darwin compiler default
+that differs from a Node worker running under Rosetta. Header checks are a build
+consistency check; they neither fully validate a loadable image nor grant runtime
+admission. Synthetic format regressions provide no foreign-host qualification.
+The existing runtime pins, protected-path checks and real host qualification
+remain required.

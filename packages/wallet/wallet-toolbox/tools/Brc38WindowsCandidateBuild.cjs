@@ -18,7 +18,10 @@ const stagingCleanup = () => require('../out/src/storage/portable/Brc38StagingCl
 // Exported hashes and candidate build receipts cannot mutate this table.
 const toolchains = Object.freeze({})
 let retainedWorker = false
-const { windowsAddonSources: addonSources } = require('../src/storage/portable/native/source_recipe.cjs')
+const {
+  windowsAddonSources: addonSources,
+  assertNativeCandidateTarget
+} = require('../src/storage/portable/native/source_recipe.cjs')
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 
 /** Pure bootstrap source DATA. A fresh isolated worker/controller must review
@@ -285,6 +288,10 @@ async function buildBrc38WindowsCandidates(options) {
       const output = await controller(root, target, fixed)
       const staged = path.join(root, target + '-candidate-readback')
       const actual = await copyNativeSourceInput(path.join(root, filename), staged, 2097152)
+      const image = await fs.readFile(staged)
+      if (image.length !== actual.bytes || digest(image) !== actual.sha256)
+        throw new Error('Windows candidate image changed during target readback')
+      assertNativeCandidateTarget(image, 'win32', process.arch, target)
       await fs.unlink(staged)
       outputs.push({ target, path: filename, bytes: actual.bytes, sha256: actual.sha256, output })
     }

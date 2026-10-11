@@ -112,6 +112,7 @@ test.each([
       expect(source.inputs.find(input => input.name === dependency.name)).toEqual(dependency)
     expect(crypto.createHash('sha256').update(JSON.stringify(source)).digest('hex')).toBe(prepared.manifestSha256)
     if (platform === 'darwin') {
+      expect(source.compiler.arguments.slice(0, 2)).toEqual(['-arch', architecture === 'arm64' ? 'arm64' : 'x86_64'])
       expect(source.compiler.arguments).not.toContain('-ldl')
       expect(source.compiler.arguments).not.toContain('-D_GNU_SOURCE')
     } else {
@@ -134,3 +135,97 @@ test.each([
     expect(await fs.readdir(directory)).toEqual([])
   }
 )
+
+// Synthetic format headers are DATA only, never executable host proof.
+function targetHeader(platform, architecture, kind = 'driver') {
+  const bytes = Buffer.alloc(platform === 'win32' ? 200 : platform === 'linux' ? 64 : 32)
+  if (platform === 'linux') {
+    Buffer.from('7f454c4602010100', 'hex').copy(bytes)
+    bytes.writeUInt16LE(3, 16)
+    bytes.writeUInt16LE(architecture === 'arm64' ? 183 : 62, 18)
+    bytes.writeUInt32LE(1, 20)
+    bytes.writeUInt16LE(64, 52)
+  } else if (platform === 'darwin') {
+    bytes.writeUInt32LE(0xfeedfacf, 0)
+    bytes.writeUInt32LE(architecture === 'arm64' ? 0x0100000c : 0x01000007, 4)
+    bytes.writeUInt32LE(2, 12)
+  } else {
+    bytes.writeUInt16LE(0x5a4d, 0)
+    bytes.writeUInt32LE(64, 60)
+    bytes.writeUInt32LE(0x4550, 64)
+    bytes.writeUInt16LE(architecture === 'arm64' ? 0xaa64 : 0x8664, 68)
+    bytes.writeUInt16LE(112, 84)
+    bytes.writeUInt16LE(kind === 'addon' ? 0x2002 : 2, 86)
+    bytes.writeUInt16LE(0x20b, 88)
+  }
+  return bytes
+}
+test.each([
+  ['linux', 'arm64', 'driver'],
+  ['linux', 'x64', 'driver'],
+  ['darwin', 'arm64', 'driver'],
+  ['darwin', 'x64', 'driver'],
+  ['win32', 'arm64', 'driver'],
+  ['win32', 'x64', 'driver'],
+  ['win32', 'arm64', 'addon'],
+  ['win32', 'x64', 'addon']
+])(
+  'captured %s/%s/%s header matches only its actual target and complete format header',
+  (platform, architecture, kind) => {
+    const { assertNativeCandidateTarget: check } = require('./source_recipe.cjs'),
+      bytes = targetHeader(platform, architecture, kind)
+    expect(() => check(bytes, platform, architecture, kind)).not.toThrow()
+    expect(() => check(bytes, platform, architecture === 'arm64' ? 'x64' : 'arm64', kind)).toThrow(
+      'image differs from its build target'
+    )
+    for (const length of [0, 3, 31, bytes.length - 1])
+      expect(() => check(bytes.subarray(0, length), platform, architecture, kind)).toThrow(
+        'image differs from its build target'
+      )
+    if (platform === 'win32')
+      expect(() => check(bytes, platform, architecture, kind === 'addon' ? 'driver' : 'addon')).toThrow(
+        'image differs from its build target'
+      )
+  }
+)
+test.each([
+  ['linux', 0, 'u32', 0],
+  ['linux', 4, 'u8', 1],
+  ['linux', 5, 'u8', 2],
+  ['linux', 6, 'u8', 0],
+  ['linux', 16, 'u16', 1],
+  ['linux', 20, 'u32', 0],
+  ['linux', 52, 'u16', 63],
+  ['darwin', 0, 'u32', 0xcafebabe],
+  ['darwin', 12, 'u32', 1],
+  ['win32', 0, 'u16', 0],
+  ['win32', 60, 'u32', 0],
+  ['win32', 60, 'u32', 0xffffffff],
+  ['win32', 64, 'u32', 0],
+  ['win32', 84, 'u16', 0],
+  ['win32', 84, 'u16', 0xffff],
+  ['win32', 86, 'u16', 0],
+  ['win32', 88, 'u16', 0x10b]
+])('captured %s malformed target field at %i refuses a successful build receipt', (platform, offset, width, value) => {
+  const { assertNativeCandidateTarget: check } = require('./source_recipe.cjs'),
+    bytes = targetHeader(platform, 'arm64')
+  if (width === 'u8') bytes.writeUInt8(value, offset)
+  else if (width === 'u16') bytes.writeUInt16LE(value, offset)
+  else bytes.writeUInt32LE(value, offset)
+  expect(() => check(bytes, platform, 'arm64')).toThrow('image differs from its build target')
+})
+test('target checks preserve fixed ELF executable type and refuse unsupported selectors without running bytes', () => {
+  const { assertNativeCandidateTarget: check } = require('./source_recipe.cjs'),
+    bytes = targetHeader('linux', 'arm64')
+  bytes.writeUInt16LE(2, 16)
+  expect(() => check(bytes, 'linux', 'arm64')).not.toThrow()
+  for (const [platform, architecture, kind] of [
+    ['linux', 'ia32', 'driver'],
+    ['linux', 'arm64', 'addon'],
+    ['darwin', 'arm64', 'addon'],
+    ['unknown', 'arm64', 'driver'],
+    ['win32', 'arm64', 'unknown']
+  ])
+    expect(() => check(bytes, platform, architecture, kind)).toThrow('image differs from its build target')
+  expect(() => check({}, 'linux', 'arm64')).toThrow('image differs from its build target')
+})

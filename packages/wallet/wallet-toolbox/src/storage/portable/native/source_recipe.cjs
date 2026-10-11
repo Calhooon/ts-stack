@@ -74,9 +74,75 @@ const linuxFlags = Object.freeze([
 function unixCompilerArguments(platform, architecture) {
   if (!['linux', 'darwin'].includes(platform) || !['arm64', 'x64'].includes(architecture))
     throw new Error('Native candidate recipe requires a controlled supported Unix worker')
-  // Darwin's loader functions are in libSystem; all other original flags stay.
+  // Darwin's loader functions are in libSystem. Select the Node worker's
+  // architecture explicitly rather than relying on a compiler host default.
   return Object.freeze(
-    platform === 'darwin' ? linuxFlags.filter(flag => flag !== '-ldl' && flag !== '-D_GNU_SOURCE') : [...linuxFlags]
+    platform === 'darwin'
+      ? [
+          '-arch',
+          architecture === 'arm64' ? 'arm64' : 'x86_64',
+          ...linuxFlags.filter(flag => flag !== '-ldl' && flag !== '-D_GNU_SOURCE')
+        ]
+      : [...linuxFlags]
   )
 }
-module.exports = Object.freeze({ sqlite, sqliteFiles, driverSources, windowsAddonSources, unixCompilerArguments })
+
+/** Check the target encoded in captured candidate DATA before a build receipt.
+ * This is not a full loader, image signature check or runtime admission.
+ * @param {Buffer} bytes @param {string} platform @param {string} architecture
+ * @param {'driver'|'addon'} [kind] */
+function assertNativeCandidateTarget(bytes, platform, architecture, kind = 'driver') {
+  const mismatch = () => {
+    throw new Error('Native candidate image differs from its build target')
+  }
+  if (!Buffer.isBuffer(bytes) || !['arm64', 'x64'].includes(architecture) || !['driver', 'addon'].includes(kind))
+    mismatch()
+  if (platform === 'linux' && kind === 'driver') {
+    // ELF64 little endian: e_type, e_machine, e_version and e_ehsize.
+    if (
+      bytes.length < 64 ||
+      bytes.readUInt32LE(0) !== 0x464c457f ||
+      bytes[4] !== 2 ||
+      bytes[5] !== 1 ||
+      bytes[6] !== 1 ||
+      ![2, 3].includes(bytes.readUInt16LE(16)) ||
+      bytes.readUInt16LE(18) !== (architecture === 'arm64' ? 183 : 62) ||
+      bytes.readUInt32LE(20) !== 1 ||
+      bytes.readUInt16LE(52) !== 64
+    )
+      mismatch()
+  } else if (platform === 'darwin' && kind === 'driver') {
+    // A single selected architecture must produce a thin Mach-O executable.
+    if (
+      bytes.length < 32 ||
+      bytes.readUInt32LE(0) !== 0xfeedfacf ||
+      bytes.readUInt32LE(4) !== (architecture === 'arm64' ? 0x0100000c : 0x01000007) ||
+      bytes.readUInt32LE(12) !== 2
+    )
+      mismatch()
+  } else if (platform === 'win32') {
+    if (bytes.length < 64 || bytes.readUInt16LE(0) !== 0x5a4d) mismatch()
+    const offset = bytes.readUInt32LE(60)
+    if (offset < 64 || offset > bytes.length - 24) mismatch()
+    const optionalBytes = bytes.readUInt16LE(offset + 20),
+      characteristics = bytes.readUInt16LE(offset + 22)
+    if (
+      bytes.readUInt32LE(offset) !== 0x00004550 ||
+      bytes.readUInt16LE(offset + 4) !== (architecture === 'arm64' ? 0xaa64 : 0x8664) ||
+      optionalBytes < 112 ||
+      optionalBytes > bytes.length - offset - 24 ||
+      bytes.readUInt16LE(offset + 24) !== 0x20b ||
+      (characteristics & 2) === 0 ||
+      ((characteristics & 0x2000) !== 0) !== (kind === 'addon')
+    )
+      mismatch()
+  } else mismatch()
+}
+module.exports = Object.freeze({
+  sqlite,
+  sqliteFiles,
+  driverSources,
+  windowsAddonSources,
+  unixCompilerArguments,
+  assertNativeCandidateTarget
+})
