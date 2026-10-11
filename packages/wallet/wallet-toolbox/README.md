@@ -5229,3 +5229,12 @@ original28/30-second failures remain evidence. All original data, assertions,
 crypto parameters, production expiries and memory/PID bounds remain unchanged.
 This is measured test admission; full browser, mutation and system qualification
 are still required, and the measured latency remains a performance baseline.
+
+# Mutation test compiler configuration
+
+Jest resolves `tsconfig.jest.json` from the source checkout before Stryker
+relocates the test root. It inherits the package's strict compiler settings and
+preserves the existing CommonJS/bundler test transform. The relocated-root
+regression uses the real TypeScript transformer. Compiler configuration changes
+select every owning wallet Jest mutation target; no diagnostic or score exemption
+is introduced.

@@ -366,6 +366,14 @@ node-only targets; ordinary wallet shards also receive the native browser.
 Complete real browser/controller/Stryker coverage and cleanup qualification are
 still required, with no skipped cases or substituted browser.
 
+Wallet Jest compilation uses the source-owned `tsconfig.jest.json`, resolved
+before a mutation runner relocates the test root. It inherits the package's
+strict compiler configuration and retains the existing CommonJS/bundler test
+transform. A relocated-root integration regression exercises the real TypeScript
+transform; compiler configuration changes select every owning wallet Jest
+mutation target. This fixes configuration discovery without suppressing diagnostics
+or changing mutation scope, properties or score gates.
+
 Native browser delivery follows the actual Jest glob selection, including ordered
 negative exclusions, through the declared Node toolchain's standard glob matcher.
 Whole-package and genuinely matched native tests receive the pinned browser;

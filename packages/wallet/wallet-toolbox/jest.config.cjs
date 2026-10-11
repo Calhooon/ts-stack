@@ -30,10 +30,9 @@ const getJestConfig = async () => {
         'ts-jest',
         {
           rootDir: '.',
-          tsconfig: {
-            module: 'commonjs',
-            moduleResolution: 'bundler'
-          }
+          // Stryker relocates the test root. Resolve the source-owned compiler
+          // config here so its inherited settings retain their original base.
+          tsconfig: require.resolve('./tsconfig.jest.json')
         }
       ]
     },

@@ -560,6 +560,28 @@ test('reviewed component routing preserves properties, broader input ownership a
   }
 })
 
+test('wallet compiler configuration changes select every owning Jest mutation target', () => {
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  const wallet = Object.entries(targets)
+    .filter(
+      ([, target]) =>
+        target.packageDirectory === 'packages/wallet/wallet-toolbox' && target.runnerOptions?.jest
+    )
+    .map(([id]) => id)
+    .sort()
+  assert.ok(wallet.length >= 40)
+  for (const input of [
+    'packages/wallet/wallet-toolbox/tsconfig.json',
+    'packages/wallet/wallet-toolbox/tsconfig.jest.json',
+    'config/typescript/dual-runtime.json',
+    'config/typescript/strict.json',
+    'scripts/wallet-jest-config.test.mjs'
+  ]) {
+    assert.deepEqual(selectAffectedMutationTargets(targets, [input]).sort(), wallet)
+    assert.deepEqual(selectAffectedMutationTargets(targets, [input + '.extra']), [])
+  }
+})
+
 test('component registries reject missing targets, duplicate tests, removed properties and undeclared substitutes', () => {
   const all = buildMutationTargets(REPOSITORY_ROOT)
   const current = Object.fromEntries(

@@ -6413,6 +6413,22 @@ function currentWalletMutationTargets(repositoryRoot) {
   // the complete controller bridge in every current target that selects them;
   // the original target definitions and all case/resource controls stay intact.
   for (const target of Object.values(targets)) {
+    if (
+      target.packageDirectory === 'packages/wallet/wallet-toolbox' &&
+      target.runnerOptions?.jest
+    ) {
+      target.additionalInputs = [
+        ...new Set([...(target.additionalInputs ?? []), 'tsconfig.json', 'tsconfig.jest.json'])
+      ]
+      target.configurationInputs = [
+        ...new Set([
+          ...(target.configurationInputs ?? []),
+          'config/typescript/dual-runtime.json',
+          'config/typescript/strict.json',
+          'scripts/wallet-jest-config.test.mjs'
+        ])
+      ]
+    }
     const cases = [
       ...(target.runnerOptions?.jest?.config?.testMatch ?? []),
       ...(target.componentTestUniverse ?? [])
