@@ -183,13 +183,15 @@ test('actual Linux host refuses both Darwin routes before filesystem or compiler
   expect(stat).not.toHaveBeenCalled()
   expect(compiler).not.toHaveBeenCalled()
 })
-test.each([
-  [],
-  ['--source', 'relative'],
-  ['--source', '/tmp/../native-candidate'],
-  ['--source', '/tmp/native\0candidate'],
-  ['--source', '/private/native', '--destination', '/Library/changed']
-])('root-copy CLI refuses ambiguous paths or installation overrides %p', args => {
+test.each(
+  [
+    [],
+    ['--source', 'relative'],
+    ['--source', '/tmp/../native-candidate'],
+    ['--source', '/tmp/native\0candidate'],
+    ['--source', '/private/native', '--destination', '/Library/changed']
+  ].map(args => [args])
+)('root-copy CLI refuses ambiguous paths or installation overrides %p', args => {
   expect(() =>
     require('../../../../tools/Brc38RootNativeInstallation.cjs').parseDarwinInstallationArguments(args)
   ).toThrow()
