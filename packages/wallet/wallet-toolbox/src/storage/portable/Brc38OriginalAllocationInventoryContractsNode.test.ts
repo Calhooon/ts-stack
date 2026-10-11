@@ -164,6 +164,10 @@ async function verifyAllocationInventory(width: number, originalAllocationBytes:
       status = await restore.step(status.nextRow)
     }
     expect(status.state).toBe('COMPLETE')
+    // Final independent inventory runs in the same irreversible frozen phase
+    // as publication comparison; its setting-change refusal belongs to that phase.
+    await store.beginPrivateNativeComparison()
+    await store.requirePrivateNativeComparison()
     await store.withAuthenticatedPrivateStructuredDestination(async () => {
       await store.withPrivateNativeDatabase(true, async database => {
         await database.transaction(async trx => {

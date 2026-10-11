@@ -5328,8 +5328,15 @@ The initial128KiB profile reaches COMPLETE in all three original transfer
 widths, then exposes a fixture-only inventory reader error. The fixture used a
 legacy destination fence despite disabling that public snapshot capability.
 Inventory now uses the authenticated private store's actual owned query-only
-slot3 transaction, proves query_only=1 and rejects an attempted setting change,
+slot3 transaction, enters the irreversible frozen comparison phase, proves query_only=1 and rejects an attempted setting change,
 then runs the same independent complete-table/bytes/mapping/proof oracle.
 Production fences, schemas, settings and grants remain unchanged. Complete
 inventory/current gates still need runtime verification;64KiB reference remains
 open and no whole-system qualification is inferred.
+
+The final inventory fixture now enters the actual frozen native comparison
+phase after COMPLETE, before borrowing the query-only reader. Immutability of
+connection settings is a frozen-phase contract; ordinary import read leases
+are physically read-only and separately checked at scope exit. The existing
+setting-change refusal remains intact and is tested in its correct phase.
+This lifecycle correction changes no native policy or original64KiB data.
