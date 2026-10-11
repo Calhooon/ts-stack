@@ -31,6 +31,11 @@ import type { Brc38CheckpointSyncMapDelta } from './Brc38CheckpointSyncMap'
 import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 import { chargeBrc38ImportDecodedBudget, copyBrc38ImportDecodedValue } from './Brc38ImportDecodedBudget'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
+import {
+  withBrc38PrivateCheckpointWindowDeltas,
+  type Brc38PrivateCheckpointWindow
+} from './Brc38PrivateCheckpointWindowNode'
+import { brc38WorkingAllocation } from './Brc38WorkingAllocation'
 
 export interface Brc38PrivateOperationalCheckpoint {
   readonly syncStateId: number
@@ -138,7 +143,8 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
   reader: Readonly<Brc38AuthenticatedStreamedImportReader>,
   selectedMappings: readonly Readonly<{ incomingId: number; localId: number }>[],
   policy: Brc38PrivateCurrentStructuredPolicy,
-  work: (checkpoint: Readonly<Brc38PrivateOperationalCheckpoint>) => Promise<T>
+  work: (checkpoint: Readonly<Brc38PrivateOperationalCheckpoint>) => Promise<T>,
+  window?: Readonly<Brc38PrivateCheckpointWindow>
 ): Promise<T> {
   const root = storage.toDb(),
     origin = privateNativeDatabaseIdentity(root),
@@ -284,6 +290,27 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
   )
   const syncStateId = prepared.current.metadata === undefined ? prepared.allocation?.ids[0] : prepared.target.localId
   if (typeof syncStateId !== 'number' || !Number.isSafeInteger(syncStateId)) invalid()
+  if (window !== undefined && window.receipt.nextRow !== page.step.fromRow) invalid()
+  const incremental = window?.incremental === true,
+    materialize =
+      !incremental || done || window.pendingPages + 1 >= 128 || window.pendingMappings + mappings.length >= 128,
+    nextRow = page.step.fromRow + page.step.rows,
+    observation = (
+      mode: 'NEW' | 'UPDATE' | 'SKIP',
+      selectedTimestamp: string | null,
+      refNum: string | null
+    ): Readonly<Brc38PrivateCheckpointData> => {
+      const data = { syncStateId, mode, preparedAt, timestamp: selectedTimestamp, refNum }
+      return brc38PrivateCheckpointData(
+        incremental
+          ? {
+              protocol: 'brc38-private-checkpoint-data/v2',
+              ...data,
+              materializedNextRow: mode !== 'UPDATE' || materialize ? nextRow : window.materializedNextRow
+            }
+          : { protocol: 'brc38-private-checkpoint-data/v1', ...data }
+      )
+    }
   let live = true,
     consumed = false,
     asserted: Knex.Transaction | undefined,
@@ -341,14 +368,8 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
             await verifyBrc38AuthenticatedSourceSeal(trx)
             consumed = true
             if (skip) {
-              committed = brc38PrivateCheckpointData({
-                protocol: 'brc38-private-checkpoint-data/v1',
-                syncStateId,
-                mode: 'SKIP',
-                preparedAt,
-                timestamp: null,
-                refNum: null
-              })
+              if (incremental && window.pendingPages !== 0) invalid()
+              committed = observation('SKIP', null, null)
               return
             }
             chargeBrc38ImportDecodedBudget(budget, 32768 + 2048 * mappings.length)
@@ -412,19 +433,12 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
                   initial,
                   budget.signal
                 )
-                committed = brc38PrivateCheckpointData({
-                  protocol: 'brc38-private-checkpoint-data/v1',
-                  syncStateId,
-                  mode: 'NEW',
-                  preparedAt,
-                  timestamp: created.toISOString(),
-                  refNum: metadata.refNum
-                })
+                committed = observation('NEW', created.toISOString(), metadata.refNum)
               } finally {
                 initial.fill(0)
               }
             } else {
-              if (text === undefined) invalid()
+              if (materialize && text === undefined) invalid()
               const metadata: Record<string, unknown> = {
                 ...prepared.current.metadata,
                 storageName: source.storageName,
@@ -432,7 +446,7 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
               }
               if (done)
                 metadata.when =
-                  importedWhen ?? (text.maximumUpdatedAt === undefined ? undefined : new Date(text.maximumUpdatedAt))
+                  importedWhen ?? (text?.maximumUpdatedAt === undefined ? undefined : new Date(text.maximumUpdatedAt))
               await updateBrc38PackedPrivateMetadata(
                 storage,
                 trx,
@@ -443,15 +457,8 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
                 budget,
                 ['syncMap']
               )
-              await text.attach(trx)
-              committed = brc38PrivateCheckpointData({
-                protocol: 'brc38-private-checkpoint-data/v1',
-                syncStateId,
-                mode: 'UPDATE',
-                preparedAt,
-                timestamp: timestamp.toISOString(),
-                refNum: null
-              })
+              await text?.attach(trx)
+              committed = observation('UPDATE', timestamp.toISOString(), null)
             }
             actor()
           })
@@ -465,5 +472,23 @@ export async function withBrc38PrivateOperationalCheckpoint<T>(
   // Later archived sync-state pages retain originals only; their source values
   // never replace a newly built operational map or activate local history.
   if (prepared.current.metadata === undefined || skip) return await use()
+  if (!materialize) return await use()
+  if (incremental) {
+    const working = brc38WorkingAllocation(policy.workingAllocation)
+    if (working === undefined) invalid()
+    return await withBrc38PrivateCheckpointWindowDeltas(
+      store,
+      storage,
+      admission,
+      reader,
+      window,
+      syncStateId,
+      delta,
+      working,
+      budget,
+      async deltas =>
+        await withBrc38PreparedPrivateCheckpointText(store, storage, syncStateId, policy, deltas, budget, use)
+    )
+  }
   return await withBrc38PreparedPrivateCheckpointText(store, storage, syncStateId, policy, delta, budget, use)
 }

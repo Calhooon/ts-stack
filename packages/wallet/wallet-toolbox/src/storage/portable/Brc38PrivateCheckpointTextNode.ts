@@ -15,7 +15,7 @@ import {
   withBrc38PrivateCurrentCheckpointActor,
   type Brc38PrivateCurrentStructuredPolicy
 } from './Brc38PrivateCurrentStructuredSourceNode'
-import type { Brc38CheckpointSyncMapDelta } from './Brc38CheckpointSyncMap'
+import type { Brc38CheckpointSyncMapDelta, Brc38CheckpointSyncMapDeltas } from './Brc38CheckpointSyncMap'
 import { brc38PrivateStructuredPolicy } from './Brc38PrivateStructuredPolicy'
 import { brc38WorkingAllocation } from './Brc38WorkingAllocation'
 import { chargeBrc38ImportDecodedBudget, type Brc38ImportDecodedBudget } from './Brc38ImportDecodedBudget'
@@ -63,7 +63,7 @@ export async function withBrc38PreparedPrivateCheckpointText<T>(
   storage: StorageKnex,
   syncStateId: number,
   selected: Brc38PrivateCurrentStructuredPolicy,
-  selectedDelta: Brc38CheckpointSyncMapDelta,
+  selectedDelta: Brc38CheckpointSyncMapDeltas,
   budget: Brc38ImportDecodedBudget,
   work: (prepared: Readonly<Brc38PrivateCheckpointText>) => Promise<T>,
   selectedLifetimes?: Brc38PrivateDerivedTextLifetimes
@@ -87,6 +87,16 @@ export async function withBrc38PreparedPrivateCheckpointText<T>(
         )
     )
   }
+  const deltas: readonly Brc38CheckpointSyncMapDelta[] = Array.isArray(selectedDelta)
+    ? selectedDelta
+    : [selectedDelta as Brc38CheckpointSyncMapDelta]
+  if (deltas.length < 1 || deltas.length > 128) invalid()
+  let mappingCount = 0
+  for (const delta of deltas) {
+    if (!Array.isArray(delta.mappings) || delta.mappings.length > 4000) invalid()
+    mappingCount += delta.mappings.length
+    if (mappingCount > 4000) invalid()
+  }
   const root = storage.toDb(),
     origin = privateNativeDatabaseIdentity(root),
     policy = Object.freeze({
@@ -98,14 +108,12 @@ export async function withBrc38PreparedPrivateCheckpointText<T>(
     coordinate = Object.freeze({ table: 'syncStates' as const, field: 'syncMap' as const, rowId: syncStateId }),
     deadline = performance.now() + Math.max(0, policy.expiresAt - Date.now()),
     effects = new Brc38OwnedImportReads(),
-    captureBytes = 8192 + 1024 * selectedDelta.mappings.length
+    captureBytes = 8192 + 1024 * mappingCount + 1024 * (deltas.length - 1)
   if (
     root !== store.knex ||
     origin?.slot !== 0 ||
     !Number.isSafeInteger(syncStateId) ||
     working === undefined ||
-    !Array.isArray(selectedDelta.mappings) ||
-    selectedDelta.mappings.length > 4000 ||
     policy.expiresAt !== store.limits.expiresAt ||
     !Number.isSafeInteger(budget.maximum) ||
     budget.maximum < 1 ||
@@ -202,16 +210,20 @@ export async function withBrc38PreparedPrivateCheckpointText<T>(
     reservation.close()
   })
   try {
-    const delta = Object.freeze({
-      entity: selectedDelta.entity,
-      count: selectedDelta.count,
-      done: selectedDelta.done,
-      maximumUpdatedAt:
-        selectedDelta.maximumUpdatedAt === undefined ? undefined : new Date(selectedDelta.maximumUpdatedAt.getTime()),
-      mappings: Object.freeze(
-        selectedDelta.mappings.map(value => Object.freeze({ incomingId: value.incomingId, localId: value.localId }))
+    const delta = Object.freeze(
+      deltas.map(value =>
+        Object.freeze({
+          entity: value.entity,
+          count: value.count,
+          done: value.done,
+          maximumUpdatedAt:
+            value.maximumUpdatedAt === undefined ? undefined : new Date(value.maximumUpdatedAt.getTime()),
+          mappings: Object.freeze(
+            value.mappings.map(mapping => Object.freeze({ incomingId: mapping.incomingId, localId: mapping.localId }))
+          )
+        })
       )
-    })
+    )
     actor()
     const measured = await withBrc38PrivateCurrentCheckpointActor(
       store,

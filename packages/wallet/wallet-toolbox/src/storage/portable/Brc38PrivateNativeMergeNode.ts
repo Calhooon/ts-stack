@@ -175,6 +175,7 @@ export class Brc38PrivateNativeMergeNode {
           },
           projectionPolicy: this.#requestProjection,
           maximumPreparedRows: this.#options.maximumStepRows,
+          incrementalCheckpoint: true,
           signal: this.#options.signal
         })
         this.#check()

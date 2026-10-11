@@ -2537,3 +2537,42 @@ quiescence; original customer write/restart/repeat and complete qualification
 remain required. The correction changes no image oracle, capacity or deadline. Supported workload, measured
 headroom and total engineering cost must justify discretionary limits; these
 fixture measurements do not establish production sizing.
+
+### Durable incremental private checkpoints
+
+The owned native merge now selects an additive private checkpoint window. Each
+page still commits entity effects, actual ID mappings, provenance, stock
+checkpoint scalar metadata and its destination receipt atomically. The complete
+operational map remains at its recorded materialization boundary while pages are
+pending in the inactive candidate. It is materialized from authenticated source
+rows and actual committed mappings at completion or the existing bounded
+128-page/mapping reconstruction window, in the final page's same writer and ACK.
+A larger originally admitted single page is materialized immediately; import
+capacity, original budgets and deadlines are unchanged. Pending numeric mappings
+bound the next prepared page so a window cannot overrun its existing allowance.
+
+Private v2 observations add an explicit `materializedNextRow` within the existing
+512-byte journal observation allowance. Existing v1 bytes remain readable and
+mean that each page already materialized its map. Resume follows an existing v2
+cursor even if the new option is absent; timestamps and generated reference
+values retain their original meanings. Lost-ACK replay returns the committed
+receipt without repeating entity or map effects. Later archived sync-state pages
+remain inert provenance and cannot advance across pending map effects. Mapping
+conflicts with the original operational map are checked during materialization;
+a deferred page ACK proves its durable row/map/journal effects, not a complete
+operational-map or activation verdict. Failed preparation or materialization
+leaves the candidate inactive and retains the original recovery admission.
+
+The final independent inventory continues to reconstruct the entire expected
+map from the original source and every actual committed page, including unknown
+JSON members, counter resets, dates and mapping conflicts. Full source/current
+ownership, schema, copied-image and physical-content checks remain. No published
+BRC-38/39 format, database DDL, native binary or default legacy helper behavior
+changes. Newly written private v2 candidates require this implementation on
+resume; older binaries must not operate on them. Matching unpublished 2.15.0
+candidate artifacts and retained original v1 custody remain the recovery path.
+
+This implementation is authored and UNQUALIFIED. Protocol boundary controls,
+genuine occupied import/cancellation/resume/repeat/independent comparison,
+performance/resource measurements and complete platform qualification are still
+required. No production capacity or latency claim follows from the window.

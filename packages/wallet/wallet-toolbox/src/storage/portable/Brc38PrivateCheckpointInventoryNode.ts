@@ -10,7 +10,7 @@ import { readBrc38ImportJournal, type Brc38ImportJournalAdmission } from './Brc3
 import { admissionCopy } from './Brc38ImportJournalCore'
 import { readBrc38PrivateMergeRecovery } from './Brc38PrivateMergeRecoverySchemaNode'
 import { inspectBrc38PrivateMergePages, brc38PrivateMergePagesTable } from './Brc38PrivateMergePagesNode'
-import { brc38PrivateCheckpointData } from './Brc38PrivateCheckpointData'
+import { brc38PrivateCheckpointData, brc38PrivateCheckpointMaterializationCursor } from './Brc38PrivateCheckpointData'
 import { brc38ImportTableOrder, brc38ImportRowForm } from './Brc38ImportForms'
 import { loadBrc38ImportIdMap } from './Brc38ImportIdMap'
 import { decodePortableRow, type PortableRow } from './Brc38PortableRows'
@@ -324,7 +324,9 @@ export async function inspectBrc38PrivateCheckpointInventory(
     let expected: Record<string, unknown> | undefined = original === undefined ? undefined : { ...original.metadata },
       fields: Readonly<Record<string, Field>> | undefined = originalFields,
       syncStateId: number | undefined,
-      afterPage = -1
+      afterPage = -1,
+      materializedNextRow = 0,
+      incrementalCheckpoint = false
     await Brc38PrivateDerivedTextLifetimes.with(
       store,
       { expiresAt: store.operationExpiresAt, workingAllocation: working, signal },
@@ -393,6 +395,18 @@ export async function inspectBrc38PrivateCheckpointInventory(
           )
             invalid()
           if (syncStateId === undefined) syncStateId = observation.syncStateId
+          if (observation.protocol === 'brc38-private-checkpoint-data/v2') {
+            materializedNextRow = brc38PrivateCheckpointMaterializationCursor(
+              observation,
+              page.fromRow,
+              page.fromRow + step.rows,
+              materializedNextRow
+            )
+            incrementalCheckpoint = true
+          } else {
+            if (incrementalCheckpoint && materializedNextRow !== page.fromRow) invalid()
+            materializedNextRow = page.fromRow + step.rows
+          }
           if (observation.syncStateId !== syncStateId || (original !== undefined && original.rowId !== syncStateId))
             invalid()
           const header = page.fromRow === 0,
@@ -573,6 +587,7 @@ export async function inspectBrc38PrivateCheckpointInventory(
           afterPage = page.fromRow
         }
         await flush()
+        if (incrementalCheckpoint && materializedNextRow !== admission.totalRows) invalid()
         if (expected === undefined || fields === undefined || syncStateId === undefined || pages < 1) invalid()
         let afterSource: number | null = null,
           afterActual: number | null = null,

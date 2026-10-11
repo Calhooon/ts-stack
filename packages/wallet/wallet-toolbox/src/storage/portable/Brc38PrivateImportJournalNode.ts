@@ -58,6 +58,8 @@ import { prepareBrc38ProofMerge } from './Brc38ImportProofMergeNode'
 import { prepareBrc38ActionMerge } from './Brc38ImportActionMergeNode'
 import { withBrc38PreparedRequestMerge } from './Brc38ImportRequestMergeNode'
 import { withBrc38PrivateOperationalCheckpoint } from './Brc38PrivateOperationalCheckpointNode'
+import { readBrc38PrivateCheckpointWindow } from './Brc38PrivateCheckpointWindowNode'
+import { brc38WorkingAllocation } from './Brc38WorkingAllocation'
 import type { Brc38PrivateCurrentStructuredPolicy } from './Brc38PrivateCurrentStructuredSourceNode'
 import type { Brc38StreamedHistoryProjectionPolicy } from './Brc38StreamedHistoryProjection'
 import type { Brc38PrivatePreparedFieldInstaller } from './Brc38NativePackedFieldPreparationNode'
@@ -756,6 +758,8 @@ export async function commitBrc38PrivateStructuredMergePage(
     readonly sourcePolicy: Brc38PrivateCurrentStructuredPolicy
     readonly projectionPolicy: Brc38StreamedHistoryProjectionPolicy
     readonly maximumPreparedRows?: number
+    /** Additive private path; existing v2 receipts also select it on resume. */
+    readonly incrementalCheckpoint?: boolean
     readonly signal?: AbortSignal
   }
 ): Promise<Readonly<Brc38ImportJournalReceipt>> {
@@ -794,8 +798,27 @@ export async function commitBrc38PrivateStructuredMergePage(
       if (fromRow === admission.totalRows && prior.state === 'COMPLETE' && prior.nextRow === fromRow) return prior
       if (prior.nextRow < fromRow) invalid()
       // An acknowledged alias-safe prefix must replay its original exact shape.
+      const working = brc38WorkingAllocation(source.workingAllocation)
+      if (working === undefined) invalid()
+      const window =
+        prior.nextRow > fromRow
+          ? undefined
+          : await inspect(
+              async trx =>
+                await readBrc38PrivateCheckpointWindow(
+                  store,
+                  trx,
+                  admission,
+                  prior,
+                  working,
+                  options.incrementalCheckpoint ?? false,
+                  maximumPreparedRows
+                )
+            )
       const replayRows =
-          prior.nextRow > fromRow && prior.lastStep?.fromRow === fromRow ? prior.lastStep.rows : maximumPreparedRows,
+          prior.nextRow > fromRow && prior.lastStep?.fromRow === fromRow
+            ? prior.lastStep.rows
+            : (window?.maximumPreparedRows ?? maximumPreparedRows),
         page = await prepareBrc38StructuredImportPage(reader, metadata, admission, fromRow, signal, replayRows)
       if (prior.nextRow > fromRow)
         return await commitBoundImportStep(
@@ -840,7 +863,8 @@ export async function commitBrc38PrivateStructuredMergePage(
                   preview,
                   prior,
                   trx => checkpoint.committedData(trx)
-                )
+                ),
+              window
             )
           } finally {
             await effect.close?.()

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto'
-import { brc38PrivateCheckpointData, type Brc38PrivateCheckpointData } from './Brc38PrivateCheckpointData'
+import {
+  brc38PrivateCheckpointData,
+  brc38PrivateCheckpointMaterializationCursor,
+  type Brc38PrivateCheckpointData
+} from './Brc38PrivateCheckpointData'
 import type { Knex } from 'knex'
 import { isBrc38OwnedPrivateNativeSqlite, isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
 import {
@@ -338,7 +342,9 @@ export async function inspectBrc38PrivateMergePages(
         destinationSha256: admission.initialDestinationSha256,
         lastStep: null
       }),
-      after = -1
+      after = -1,
+      materializedNextRow = 0,
+      incrementalCheckpoint = false
     const feed = (hash: ReturnType<typeof createHash>, value: unknown): number => {
       let bytes = 0
       for (const chunk of canonicalPortableChunks(value, {
@@ -426,7 +432,19 @@ export async function inspectBrc38PrivateMergePages(
           (data.mode === 'SKIP' && page.tableName !== 'syncStates')
         )
           invalid()
-      }
+        if (data.protocol === 'brc38-private-checkpoint-data/v2') {
+          materializedNextRow = brc38PrivateCheckpointMaterializationCursor(
+            data,
+            page.fromRow,
+            page.nextRow,
+            materializedNextRow
+          )
+          incrementalCheckpoint = true
+        } else {
+          if (incrementalCheckpoint && materializedNextRow !== page.fromRow) invalid()
+          materializedNextRow = page.nextRow
+        }
+      } else if (incrementalCheckpoint) invalid()
       if (page.cacheEpochAfter !== page.cacheEpochBefore && page.cacheReadyId !== null) {
         if (typeof page.cacheUpdatedAt !== 'string') invalid()
         const time = Date.parse(page.cacheUpdatedAt)
@@ -557,6 +575,7 @@ export async function inspectBrc38PrivateMergePages(
       JSON.stringify(previous) !== JSON.stringify(receipt)
     )
       invalid()
+    if (incrementalCheckpoint && receipt.state === 'COMPLETE' && materializedNextRow !== receipt.nextRow) invalid()
     check()
     return Object.freeze({
       pages,

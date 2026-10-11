@@ -537,7 +537,7 @@ export async function withBrc38PrivateCurrentCheckpointActor<T>(
   storage: StorageKnex,
   syncStateId: number,
   policy: Brc38PrivateCurrentStructuredPolicy,
-  delta: Brc38CheckpointSyncMapDelta,
+  delta: Brc38CheckpointSyncMapDeltas,
   work: (chunks: AsyncIterable<Uint8Array>, prior: Readonly<{ bytes: number; sha256: string }>) => Promise<T>,
   additionalTemporaryFileBytes = 0
 ): Promise<CheckpointDeltaResult<T>> {
