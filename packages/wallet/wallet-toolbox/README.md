@@ -1832,6 +1832,13 @@ The complete authenticated staging property cases allow 180 seconds for the
 existing 150-second, minimum-300-run campaign and physical cleanup. Each import
 and its replay still share the original reservation deadline; a harness timeout
 cannot renew it. This aligns the enclosing test budget with its admitted work.
+The original large native snapshot pair uses two independently authenticated,
+restored and published profiles. Measured setup took 104 and 107 seconds, so the
+first profile's former three-minute lifetime expired before either retained
+view opened. These component cases now select one initial ten-minute lifetime
+per profile and an eleven-minute enclosing allowance for effects and cleanup.
+The general fixture default, original proofs and data, retained-view limit,
+resource bounds and all real UTC/monotonic expiry checks remain unchanged.
 
 The working native candidate now has traceable in-repository C source and an
 internal incremental blob ABI. One operation carries a fixed coordinate header
