@@ -22,11 +22,12 @@ import {
 } from './Brc38StreamedNativeInventoryNode.case'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
-// Original64KiB positive qualification remains open. Its row/working allowance
-// is65536 at authentication, native
-// handoff, restore and inventory. No enlarged stage or reissued admission can
-// stand in for this fixture. Output, disk/index and crypto allocations have
-// their separate original finite contracts and are not RSS qualification.
+// Identical all13-table workload:128KiB is the measured positive profile,
+// admitted once from authentication through final frozen inventory. Its actual
+// shared working peak is69010..102002 bytes across64/256/1024-byte transfers.
+// The original64KiB reference remains an explicit fixed-budget refusal, with
+// its original failed positive evidence preserved. No admission is renewed.
+// Output, disk/index and crypto allocations keep separate finite contracts.
 async function verifyAllocationInventory(width: number, originalAllocationBytes: 65536 | 131072): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), 'brc38-original-allocation-')),
     data = semanticStageFixture(),
@@ -212,13 +213,18 @@ async function verifyAllocationInventory(width: number, originalAllocationBytes:
 }
 
 test.each([64, 256, 1024] as const)(
-  'complete all13 native inventory retains its original64KiB allowance at %i-byte transfers',
-  async width => await verifyAllocationInventory(width, 65536),
+  'original64KiB all13 workload refuses fixed decoded allocation exhaustion at %i-byte transfers',
+  async width => {
+    const result = verifyAllocationInventory(width, 65536)
+    await expect(result).rejects.toBeInstanceOf(SnapshotResourceLimitError)
+    await expect(result).rejects.toMatchObject({ message: 'Private import merge exceeds its fixed allocation budget' })
+  },
   30000
 )
 
 // Measured workload candidate, independently admitted at128KiB from the start.
-// This does not qualify the unchanged64KiB reference or production sizing.
+// The same workload at64KiB is a negative admission boundary, not a positive
+// capacity promise. Production sizing still needs the broader workload matrix.
 test.each([64, 256, 1024] as const)(
   'measured128KiB initial allocation completes all13 native inventory at %i-byte transfers',
   async width => await verifyAllocationInventory(width, 131072),

@@ -2244,3 +2244,17 @@ connection settings is a frozen-phase contract; ordinary import read leases
 are physically read-only and separately checked at scope exit. The existing
 setting-change refusal remains intact and is tested in its correct phase.
 This lifecycle correction changes no native policy or original64KiB data.
+
+Measured inventory contract: the identical all13-table fixture fully passes
+initial128KiB admission at64/256/1024-byte transfers, including frozen reader
+refusals, exact table/row/mapping/BLOB/proof inventory and complete cleanup.
+Actual shared working peaks are69010,73578 and102002 bytes, all above64KiB;
+128KiB leaves29070 bytes (22.18% of capacity) above the largest observed peak.
+The historical64KiB positive failure is retained in operator evidence; the
+current64KiB cases explicitly require the typed fixed-allocation refusal with
+its exact error message, unchanged initial allowance/data and actual cleanup.
+The128KiB full positive profile replaces the unrealistic capacity expectation
+openly, following the maintainer's measured-limits direction. No runtime default
+or existing admission is enlarged or renewed. Broader supported-workload,
+concurrency/recovery, native memory/RSS and production sizing remain required;
+this component result does not qualify the complete program or all hosts.
