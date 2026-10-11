@@ -2258,3 +2258,32 @@ openly, following the maintainer's measured-limits direction. No runtime default
 or existing admission is enlarged or renewed. Broader supported-workload,
 concurrency/recovery, native memory/RSS and production sizing remain required;
 this component result does not qualify the complete program or all hosts.
+
+### Windows bootstrap outer process worker
+
+The maintainer controller now wires the first-artifact builder to an actual
+Windows Job through authored PowerShell and managed controller source. It locks
+and hashes the original configuration, controller cohort and Node executable,
+creates protected private storage, launches Node suspended and assigns/readbacks
+its real non-inherited Job before resumption. The existing qualification envelope
+is12GiB/512activeprocesses/up-to-fourCPU affinity/Node1536MiB with a600-second
+monotonic outer process deadline and10-second physical drain allowance. These
+bounds support two original180-second compiler stages plus source/helper/readback
+work; real Windows demand and headroom still require measurement.
+
+Every path shuts down the actual remaining original Job; successful DATA requires
+primary exit, zero active processes and concrete original handle closure. Candidate
+postimage/hash/PE and source/Node checks happen after that observed shutdown;
+original source and result descriptors must also close. Owned build directories
+are retained. A failed close retains its exact original descriptor retry or fails
+the controller; no new handle or parent-close observation substitutes for drain.
+The portable data inspector rejects absent process/tree/close observations,
+wrong limits/affinity, error results and forged qualification fields but grants no
+runtime or host authority even for complete serialized observations.
+
+Actual Windows execution is pending. The independent host must bound managed
+controller preparation before the Node Job, controller failure/crash, network and
+token isolation and physical-host shutdown; Job completion is not VM shutdown.
+Real Windows helper/MSVC/Job/addon/supervisor, protected installation, provenance,
+replacement/handle and platform qualification remain. Source wiring and pure
+configuration/error/cleanup tests do not complete the host or full#544 system.

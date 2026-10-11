@@ -407,3 +407,251 @@ test('bootstrap manifest write and close failures retain both errors and the act
   expect(await fs.readdir(directory)).toEqual(['bootstrap-inputs'])
   await failure.retryCleanup()
 })
+
+// Outer-worker source/data regressions. No synthetic observation is real Job
+// evidence, and these controls never invoke PowerShell, .NET or a compiler.
+async function windowsBootstrapWorkerFixture() {
+  const { controllerInputs } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    crypto = require('node:crypto'),
+    bootstrap = await windowsBootstrapFixture(),
+    inputs = []
+  for (const name of controllerInputs) {
+    const bytes = await fs.readFile(path.join(__dirname, '../../../../', name))
+    inputs.push({ path: name, bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') })
+  }
+  Object.assign(bootstrap, {
+    outputDirectory: 'C:\\Private\\original-root',
+    sqliteSource: 'C:\\Inputs\\sqlite3.c',
+    nodeHeaderDirectory: 'C:\\Inputs\\node-headers'
+  })
+  bootstrap.nodeImportLibrary.filename = 'C:\\Inputs\\node.lib'
+  return {
+    architecture: bootstrap.architecture,
+    bootstrap,
+    controllerInputs: inputs,
+    nodeExecutable: { filename: 'C:\\Node\\node.exe', bytes: 123, sha256: '1'.repeat(64) }
+  }
+}
+test.each(['arm64', 'x64'])(
+  'outer %s worker plan snapshots the real authored controller cohort without executing it',
+  async architecture => {
+    const { bootstrapWorkerPlan } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+      configuration = await windowsBootstrapWorkerFixture(),
+      noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+    configuration.architecture = configuration.bootstrap.architecture = architecture
+    const plan = bootstrapWorkerPlan(configuration),
+      header = plan.bootstrap.nodeHeaders[0].sha256,
+      source = plan.controllerInputs[0].sha256
+    configuration.bootstrap.nodeHeaders[0].sha256 = '2'.repeat(64)
+    configuration.controllerInputs[0].sha256 = '3'.repeat(64)
+    configuration.bootstrap.toolchain.compiler = 'C:\\Other\\cl.exe'
+    expect(plan.architecture).toBe(architecture)
+    expect(plan.bootstrap.nodeHeaders[0].sha256).toBe(header)
+    expect(plan.controllerInputs[0].sha256).toBe(source)
+    expect(plan.bootstrap.toolchain.compiler).toBe('C:\\BuildTools\\cl.exe')
+    expect(plan.limits).toEqual({
+      memoryBytes: 12884901888,
+      processCount: 512,
+      maximumCPUCount: 4,
+      nodeHeapMiB: 1536,
+      deadlineMilliseconds: 600000,
+      drainMilliseconds: 10000
+    })
+    expect(plan.compiled).toBe(false)
+    expect(plan.qualified).toBe(false)
+    expect(plan.runtimePinChanged).toBe(false)
+    expect(Object.isFrozen(plan.bootstrap.nodeHeaders[0])).toBe(true)
+    expect(Object.isFrozen(plan.controllerInputs[0])).toBe(true)
+    expect(noExecution).not.toHaveBeenCalled()
+  }
+)
+test.each([
+  'mismatched-arch',
+  'missing-controller',
+  'reordered-controller',
+  'source-digest',
+  'source-extent',
+  'node-name',
+  'node-digest',
+  'node-extent',
+  'UNC',
+  'traversal',
+  'reserved',
+  'alias',
+  'stream'
+])('outer worker %s refuses before any host operation', async defect => {
+  const { bootstrapWorkerPlan } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    config = await windowsBootstrapWorkerFixture(),
+    noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+  if (defect === 'mismatched-arch') config.architecture = 'x64'
+  else if (defect === 'missing-controller') config.controllerInputs.pop()
+  else if (defect === 'reordered-controller') config.controllerInputs.reverse()
+  else if (defect === 'source-digest') config.controllerInputs[0].sha256 = 'bad'
+  else if (defect === 'source-extent') config.controllerInputs[0].bytes = 1048577
+  else if (defect === 'node-name') config.nodeExecutable.filename = 'C:\\Node\\other.exe'
+  else if (defect === 'node-digest') config.nodeExecutable.sha256 = 'bad'
+  else if (defect === 'node-extent') config.nodeExecutable.bytes = 134217729
+  else if (defect === 'UNC') config.bootstrap.outputDirectory = '\\\\server\\private'
+  else if (defect === 'traversal') config.bootstrap.outputDirectory = 'C:\\Private\\..\\other'
+  else if (defect === 'reserved') config.bootstrap.outputDirectory = 'C:\\Private\\NUL'
+  else if (defect === 'alias') config.bootstrap.outputDirectory = 'C:\\Private\\root. '
+  else if (defect === 'stream') config.bootstrap.outputDirectory = 'C:\\Private\\root:alternate'
+  expect(() => bootstrapWorkerPlan(config)).toThrow('Windows bootstrap')
+  expect(noExecution).not.toHaveBeenCalled()
+})
+function syntheticBootstrapControllerData() {
+  return {
+    protocol: 'brc38-windows-bootstrap-controller/v1',
+    controllerFilesClosed: true,
+    controllerErrors: [],
+    VMShutdownObserved: false,
+    qualified: false,
+    runtimePinChanged: false,
+    engineOrAddonExecuted: false,
+    worker: {
+      protocol: 'brc38-windows-bootstrap-worker/v1',
+      success: true,
+      qualified: false,
+      runtimePinChanged: false
+    },
+    job: {
+      Success: true,
+      AssignedBeforeResume: true,
+      LimitsReadBack: true,
+      NonInheritedJobHandle: true,
+      WorkerExitObserved: true,
+      ZeroActiveProcessesObserved: true,
+      AllHandlesClosed: true,
+      OriginalProcessWorkerStopped: true,
+      DeadlineExpired: false,
+      WorkerExitCode: 0,
+      MemoryLimitBytes: 12884901888,
+      ProcessLimit: 512,
+      MaximumCPUCount: 4,
+      AffinityMaskHex: '000000000000000f',
+      DeadlineMilliseconds: 600000,
+      Errors: [],
+      Qualified: false,
+      VMShutdownObserved: false
+    },
+    candidates: [
+      { path: 'brc38-build-supervisor.exe', bytes: 512, sha256: '1'.repeat(64) },
+      { path: 'brc38_windows.node', bytes: 512, sha256: '2'.repeat(64) }
+    ]
+  }
+}
+test('complete synthetic controller observations remain explicitly unqualified DATA, not a host enrollment', () => {
+  const { inspectBootstrapWorkerResult } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    input = syntheticBootstrapControllerData(),
+    data = inspectBootstrapWorkerResult(input)
+  expect(data.qualified).toBe(false)
+  expect(data.runtimePinChanged).toBe(false)
+  expect(data.VMShutdownObserved).toBe(false)
+  expect(Object.isFrozen(data.candidates[0])).toBe(true)
+  input.candidates[0].sha256 = '3'.repeat(64)
+  expect(data.candidates[0].sha256).toBe('1'.repeat(64))
+})
+test.each([
+  'Success',
+  'AssignedBeforeResume',
+  'LimitsReadBack',
+  'NonInheritedJobHandle',
+  'WorkerExitObserved',
+  'ZeroActiveProcessesObserved',
+  'AllHandlesClosed',
+  'OriginalProcessWorkerStopped'
+])('a missing actual %s observation cannot pass exported build DATA validation', field => {
+  const { inspectBootstrapWorkerResult } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    data = syntheticBootstrapControllerData()
+  delete data.job[field]
+  expect(() => inspectBootstrapWorkerResult(data)).toThrow('incomplete or failed')
+})
+test.each([
+  'timeout',
+  'failed-exit',
+  'job-close-error',
+  'file-close-error',
+  'qualified',
+  'VM-stop',
+  'wrong-memory',
+  'wrong-PIDs',
+  'wrong-affinity',
+  'missing-affinity',
+  'wrong-candidate',
+  'candidate-digest',
+  'worker-failed'
+])('controller %s cannot be laundered into successful exported DATA', defect => {
+  const { inspectBootstrapWorkerResult } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    data = syntheticBootstrapControllerData()
+  if (defect === 'timeout') data.job.DeadlineExpired = true
+  else if (defect === 'failed-exit') data.job.WorkerExitCode = 1
+  else if (defect === 'job-close-error') data.job.Errors = ['original handle still retained']
+  else if (defect === 'file-close-error') data.controllerFilesClosed = false
+  else if (defect === 'qualified') data.qualified = true
+  else if (defect === 'VM-stop') data.job.VMShutdownObserved = true
+  else if (defect === 'wrong-memory') data.job.MemoryLimitBytes++
+  else if (defect === 'wrong-PIDs') data.job.ProcessLimit++
+  else if (defect === 'wrong-affinity') data.job.AffinityMaskHex = '00000000000000ff'
+  else if (defect === 'missing-affinity') delete data.job.AffinityMaskHex
+  else if (defect === 'wrong-candidate') data.candidates[1].path = '../other.node'
+  else if (defect === 'candidate-digest') data.candidates[1].sha256 = 'bad'
+  else if (defect === 'worker-failed') data.worker.success = false
+  expect(() => inspectBootstrapWorkerResult(data)).toThrow('Windows bootstrap')
+})
+test('bounded actual worker configuration capture closes its descriptor and preserves immutable source plan DATA', async () => {
+  const { readBootstrapWorkerConfiguration } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    configuration = await windowsBootstrapWorkerFixture(),
+    filename = path.join(directory, 'worker-options.json')
+  await fs.writeFile(filename, JSON.stringify(configuration), { flag: 'wx' })
+  const plan = await readBootstrapWorkerConfiguration(filename)
+  expect(plan.controllerInputs).toEqual(configuration.controllerInputs)
+  expect(plan.qualified).toBe(false)
+  expect(JSON.parse(await fs.readFile(filename, 'utf8'))).toEqual(configuration)
+})
+test('failed worker configuration read and close preserve both causes and retry the same actual descriptor', async () => {
+  const { readBootstrapWorkerConfiguration } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    originalOpen = fs.open,
+    filename = path.join(directory, 'worker-options.json'),
+    readFailure = new Error('synthetic configuration read failure'),
+    closeFailure = new Error('synthetic configuration close failure')
+  await fs.writeFile(filename, '{}', { flag: 'wx' })
+  let retained
+  const opening = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const file = await originalOpen(...args)
+    if (String(args[0]) === filename) {
+      retained = file
+      const close = file.close.bind(file)
+      let first = true
+      file.read = async () => {
+        throw readFailure
+      }
+      file.close = async () => {
+        if (first) {
+          first = false
+          throw closeFailure
+        }
+        await close()
+      }
+    }
+    return file
+  })
+  const failure = await readBootstrapWorkerConfiguration(filename).then(
+    () => undefined,
+    error => error
+  )
+  expect(failure).toBeInstanceOf(NativeSourceCleanupError)
+  expect(failure.errors).toEqual([readFailure, closeFailure])
+  expect(retained.fd).toBeGreaterThanOrEqual(0)
+  opening.mockRestore()
+  await failure.retryCleanup()
+  expect(retained.fd).toBe(-1)
+  expect(await fs.readFile(filename, 'utf8')).toBe('{}')
+  await failure.retryCleanup()
+})
+test('a bootstrap process on the wrong host or outside its original root refuses before any child launch', async () => {
+  const { runBootstrapWorker } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
+    noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+  await expect(runBootstrapWorker('relative-options.json')).rejects.toThrow(/Bootstrap process|Bootstrap options/)
+  expect(noExecution).not.toHaveBeenCalled()
+  expect(await fs.readdir(directory)).toEqual([])
+})

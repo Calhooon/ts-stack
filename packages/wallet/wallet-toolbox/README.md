@@ -5422,3 +5422,41 @@ fixed artifact entries are committed. Pure capture regressions use real authored
 C/SQLite and explicitly synthetic Node dependency DATA, not Windows execution.
 The source recipe does not claim an end-to-end or production-qualified Windows
 route until the independent worker and actual platform qualification are proved.
+
+The authored `Brc38WindowsBootstrapController.ps1`, managed
+`Brc38WindowsBootstrapJob.cs` and `Brc38WindowsBootstrapWorker.cjs` now wire the
+outer **process** worker. Inside an independently owned Windows host, invoke the
+controller with `-Configuration <private-absolute-json-file>`. The configuration
+contains `architecture`, exact `nodeExecutable` filename/size/SHA256, the
+existing `bootstrap` options, and the ordered exact `controllerInputs` cohort
+exported by `bootstrapWorkerPlan`. The configuration's parent is the protected
+actor-only output parent; the controller creates its own private child and
+freezes a new worker-options file. It holds real configuration/controller/Node
+read descriptors against write/delete while the original worker runs.
+
+The Windows controller prepares only the authored managed controller, creates
+an unnamed non-inherited Job with kill-on-close and no breakaway flags, and
+starts the exact Node24.18/ABI137 process suspended. Before resumption it assigns
+and reads back actual Job membership, 12GiB aggregate memory, 512 active
+processes and affinity to at most four available processors. Node heap remains
+1536MiB. A monotonic600-second worker deadline encloses both original180-second
+compiler stages and bounded source/helper/readback work; an additional10-second
+drain allowance verifies actual original process exit and zero active Job
+members. Even after Node exit0 it terminates remaining descendants. Concrete
+original thread/process/Job handles must close before successful exported DATA.
+The controller then checks actual source/Node postimages and protected candidate
+hashes/PE targets, closes original file descriptors and retains every build root.
+These are existing qualification-capacity bounds, not measured Windows production
+sizing; actual Windows workload/headroom and failure cases remain to qualify.
+
+PowerShell/.NET preparation occurs before the Node Job. The independently
+controlled host must bound that preparation and controller lifetime, provide
+network/token/VM isolation and physically stop if cleanup cannot be proved.
+Job observations prove only that original process tree; they never claim VM
+shutdown. A parent-controller crash leaves kill-on-close protection but no
+verified drain receipt. `inspectBootstrapWorkerResult` validates exported DATA,
+not live handles, runtime identity or host enrollment. Synthetic portable tests
+cannot prove Windows Job, compiler, ACL, replacement or physical-host behavior.
+Actual Windows end-to-end qualification and fixed trusted artifact entries
+remain required. These maintainer tools are repository-only, not public wallet
+exports or shipped runtime candidates.
