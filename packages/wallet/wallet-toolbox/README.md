@@ -5300,3 +5300,11 @@ then retains every existing512-byte/16-times-string per-value charge. The
 bounded key array is reused. Original65,536-byte page/row/working limits,
 semantic validation, native transactions and negative controls remain. Runtime
 validation of the complete inventory and wider system is still pending.
+
+The next original inventory trace reaches the transaction table (page6) and
+confirms text preparation has the same blanket16384-byte charge for a small
+shallow metadata container. That container now uses the same1024-plus256-per-
+actual-field accounting, explicitly capped at64 fields. Every actual UTF-8
+conversion keeps its original512-plus16-times-byte precharge. Retained copies,
+validation and original65,536-byte admission remain; full inventory/runtime
+qualification is not inferred from these source corrections.

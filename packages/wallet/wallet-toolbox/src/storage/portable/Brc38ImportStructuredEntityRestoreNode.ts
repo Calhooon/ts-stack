@@ -452,7 +452,11 @@ export async function prepareBrc38StructuredEntityRestore(
     const spec = nativePackedTextSource(data.table)
     for (const [index, prepared] of data.rows.entries()) {
       signal?.throwIfAborted()
-      chargeBrc38ImportDecodedBudget(budget, 16384)
+      const keys = Object.keys(prepared.metadata)
+      if (keys.length > 64) invalid()
+      // Charge the actual shallow metadata container. Converted payload copies
+      // below remain independently precharged by their actual UTF-8 byte size.
+      chargeBrc38ImportDecodedBudget(budget, 1024 + 256 * keys.length)
       const metadata: Record<string, unknown> = { ...prepared.metadata },
         history = histories[index]
       if (history !== undefined) metadata[history.field] = history.mappedJson
