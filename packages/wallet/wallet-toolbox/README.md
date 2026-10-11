@@ -5251,9 +5251,10 @@ The self-contained browser test context is mapped to the governed browser
 compiler profile; root validation enforces all of its required strict options.
 
 The all13 inventory fixture retains its original 65,536-byte combined working
-owner. Its grammar shares that ceiling rather than imposing a 4,096-byte
+owner. Its grammar and index share that ceiling rather than imposing a 4,096-byte
 sub-cap that admits only the grammar base and cannot admit its first digest
-scope. Concurrent grammar, index, projection and transport charges still count
+scope; an index also needs its base plus the actual private paths. Concurrent
+grammar, index, projection and transport charges still count
 together. This test configuration correction does not establish full native
 inventory or resident-memory qualification. The retained-chunk negative test
 checks that sealed SQL updates refuse and injects a changed actual scoped read
