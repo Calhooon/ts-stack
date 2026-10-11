@@ -3,7 +3,12 @@ import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Brc38StagingAdmissionNode } from './Brc38StagingAdmissionNode'
-import { resumeBinding, resumeLimits } from './Brc38ResumeFixture'
+import {
+  authenticatedStageOptions,
+  authenticatedStagePassword,
+  encrypted
+} from './Brc38AuthenticatedPrivateStageFixture'
+import { stageAuthenticatedBrc39PrivateImport } from './Brc38AuthenticatedPrivateStageNode'
 import {
   brc38PrivateRequestTxidAccepted,
   withBrc38PrivateOccupiedRequestSources
@@ -759,10 +764,16 @@ test.each(['discard', 'close'] as const)(
       })
     let native: Awaited<ReturnType<typeof root.resumeNative>> | undefined
     try {
-      const limits = { ...resumeLimits(), expiresAt: Date.now() + 10000 },
-        first = await root.admit(limits, resumeBinding())
-      await first.store.close()
-      native = await root.resumeNative(first.id, limits, resumeBinding(), nativeTestExecutable())
+      const bytes = await encrypted(),
+        selected = authenticatedStageOptions(bytes),
+        limits = { ...selected.limits, expiresAt: Date.now() + 10000 }
+      selected.limits = limits
+      async function* chunks() {
+        for (let offset = 0; offset < bytes.length; offset += 137) yield bytes.slice(offset, offset + 137)
+      }
+      const first = await stageAuthenticatedBrc39PrivateImport(chunks(), authenticatedStagePassword, root, selected)
+      await first.reservation.store.close()
+      native = await root.resumeNative(first.reservation.id, limits, selected.binding, nativeTestExecutable())
       const store = native.store,
         working = new Brc38WorkingAllocation(limits.maximumRowAllocationBytes),
         charge = working.claim(8192),
