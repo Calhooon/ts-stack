@@ -58,7 +58,7 @@ export function copyAuthByteArray(
   if (!Array.isArray(value)) throw invalid()
   const length = value.length
   if ((!allowEmpty && length === 0) || length > maxBytes) throw invalid()
-  const copy = new Array<number>(length)
+  const copy: number[] = []
   for (let index = 0; index < length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(value, index)
     if (
@@ -70,7 +70,7 @@ export function copyAuthByteArray(
     ) {
       throw invalid()
     }
-    copy[index] = descriptor.value
+    copy.push(descriptor.value)
   }
   return copy
 }
@@ -213,7 +213,7 @@ function visitAuthArray(
   }
   // Capture each descriptor value once without retaining one descriptor object
   // per byte. The captured values supply both validation and the owned snapshot.
-  const values = new Array<unknown>(length)
+  const values: unknown[] = []
   let denseBytes = true
   for (let index = 0; index < length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(candidate, index)
@@ -221,7 +221,7 @@ function visitAuthArray(
       throw new Error('Authentication messages must not contain sparse arrays.')
     }
     const value = descriptor.value
-    values[index] = value
+    values.push(value)
     if (!Number.isInteger(value) || value < 0 || value > 255) denseBytes = false
   }
   if (denseBytes) {
