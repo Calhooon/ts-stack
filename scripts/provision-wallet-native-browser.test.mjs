@@ -3,6 +3,7 @@ import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import test from 'node:test'
 import {
   browserPin,
@@ -82,4 +83,15 @@ test('browser delivery rejects changed bytes, incorrect lengths and symlink subs
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('enclosing native browser deadlines admit the original case and retained cleanup', () => {
+  const require = createRequire(import.meta.url)
+  const {
+    nativeBrowserDriverTimeout,
+    nativeBrowserTestTimeout
+  } = require('../packages/wallet/wallet-toolbox/client/test/native-browser-driver.cjs')
+  assert.ok(nativeBrowserDriverTimeout > 30000 + 30000)
+  assert.ok(nativeBrowserTestTimeout > nativeBrowserDriverTimeout)
+  assert.ok(nativeBrowserDriverTimeout < 120000)
 })

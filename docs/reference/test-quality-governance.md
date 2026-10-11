@@ -371,3 +371,13 @@ negative exclusions, through the declared Node toolchain's standard glob matcher
 Whole-package and genuinely matched native tests receive the pinned browser;
 node-only patterns do not. Exact canonical mutation and full functional scopes
 remain unchanged, and routing controls grant no runtime qualification.
+
+The native browser driver admits startup, the original30-second case and
+original30-second cleanup in one90-second enclosing allowance; Jest admits that
+child plus10 seconds to settle. The old28-second parent cutoff stopped one
+original request case before its own deadline reported. An independent direct
+run still failed that original30-second contract, which remains a failure to
+investigate. No case data, semantic assertion, crypto parameter, production
+expiry, inner case/cleanup limit or memory/PID allowance changes. This corrects
+enclosing admission and failure reporting; it does not qualify the failed case
+or the complete system.

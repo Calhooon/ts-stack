@@ -1,5 +1,6 @@
 'use strict'
 const { runPortableBrowserCase } = require('../../../client/test/portable-program-browser.cjs')
+const { nativeBrowserTestTimeout } = require('../../../client/test/native-browser-driver.cjs')
 
 // Reuse every original native-browser oracle. The normal browser entry still
 // requires the full catalogue. Per-test instrumentation returns only actual
@@ -169,12 +170,16 @@ const cases = [
   ['verifyBrowserArgon2Worker', 'src/utility/BrowserArgon2idWorker.browser.case.ts']
 ]
 for (const [id, source] of cases) {
-  test(`native browser component: ${id}`, async () => {
-    const result = await runPortableBrowserCase(id)
-    expect(result.reports).toHaveLength(1)
-    expect(result.reports[0]).toMatchObject({ id, source, passed: true })
-    expect(result.browserChildClose).toEqual({ code: 0, signal: null })
-    expect(result.completeCatalogueRun).toBe(false)
-    expect(result.processTreeQualified).toBe(false)
-  }, 30000)
+  test(
+    `native browser component: ${id}`,
+    async () => {
+      const result = await runPortableBrowserCase(id)
+      expect(result.reports).toHaveLength(1)
+      expect(result.reports[0]).toMatchObject({ id, source, passed: true })
+      expect(result.browserChildClose).toEqual({ code: 0, signal: null })
+      expect(result.completeCatalogueRun).toBe(false)
+      expect(result.processTreeQualified).toBe(false)
+    },
+    nativeBrowserTestTimeout
+  )
 }

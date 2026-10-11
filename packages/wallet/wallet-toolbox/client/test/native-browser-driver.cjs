@@ -2,6 +2,12 @@
 const assert = require('node:assert/strict')
 const { execFile } = require('node:child_process')
 
+// The inner native case and original cleanup each retain their 30-second
+// limits. The parent must also admit bundle/browser startup; its old 28-second
+// cutoff could kill a valid inner case before it reports or drains.
+const nativeBrowserDriverTimeout = 30000 + 30000 + 30000
+const nativeBrowserTestTimeout = nativeBrowserDriverTimeout + 10000
+
 // Jest's CommonJS VM does not provide native ESM loaders for the installed
 // browser tools. Execute the genuine controller in a fresh inherited-group
 // Node child, rather than substituting implementations or VM globals.
@@ -15,10 +21,10 @@ async function runNativeBrowserDriver(kind, context, id = '') {
     execFile(
       process.execPath,
       ['--max-old-space-size=1536', __filename, kind, id, encoded],
-      { timeout: 28000, maxBuffer: 1048576, killSignal: 'SIGTERM' },
+      { timeout: nativeBrowserDriverTimeout, maxBuffer: 1048576, killSignal: 'SIGTERM' },
       (cause, stdout) => {
         if (cause !== null) {
-          reject(new Error('Native browser driver failed or reached its original enclosing case bound', { cause }))
+          reject(new Error('Native browser driver failed or reached its enclosing driver bound', { cause }))
           return
         }
         try {
@@ -32,7 +38,7 @@ async function runNativeBrowserDriver(kind, context, id = '') {
     )
   })
 }
-module.exports = { runNativeBrowserDriver }
+module.exports = { runNativeBrowserDriver, nativeBrowserDriverTimeout, nativeBrowserTestTimeout }
 
 if (require.main === module) {
   const run = async () => {
