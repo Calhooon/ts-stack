@@ -6,7 +6,7 @@ import { constants, createReadStream } from 'node:fs'
 import { appendFile, chmod, copyFile, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, matchesGlob, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 
@@ -23,15 +23,22 @@ export function needsNativeBrowserDelivery(target) {
   if (target.packageDirectory !== 'packages/wallet/wallet-toolbox' || target.testRunner !== 'jest')
     return false
   const selected = target.runnerOptions?.jest?.config?.testMatch
-  return (
-    selected === undefined ||
-    selected.some(
-      file =>
-        file.endsWith('/Brc38NativeBrowserComponents.test.cjs') ||
-        file.endsWith('/BrowserArgon2idWorker.native.test.cjs') ||
-        file.endsWith('/PackedIdbCurrentStructuredRead.test.ts')
-    )
-  )
+  if (selected === undefined) return true
+  const browserTests = [
+    'src/storage/portable/Brc38NativeBrowserComponents.test.cjs',
+    'src/utility/BrowserArgon2idWorker.native.test.cjs',
+    'src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts'
+  ]
+  return browserTests.some(file => {
+    let included = false
+    for (const pattern of selected) {
+      const excluded = pattern.startsWith('!') && !pattern.startsWith('!(')
+      const glob = excluded ? pattern.slice(1) : pattern
+      const candidate = glob.includes('<rootDir>') ? '/wallet-root/' + file : file
+      if (matchesGlob(candidate, glob.replaceAll('<rootDir>', '/wallet-root'))) included = !excluded
+    }
+    return included
+  })
 }
 export async function verifyBrowserFile(file, bytes, sha256) {
   const info = await lstat(file)

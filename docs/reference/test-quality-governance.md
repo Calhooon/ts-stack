@@ -365,3 +365,9 @@ Mutation setup follows the actual selected tests, avoiding the download for
 node-only targets; ordinary wallet shards also receive the native browser.
 Complete real browser/controller/Stryker coverage and cleanup qualification are
 still required, with no skipped cases or substituted browser.
+
+Native browser delivery follows the actual Jest glob selection, including ordered
+negative exclusions, through the declared Node toolchain's standard glob matcher.
+Whole-package and genuinely matched native tests receive the pinned browser;
+node-only patterns do not. Exact canonical mutation and full functional scopes
+remain unchanged, and routing controls grant no runtime qualification.

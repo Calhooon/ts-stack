@@ -38,6 +38,27 @@ test('browser setup follows actual selected execution without downloading for no
     'src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts'
   ])
     assert.equal(needsNativeBrowserDelivery(target(['<rootDir>/' + file])), true)
+  for (const pattern of [
+    '<rootDir>/src/**/*.test.{ts,cjs}',
+    '<rootDir>/src/storage/portable/Brc38*.test.cjs',
+    'src/utility/*.native.test.cjs',
+    '<rootDir>/src/storage/snapshot/PackedIdb*.test.ts'
+  ])
+    assert.equal(needsNativeBrowserDelivery(target([pattern])), true, pattern)
+  for (const patterns of [
+    [],
+    ['<rootDir>/src/schema/**/*.test.ts'],
+    ['<rootDir>/src/**/*.test.ts', '!<rootDir>/src/storage/snapshot/PackedIdb*.test.ts'],
+    ['!<rootDir>/src/**/*.test.{ts,cjs}'],
+    ['<rootDir>/src/**/*.test.{ts,cjs}', '!<rootDir>/src/**']
+  ])
+    assert.equal(needsNativeBrowserDelivery(target(patterns)), false, String(patterns))
+  assert.equal(
+    needsNativeBrowserDelivery(
+      target(['!<rootDir>/src/**', '<rootDir>/src/utility/*.native.test.cjs'])
+    ),
+    true
+  )
   assert.equal(needsNativeBrowserDelivery(target(undefined)), true)
   assert.equal(
     needsNativeBrowserDelivery({ ...target(undefined), packageDirectory: 'packages/other' }),
