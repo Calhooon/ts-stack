@@ -2227,3 +2227,13 @@ refusal/cancellation/concurrency controls remain. The new measured profile has
 the same original180-second source lifetime and an enclosing180-second test
 allowance; old64KiB tests retain their original30-second allowance. This is a
 sizing experiment, not a default/admission policy change or qualification claim.
+
+The initial128KiB profile reaches COMPLETE in all three original transfer
+widths, then exposes a fixture-only inventory reader error. The fixture used a
+legacy destination fence despite disabling that public snapshot capability.
+Inventory now uses the authenticated private store's actual owned query-only
+slot3 transaction, proves query_only=1 and rejects an attempted setting change,
+then runs the same independent complete-table/bytes/mapping/proof oracle.
+Production fences, schemas, settings and grants remain unchanged. Complete
+inventory/current gates still need runtime verification;64KiB reference remains
+open and no whole-system qualification is inferred.

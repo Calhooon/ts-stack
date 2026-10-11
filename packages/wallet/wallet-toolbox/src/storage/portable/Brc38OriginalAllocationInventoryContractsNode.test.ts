@@ -20,12 +20,10 @@ import {
   verifyOriginal64KiBNativeInventoryOracle,
   verifyMeasured128KiBNativeInventoryOracle
 } from './Brc38StreamedNativeInventoryNode.case'
-import { withBrc38KnexImportReadDestination } from './Brc38KnexDestinationFence'
-import { StorageKnex } from '../StorageKnex'
-import { StorageProvider } from '../StorageProvider'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
-// UNRUN. The original row/working allowance is65536 at authentication, native
+// Original64KiB positive qualification remains open. Its row/working allowance
+// is65536 at authentication, native
 // handoff, restore and inventory. No enlarged stage or reissued admission can
 // stand in for this fixture. Output, disk/index and crypto allocations have
 // their separate original finite contracts and are not RSS qualification.
@@ -166,19 +164,12 @@ async function verifyAllocationInventory(width: number, originalAllocationBytes:
       status = await restore.step(status.nextRow)
     }
     expect(status.state).toBe('COMPLETE')
-    const storage = new StorageKnex({
-      ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
-      knex: store.knex,
-      snapshotSync: false
-    })
-    storage.setServices(proof.services)
     await store.withAuthenticatedPrivateStructuredDestination(async () => {
-      await storage.makeAvailable()
-      await withBrc38KnexImportReadDestination(
-        storage,
-        { ...selected.binding, mode: 'restore' },
-        previewReceiptPolicy,
-        async trx =>
+      await store.withPrivateNativeDatabase(true, async database => {
+        await database.transaction(async trx => {
+          store.assertPrivateNativeReadTransaction(trx)
+          expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+          await expect(trx.raw('PRAGMA query_only=OFF')).rejects.toMatchObject({ code: 'SQLITE_AUTH' })
           await (
             originalAllocationBytes === 65536
               ? verifyOriginal64KiBNativeInventoryOracle
@@ -194,7 +185,9 @@ async function verifyAllocationInventory(width: number, originalAllocationBytes:
               store.assertPrivateNativeReadTransaction(trx)
             }
           )
-      )
+          store.assertPrivateNativeReadTransaction(trx)
+        })
+      })
     })
     expect(store.limits.maximumRowAllocationBytes).toBe(originalAllocationBytes)
     expect(workingAllocation.maximum).toBe(originalAllocationBytes)
