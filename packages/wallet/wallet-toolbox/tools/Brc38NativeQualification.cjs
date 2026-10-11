@@ -268,6 +268,35 @@ function inspectNativeQualificationHost() {
   return Object.freeze({ ...host, pin, outerWorkerAttested: false, fullSystemQualified: false })
 }
 
+/** Pure ordinary-actor plan, not host or installation attestation. */
+function planDarwinInstalledQualificationHost(platform, architecture, node, abi, uid, euid) {
+  const plan = planUnixBootstrapHost(platform, architecture, node, abi)
+  if (platform !== 'darwin' || !Number.isSafeInteger(uid) || uid <= 0 || uid !== euid)
+    throw new Error('Installed Darwin qualification requires its ordinary non-root wallet actor')
+  return Object.freeze({ ...plan, uid, euid, launchMechanism: 'protected-darwin-installed-path' })
+}
+function inspectDarwinInstalledQualificationHost() {
+  const host = planDarwinInstalledQualificationHost(
+      process.platform,
+      process.arch,
+      process.version,
+      process.versions.modules,
+      process.getuid?.(),
+      process.geteuid?.()
+    ),
+    pin = require('../out/src/storage/portable/Brc38NativeExecutable.cjs').qualifiedNativeComponentBuild()
+  if (pin === undefined || pin.platform !== host.platform || pin.architecture !== host.architecture)
+    throw new Error('Installed Darwin component platform is not qualified')
+  const destination = require('./Brc38RootNativeInstallation.cjs').darwinNativeInstallationPath(pin)
+  return Object.freeze({
+    ...host,
+    pin,
+    installedExecutable: destination,
+    outerWorkerAttested: false,
+    fullSystemQualified: false
+  })
+}
+
 /** One bounded actual file, not a pathname verdict or build-receipt grant. */
 async function readActual(filename, maximum, digestOnly = false) {
   const file = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
@@ -531,23 +560,28 @@ async function originalComponent(owner, file, cwd, name, args, calendar, committ
 /** Both maintainer modes build the actual reviewed source and share all thirteen
  * original contracts. Delivery additionally requires the existing static pin;
  * bootstrap evidence cannot enroll a runtime artifact or install one. */
-async function runNativeQualification(options, bootstrap) {
-  const host = bootstrap
-      ? Object.freeze({
-          ...planUnixBootstrapHost(process.platform, process.arch, process.version, process.versions.modules),
-          outerWorkerAttested: false,
-          fullSystemQualified: false
-        })
-      : inspectNativeQualificationHost(),
-    parsed = bootstrap
-      ? parseBootstrapQualificationArguments([
-          '--sqlite-source',
-          options.sqliteSource,
-          '--output-parent',
-          options.outputParent
-        ])
-      : parseQualificationArguments(['--sqlite-source', options.sqliteSource, '--destination', options.destination]),
-    parent = bootstrap ? parsed.outputParent : path.dirname(parsed.destination),
+async function runNativeQualification(options, mode) {
+  const bootstrap = mode === true,
+    installed = mode === 'installed'
+  const host = installed
+      ? inspectDarwinInstalledQualificationHost()
+      : bootstrap
+        ? Object.freeze({
+            ...planUnixBootstrapHost(process.platform, process.arch, process.version, process.versions.modules),
+            outerWorkerAttested: false,
+            fullSystemQualified: false
+          })
+        : inspectNativeQualificationHost(),
+    parsed =
+      bootstrap || installed
+        ? parseBootstrapQualificationArguments([
+            '--sqlite-source',
+            options.sqliteSource,
+            '--output-parent',
+            options.outputParent
+          ])
+        : parseQualificationArguments(['--sqlite-source', options.sqliteSource, '--destination', options.destination]),
+    parent = bootstrap || installed ? parsed.outputParent : path.dirname(parsed.destination),
     parentIdentity = await privateDirectory(parent),
     utcDeadline = Date.now() + 360000,
     monotonicDeadline = performance.now() + 360000,
@@ -558,7 +592,7 @@ async function runNativeQualification(options, bootstrap) {
       }
     }
   // Existing and dangling-symlink destinations refuse before compilation.
-  if (!bootstrap) {
+  if (!bootstrap && !installed) {
     try {
       await fs.lstat(parsed.destination)
       throw new Error('Native qualification destination already exists')
@@ -598,6 +632,17 @@ async function runNativeQualification(options, bootstrap) {
     pendingTarget
   const records = []
   try {
+    // Refuse a missing or unsafe installation before compiling. Keep the actual
+    // original SDK descriptor through preparation and all thirteen contracts.
+    if (installed) {
+      owner = Object.freeze({
+        open: filename => runtimeFactory.openPinnedNativeExecutable(filename),
+        launchPath: file => runtimeFactory.pinnedNativeLaunchPath(file),
+        close: file => runtimeFactory.closePinnedNativeExecutable(file)
+      })
+      executable = await owner.open(host.installedExecutable)
+      await owner.launchPath(executable)
+    }
     build = await isolatedBuild(parsed.sqliteSource, root, calendar)
     if (
       !bootstrap &&
@@ -615,14 +660,16 @@ async function runNativeQualification(options, bootstrap) {
     if (Object.keys(build.inputs).length !== sources.length + 1)
       throw new Error('Native build source cohort is incomplete')
     await checkInputs()
-    owner = bootstrap
-      ? standaloneContractOwner(build, root)
-      : Object.freeze({
-          open: filename => runtimeFactory.openPinnedNativeExecutable(filename),
-          launchPath: file => runtimeFactory.pinnedNativeLaunchPath(file),
-          close: file => runtimeFactory.closePinnedNativeExecutable(file)
-        })
-    executable = await owner.open(build.candidate.path)
+    owner = installed
+      ? owner
+      : bootstrap
+        ? standaloneContractOwner(build, root)
+        : Object.freeze({
+            open: filename => runtimeFactory.openPinnedNativeExecutable(filename),
+            launchPath: file => runtimeFactory.pinnedNativeLaunchPath(file),
+            close: file => runtimeFactory.closePinnedNativeExecutable(file)
+          })
+    if (!installed) executable = await owner.open(build.candidate.path)
     records.push(
       await originalComponent(owner, executable, fixture, 'original-runtime', ['--runtime-contract'], calendar)
     )
@@ -818,6 +865,40 @@ async function runNativeQualification(options, bootstrap) {
       await checkInputs()
       return receipt
     }
+    if (installed) {
+      const candidate = await readActual(build.candidate.path, pin.bytes, true)
+      if (candidate.bytes !== pin.bytes || candidate.sha256 !== pin.sha256)
+        throw new Error('Installed Darwin source candidate postimage differs from the fixed component')
+      await owner.launchPath(executable)
+      await owner.close(executable)
+      executable = undefined
+      const receipt = {
+        protocol: 'brc38-darwin-installed-component/v1',
+        finishedAt: new Date().toISOString(),
+        inputs,
+        build,
+        pin,
+        host,
+        records,
+        installedExecutable: host.installedExecutable,
+        originalRuntimePassed: true,
+        originalContractsPassed: 13,
+        originalFixturesDrained: true,
+        originalSDKProtectedLaunchUsed: true,
+        installedDescriptorClosed: true,
+        executableCreatedOrReplaced: false,
+        runtimePinChanged: false,
+        hostEnrolled: false,
+        outerWorkerAttested: false,
+        physicalRSSQualified: false,
+        providerQualified: false,
+        fullSystemQualified: false,
+        publicationOrDeployment: false
+      }
+      await writeQualificationRecord(path.join(root, 'installed-component-receipt.json'), receipt)
+      await checkInputs()
+      return receipt
+    }
     const bytes = await readActual(build.candidate.path, pin.bytes)
     if (bytes.length !== pin.bytes || sha(bytes) !== pin.sha256) throw new Error('Native candidate postimage differs')
     await owner.close(executable)
@@ -970,6 +1051,9 @@ async function runNativeQualification(options, bootstrap) {
 async function qualifyBrc38NativeCandidate(options) {
   return await runNativeQualification(options, false)
 }
+async function qualifyInstalledDarwinCandidate(options) {
+  return await runNativeQualification(options, 'installed')
+}
 async function bootstrapBrc38NativeCandidate(options) {
   return await runNativeQualification(options, true)
 }
@@ -983,6 +1067,9 @@ module.exports = {
   planUnixBootstrapHost,
   standaloneBuildPath,
   inspectNativeQualificationHost,
+  planDarwinInstalledQualificationHost,
+  inspectDarwinInstalledQualificationHost,
+  qualifyInstalledDarwinCandidate,
   qualifyBrc38NativeCandidate,
   bootstrapBrc38NativeCandidate,
   qualificationFailureData

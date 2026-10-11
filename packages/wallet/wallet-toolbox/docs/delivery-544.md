@@ -261,3 +261,34 @@ resource and worker qualification, reviewed static pins, and protected delivery
 remain required. Normal delivery still refuses an absent or mismatched pin.
 Limits remain attached to their named resources; first-artifact evidence does
 not establish production sizing or justify tighter arbitrary caps.
+
+### Darwin root copy and ordinary-actor qualification
+
+The maintainer source route now separates root file preparation from ordinary
+wallet execution. After genuine first-artifact qualification and an explicitly
+reviewed fixed Darwin entry, an independently admitted worker can run
+`tools/Brc38DarwinNativeInstall.cjs --source /absolute/native-candidate` as root
+with Node24.18.0 ABI137. A missing platform pin refuses before filesystem work.
+The destination is derived internally:
+`/Library/Application Support/BSV Wallet/native/<architecture>/<sha256>/native-contract`.
+There is no destination, platform or pin override. Root-owned directory identity,
+exclusive creation, streamed exact source/target bytes and immutable mode555 are
+checked. Existing files never change. Failed files remain as evidence; failed
+actual descriptor closure keeps a concrete retry owner and blocks another copy.
+These root/POSIX checks and comparison DATA do not attest Darwin ACLs or enroll a
+runtime, host or wallet. Privileged installation requires separate authorization.
+
+The non-root wallet actor then runs
+`tools/Brc38DarwinNativeQualification.cjs --sqlite-source /absolute/sqlite3.c --output-parent /private/absolute/directory`.
+It selects its actual Darwin architecture and fixed registry entry internally,
+refuses an unsafe installed image through the original SDK factory before
+compilation, retains that same original protected descriptor across its fresh
+source build and all thirteen unchanged contracts, and checks the source and
+installed launch postimages before closing it. It does not create or replace an
+installed executable. The original SDK checks effective ordinary-actor writes,
+including ACLs, and the root-owned path chain at launch; file-copy metadata is not
+an ACL or launch verdict. Both phases require the original worker owner's
+resource/network/lifetime isolation and verified physical drainage. Source and
+Linux private filesystem regressions do not establish actual Darwin behavior.
+No Darwin pin, actual root installation, foreign-host execution, production
+budget change or completed platform/full-system qualification is supplied here.

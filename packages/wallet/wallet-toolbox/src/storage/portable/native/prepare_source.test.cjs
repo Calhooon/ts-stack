@@ -130,6 +130,174 @@ test('host-check CLI returns the actual admitted Docker target while extra argum
   expect(invalid.stderr.toString()).toContain('Usage: --sqlite-source')
 })
 
+test.each(['arm64', 'x64'])('Darwin %s root-copy and ordinary-actor plans are immutable DATA', async architecture => {
+  const root = require('../../../../tools/Brc38RootNativeInstallation.cjs'),
+    qualification = require('../../../../tools/Brc38NativeQualification.cjs'),
+    owner = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs'),
+    pin = { platform: 'darwin', architecture, bytes: 64, sha256: 'a'.repeat(64) },
+    rootPlan = root.planDarwinInstallationHost('darwin', architecture, 'v24.18.0', '137', 0, 0),
+    actorPlan = qualification.planDarwinInstalledQualificationHost('darwin', architecture, 'v24.18.0', '137', 501, 501)
+  expect(Object.isFrozen(rootPlan)).toBe(true)
+  expect(Object.isFrozen(actorPlan)).toBe(true)
+  expect(actorPlan.launchMechanism).toBe('protected-darwin-installed-path')
+  expect(root.darwinNativeInstallationPath(pin)).toBe(
+    `/Library/Application Support/BSV Wallet/native/${architecture}/${pin.sha256}/native-contract`
+  )
+  await expect(owner.pinnedNativeLaunchPath(pin)).rejects.toThrow('original pinned executable descriptor')
+})
+test.each([
+  ['linux', 'arm64', 'v24.18.0', '137', 0, 0],
+  ['win32', 'x64', 'v24.18.0', '137', 0, 0],
+  ['darwin', 'ia32', 'v24.18.0', '137', 0, 0],
+  ['darwin', 'arm64', 'v24.17.0', '137', 0, 0],
+  ['darwin', 'arm64', 'v24.18.0', '136', 0, 0],
+  ['darwin', 'arm64', 'v24.18.0', '137', 501, 0],
+  ['darwin', 'arm64', 'v24.18.0', '137', 0, 501]
+])('unsupported root-install plan %s/%s/%s/%s/%s/%s refuses', (...host) => {
+  expect(() =>
+    require('../../../../tools/Brc38RootNativeInstallation.cjs').planDarwinInstallationHost(...host)
+  ).toThrow()
+})
+test.each([
+  ['linux', 'arm64', 'v24.18.0', '137', 501, 501],
+  ['darwin', 'arm64', 'v24.18.0', '137', 0, 0],
+  ['darwin', 'x64', 'v24.18.0', '137', 501, 0],
+  ['darwin', 'arm64', 'v24.18.0', '137', -1, -1],
+  ['darwin', 'arm64', 'v24.18.0', '137', 1.5, 1.5]
+])('unsupported installed-actor plan %s/%s/%s/%s/%s/%s refuses', (...host) => {
+  expect(() =>
+    require('../../../../tools/Brc38NativeQualification.cjs').planDarwinInstalledQualificationHost(...host)
+  ).toThrow()
+})
+test('actual Linux host refuses both Darwin routes before filesystem or compiler work', async () => {
+  const root = require('../../../../tools/Brc38RootNativeInstallation.cjs'),
+    qualification = require('../../../../tools/Brc38NativeQualification.cjs'),
+    files = jest.spyOn(fs, 'open'),
+    stat = jest.spyOn(fs, 'lstat'),
+    compiler = jest.spyOn(require('node:child_process'), 'spawn')
+  await expect(root.installDarwinNativeCandidate({ source: '/absent/native-candidate' })).rejects.toThrow('actual root')
+  await expect(
+    qualification.qualifyInstalledDarwinCandidate({ sqliteSource: '/absent/sqlite3.c', outputParent: '/absent/output' })
+  ).rejects.toThrow('ordinary non-root wallet actor')
+  expect(files).not.toHaveBeenCalled()
+  expect(stat).not.toHaveBeenCalled()
+  expect(compiler).not.toHaveBeenCalled()
+})
+test.each([
+  [],
+  ['--source', 'relative'],
+  ['--source', '/tmp/../native-candidate'],
+  ['--source', '/tmp/native\0candidate'],
+  ['--source', '/private/native', '--destination', '/Library/changed']
+])('root-copy CLI refuses ambiguous paths or installation overrides %p', args => {
+  expect(() =>
+    require('../../../../tools/Brc38RootNativeInstallation.cjs').parseDarwinInstallationArguments(args)
+  ).toThrow()
+})
+
+async function rootCopyFixture() {
+  const source = process.env.TS_STACK_NATIVE_TEST_EXECUTABLE,
+    destination = path.join(directory, 'root-copy')
+  expect(process.platform).toBe('linux')
+  expect(process.getuid()).toBe(0)
+  expect(typeof source).toBe('string')
+  await fs.mkdir(destination, { mode: 0o700 })
+  return { source, destination, output: path.join(destination, 'native-contract') }
+}
+test('actual Linux root file-copy fixture preserves exact bytes, closes descriptors and conveys no Darwin ACL grant', async () => {
+  const fixture = await rootCopyFixture(),
+    copy = require('../../../../tools/Brc38RootNativeInstallation.cjs').copyPinnedRootOwnedExecutable,
+    result = await copy(fixture.source, fixture.destination),
+    pin = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').qualifiedNativeComponentBuild(),
+    actual = await fs.lstat(fixture.output)
+  expect(await fs.readFile(fixture.output)).toEqual(await fs.readFile(fixture.source))
+  expect(actual.mode & 0o777).toBe(0o555)
+  expect(actual.uid).toBe(0)
+  expect(actual.nlink).toBe(1)
+  expect(result.pin).toBe(pin)
+  expect(result.engineExecuted).toBe(false)
+  expect(result.runtimeAdmitted).toBe(false)
+  expect(result.darwinACLQualified).toBe(false)
+  expect(result.fullSystemQualified).toBe(false)
+  await expect(
+    require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').pinnedNativeLaunchPath(result)
+  ).rejects.toThrow('original pinned executable descriptor')
+  await expect(copy(fixture.source, fixture.destination)).rejects.toThrow()
+  expect(await fs.readFile(fixture.output)).toEqual(await fs.readFile(fixture.source))
+})
+test.each(['symlink', 'writable', 'hard-link', 'truncated', 'corrupted'])(
+  'actual root-copy %s source refuses; only a newly created failed file may remain',
+  async defect => {
+    const f = await rootCopyFixture(),
+      source = path.join(directory, 'candidate')
+    if (defect === 'symlink') await fs.symlink(f.source, source)
+    else {
+      const bytes = await fs.readFile(f.source)
+      if (defect === 'corrupted') bytes[bytes.length - 1] ^= 1
+      await fs.writeFile(source, defect === 'truncated' ? bytes.subarray(0, bytes.length - 1) : bytes, { mode: 0o500 })
+      if (defect === 'writable') await fs.chmod(source, 0o700)
+      if (defect === 'hard-link') await fs.link(source, path.join(directory, 'candidate-link'))
+    }
+    await expect(
+      require('../../../../tools/Brc38RootNativeInstallation.cjs').copyPinnedRootOwnedExecutable(source, f.destination)
+    ).rejects.toThrow()
+    if (defect === 'corrupted') expect((await fs.lstat(f.output)).mode & 0o777).toBe(0o500)
+    else expect(await fs.readdir(f.destination)).toEqual([])
+  }
+)
+test('a replaced root-copy parent refuses before creating a file in either directory', async () => {
+  const f = await rootCopyFixture(),
+    original = fs.open,
+    saved = f.destination + '-original'
+  let changed = false
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await original(...args)
+    if (!changed && args[0] === f.source) {
+      changed = true
+      await fs.rename(f.destination, saved)
+      await fs.mkdir(f.destination, { mode: 0o700 })
+    }
+    return handle
+  })
+  await expect(
+    require('../../../../tools/Brc38RootNativeInstallation.cjs').copyPinnedRootOwnedExecutable(f.source, f.destination)
+  ).rejects.toThrow('directory identity')
+  expect(await fs.readdir(f.destination)).toEqual([])
+  expect(await fs.readdir(saved)).toEqual([])
+})
+test('root-copy failed close retains the actual descriptor and blocks another copy until idempotent retry', async () => {
+  const f = await rootCopyFixture(),
+    original = fs.open,
+    reason = new Error('synthetic root-copy close refusal')
+  let retainedHandle,
+    attempts = 0
+  jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await original(...args)
+    if (args[0] === f.output) {
+      retainedHandle = handle
+      const close = handle.close.bind(handle)
+      handle.close = async () => {
+        if (++attempts === 1) throw reason
+        return close()
+      }
+    }
+    return handle
+  })
+  const copy = require('../../../../tools/Brc38RootNativeInstallation.cjs').copyPinnedRootOwnedExecutable,
+    failure = await copy(f.source, f.destination).catch(e => e)
+  expect(failure).toBeInstanceOf(
+    require('../../../../tools/Brc38NativeCandidateBuild.cjs').NativeCandidateBuildCleanupError
+  )
+  expect(failure.cleanupError.errors).toContain(reason)
+  expect(retainedHandle.fd).toBeGreaterThanOrEqual(0)
+  await expect(copy(f.source, f.destination)).rejects.toThrow('descriptors remain retained')
+  await failure.retryCleanup()
+  await failure.retryCleanup()
+  expect(attempts).toBe(2)
+  expect(retainedHandle.fd).toBe(-1)
+  expect(failure.cleaned).toBe(true)
+})
+
 test('a missing pinned dependency removes only its owned source directory and preserves neighboring input', async () => {
   const neighbor = path.join(directory, 'neighbor')
   await fs.writeFile(neighbor, 'preserved', { flag: 'wx' })
