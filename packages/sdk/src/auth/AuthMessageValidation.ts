@@ -345,6 +345,23 @@ export function snapshotBoundedAuthData<T>(value: T): T {
   return walkAuthData(value, true)
 }
 
+/** Shape checking receives only arrays owned by the completed snapshot traversal. */
+function assertOwnedAuthByteArray(
+  value: unknown,
+  name: string,
+  maxBytes: number,
+  allowEmpty = false
+): asserts value is number[] {
+  if (
+    !Array.isArray(value) ||
+    (!allowEmpty && value.length === 0) ||
+    value.length > maxBytes ||
+    value.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)
+  ) {
+    throw new Error(`${name} must be a dense byte array of at most ${maxBytes} bytes.`)
+  }
+}
+
 function assertValidAuthMessageShape(
   value: unknown,
   maxGeneralPayloadBytes?: number | null
@@ -375,14 +392,18 @@ function assertValidAuthMessageShape(
     case 'initialResponse':
       assertCanonicalBase64(message.initialNonce, 'initialResponse.initialNonce', 48)
       assertCanonicalBase64(message.yourNonce, 'initialResponse.yourNonce', 48)
-      assertAuthByteArray(message.signature, 'initialResponse.signature', MAX_AUTH_SIGNATURE_BYTES)
+      assertOwnedAuthByteArray(
+        message.signature,
+        'initialResponse.signature',
+        MAX_AUTH_SIGNATURE_BYTES
+      )
       break
     case 'certificateRequest':
       assertCanonicalBase64(message.nonce, 'certificateRequest.nonce', 32)
       assertCanonicalBase64(message.initialNonce, 'certificateRequest.initialNonce', 48)
       assertCanonicalBase64(message.yourNonce, 'certificateRequest.yourNonce', 48)
       assertRequestedCertificateSet(message.requestedCertificates)
-      assertAuthByteArray(
+      assertOwnedAuthByteArray(
         message.signature,
         'certificateRequest.signature',
         MAX_AUTH_SIGNATURE_BYTES
@@ -395,7 +416,7 @@ function assertValidAuthMessageShape(
       if (!Array.isArray(message.certificates)) {
         throw new Error('certificateResponse.certificates must be an array.')
       }
-      assertAuthByteArray(
+      assertOwnedAuthByteArray(
         message.signature,
         'certificateResponse.signature',
         MAX_AUTH_SIGNATURE_BYTES
@@ -404,7 +425,7 @@ function assertValidAuthMessageShape(
     case 'general':
       assertCanonicalBase64(message.nonce, 'general.nonce', 32)
       assertCanonicalBase64(message.yourNonce, 'general.yourNonce', 48)
-      assertAuthByteArray(
+      assertOwnedAuthByteArray(
         message.payload,
         'general.payload',
         maxGeneralPayloadBytes === null
@@ -412,7 +433,7 @@ function assertValidAuthMessageShape(
           : (maxGeneralPayloadBytes ?? MAX_AUTH_MESSAGE_BYTES),
         true
       )
-      assertAuthByteArray(message.signature, 'general.signature', MAX_AUTH_SIGNATURE_BYTES)
+      assertOwnedAuthByteArray(message.signature, 'general.signature', MAX_AUTH_SIGNATURE_BYTES)
       break
     default:
       throw new Error(`Unknown authentication message type: ${String(message.messageType)}`)
