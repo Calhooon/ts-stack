@@ -8,24 +8,50 @@ import { createRequire } from 'node:module'
 import test from 'node:test'
 import {
   browserPin,
+  browserPins,
   nativeBrowserPlan,
   needsNativeBrowserDelivery,
   verifyBrowserFile
 } from './provision-wallet-native-browser.mjs'
 
-test('native browser delivery admits only the source-pinned real ARM64 distribution', () => {
+test('native browser delivery selects the exact source-pinned ARM64 or x64 distribution', () => {
   assert.equal(nativeBrowserPlan('linux', 'arm64'), browserPin)
+  assert.equal(nativeBrowserPlan('linux', 'x64'), browserPins.x64)
+  assert.equal(Object.isFrozen(browserPins), true)
+  for (const architecture of ['arm64', 'x64']) {
+    const pin = nativeBrowserPlan('linux', architecture)
+    assert.equal(Object.isFrozen(pin), true)
+    assert.equal(pin.deliveryOnly, true)
+    assert.equal(pin.buildId, browserPin.buildId)
+    const distribution = architecture === 'arm64' ? 'linux-arm64' : 'linux64'
+    assert.equal(pin.platform, distribution)
+    assert.equal(
+      pin.url,
+      'https://storage.googleapis.com/chrome-for-testing-public/' +
+        pin.buildId +
+        '/' +
+        distribution +
+        '/chrome-' +
+        distribution +
+        '.zip'
+    )
+    assert.equal(pin.executableRelativePath, 'chrome-' + distribution + '/chrome')
+    assert.match(pin.archiveSha256, /^[a-f0-9]{64}$/)
+    assert.match(pin.executableSha256, /^[a-f0-9]{64}$/)
+    assert.ok(Number.isSafeInteger(pin.archiveBytes) && pin.archiveBytes > 0)
+    assert.ok(Number.isSafeInteger(pin.executableBytes) && pin.executableBytes > 0)
+  }
+  assert.notEqual(browserPins.x64.archiveSha256, browserPin.archiveSha256)
+  assert.notEqual(browserPins.x64.executableSha256, browserPin.executableSha256)
   for (const [platform, architecture] of [
-    ['linux', 'x64'],
+    ['linux', 'ia32'],
+    ['linux', 'constructor'],
+    ['linux', '__proto__'],
     ['darwin', 'arm64'],
+    ['darwin', 'x64'],
     ['win32', 'x64']
   ])
-    assert.throws(() => nativeBrowserPlan(platform, architecture), /native Linux ARM64/)
-  assert.equal(browserPin.deliveryOnly, true)
-  assert.match(
-    browserPin.url,
-    /^https:\/\/storage\.googleapis\.com\/chrome-for-testing-public\/[0-9.]+\/linux-arm64\/chrome-linux-arm64\.zip$/
-  )
+    assert.throws(() => nativeBrowserPlan(platform, architecture), /native Linux ARM64\/x64/)
 })
 test('browser setup follows actual selected execution without downloading for node-only targets', () => {
   const target = selected => ({

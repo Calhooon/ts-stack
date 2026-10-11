@@ -304,3 +304,24 @@ Before starting that original guest, the host checks static16GiB memory, four CP
 A fresh SYSTEM scheduled watchdog is registered and read back before VM start, independently of the host controller and guest. Its20-minute deadline encloses startup, PowerShell/.NET preparation and the original nested600-second Node/compiler Job. The controller also checks its own monotonic/UTC deadline, fixed VM settings and watchdog while waiting. Every outcome stops only the same owned VM, observes actual Off state and absence of the captured original VM process using PID plus creation time, and removes its watchdog only after that proof. A failed or unproved shutdown keeps the watchdog and fails; a scheduled task or process-tree receipt alone never proves physical VM shutdown. A30-second shutdown request wait and separate30-second observation window are bounded independently. No VHD, VM, original build root or another actor's task is removed.
 
 The16GiB/four-CPU outer allowance preserves4GiB of OS/controller headroom around the existing12GiB inner Job. The20-minute preparation allowance and60-second watchdog action bound are provisional qualification containment, not measured Windows demand or production recommendations. Actual startup/compiler/controller/recovery/resource/network/token/physical-stop proof, watchdog crash and failed-stop behavior, genuine source/toolchain/artifact provenance and the Windows addon/supervisor/runtime contracts remain mandatory before qualification. This source has not run on Windows or Hyper-V. Linux work-order/filesystem regressions cannot substitute for those results, cannot establish ARM64 Hyper-V availability, and cannot populate the empty Windows registries. The full goal remains unqualified.
+
+### Architecture-specific Linux browser delivery
+
+The source-owned browser delivery CLI now selects a fixed Chrome for Testing
+155.0.8059.39 archive from the actual Node Linux ARM64 or x64 architecture. The
+existing ARM64 pin and `browserPin` export remain unchanged. The separate x64
+pin records the genuine official `linux64` archive:198195769 bytes,309 entries
+and416502722 expanded bytes, with the297680200-byte x64 ELF executable. Exact
+archive and executable digests are checked before delivery; extraction stays
+inside the architecture-specific archive root. Another platform or architecture
+refuses before creating a private delivery directory. There is no fallback to
+another browser or inferred artifact pin.
+
+Both archives are listed by [Google Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/).
+A delivered artifact is data, with `runtimeQualified:false` and
+`processTreeQualified:false`. The actual browser catalogue, worker, resource and
+physical process-tree checks remain mandatory on an admitted native worker.
+The ARM64 CI lane and all case/cleanup bounds are unchanged; source support and
+artifact capture do not qualify the complete x64 Docker provisioning script or
+the full system. That script requires an actual Docker-capable Linux worker; an
+existing containerd-only worker cannot be silently substituted.

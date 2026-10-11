@@ -14,10 +14,18 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const browserPin = Object.freeze(
   JSON.parse(readFileSync(new URL('./wallet-native-browser.json', import.meta.url), 'utf8'))
 )
+export const browserPins = Object.freeze({
+  arm64: browserPin,
+  x64: Object.freeze(
+    JSON.parse(
+      readFileSync(new URL('./wallet-native-browser-linux-x64.json', import.meta.url), 'utf8')
+    )
+  )
+})
 export function nativeBrowserPlan(platform = process.platform, architecture = process.arch) {
-  if (platform !== 'linux' || architecture !== 'arm64')
-    throw new Error('Pinned browser delivery requires the native Linux ARM64 worker')
-  return browserPin
+  if (platform !== 'linux' || !['arm64', 'x64'].includes(architecture))
+    throw new Error('Pinned browser delivery requires the native Linux ARM64/x64 worker')
+  return browserPins[architecture]
 }
 export function needsNativeBrowserDelivery(target) {
   if (target.packageDirectory !== 'packages/wallet/wallet-toolbox' || target.testRunner !== 'jest')
@@ -109,7 +117,9 @@ export async function provisionNativeBrowser({
     assert.ok(
       entries.every(
         entry =>
-          entry.startsWith('chrome-linux-arm64/') &&
+          entry.startsWith(
+            pin.executableRelativePath.slice(0, pin.executableRelativePath.indexOf('/') + 1)
+          ) &&
           !entry.split('/').includes('..') &&
           !entry.includes('\\')
       )
