@@ -47,6 +47,7 @@ import {
 import type { PortableRow } from './Brc38PortableRows'
 import { requireBrc38ImportSqliteTransaction } from './Brc38ImportJournalSchema'
 import { runInSeries } from '../../utility/runInSeries'
+import { reserveBrc38ImportDecodedScratch } from './Brc38ImportDecodedBudget'
 
 function invalid(): never {
   throw new Error('Private structured restore differs from its admitted source or native writer')
@@ -374,7 +375,7 @@ export async function prepareBrc38StructuredEntityRestore(
         const expected = brc38StructuredInlineProofFields(source, allowance).row,
           proofReader = brc38StructuredInlineProofReader(reader, allowance, signal),
           maximumDecodedMerkleBytes = Math.max(1, Math.min(16777216, maximum[4], Math.floor(budget.remaining / 2)))
-        chargeBrc38ImportDecodedBudget(budget, maximumDecodedMerkleBytes)
+        const releaseProofScratch = reserveBrc38ImportDecodedScratch(budget, maximumDecodedMerkleBytes)
         const inspected = await inspectBrc38AuthenticatedStreamedProofReader(
           proofReader,
           storage,
@@ -394,6 +395,9 @@ export async function prepareBrc38StructuredEntityRestore(
           inspected.merkleSha256 !== expected.binaries.merklePath?.sha256
         )
           invalid()
+        // Inspection returns bounded hashes/data only after its Merkle buffers
+        // and actual network work drain. Failure/retained cleanup never refunds.
+        releaseProofScratch()
       })
       cache = await prepareBrc38ImportCacheFence(trx, storage, budget)
     }

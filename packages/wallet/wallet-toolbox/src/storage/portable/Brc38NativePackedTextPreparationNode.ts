@@ -9,7 +9,7 @@ import { nativePackedTextSource } from './Brc38NativePackedTextSources'
 import type { Brc38JsonStructuredField } from './Brc38JsonStructuredFields'
 import type { Brc38NativeTextRead } from './Brc38NativeBlobProtocol'
 import { encodeBrc38NativeTextRead } from './Brc38NativeBlobProtocol'
-import { chargeBrc38ImportDecodedBudget } from './Brc38ImportDecodedBudget'
+import { chargeBrc38ImportDecodedBudget, reserveBrc38ImportDecodedScratch } from './Brc38ImportDecodedBudget'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { hasBrc38NativePackedTextSchema, nativePackedTextTables as names } from './Brc38NativePackedTextSchemaNode'
@@ -170,9 +170,10 @@ export async function withBrc38PreparedPrivatePackedText<T>(
   }
   const scratchBytes = Math.min(1048576, Math.floor(page.budget.remaining / 2)),
     maximumReadBytes = Math.min(16384, Math.floor((scratchBytes - 4096) / 16))
+  let releaseScratch: (() => void) | undefined
   if (sources.length !== 0) {
     if (maximumReadBytes < 128) invalid()
-    chargeBrc38ImportDecodedBudget(page.budget, scratchBytes)
+    releaseScratch = reserveBrc38ImportDecodedScratch(page.budget, scratchBytes)
   }
   const transaction = async <V>(readOnly: boolean, operation: (trx: Knex.Transaction) => Promise<V>): Promise<V> =>
     await store.withPrivateNativeDatabase(
@@ -382,6 +383,10 @@ export async function withBrc38PreparedPrivatePackedText<T>(
           invalid()
       })
     }
+    // All chunk buffers were cleared and their native transactions drained.
+    // The callback installs only already-sealed descriptors, not payloads.
+    // Keep descriptor/current-row charges; retire only this copy/hash scratch.
+    releaseScratch?.()
     const installed = new Set<string>(),
       effects = new Brc38OwnedImportReads()
     const install: Brc38PrivatePreparedTextInstaller = (trx, table, index, rowId, selected, family) =>

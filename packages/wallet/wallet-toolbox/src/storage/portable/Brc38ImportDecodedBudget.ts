@@ -17,6 +17,30 @@ export function chargeBrc38ImportDecodedBudget(budget: Budget, bytes: number): v
     throw new SnapshotResourceLimitError('Private import merge exceeds its fixed allocation budget')
   budget.remaining -= bytes
 }
+/** Account for a temporary phase alongside retained page data. The owner may
+ * release once only after its buffers and actual I/O have drained. A failed
+ * phase keeps this reservation; a rollback cannot release retained copies.
+ * This is resource accounting, never source/native/import authority. */
+export function reserveBrc38ImportDecodedScratch(budget: Budget, bytes: number): () => void {
+  if (
+    !Number.isSafeInteger(budget.maximum) ||
+    !Number.isSafeInteger(budget.remaining) ||
+    budget.maximum < 1 ||
+    budget.remaining < 0 ||
+    budget.remaining > budget.maximum
+  )
+    throw new RangeError('Invalid original decoded allocation balance')
+  chargeBrc38ImportDecodedBudget(budget, bytes)
+  let released = false
+  return () => {
+    if (released) return
+    const next = budget.remaining + bytes
+    if (!Number.isSafeInteger(next) || next < 0 || next > budget.maximum)
+      throw new RangeError('Invalid decoded scratch release balance')
+    budget.remaining = next
+    released = true
+  }
+}
 const take = chargeBrc38ImportDecodedBudget
 export function copyBrc38ImportDecodedValue<T>(value: T, budget: Budget): T {
   // Charge before clone, including retained native/normalized/captured copies.

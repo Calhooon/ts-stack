@@ -5274,3 +5274,19 @@ The replacement executable must pass all13 original native component modes
 and the actual all13 fixture before admission or runtime qualification is
 claimed. This unreleased feature's fixture budget is not a production sizing
 recommendation.
+
+### Decoded page scratch lifetimes
+
+Actual original64KiB inventory tracing found packed payload scratch charged for
+18412 bytes after all copy/hash/native transactions had drained, followed by
+another5602-byte proof scratch reservation. Both reduced the later retained
+6400-byte metadata copy to only5602 bytes available. Temporary copy/hash and
+proof scratch now reserve alongside retained page data and release once only
+when their successful phase has physically drained, before the next phase.
+Descriptors, original provenance, normalized/current/SQL rows remain charged;
+rollback, failed preparation and retained cleanup never refund those copies or
+a pending scratch reservation. Original row/working/page limits, proof checks,
+data/oracles and native pin remain unchanged. Concurrent reservation, refusal,
+idempotence and cancellation controls cover the original accounting ceiling.
+The original all13 inventory and wider qualification still require current
+runtime evidence; this accounting correction is not a production sizing claim.

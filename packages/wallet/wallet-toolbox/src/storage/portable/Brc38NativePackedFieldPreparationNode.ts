@@ -1,4 +1,4 @@
-import { chargeBrc38ImportDecodedBudget } from './Brc38ImportDecodedBudget'
+import { chargeBrc38ImportDecodedBudget, reserveBrc38ImportDecodedScratch } from './Brc38ImportDecodedBudget'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
 import { createHash } from 'node:crypto'
 import type { Brc38PrivateDerivedTextLifetimes } from './Brc38PrivateDerivedTextLifetimesNode'
@@ -99,12 +99,13 @@ export async function withBrc38PreparedPrivatePackedFields<T>(
       }
   }
   // One fixed scratch reservation covers source/native/captured chunk copies,
-  // SQL packet buffering and hash windows for the entire serial operation.
+  // SQL packet buffering and hash windows during serial field preparation.
   const scratchBytes = Math.min(1048576, Math.floor(page.budget.remaining / 2)),
     maximumReadBytes = Math.min(65536, Math.floor((scratchBytes - 4096) / 16))
+  let releaseScratch: (() => void) | undefined
   if (fields.length !== 0) {
     if (maximumReadBytes < 128) invalid()
-    chargeBrc38ImportDecodedBudget(page.budget, scratchBytes)
+    releaseScratch = reserveBrc38ImportDecodedScratch(page.budget, scratchBytes)
   }
   const transaction = async <V>(readOnly: boolean, operation: (trx: Knex.Transaction) => Promise<V>): Promise<V> =>
     await store.withPrivateNativeDatabase(
@@ -311,6 +312,10 @@ export async function withBrc38PreparedPrivatePackedFields<T>(
           invalid()
       })
     }
+    // All chunk buffers were cleared and their native transactions drained.
+    // The callback installs only already-sealed descriptors, not payloads.
+    // Keep descriptor/current-row charges; retire only this copy/hash scratch.
+    releaseScratch?.()
     const installed = new Set<string>(),
       effects = new Brc38OwnedImportReads()
     const install: Brc38PrivatePreparedFieldInstaller = (trx, table, index, rowId, selected) =>

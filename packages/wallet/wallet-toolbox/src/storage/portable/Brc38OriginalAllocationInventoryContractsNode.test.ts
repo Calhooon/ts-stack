@@ -1,3 +1,5 @@
+import { chargeBrc38ImportDecodedBudget, reserveBrc38ImportDecodedScratch } from './Brc38ImportDecodedBudget'
+import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -205,3 +207,37 @@ test.each([64, 256, 1024] as const)(
   },
   30000
 )
+
+test('decoded scratch protects simultaneous retained data and releases only its own reservation once', () => {
+  const budget = { maximum: 1024, remaining: 1024 }
+  chargeBrc38ImportDecodedBudget(budget, 256)
+  const release = reserveBrc38ImportDecodedScratch(budget, 512)
+  expect(budget.remaining).toBe(256)
+  expect(() => chargeBrc38ImportDecodedBudget(budget, 512)).toThrow(SnapshotResourceLimitError)
+  expect(budget.remaining).toBe(256)
+  release()
+  expect(budget.remaining).toBe(768)
+  chargeBrc38ImportDecodedBudget(budget, 512)
+  release()
+  expect(budget.remaining).toBe(256)
+  expect(budget.maximum).toBe(1024)
+})
+
+test('refused decoded scratch cannot renew the original small allocation', () => {
+  const budget = { maximum: 1024, remaining: 256 }
+  expect(() => reserveBrc38ImportDecodedScratch(budget, 257)).toThrow(SnapshotResourceLimitError)
+  expect(budget.remaining).toBe(256)
+  expect(budget.maximum).toBe(1024)
+})
+
+test('cancelled scratch acquisition does not allocate and drained scratch can release after cancellation', () => {
+  const controller = new AbortController(),
+    budget = { maximum: 1024, remaining: 1024, signal: controller.signal },
+    release = reserveBrc38ImportDecodedScratch(budget, 512),
+    reason = new Error('original scratch cancellation')
+  controller.abort(reason)
+  expect(() => reserveBrc38ImportDecodedScratch(budget, 1)).toThrow(reason)
+  expect(budget.remaining).toBe(512)
+  release()
+  expect(budget.remaining).toBe(1024)
+})
