@@ -47,6 +47,62 @@ const simpleCases = [
 ]
 const escapePattern = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+export const nativePairTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts'
+
+// Each original case creates two independently authenticated full profiles.
+// Setup measured 104s + 107s before selected effects; all18 do not fit one40m
+// shard. One case per lane preserves original data, oracles and real expiry.
+export const nativePairCohorts = Object.freeze(
+  [
+    [
+      'proof',
+      'actual native proof session retains independently constructed multichunk transaction and Merkle bytes'
+    ],
+    [
+      'quarantine',
+      'actual native target-winner merge quarantines separate previously spendable reclaim liquidity'
+    ],
+    [
+      'rejected-proof',
+      'actual occupied native proof refuses an invalid current header before destination or ACK mutation'
+    ],
+    [
+      'scalar',
+      'actual native scalar session preserves original occupied basket policy and one-use durable ACK'
+    ],
+    ...['transactions', 'outputs'].map(table => [
+      `action-${table}`,
+      `actual native ${table} session retains complete occupied action fields`
+    ]),
+    ...['certificates', 'certificateFields', 'commissions'].map(table => [
+      `payload-${table}`,
+      `actual native ${table} session retains full large logical payloads and parent mappings`
+    ]),
+    [
+      'request',
+      'actual native request session retains full history, proof, notify and atomic completion'
+    ],
+    [
+      'packed-field',
+      'actual retained source stages multichunk bytes into a fresh native pointer with rollback and content reuse'
+    ],
+    ['stale-proof', 'a real occupied proof update invalidates previously prepared native effects'],
+    ['stale-parent', 'a real mapped-parent update invalidates prepared native output effects'],
+    ...['certificates', 'certificateFields', 'commissions'].map(table => [
+      `stale-${table}`,
+      `a real occupied ${table} update refuses the old prepared payload and ACK`
+    ]),
+    ...['request', 'transaction'].map(kind => [
+      `stale-current-${kind}`,
+      `a real current ${kind} update invalidates prepared native request effects`
+    ])
+  ].map(([id, name]) => Object.freeze({ id, name, cases: 1, pattern: `^${escapePattern(name)}$` }))
+)
+export const nativePairCaseNames = Object.freeze(
+  nativePairCohorts.map(cohort => cohort.name).sort()
+)
+
 // COMPLETED has the same original name for live and expired admissions. Keep
 // both in one cohort, with multiplicity two; neither original case is renamed.
 export const composedNativeCohorts = Object.freeze(
@@ -68,6 +124,17 @@ export const composedNativeCaseNames = Object.freeze(
   composedNativeCohorts.flatMap(cohort => Array(cohort.cases).fill(cohort.name)).sort()
 )
 
+const composedPlan = {
+  testFile: composedNativeTestFile,
+  cohorts: composedNativeCohorts,
+  names: composedNativeCaseNames
+}
+const pairPlan = {
+  testFile: nativePairTestFile,
+  cohorts: nativePairCohorts,
+  names: nativePairCaseNames
+}
+
 export function walletCoverageMatrix() {
   return {
     include: [
@@ -76,19 +143,23 @@ export function walletCoverageMatrix() {
       ...composedNativeCohorts.map(cohort => ({
         id: `native-${cohort.id}`,
         native_cohort: cohort.id
+      })),
+      ...nativePairCohorts.map(cohort => ({
+        id: `native-pair-${cohort.id}`,
+        native_pair_cohort: cohort.id
       }))
     ]
   }
 }
 
-export function composedNativeCohort(id) {
-  const cohort = composedNativeCohorts.find(value => value.id === id)
-  if (cohort === undefined) throw new Error('Unknown composed native cohort')
+function nativeCohort(id, plan) {
+  const cohort = plan.cohorts.find(value => value.id === id)
+  if (cohort === undefined) throw new Error('Unknown native cohort')
   return cohort
 }
 
-export function validateComposedNativeReport(report, cohortId) {
-  const cohort = composedNativeCohort(cohortId)
+function validateNativeReport(report, cohortId, plan) {
+  const cohort = nativeCohort(cohortId, plan)
   const suite = report?.testResults?.[0]
   const assertions = suite?.assertionResults
   if (
@@ -98,118 +169,133 @@ export function validateComposedNativeReport(report, cohortId) {
     report.numFailedTestSuites !== 0 ||
     report.numPendingTestSuites !== 0 ||
     report.testResults.length !== 1 ||
-    !suite.name?.replaceAll('\\', '/').endsWith('/' + composedNativeTestFile) ||
+    !suite.name?.replaceAll('\\', '/').endsWith('/' + plan.testFile) ||
     !Array.isArray(assertions) ||
-    assertions.length !== composedNativeCaseNames.length ||
-    !isDeepStrictEqual(assertions.map(value => value.fullName).sort(), composedNativeCaseNames)
+    assertions.length !== plan.names.length ||
+    !isDeepStrictEqual(assertions.map(value => value.fullName).sort(), plan.names)
   )
-    throw new Error('Composed native report lacks the complete original case inventory')
+    throw new Error('Native report lacks the complete original case inventory')
   for (const value of assertions) {
     const selected = value.fullName === cohort.name
     if (value.status !== (selected ? 'passed' : 'pending') || value.failureMessages?.length !== 0)
-      throw new Error('Composed native selected case failed, skipped or differs from its cohort')
+      throw new Error('Native selected case failed, skipped or differs from its cohort')
   }
   if (
-    report.numTotalTests !== composedNativeCaseNames.length ||
+    report.numTotalTests !== plan.names.length ||
     report.numPassedTests !== cohort.cases ||
     report.numFailedTests !== 0 ||
-    report.numPendingTests !== composedNativeCaseNames.length - cohort.cases ||
+    report.numPendingTests !== plan.names.length - cohort.cases ||
     report.numTodoTests !== 0 ||
     assertions.filter(value => value.status === 'passed').length !== cohort.cases
   )
-    throw new Error('Composed native selected execution count differs')
+    throw new Error('Native selected execution count differs')
   return {
     cohort: cohort.id,
     passedCases: cohort.cases,
-    originalCaseCount: composedNativeCaseNames.length
+    originalCaseCount: plan.names.length
   }
 }
 
-export function validateComposedNativeReceipts(receipts, identity) {
-  if (!Array.isArray(receipts) || receipts.length !== composedNativeCohorts.length)
-    throw new Error('Missing complete composed native cohort receipts')
+function validateNativeReceipts(receipts, identity, plan) {
+  if (!Array.isArray(receipts) || receipts.length !== plan.cohorts.length)
+    throw new Error('Missing complete native cohort receipts')
   const seen = new Set()
   let total = 0
   for (const receipt of receipts) {
-    const cohort = composedNativeCohort(receipt.cohort)
+    const cohort = nativeCohort(receipt.cohort, plan)
     if (
       seen.has(cohort.id) ||
       !isDeepStrictEqual(receipt.identity, identity) ||
       receipt.passedCases !== cohort.cases ||
-      receipt.originalCaseCount !== composedNativeCaseNames.length ||
+      receipt.originalCaseCount !== plan.names.length ||
       typeof receipt.reportSha256 !== 'string' ||
       !/^[0-9a-f]{64}$/.test(receipt.reportSha256)
     )
-      throw new Error('Duplicate, stale or incomplete composed native cohort receipt')
+      throw new Error('Duplicate, stale or incomplete native cohort receipt')
     seen.add(cohort.id)
     total += receipt.passedCases
   }
-  if (total !== composedNativeCaseNames.length)
-    throw new Error('Composed native case union differs')
+  if (total !== plan.names.length) throw new Error('Native case union differs')
   return total
 }
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
-export function validateComposedNativeReceiptReport(receipt, bytes) {
-  if (receipt.reportSha256 !== digest(bytes))
-    throw new Error('Composed native runtime report changed')
-  const actual = validateComposedNativeReport(JSON.parse(bytes.toString('utf8')), receipt.cohort)
+function validateNativeReceiptReport(receipt, bytes, plan) {
+  if (receipt.reportSha256 !== digest(bytes)) throw new Error('Native runtime report changed')
+  const actual = validateNativeReport(JSON.parse(bytes.toString('utf8')), receipt.cohort, plan)
   if (
     actual.passedCases !== receipt.passedCases ||
     actual.originalCaseCount !== receipt.originalCaseCount
   )
-    throw new Error('Composed native receipt differs from actual runtime report')
+    throw new Error('Native receipt differs from actual runtime report')
   return actual
 }
-function identity(root) {
+export const composedNativeCohort = id => nativeCohort(id, composedPlan)
+export const nativePairCohort = id => nativeCohort(id, pairPlan)
+export const validateComposedNativeReport = (report, id) =>
+  validateNativeReport(report, id, composedPlan)
+export const validateNativePairReport = (report, id) => validateNativeReport(report, id, pairPlan)
+export const validateComposedNativeReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, composedPlan)
+export const validateNativePairReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, pairPlan)
+export const validateComposedNativeReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, composedPlan)
+export const validateNativePairReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, pairPlan)
+function identity(root, plan) {
   return {
     head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
-    testFileSha256: digest(fs.readFileSync(path.join(root, composedNativeTestFile))),
+    testFileSha256: digest(fs.readFileSync(path.join(root, plan.testFile))),
     planSha256: digest(fs.readFileSync(fileURLToPath(import.meta.url)))
   }
 }
-function receiptFiles(directory) {
+function receiptFiles(directory, suffix) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     const filename = path.join(directory, entry.name)
-    if (entry.isDirectory()) return receiptFiles(filename)
-    return entry.isFile() && entry.name.endsWith('.composed-native.json') ? [filename] : []
+    if (entry.isDirectory()) return receiptFiles(filename, suffix)
+    return entry.isFile() && entry.name.endsWith(suffix) ? [filename] : []
   })
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
-    const [command, ...args] = process.argv.slice(2)
+    const [requestedCommand, ...args] = process.argv.slice(2)
+    const pair = requestedCommand?.startsWith('pair-') === true
+    const command = pair ? requestedCommand.slice(5) : requestedCommand
+    const plan = pair ? pairPlan : composedPlan
+    const suffix = pair ? '.native-pair.json' : '.composed-native.json'
     const root = fileURLToPath(new URL('..', import.meta.url))
-    if (command === 'matrix' && args.length === 0) {
+    if (command === 'matrix' && !pair && args.length === 0) {
       console.log(JSON.stringify(walletCoverageMatrix()))
     } else if (command === 'pattern' && args.length === 1) {
-      console.log(composedNativeCohort(args[0]).pattern)
+      console.log(nativeCohort(args[0], plan).pattern)
     } else if (command === 'capture' && args.length === 3) {
       const bytes = fs.readFileSync(args[1])
       const report = JSON.parse(bytes.toString('utf8'))
-      const verified = validateComposedNativeReport(report, args[0])
+      const verified = validateNativeReport(report, args[0], plan)
       fs.writeFileSync(args[2] + '.jest.json', bytes, { flag: 'wx' })
       fs.writeFileSync(
         args[2],
         JSON.stringify(
-          { ...verified, identity: identity(root), reportSha256: digest(bytes) },
+          { ...verified, identity: identity(root, plan), reportSha256: digest(bytes) },
           null,
           2
         ) + '\n',
         { flag: 'wx' }
       )
     } else if (command === 'verify' && args.length === 1) {
-      const receipts = receiptFiles(args[0]).map(filename => {
+      const receipts = receiptFiles(args[0], suffix).map(filename => {
         const receipt = JSON.parse(fs.readFileSync(filename, 'utf8'))
-        validateComposedNativeReceiptReport(receipt, fs.readFileSync(filename + '.jest.json'))
+        validateNativeReceiptReport(receipt, fs.readFileSync(filename + '.jest.json'), plan)
         return receipt
       })
       console.log(
-        `All ${validateComposedNativeReceipts(receipts, identity(root))} original composed native cases passed`
+        `All ${validateNativeReceipts(receipts, identity(root, plan), plan)} original ${pair ? 'native pair' : 'composed native'} cases passed`
       )
     } else
       throw new Error(
-        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>'
+        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs'
       )
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))

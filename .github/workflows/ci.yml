@@ -1014,6 +1014,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04-arm
     # Keep both original COMPLETED cases together, each with its finite bound.
+    # One pair case fits the existing40m limit:660s plus two600s delivery steps.
     # Include bounded native provisioning and dependency installation overhead.
     timeout-minutes: ${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || 40 }}
     env:
@@ -1100,6 +1101,7 @@ jobs:
           WALLET_SHARD: ${{ matrix.shard }}
           SYNC_LATENCY: ${{ matrix.latency }}
           NATIVE_COHORT: ${{ matrix.native_cohort }}
+          NATIVE_PAIR_COHORT: ${{ matrix.native_pair_cohort }}
           POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # The two real-HTTP latency scenarios run in independent processes;
@@ -1111,12 +1113,18 @@ jobs:
               --runTestsByPath src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts
               --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs pattern "$NATIVE_COHORT")"
               --json --outputFile="$GITHUB_WORKSPACE/composed-native-result.json")
+          elif [ -n "$NATIVE_PAIR_COHORT" ]; then
+            # Preserve all18 original names; every lane runs one original case.
+            args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
+              --runTestsByPath src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts
+              --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs pair-pattern "$NATIVE_PAIR_COHORT")"
+              --json --outputFile="$GITHUB_WORKSPACE/native-pair-result.json")
           elif [ -n "$WALLET_SHARD" ]; then
             export RUNPOSTGRES=1
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
@@ -1131,6 +1139,9 @@ jobs:
           if [ -n "$NATIVE_COHORT" ]; then
             node scripts/wallet-composed-native-ci.mjs capture "$NATIVE_COHORT" \
               composed-native-result.json ".coverage-output/${{ matrix.id }}.composed-native.json"
+          elif [ -n "$NATIVE_PAIR_COHORT" ]; then
+            node scripts/wallet-composed-native-ci.mjs pair-capture "$NATIVE_PAIR_COHORT" \
+              native-pair-result.json ".coverage-output/${{ matrix.id }}.native-pair.json"
           fi
           cp packages/wallet/wallet-toolbox/coverage/${{ matrix.id }}/lcov.info \
             .coverage-output/wallet-${{ matrix.id }}.lcov.info
@@ -1375,6 +1386,9 @@ jobs:
       - name: Verify all original composed native cases at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-composed-native-ci.mjs verify .coverage-artifacts
+      - name: Verify all original native pair cases at this exact head
+        if: needs.prepare.outputs.wallet == 'true'
+        run: node scripts/wallet-composed-native-ci.mjs pair-verify .coverage-artifacts
       - name: Compose Codecov inputs
         id: cov
         run: |

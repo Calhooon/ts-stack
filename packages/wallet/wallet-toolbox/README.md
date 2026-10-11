@@ -5160,3 +5160,16 @@ Fresh private native local schemas retain individual literal field guards and or
 The complete canonical migration regression fixture explicitly admits 8 MiB of aggregate physical storage, preserving 64 KiB row and working-allocation ceilings. Its measured empty main database is 1,503,232 bytes; the actual small 4 MiB fixture limits the main database to 336 pages (1,376,256 bytes) after its unchanged three-image recovery reservation. An independent control compares both real page ceilings and verifies the complete schema fits the larger bounded allowance with recovery headroom. Original migration algorithms, exact DDL/names/callbacks/configs, selected rollback/replacement retry and case deadlines remain unchanged. The small default and exhaustion controls remain 4 MiB. This is an empty-schema test allowance; production data, concurrency and recovery peaks still require qualification. No production default or native resource formula is changed.
 
 PushDrop infers the actual getPublicKey/createSignature wallet capability through a generic parameter while defaulting to WalletInterface for existing full-wallet annotations and public wallet access. Constructor and method runtime bodies/defaults are unchanged, and emitted JavaScript remains byte-identical. Actual ProtoWallet and full-wallet declaration checks cover both forms without casts or invented wallet methods; the original six script tests remain intact alongside two appended regressions. SDK output propagation and release ownership are coordinated separately; full program qualification remains pending.
+
+The required wallet coverage matrix now gives every original native snapshot
+pair case its own lane. The first unchanged original case measured 214.5 seconds
+of genuine two-profile setup, selected effects and cleanup; a shared40-minute
+shard cannot admit all18 cases. Each lane keeps the existing40-minute limit for the original
+660-second case bound, two600-second native delivery steps and dependency setup. The
+ordinary shards route this file to these mandatory lanes. The aggregate gate
+rereads each actual Jest report, checks all18 original names and selected passes,
+and requires every distinct cohort exactly once at the current commit, test-file
+hash and plan hash. Missing, stale, duplicated, skipped or altered evidence fails.
+These source changes do not yet qualify the full18 cases or the complete system;
+the separate original21 composed cases and six real-UTC expiry cases remain
+mandatory, and mutation inventories and scoring gates are unchanged.

@@ -459,10 +459,22 @@ function assertNativeWalletJob(wallet) {
   assert.match(wallet, /node-version: 24\.18\.0/)
   assert.match(wallet, /run: bash scripts\/provision-wallet-native-tests\.sh/)
   assert.match(wallet, /wallet-composed-native-ci\.mjs capture/)
+  assert.match(wallet, /wallet-composed-native-ci\.mjs pair-capture/)
+  assert.match(wallet, /wallet-composed-native-ci\.mjs pair-pattern/)
+  assert.match(
+    wallet,
+    /--runTestsByPath src\/storage\/snapshot\/NativeSnapshotMergeContractsNode\.test\.ts/
+  )
+  assert.match(
+    wallet,
+    /testPathIgnorePatterns=.*src\/storage\/snapshot\/NativeSnapshotMergeContractsNode\.test\.ts/
+  )
+  assert.match(wallet, /NATIVE_PAIR_COHORT: \$\{\{ matrix\.native_pair_cohort \}\}/)
   const workflow = readFileSync(CI_PATH, 'utf8')
   assert.match(workflow, /wallet-test-matrix: \$\{\{ steps\.wallet-matrix\.outputs\.matrix \}\}/)
   assert.match(workflow, /wallet-composed-native-ci\.mjs matrix/)
   assert.match(workflow, /wallet-composed-native-ci\.mjs verify \.coverage-artifacts/)
+  assert.match(workflow, /wallet-composed-native-ci\.mjs pair-verify \.coverage-artifacts/)
   assert.match(
     wallet,
     /^ {6}postgres:\n {8}image: postgres@sha256:d5daad18926b71c3d663f358af0aea798670cb79fb550c106d19662a9d1627ef(?: #[^\n]*)?$/m
