@@ -2493,8 +2493,10 @@ before a reset, per-page duplicate refusal, cross-page mapping conflicts, dates
 and all unknown JSON members remain checked. Both original-source passes,
 authenticated EOF and final full-byte postimage comparisons remain. No source
 or activation verdict is cached and no production limit or expiry changes.
-The original one-hour customer failure remains evidence; current performance
-and complete customer qualification of the batching change are pending.
+The original one-hour customer failure remains evidence. A later original run
+measured three completed checkpoint comparisons at 34.4–34.5 seconds, then
+failed the separate cutover image check. Complete customer and production
+performance qualification remain pending.
 
 After successful physical disposal, a failed metadata observer remains queued.
 Both `discard()` and `close()` now retry that metadata release without repeating
@@ -2504,3 +2506,27 @@ expiry and require the 8 KiB working charge to survive the failure, then drain
 after retry; persisted catalog quota remains until explicit collection. These
 controls supplement the unchanged original three-minute expiry regression.
 Full customer, platform, fault and exact-head qualification remain open.
+
+### Composed image and comparison scheduling
+
+A complete frozen native SQL image includes the persisted content-collector
+scheduling bit. Even an empty collection advances that bit. A genuine native
+control reads all 122 tables and 811 schema objects: one empty call changes the
+image hash, and a second restores the exact image without collecting a chunk.
+This is legitimate comparison work, not a changed wallet or a resource failure.
+
+Cutover now checks the original private image against the receiving-copy receipt
+before fresh reconstruction and collection. The kernel must already be in its
+immutable semantic comparison phase. All complete row, field, provenance and
+checkpoint comparisons still run; the original source fence is checked again
+afterward. The actual receiving owner separately reads its complete typed image
+and verifies physical copied bytes before source retirement and target
+activation. No image field is omitted or normalized, no receipt or ownership
+verdict becomes authority, and no API, wire, schema, limit or expiry changes.
+
+The previous original customer run passed all three checkpoint comparisons in
+34.4–34.5 seconds, compared with about 624 seconds before batching, then stopped
+at the image consistency check before retirement and activation. The current
+ordering correction still needs original customer write/restart/repeat and
+complete system qualification; the native scheduling control alone does not
+prove cutover or production performance.

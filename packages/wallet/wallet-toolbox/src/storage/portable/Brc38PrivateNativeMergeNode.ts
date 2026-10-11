@@ -822,7 +822,6 @@ export class Brc38PrivateNativeMergeNode {
           if (JSON.stringify(origin) !== JSON.stringify(receipt.source)) invalid()
           return JSON.stringify({ origin, current: await this.#comparisonSource() })
         }
-        await this.#inspectComposedRows(true, mode === 'retired' ? receipt : undefined)
         const sourceBefore = await checkSource()
         await this.#store.requirePrivateNativeComparison()
         const image = await this.#store.withAuthenticatedPrivateStructuredDestination(
@@ -840,6 +839,12 @@ export class Brc38PrivateNativeMergeNode {
             )
         )
         if (JSON.stringify(image) !== JSON.stringify(receipt.image)) invalid()
+        // Match the exact copied image before fresh reconstruction/collection
+        // advances its legitimate scratch scheduling state. The kernel already
+        // freezes semantic mutations; complete row/custody comparisons still
+        // run here, and the receiving owner independently reads its full image.
+        await this.#inspectComposedRows(true, mode === 'retired' ? receipt : undefined)
+        if ((await checkSource()) !== sourceBefore) invalid()
         this.#compositionImageReceipt = receipt
         this.#compositionImageMode = mode
         const assertRetained = (): void => {

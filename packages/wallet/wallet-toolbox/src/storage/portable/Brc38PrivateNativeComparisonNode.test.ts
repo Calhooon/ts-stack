@@ -1,6 +1,7 @@
 import type { Knex } from 'knex'
 import { createHash } from 'node:crypto'
 import { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
+import { readBrc38ComposedDatabaseImage } from './Brc38ComposedDatabaseImageNode'
 import { withBrc38PrivateContentVersion } from './Brc38PrivateContentVersionNode'
 import { collectBrc38NativePackedContent } from './Brc38NativePackedTextFieldsNode'
 import { nativeTestExecutable } from './Brc38NativeTestPath'
@@ -308,5 +309,91 @@ describe('actual private native comparison phase', () => {
       await fixture.store.requirePrivateNativeComparison()
       fixture.check()
     })
+  }, 120000)
+  test('actual empty frozen collector changes the complete SQL image through its scheduling bit', async () => {
+    const fixture = await previewPrivateFixture(undefined, undefined, 65536, 16777216, 16777216, true)
+    try {
+      const { selected, value, root } = fixture
+      await value.reservation.store.close()
+      const reservation = await root.resumeNative(
+        value.reservation.id,
+        selected.limits,
+        selected.binding,
+        nativeTestExecutable()
+      )
+      fixture.held.push(reservation)
+      const store = reservation.store,
+        working = new Brc38WorkingAllocation(store.limits.maximumRowAllocationBytes),
+        storage = new StorageKnex({
+          ...StorageProvider.createStorageBaseOptions(selected.binding.chain),
+          knex: store.knex,
+          snapshotSync: false
+        })
+      await store.withAuthenticatedPrivateStructuredDestination(async () => {
+        await installBrc38PrivateNativeCandidateSchema(
+          storage,
+          store,
+          selected.binding.targetStorageIdentityKey,
+          {
+            receiptPolicy: previewReceiptPolicy,
+            maximumStepRows: 16,
+            maximumStepBytes: 65536,
+            maximumMappedIds: 1000,
+            maximumJournalLogicalBytes: 516096
+          },
+          true,
+          true,
+          true
+        )
+      })
+      await store.beginPrivateNativeComparison()
+      await store.withAuthenticatedPrivateStructuredDestination(async () => {
+        const capture = async () =>
+          await store.withPrivateNativeDatabase(
+            true,
+            async db =>
+              await db.transaction(async trx => {
+                store.assertPrivateNativeReadTransaction(trx)
+                const image = await readBrc38ComposedDatabaseImage(
+                  trx,
+                  {
+                    maximumPhysicalBytes: store.limits.maximumPhysicalBytes,
+                    maximumReadBytes: 16384,
+                    expiresAt: store.operationExpiresAt,
+                    workingAllocation: working
+                  },
+                  () => store.assertPrivateNativeReadTransaction(trx)
+                )
+                const progress = await trx('brc38_native_text_gc_progress').select('slot', 'nextFamily')
+                return { image, progress }
+              })
+          )
+        const collect = async () =>
+          await store.withPrivateNativeDatabase(
+            false,
+            async db =>
+              await db.transaction(async trx => {
+                store.assertPrivateNativeWriteTransaction(trx)
+                const result = await collectBrc38NativePackedContent(trx, 1)
+                store.assertPrivateNativeWriteTransaction(trx)
+                return result
+              })
+          )
+        const first = await capture()
+        expect(await collect()).toEqual({ chunks: 0, complete: true })
+        const second = await capture()
+        expect(second.progress).toEqual([{ slot: 1, nextFamily: 1 - first.progress[0].nextFamily }])
+        expect(second.image).not.toEqual(first.image)
+        expect({ ...second.image, sha256: first.image.sha256 }).toEqual(first.image)
+        expect(await collect()).toEqual({ chunks: 0, complete: true })
+        const third = await capture()
+        expect(third).toEqual(first)
+        expect(working.used).toBe(0)
+        expect(store.limits).toEqual(selected.limits)
+      })
+      await store.requirePrivateNativeComparison()
+    } finally {
+      await fixture.close()
+    }
   }, 120000)
 })
