@@ -2110,6 +2110,7 @@ function currentWalletMutationTargets(repositoryRoot) {
           '<rootDir>/src/storage/portable/Brc38ImportEntityTargets.test.ts',
           '<rootDir>/src/storage/portable/Brc38ImportMergeProvenanceNode.test.ts',
           '<rootDir>/src/storage/portable/Brc38ImportReadDestinationNode.test.ts',
+          '<rootDir>/src/storage/portable/Brc38PrivateNativeComparisonNode.test.ts',
           '<rootDir>/src/storage/portable/Brc38KnexDestinationFence.property.test.ts',
           '<rootDir>/src/storage/portable/Brc38NativeCurrentSourceContractsNode.test.ts',
           '<rootDir>/src/storage/portable/Brc38NativeLocalCaptureContractsNode.test.ts',

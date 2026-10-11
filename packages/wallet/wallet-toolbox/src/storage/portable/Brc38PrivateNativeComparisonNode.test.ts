@@ -128,22 +128,23 @@ describe('actual private native comparison phase', () => {
         targetStorageIdentityKey: selected.binding.targetStorageIdentityKey,
         mode: 'merge' as const
       }
-    await installBrc38PrivateNativeCandidateSchema(
-      storage,
-      store,
-      selection.targetStorageIdentityKey,
-      {
-        receiptPolicy: previewReceiptPolicy,
-        maximumStepRows: 16,
-        maximumStepBytes: 65536,
-        maximumMappedIds: 1000,
-        maximumJournalLogicalBytes: 516096
-      },
-      true,
-      true
-    )
-    await storage.makeAvailable()
-    registerBrc38PrivateDestinationLease(storage, store)
+    await store.withAuthenticatedPrivateStructuredDestination(async () => {
+      await installBrc38PrivateNativeCandidateSchema(
+        storage,
+        store,
+        selection.targetStorageIdentityKey,
+        {
+          receiptPolicy: previewReceiptPolicy,
+          maximumStepRows: 16,
+          maximumStepBytes: 65536,
+          maximumMappedIds: 1000,
+          maximumJournalLogicalBytes: 516096
+        },
+        true,
+        true
+      )
+      registerBrc38PrivateDestinationLease(storage, store)
+    })
     await store.beginPrivateNativeComparison()
     await store.withAuthenticatedPrivateStructuredDestination(async () => {
       const prepare = async () =>
