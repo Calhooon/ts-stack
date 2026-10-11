@@ -30,7 +30,8 @@ function windowsCoordinate(value) {
     typeof value !== 'string' ||
     value.length > 2048 ||
     !/^[A-Za-z]:\\/.test(value) ||
-    /[\x00-\x1f"<>|?*]/.test(value) ||
+    /["<>|?*]/.test(value) ||
+    Array.from(value).some(character => character.charCodeAt(0) < 32) ||
     path.win32.normalize(value) !== value ||
     value
       .slice(3)

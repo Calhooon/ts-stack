@@ -478,7 +478,9 @@ test.each([
   'traversal',
   'reserved',
   'alias',
-  'stream'
+  'stream',
+  'control-nul',
+  'control-unit'
 ])('outer worker %s refuses before any host operation', async defect => {
   const { bootstrapWorkerPlan } = require('../../../../tools/Brc38WindowsBootstrapWorker.cjs'),
     config = await windowsBootstrapWorkerFixture(),
@@ -496,6 +498,8 @@ test.each([
   else if (defect === 'reserved') config.bootstrap.outputDirectory = 'C:\\Private\\NUL'
   else if (defect === 'alias') config.bootstrap.outputDirectory = 'C:\\Private\\root. '
   else if (defect === 'stream') config.bootstrap.outputDirectory = 'C:\\Private\\root:alternate'
+  else if (defect === 'control-nul') config.bootstrap.outputDirectory += String.fromCharCode(0)
+  else if (defect === 'control-unit') config.bootstrap.outputDirectory += String.fromCharCode(31)
   expect(() => bootstrapWorkerPlan(config)).toThrow('Windows bootstrap')
   expect(noExecution).not.toHaveBeenCalled()
 })
