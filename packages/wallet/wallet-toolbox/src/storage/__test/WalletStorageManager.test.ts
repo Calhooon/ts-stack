@@ -473,6 +473,15 @@ describe('WalletStorageManager tests', () => {
         isValidRootForHeight: async (_root: string, _height: number) => true,
         currentHeight: async () => 1_000_000
       })
+      // Unproven recipient payments now broadcast; keep this writer-batch
+      // fixture independent of public processors and assert every submitted txid.
+      const postBeef = jest.spyOn(fred.services, 'postBeef').mockImplementation(async (_beef, txids) => [
+        {
+          name: 'writer-batch-fixture',
+          status: 'success' as const,
+          txidResults: txids.map(txid => ({ txid, status: 'success' as const }))
+        }
+      ])
       try {
         const promises: Array<Promise<number>> = []
         const result: Array<{ i: number; r: any }> = []
@@ -532,8 +541,10 @@ describe('WalletStorageManager tests', () => {
         for (let i = 0; i < maxI; i++) promises.push(makeWriter2(fred, crs1[j++], i, result))
         await Promise.all(promises)
         expect(result).toHaveLength(maxI)
+        expect(new Set(postBeef.mock.calls.flatMap(call => call[1]))).toEqual(new Set(crs1.map(cr => cr.txid)))
         expect(getChainTracker).toHaveBeenCalled()
       } finally {
+        postBeef.mockRestore()
         sourceChainTracker.mockRestore()
         getChainTracker.mockRestore()
         await fred.wallet.destroy()
