@@ -58,7 +58,9 @@ test('generated source bytes copy and hash exactly across fixed-buffer boundarie
         })
         expect(receipt).toEqual({ bytes: size, sha256: digest(bytes) })
         expect(Object.isFrozen(receipt)).toBe(true)
-        expect(calls).toBe(2 + Math.ceil(size / 262144))
+        // Ownership is checked before opening the source, before target
+        // creation, before each chunk, and before returning the receipt.
+        expect(calls).toBe(3 + Math.ceil(size / 262144))
         expect((await readFile(destination())).equals(bytes)).toBe(true)
         expect((await stat(destination())).mode & 0o777).toBe(0o600)
         expect(await hashBrc38PublishedDatabase(destination(), size)).toBe(digest(bytes))
@@ -117,7 +119,7 @@ test('generated original expiry and cancellation refuse before source ownership 
 }, 30000)
 test('generated current ownership rejection retains the cause and never returns a successful copy receipt', async () => {
   await fc.assert(
-    fc.asyncProperty(fill, fc.integer({ min: 1, max: 4 }), async (value, refuseAt) => {
+    fc.asyncProperty(fill, fc.integer({ min: 1, max: 5 }), async (value, refuseAt) => {
       const bytes = Buffer.alloc(262145, value)
       await withSource(bytes, async () => {
         const reason = new Error('owned copy rejected ' + value),
@@ -129,10 +131,10 @@ test('generated current ownership rejection retains the cause and never returns 
           })
         ).rejects.toBe(reason)
         expect(seen).toHaveLength(refuseAt)
-        if (refuseAt === 1) await expect(stat(destination())).rejects.toMatchObject({ code: 'ENOENT' })
+        if (refuseAt <= 2) await expect(stat(destination())).rejects.toMatchObject({ code: 'ENOENT' })
         else {
           const copied = await readFile(destination())
-          expect(copied.length).toBe(refuseAt === 2 ? 0 : refuseAt === 3 ? 262144 : bytes.length)
+          expect(copied.length).toBe(refuseAt === 3 ? 0 : refuseAt === 4 ? 262144 : bytes.length)
           expect(copied.equals(bytes.subarray(0, copied.length))).toBe(true)
         }
       })

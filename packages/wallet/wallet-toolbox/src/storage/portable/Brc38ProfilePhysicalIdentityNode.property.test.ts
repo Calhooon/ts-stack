@@ -119,17 +119,23 @@ describe('private profile identities bind exact owned filesystem objects', () =>
               ).rejects.toThrow('original physical identity differs')
               if (defect === 'mode') {
                 await chmod(filename, 0o400)
-                await expect(assertBrc38ProfileFileDescriptor(file, bound)).rejects.toThrow('original private file')
+                expect((await file.stat()).mode & 0o777).toBe(0o400)
+                await expect(assertBrc38ProfileFileDescriptor(file, bound)).rejects.toThrow(
+                  'Actual Unix private ownership or mode differs'
+                )
                 await expect(assertBrc38ProfilePhysicalIdentity(directory, original, true)).rejects.toThrow(
-                  'original private file'
+                  'Actual Unix private ownership or mode differs'
                 )
                 await chmod(filename, 0o600)
               } else if (defect === 'hard-link') {
                 const alias = filename + '.alias'
                 await link(filename, alias)
-                await expect(assertBrc38ProfileFileDescriptor(file, bound)).rejects.toThrow('original private file')
+                expect((await file.stat()).nlink).toBe(2)
+                await expect(assertBrc38ProfileFileDescriptor(file, bound)).rejects.toThrow(
+                  'Actual private descriptor type or link count differs'
+                )
                 await expect(assertBrc38ProfilePhysicalIdentity(directory, original, true)).rejects.toThrow(
-                  'original private file'
+                  'Actual private file type or link count differs'
                 )
                 await rm(alias)
               } else {

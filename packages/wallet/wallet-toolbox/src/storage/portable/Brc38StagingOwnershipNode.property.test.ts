@@ -2,6 +2,7 @@ import fc from 'fast-check'
 import { appendFile, chmod, lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { types } from 'node:util'
 import { Brc38StagingOwnershipNode } from './Brc38StagingOwnershipNode'
 
 const MIN_PROPERTY_RUNS = 300
@@ -73,7 +74,9 @@ describe('actual pinned private staging ownership lifecycle', () => {
             expect(current.purpose).toBe('resume')
             current.assertLive()
             const contender = await owned.refuse(Brc38StagingOwnershipNode.claimExisting(owned.directory, binding))
-            expect(contender).toBeInstanceOf(Error)
+            // The native driver can construct its Error in a different Jest realm.
+            expect(types.isNativeError(contender)).toBe(true)
+            expect(contender).toMatchObject({ code: 'SQLITE_BUSY' })
             expect((contender as Error).message).toMatch(/locked|busy/i)
             current.assertLive()
             const old = current
@@ -140,7 +143,10 @@ describe('actual pinned private staging ownership lifecycle', () => {
               expect(cause).toBeInstanceOf(Error)
               if (kind === 'digest') expect(cause).toBeInstanceOf(TypeError)
               if (['expired', 'fractional', 'overlong'].includes(kind)) expect(cause).toBeInstanceOf(RangeError)
-              if (kind === 'public') expect((cause as Error).message).toContain('0700')
+              if (kind === 'public') {
+                expect((await lstat(owned.directory)).mode & 0o777).toBe(0o755)
+                expect((cause as Error).message).toBe('Actual Unix private ownership or mode differs')
+              }
             }
             expect(await readdir(owned.directory)).toEqual([])
           } finally {

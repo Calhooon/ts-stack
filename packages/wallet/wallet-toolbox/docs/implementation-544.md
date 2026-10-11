@@ -2706,3 +2706,25 @@ portable consumers, actual supported native hosts, workload/performance/headroom
 and exact-head CI/analyzers/review. All eleven acceptance rows remain open.
 PR569 stays open, draft and unmerged; no package publication or deployment is
 established by this implementation checkpoint.
+
+### Full property campaign and exact filesystem/copy oracles
+
+The complete source423 wallet property command ran all 61 registered suites at
+300 runs and seed 3242026: 58 suites and 446 tests passed; three suites and five
+tests failed normally, without skipped tests, timeouts or source drift. The
+retained failed report exposes outdated test expectations, not a missing runtime
+component. Source424 corrects those expectations while keeping the full suite,
+generated data, assertions, original deadlines and property strength.
+
+SQLite contention must be a real Error across Jest realms and carry
+`SQLITE_BUSY`. Unix mode and hard-link mutations now require their exact
+descriptor/path privacy refusal, with the mutated mode/link count checked. Copy
+ownership checks occur before source open, before target creation, before each
+256 KiB chunk and before returning a receipt. Refusal at either of the first two
+checks leaves no destination; later checks preserve exactly zero bytes, one
+chunk, or the complete copied bytes. The generated rejection range includes the
+final fifth checkpoint for the two-chunk fixture. Exact source/destination
+bytes, hashes, private modes, exclusivity, cancellation, fixed expiry, unchanged
+source identity and retirement assertions remain. No production code, native
+binary, API, wire/schema, resource limit or migration changes. Full current-head
+property and system qualification remain required.
