@@ -20,7 +20,10 @@ import { Brc38StagingAdmissionNode, type Brc38StagingReservation } from './Brc38
 import { stageAuthenticatedBrc39PrivateImport } from './Brc38AuthenticatedPrivateStageNode'
 import { previewDestinationFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { previewBrc38PrivateImport } from './Brc38PrivateImportPreviewNode'
-import { inspectBrc38AuthenticatedStreamedProof } from './Brc38AuthenticatedStreamedProofNode'
+import {
+  inspectBrc38AuthenticatedStreamedProof,
+  inspectBrc38AuthenticatedStreamedProofReader
+} from './Brc38AuthenticatedStreamedProofNode'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 
 const policy = Object.freeze({
@@ -155,13 +158,37 @@ test('refuses declared and decoded Merkle allocation limits before the SDK or ne
 })
 test('checks actual retained chunk bytes and refuses changed source content', async () => {
   const { store, proof } = await stage()
-  await store
-    .knex('private_binary_chunks')
-    .where({ tableName: 'provenTxs', position: 0, field: 'rawTx', offset: 0 })
-    .update({ payload: Buffer.from(proof.tx.toBinary()).fill(0) })
   await expect(
-    inspectBrc38AuthenticatedStreamedProof(store, { getServices: () => proof.services }, 0, policy)
+    store
+      .knex('private_binary_chunks')
+      .where({ tableName: 'provenTxs', position: 0, field: 'rawTx', offset: 0 })
+      .update({ payload: Buffer.from(proof.tx.toBinary()).fill(0) })
+  ).rejects.toThrow('Authenticated private source is immutable')
+  // Corrupt the actual scoped read without disabling the persisted source seal.
+  // Keep its original descriptor so the independent byte/hash proof must refuse.
+  const changedRead = jest.fn()
+  await expect(
+    store.withAuthenticatedStreamedImportRead(async (_json, _metadata, reader) =>
+      inspectBrc38AuthenticatedStreamedProofReader(
+        {
+          ...reader,
+          chunk: async (table, position, field, offset) => {
+            const actual = await reader.chunk(table, position, field, offset)
+            if (actual !== undefined && field === 'rawTx') {
+              changedRead()
+              return { ...actual, bytes: new Uint8Array(actual.bytes.byteLength) }
+            }
+            return actual
+          }
+        },
+        { getServices: () => proof.services },
+        0,
+        policy,
+        store.limits.expiresAt
+      )
+    )
   ).rejects.toThrow()
+  expect(changedRead).toHaveBeenCalled()
   expect(proof.isValidRootForHeight).not.toHaveBeenCalled()
 })
 test('awaits a pending chain request through cancellation and retains the exact cancellation reason', async () => {

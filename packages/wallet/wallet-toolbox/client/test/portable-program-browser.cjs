@@ -73,7 +73,9 @@ async function runPortableBrowserProgram(executablePath, selection) {
   // The normal entry still executes the complete original catalogue. An exact
   // component selection is local feedback and cannot report full qualification.
   let selectedIds
-  const context = {}
+  // Instrumentation creates its counters lazily. A case that never executes a
+  // mutant location has real zero coverage, represented by these empty maps.
+  const context = { mutantCoverage: { static: {}, perTest: {} } }
   if (selection !== undefined) {
     assert.ok(selection && typeof selection === 'object')
     assert.ok(Array.isArray(selection.caseIds) && selection.caseIds.length > 0 && selection.caseIds.length <= 60)
@@ -163,11 +165,13 @@ async function runPortableBrowserProgram(executablePath, selection) {
       platform: 'browser',
       format: 'esm',
       target: 'es2022',
+      tsconfig: join(__dirname, 'tsconfig.browser.json'),
       splitting: false,
       ...(selection === undefined
         ? {}
         : { banner: { js: 'globalThis.__stryker__ = ' + JSON.stringify(context) + ';' } })
     })
+    assert.equal(bundles.warnings.length, 0, 'Native coverage bundle warnings require review')
     const program = bundles.outputFiles.find(file => file.path.endsWith('/program.js'))
     assert.ok(program && bundles.outputFiles.length === 1, 'The exact browser catalogue bundle is required')
     const workerPath = join(wallet, 'client/out/argon2id-worker.mjs')

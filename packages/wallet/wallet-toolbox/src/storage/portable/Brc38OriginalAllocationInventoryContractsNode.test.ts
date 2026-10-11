@@ -90,7 +90,9 @@ test.each([64, 256, 1024] as const)(
             maximumCanonicalBytes: 65536,
             maximumReadBytes: width,
             maximumIndexAllocationBytes: 4096,
-            maximumGrammarAllocationBytes: 4096,
+            // Share the original aggregate ceiling; a 4096 sub-cap admits only
+            // the grammar base and cannot admit even its first digest scope.
+            maximumGrammarAllocationBytes: workingAllocation.maximum,
             workingAllocation
           },
           projectionPolicy: {
@@ -101,7 +103,7 @@ test.each([64, 256, 1024] as const)(
             maximumScalarBytes: 4096,
             maximumReadBytes: width,
             maximumIndexAllocationBytes: 4096,
-            maximumGrammarAllocationBytes: 4096,
+            maximumGrammarAllocationBytes: workingAllocation.maximum,
             expiresAt,
             workingAllocation
           },

@@ -38,7 +38,7 @@ async function runArgon2idBrowserCoverage(executablePath, context = {}) {
   let browserCloseFailed = false,
     serverCloseFailed = false
   assert.equal(typeof context, 'object')
-  const selectedContext = {}
+  const selectedContext = { mutantCoverage: { static: {}, perTest: {} } }
   for (const key of ['currentTestId', 'activeMutant']) {
     if (context[key] !== undefined) {
       assert.equal(typeof context[key], 'string')
@@ -122,6 +122,7 @@ async function runArgon2idBrowserCoverage(executablePath, context = {}) {
       platform: 'browser',
       format: 'esm',
       target: 'es2022',
+      tsconfig: join(__dirname, 'tsconfig.browser.json'),
       splitting: false,
       logLevel: 'silent',
       banner: { js: 'globalThis.__stryker__ = ' + JSON.stringify(selectedContext) + ';' }

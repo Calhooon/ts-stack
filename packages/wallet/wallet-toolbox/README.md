@@ -5239,3 +5239,20 @@ regression copies and loads Jest at the new root and uses the real TypeScript
 transformer. Compiler configuration changes
 select every owning wallet Jest mutation target; no diagnostic or score exemption
 is introduced.
+
+The qualification browser bundles use a self-contained test compiler config
+that preserves the package's ES2022 class-field definitions when Stryker copies
+the package away from its inherited config. A real compiler regression compares
+the original and relocated output and rejects the old missing-base warning and
+changed class-field semantics. Browser counter maps start empty: cases that
+never execute an instrumented location report zero hits. Actual instrumentation
+alone adds counters, and canonical NoCoverage and score gates still apply.
+
+The all13 inventory fixture retains its original 65,536-byte combined working
+owner. Its grammar shares that ceiling rather than imposing a 4,096-byte
+sub-cap that admits only the grammar base and cannot admit its first digest
+scope. Concurrent grammar, index, projection and transport charges still count
+together. This test configuration correction does not establish full native
+inventory or resident-memory qualification. The retained-chunk negative test
+checks that sealed SQL updates refuse and injects a changed actual scoped read
+to exercise the independent byte/hash refusal without disabling the seal.

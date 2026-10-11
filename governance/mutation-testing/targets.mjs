@@ -7830,6 +7830,7 @@ export function buildMutationTargets(repositoryRoot) {
           ...(target.configurationInputs ?? []),
           'packages/wallet/wallet-toolbox/tsconfig.json',
           'packages/wallet/wallet-toolbox/tsconfig.jest.json',
+          'packages/wallet/wallet-toolbox/client/test/tsconfig.browser.json',
           'config/typescript/dual-runtime.json',
           'config/typescript/strict.json',
           'scripts/wallet-jest-config.test.mjs'

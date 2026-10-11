@@ -60,3 +60,46 @@ test('wallet TypeScript transform retains its compiler configuration in a reloca
     rmSync(sandbox, { recursive: true, force: true })
   }
 })
+
+test('browser compilation retains package class-field semantics without relocated config inheritance', async () => {
+  const sandbox = mkdtempSync(join(tmpdir(), 'wallet-browser-config-'))
+  const { build, stop } = require('esbuild')
+  try {
+    const filename = join(sandbox, 'example.ts')
+    writeFileSync(filename, 'export class Example { optional?: string }')
+    copyFileSync(join(wallet, 'tsconfig.json'), join(sandbox, 'tsconfig.json'))
+    copyFileSync(
+      join(wallet, 'client/test/tsconfig.browser.json'),
+      join(sandbox, 'tsconfig.browser.json')
+    )
+    const compile = tsconfig =>
+      build({
+        entryPoints: [filename],
+        bundle: true,
+        write: false,
+        platform: 'browser',
+        format: 'cjs',
+        target: 'es2022',
+        logLevel: 'silent',
+        tsconfig
+      })
+    const original = await compile(join(wallet, 'tsconfig.json'))
+    const relocated = await compile(join(sandbox, 'tsconfig.browser.json'))
+    const broken = await compile(join(sandbox, 'tsconfig.json'))
+    assert.equal(original.warnings.length, 0)
+    assert.equal(relocated.warnings.length, 0)
+    assert.deepEqual(relocated.outputFiles[0].contents, original.outputFiles[0].contents)
+    assert.ok(
+      broken.warnings.some(warning => warning.text.includes('Cannot find base config file'))
+    )
+    const module = { exports: {} }
+    runInNewContext(relocated.outputFiles[0].text, { module })
+    assert.ok(Object.hasOwn(new module.exports.Example(), 'optional'))
+    const oldModule = { exports: {} }
+    runInNewContext(broken.outputFiles[0].text, { module: oldModule })
+    assert.equal(Object.hasOwn(new oldModule.exports.Example(), 'optional'), false)
+  } finally {
+    await stop()
+    rmSync(sandbox, { recursive: true, force: true })
+  }
+})
