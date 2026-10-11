@@ -5247,6 +5247,8 @@ the original and relocated output and rejects the old missing-base warning and
 changed class-field semantics. Browser counter maps start empty: cases that
 never execute an instrumented location report zero hits. Actual instrumentation
 alone adds counters, and canonical NoCoverage and score gates still apply.
+The self-contained browser test context is mapped to the governed browser
+compiler profile; root validation enforces all of its required strict options.
 
 The all13 inventory fixture retains its original 65,536-byte combined working
 owner. Its grammar shares that ceiling rather than imposing a 4,096-byte
