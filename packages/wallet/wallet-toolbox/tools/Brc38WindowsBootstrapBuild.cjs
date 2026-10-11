@@ -31,7 +31,9 @@ function bootstrapInputPlan(options) {
       input.path.length > 512 ||
       !/^[A-Za-z0-9_/-]+\.h$/.test(input.path) ||
       input.path.startsWith('/') ||
-      input.path.split('/').some(part => !part || part === '..') ||
+      input.path
+        .split('/')
+        .some(part => !part || part === '..' || /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(part)) ||
       names.has(input.path.toLowerCase()) ||
       !Number.isSafeInteger(input.bytes) ||
       input.bytes < 1 ||
@@ -159,14 +161,13 @@ async function writeBootstrapBytes(filename, bytes, mode = 0o600) {
   } catch (cause) {
     failed = true
     failure = cause
-    throw cause
-  } finally {
-    try {
-      await file.close()
-    } catch (cause) {
-      throw new NativeSourceCleanupError(failed ? [failure, cause] : [cause], () => file.close())
-    }
   }
+  try {
+    await file.close()
+  } catch (cause) {
+    throw new NativeSourceCleanupError(failed ? [failure, cause] : [cause], () => file.close())
+  }
+  if (failed) throw failure
 }
 async function writeRecord(filename, value) {
   await writeBootstrapBytes(filename, Buffer.from(JSON.stringify(value, null, 2) + '\n'))

@@ -9,7 +9,7 @@ if (-not [String]::Equals($full, $Directory, [StringComparison]::OrdinalIgnoreCa
   throw 'Bootstrap requires a canonical local directory'
 }
 $drive = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($full))
-if ($drive.DriveFormat -ne 'NTFS') { throw 'Bootstrap requires local NTFS build storage' }
+if ($drive.DriveFormat -ne 'NTFS' -or $drive.DriveType -eq [System.IO.DriveType]::Network) { throw 'Bootstrap requires local NTFS build storage' }
 function Inspect-PrivateBuildDirectory([string]$Name) {
   $item = [System.IO.DirectoryInfo]::new($Name)
   if (-not $item.Exists) { throw 'Bootstrap directory does not exist' }

@@ -315,25 +315,32 @@ test.each(['arm64', 'x64'])(
     expect(noExecution).not.toHaveBeenCalled()
   }
 )
-test.each(['duplicate-case', 'traversal', 'missing-required', 'oversize', 'bad-hash', 'unknown-arch', 'bad-library'])(
-  'invalid first-artifact dependency %s refuses before capture or execution',
-  async defect => {
-    const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
-      options = await windowsBootstrapFixture(),
-      before = await fs.readdir(directory),
-      noExecution = jest.spyOn(require('node:child_process'), 'spawn')
-    if (defect === 'duplicate-case') options.nodeHeaders.push({ ...options.nodeHeaders[0], path: 'NODE_API.h' })
-    else if (defect === 'traversal') options.nodeHeaders[0].path = '../node_api.h'
-    else if (defect === 'missing-required') options.nodeHeaders[0].path = 'other.h'
-    else if (defect === 'oversize') options.nodeHeaders[0].bytes = 2097153
-    else if (defect === 'bad-hash') options.nodeHeaders[0].sha256 = '00'
-    else if (defect === 'unknown-arch') options.architecture = 'ia32'
-    else options.nodeImportLibrary.bytes = 33554433
-    await expect(prepareWindowsBootstrapSource(options)).rejects.toThrow('Windows bootstrap')
-    expect(await fs.readdir(directory)).toEqual(before)
-    expect(noExecution).not.toHaveBeenCalled()
-  }
-)
+test.each([
+  'duplicate-case',
+  'reserved-name',
+  'traversal',
+  'missing-required',
+  'oversize',
+  'bad-hash',
+  'unknown-arch',
+  'bad-library'
+])('invalid first-artifact dependency %s refuses before capture or execution', async defect => {
+  const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
+    options = await windowsBootstrapFixture(),
+    before = await fs.readdir(directory),
+    noExecution = jest.spyOn(require('node:child_process'), 'spawn')
+  if (defect === 'duplicate-case') options.nodeHeaders.push({ ...options.nodeHeaders[0], path: 'NODE_API.h' })
+  else if (defect === 'reserved-name') options.nodeHeaders.push({ ...options.nodeHeaders[0], path: 'NUL.h' })
+  else if (defect === 'traversal') options.nodeHeaders[0].path = '../node_api.h'
+  else if (defect === 'missing-required') options.nodeHeaders[0].path = 'other.h'
+  else if (defect === 'oversize') options.nodeHeaders[0].bytes = 2097153
+  else if (defect === 'bad-hash') options.nodeHeaders[0].sha256 = '00'
+  else if (defect === 'unknown-arch') options.architecture = 'ia32'
+  else options.nodeImportLibrary.bytes = 33554433
+  await expect(prepareWindowsBootstrapSource(options)).rejects.toThrow('Windows bootstrap')
+  expect(await fs.readdir(directory)).toEqual(before)
+  expect(noExecution).not.toHaveBeenCalled()
+})
 test('wrong captured Node ABI refuses the source plan and removes only its uncompiled owned root', async () => {
   const { prepareWindowsBootstrapSource } = require('../../../../tools/Brc38WindowsBootstrapBuild.cjs'),
     options = await windowsBootstrapFixture(),
