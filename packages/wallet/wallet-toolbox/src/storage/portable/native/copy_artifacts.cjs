@@ -7,36 +7,13 @@
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const { copyNativeSourceInput, NativeSourceCleanupError } = require('./prepare_source.cjs')
+const { driverSources, windowsAddonSources } = require('./source_recipe.cjs')
 const assets = Object.freeze([
   'NativeProfileSqlite.cjs',
   'Brc38NativeExecutable.cjs',
   'native/prepare_source.cjs',
-  'native/native_driver.c',
-  'native/shared_quota_sources.h',
-  'native/shared_quota_contract.c',
-  'native/cell_change_contract.c',
-  'native/local_observer_contract.c',
-  'native/local_pointer_projection_contract.c',
-  'native/local_pointer_group_contract.c',
-  'native/local_observer_names_contract.c',
-  'native/blob_write.c',
-  'native/blob_read.c',
-  'native/private_stage.c',
-  'native/private_stage_contract.c',
-  'native/recovery_copy.c',
-  'native/native_contract.c',
-  'native/brc38_runtime.c',
-  'native/brc38_quota.c',
-  'native/profile_contract.c',
-  'native/range_contract.c',
-  'native/native_fixture.c',
-  'native/brc38_windows_handles.c',
-  'native/brc38_quota_windows.c',
-  'native/brc38_runtime_windows.c',
-  'native/runtime_contract.c',
-  'native/windows_bridge.c',
-  'native/windows_image.c',
-  'native/windows_build_supervisor.c'
+  'native/source_recipe.cjs',
+  ...[...driverSources, ...windowsAddonSources].map(name => 'native/' + name)
 ])
 const compiled = Object.freeze([
   'Brc38NativeBlobProtocol.js',

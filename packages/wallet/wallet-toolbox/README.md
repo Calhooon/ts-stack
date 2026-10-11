@@ -5354,3 +5354,24 @@ openly, following the maintainer's measured-limits direction. No runtime default
 or existing admission is enlarged or renewed. Broader supported-workload,
 concurrency/recovery, native memory/RSS and production sizing remain required;
 this component result does not qualify the complete program or all hosts.
+
+### Complete native source recipes
+
+Native driver source inputs, the exact SQLite dependency cohort, Windows addon
+source inputs and original Unix compiler arguments share one immutable internal
+`native/source_recipe.cjs`. Source preparation previously omitted four included
+local observer/pointer contract files; it now captures the complete same driver
+cohort as candidate compilation and packaged artifact copying. Every source plan
+records platform, architecture and owned compiler working directory; its relative
+arguments use the original candidate recipe and stay within the captured root.
+Pure plans cover Linux and Darwin on ARM64/x64. Darwin omits only the Linux
+`-D_GNU_SOURCE` and `-ldl` flags, preserving its existing candidate-build behavior.
+The controlled preparation worker accepts those actual Unix platforms/architectures
+with the unchanged Node24.18.0/ABI137 requirement. Windows source capture uses the
+same driver/addon cohort through its separate original qualified-toolchain route.
+These are source/build paths; source plans never enroll a host, change a runtime
+pin or qualify a wallet. Exact native17 LinuxARM pin remains unchanged. Other host
+artifacts/toolchains/supervisors and real qualification remain required. New
+regressions inspect every actual captured source/SQLite digest and transitive
+include, plus unsupported-target refusal before filesystem work. Compilers and
+other operating systems are not executed by those pure plan regressions.

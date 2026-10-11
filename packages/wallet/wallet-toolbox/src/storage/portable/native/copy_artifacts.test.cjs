@@ -32,6 +32,11 @@ test('copies only fixed source/runtime assets and independently records actual p
   expect(result.engineExecuted).toBe(false)
   expect(result.qualified).toBe(false)
   expect(result.assets.map(value => value.path)).toEqual(assets)
+  const recipe = require('./source_recipe.cjs')
+  expect(assets).toContain('native/source_recipe.cjs')
+  for (const name of [...recipe.driverSources, ...recipe.windowsAddonSources])
+    expect(assets).toContain('native/' + name)
+  expect(new Set(assets).size).toBe(assets.length)
   expect(result.compiled.map(value => value.path)).toEqual(compiled)
   for (const record of [...result.assets, ...result.compiled]) {
     const bytes = await fs.readFile(path.join(output, record.path))

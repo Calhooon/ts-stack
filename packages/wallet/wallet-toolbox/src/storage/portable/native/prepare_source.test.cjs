@@ -67,3 +67,65 @@ test('a descriptor close failure retains its owned source directory until concre
   expect(await fs.readdir(directory)).toEqual([])
   await failure.retryCleanup()
 })
+
+// Pure recipe/source capture on the current controlled worker. These targets
+// select build DATA only; no compiler, native engine or other OS is executed.
+test.each([
+  ['linux', 'arm64'],
+  ['linux', 'x64'],
+  ['darwin', 'arm64'],
+  ['darwin', 'x64']
+])(
+  'complete %s/%s source plan includes every transitive driver file and exact pinned SQLite inputs',
+  async (platform, architecture) => {
+    const crypto = require('node:crypto'),
+      sqliteDirectory = path.join(path.dirname(require.resolve('better-sqlite3/package.json')), 'deps/sqlite3'),
+      { driverSources, windowsAddonSources, sqliteFiles, unixCompilerArguments } = require('./source_recipe.cjs'),
+      prepared = await prepareNativeSource(sqliteDirectory, directory, { platform, architecture }),
+      source = JSON.parse(await fs.readFile(path.join(prepared.directory, 'source.json'), 'utf8')),
+      expected = [...driverSources, ...windowsAddonSources, ...sqliteFiles.map(input => input.name)]
+    expect(source).toEqual(prepared.source)
+    expect(source.inputs.map(input => input.name)).toEqual(expected)
+    expect(new Set(expected).size).toBe(expected.length)
+    expect(source.platform).toBe(platform)
+    expect(source.architecture).toBe(architecture)
+    expect(source.compiler.cwd).toBe(prepared.directory)
+    expect(source.compiler.arguments).toEqual(unixCompilerArguments(platform, architecture))
+    expect(source.compiled).toBe(false)
+    expect(source.engineExecuted).toBe(false)
+    expect(source.qualified).toBe(false)
+    for (const input of source.inputs) {
+      const actual = await fs.readFile(path.join(prepared.directory, input.name))
+      expect(actual.length).toBe(input.bytes)
+      expect(crypto.createHash('sha256').update(actual).digest('hex')).toBe(input.sha256)
+      if (input.name.endsWith('.c')) {
+        for (const included of actual.toString('utf8').matchAll(/^#include "([^"/]+)"/gm))
+          expect(expected).toContain(included[1])
+      }
+    }
+    for (const dependency of sqliteFiles)
+      expect(source.inputs.find(input => input.name === dependency.name)).toEqual(dependency)
+    expect(crypto.createHash('sha256').update(JSON.stringify(source)).digest('hex')).toBe(prepared.manifestSha256)
+    if (platform === 'darwin') {
+      expect(source.compiler.arguments).not.toContain('-ldl')
+      expect(source.compiler.arguments).not.toContain('-D_GNU_SOURCE')
+    } else {
+      expect(source.compiler.arguments).toContain('-ldl')
+      expect(source.compiler.arguments).toContain('-D_GNU_SOURCE')
+    }
+  }
+)
+test.each([
+  ['win32', 'x64'],
+  ['linux', 'ia32'],
+  ['darwin', 'unknown'],
+  ['unknown', 'arm64']
+])(
+  'unsupported %s/%s preparation refuses before reading input or creating source assets',
+  async (platform, architecture) => {
+    await expect(
+      prepareNativeSource(path.join(directory, 'absent'), directory, { platform, architecture })
+    ).rejects.toThrow('controlled supported Unix worker')
+    expect(await fs.readdir(directory)).toEqual([])
+  }
+)

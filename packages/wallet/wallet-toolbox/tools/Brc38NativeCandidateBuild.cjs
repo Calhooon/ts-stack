@@ -37,63 +37,15 @@ class NativeCandidateBuildCleanupError extends Error {
   }
 }
 
-const sqlite = Object.freeze({
-  bytes: 9516284,
-  sha256: '6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebaefc',
-  version: '3.53.4',
-  sourceId: '2026-07-24 19:02:57 bf7c7f30031888f4e796e429ab3978879485813aaca6f641c7b33e4e09459bcc'
-})
-const sources = Object.freeze([
-  'native_contract.c',
-  'brc38_quota.c',
-  'brc38_runtime.c',
-  'profile_contract.c',
-  'native_driver.c',
-  'shared_quota_sources.h',
-  'shared_quota_contract.c',
-  'cell_change_contract.c',
-  'local_observer_contract.c',
-  'local_pointer_projection_contract.c',
-  'local_pointer_group_contract.c',
-  'local_observer_names_contract.c',
-  'blob_write.c',
-  'blob_read.c',
-  'recovery_copy.c',
-  'private_stage.c',
-  'private_stage_contract.c',
-  'native_fixture.c',
-  'range_contract.c',
-  'brc38_windows_handles.c',
-  'brc38_quota_windows.c',
-  'brc38_runtime_windows.c',
-  'runtime_contract.c'
-])
-const flags = Object.freeze([
-  '-O2',
-  '-pipe',
-  '-std=c11',
-  '-D_GNU_SOURCE',
-  '-DSQLITE_THREADSAFE=1',
-  '-DSQLITE_DEFAULT_MEMSTATUS=1',
-  '-DSQLITE_DQS=0',
-  '-Wall',
-  '-Wextra',
-  '-Werror',
-  '-I.',
-  'native_driver.c',
-  '-o',
-  'native-candidate',
-  '-lpthread',
-  '-ldl',
-  '-lm'
-])
-/** Candidate compilation only; these targets are not runtime qualifications. */
+const {
+  sqlite,
+  driverSources: sources,
+  unixCompilerArguments
+} = require('../src/storage/portable/native/source_recipe.cjs')
+const flags = unixCompilerArguments('linux', 'arm64')
+/** Candidate recipe selection only; actual process and worker owner remain required. */
 function targetFlags() {
-  if (!['arm64', 'x64'].includes(process.arch) || !['linux', 'darwin'].includes(process.platform))
-    throw new Error('Native candidate recipe requires a controlled supported Unix worker')
-  // Darwin's loader functions belong to libSystem, rather than a separate dl
-  // library. Native process guards remain responsible for actual OS limits.
-  return process.platform === 'darwin' ? flags.filter(flag => flag !== '-ldl' && flag !== '-D_GNU_SOURCE') : [...flags]
+  return unixCompilerArguments(process.platform, process.arch)
 }
 /** @param {Uint8Array} bytes */
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex')

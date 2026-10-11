@@ -8,49 +8,8 @@ const fs = require('node:fs/promises')
 const { constants } = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const ownFiles = Object.freeze([
-  'native_driver.c',
-  'shared_quota_sources.h',
-  'shared_quota_contract.c',
-  'cell_change_contract.c',
-  'blob_write.c',
-  'blob_read.c',
-  'private_stage.c',
-  'private_stage_contract.c',
-  'recovery_copy.c',
-  'native_contract.c',
-  'brc38_runtime.c',
-  'brc38_quota.c',
-  'profile_contract.c',
-  'range_contract.c',
-  'native_fixture.c',
-  'brc38_windows_handles.c',
-  'brc38_quota_windows.c',
-  'brc38_runtime_windows.c',
-  'runtime_contract.c',
-  'windows_bridge.c',
-  'windows_image.c',
-  'windows_build_supervisor.c'
-])
-// Original SQLite13 dependency source bytes. These hashes identify DATA inputs;
-// they grant no native/source/profile admission or qualification verdict.
-const sqliteFiles = Object.freeze([
-  Object.freeze({
-    name: 'sqlite3.c',
-    bytes: 9516284,
-    sha256: '6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebaefc'
-  }),
-  Object.freeze({
-    name: 'sqlite3.h',
-    bytes: 690838,
-    sha256: '919e7f2e8ed1d8f56ac17b412b8971c76aa5d1a879752cc6058f75e7d5910e1d'
-  }),
-  Object.freeze({
-    name: 'sqlite3ext.h',
-    bytes: 39175,
-    sha256: 'ac9645e5c9ff0cf176efdd6e75cb5e98f46295d38e02db5c4d208826a39ab4be'
-  })
-])
+const { driverSources, windowsAddonSources, sqliteFiles, unixCompilerArguments } = require('./source_recipe.cjs')
+const ownFiles = Object.freeze([...driverSources, ...windowsAddonSources])
 /** Failed disposal retains its actual descriptors/directory and an awaited
  * retry. It is never a successful build receipt or a claimed physical drain. */
 class NativeSourceCleanupError extends AggregateError {
@@ -142,8 +101,14 @@ async function copyInput(from, to, maximum, expected) {
 /** Prepares immutable bounded source files in an owned temporary directory.
  * Returned compiler arguments are a PLAN: no compiler/engine runs here.
  * @param {string} sqliteDirectory @param {string} parentDirectory
+ * @param {{platform:string,architecture:string}} [target]
  */
-async function prepareNativeSource(sqliteDirectory, parentDirectory) {
+async function prepareNativeSource(
+  sqliteDirectory,
+  parentDirectory,
+  target = { platform: process.platform, architecture: process.arch }
+) {
+  const argumentsPlan = unixCompilerArguments(target.platform, target.architecture)
   const directory = await fs.mkdtemp(path.join(parentDirectory, 'wallet-native-source-'))
   try {
     await fs.chmod(directory, 0o700)
@@ -157,31 +122,16 @@ async function prepareNativeSource(sqliteDirectory, parentDirectory) {
     const source = {
       protocol: 'brc38-native-build-source/v2',
       abi: 2,
-      platform: 'linux',
+      platform: target.platform,
+      architecture: target.architecture,
       inputs: Object.freeze(inputs),
       compiled: false,
       engineExecuted: false,
       qualified: false,
       compiler: Object.freeze({
         program: 'cc',
-        arguments: Object.freeze([
-          '-O2',
-          '-pipe',
-          '-std=c11',
-          '-D_GNU_SOURCE',
-          '-DSQLITE_THREADSAFE=1',
-          '-DSQLITE_DEFAULT_MEMSTATUS=1',
-          '-DSQLITE_DQS=0',
-          '-Wall',
-          '-Wextra',
-          '-Werror',
-          '-I',
-          directory,
-          path.join(directory, 'native_driver.c'),
-          '-lpthread',
-          '-ldl',
-          '-lm'
-        ])
+        cwd: directory,
+        arguments: argumentsPlan
       })
     }
     const manifest = JSON.stringify(source),

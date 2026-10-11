@@ -18,7 +18,7 @@ const stagingCleanup = () => require('../out/src/storage/portable/Brc38StagingCl
 // Exported hashes and candidate build receipts cannot mutate this table.
 const toolchains = Object.freeze({})
 let retainedWorker = false
-const addonSources = Object.freeze(['windows_bridge.c', 'windows_image.c', 'windows_build_supervisor.c'])
+const { windowsAddonSources: addonSources } = require('../src/storage/portable/native/source_recipe.cjs')
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 
 /** Pure bootstrap source DATA. A fresh isolated worker/controller must review
