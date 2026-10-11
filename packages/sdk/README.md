@@ -89,6 +89,12 @@ Request framing remains capped at 16 MiB, configured response body limits remain
 enforced, and handshake, certificate, signature, nonce and redirect checks are
 unchanged. No API, wire or wallet-data migration is required.
 
+The unpublished 3.2.1 patch candidate captures byte-array descriptor values once
+while validating and owning authenticated payloads. It avoids repeated copy
+validation and retaining a descriptor object for every byte of a large request.
+Dense-byte checks, payload capacities, signature bytes and response deadlines
+remain unchanged; no API, wire or wallet-data migration is required.
+
 For signature payloads of at least 64 KiB, `ProtoWallet` uses asynchronous
 platform SHA-256 when Web Crypto is available, avoiding long synchronous
 hashing on browser UI threads. Unsupported or failed native hashing falls back

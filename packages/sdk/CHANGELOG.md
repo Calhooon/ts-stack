@@ -214,6 +214,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+- Reduce authenticated large-payload preparation overhead with one-pass byte validation/copy and value-only array snapshots; preserve byte checks, wire formats, limits and deadlines. No migration is required.
+
 ### 3.1.0 candidate — prepared BRC-118 payments and recipient interoperability
 
 - Preserve native body serialization and inferred Content-Type on ordinary HTTP

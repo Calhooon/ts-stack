@@ -53,10 +53,24 @@ export function copyAuthByteArray(
   maxBytes: number,
   allowEmpty = false
 ): number[] {
-  assertAuthByteArray(value, name, maxBytes, allowEmpty)
-  const copy = Array.from({ length: value.length }, () => 0)
-  for (let index = 0; index < value.length; index++) {
-    copy[index] = Object.getOwnPropertyDescriptor(value, index)!.value
+  const invalid = () =>
+    new Error(`${name} must be a dense byte array of at most ${maxBytes} bytes.`)
+  if (!Array.isArray(value)) throw invalid()
+  const length = value.length
+  if ((!allowEmpty && length === 0) || length > maxBytes) throw invalid()
+  const copy = new Array<number>(length)
+  for (let index = 0; index < length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index)
+    if (
+      descriptor == null ||
+      !Object.hasOwn(descriptor, 'value') ||
+      !Number.isInteger(descriptor.value) ||
+      descriptor.value < 0 ||
+      descriptor.value > 255
+    ) {
+      throw invalid()
+    }
+    copy[index] = descriptor.value
   }
   return copy
 }
@@ -197,28 +211,31 @@ function visitAuthArray(
   if (!Number.isSafeInteger(length) || length < 0 || length > maxArrayBytes) {
     throw new Error('Authentication message array exceeds its limit.')
   }
-  const descriptors = Array.from({ length }, (_, index) =>
-    Object.getOwnPropertyDescriptor(candidate, index)
-  )
-  if (descriptors.some(descriptor => descriptor == null || !('value' in descriptor))) {
-    throw new Error('Authentication messages must not contain sparse arrays.')
+  // Capture each descriptor value once without retaining one descriptor object
+  // per byte. The captured values supply both validation and the owned snapshot.
+  const values = new Array<unknown>(length)
+  let denseBytes = true
+  for (let index = 0; index < length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(candidate, index)
+    if (descriptor == null || !('value' in descriptor)) {
+      throw new Error('Authentication messages must not contain sparse arrays.')
+    }
+    const value = descriptor.value
+    values[index] = value
+    if (!Number.isInteger(value) || value < 0 || value > 255) denseBytes = false
   }
-  const denseBytes = descriptors.every(
-    descriptor =>
-      Number.isInteger(descriptor!.value) && descriptor!.value >= 0 && descriptor!.value <= 255
-  )
   if (denseBytes) {
     // JSON uses at most three digits and a comma for each byte.
     let bytes = 0
     if (!separatePayload) bytes += length * 4 + 2
-    if (snapshot) retain(descriptors.map(descriptor => descriptor!.value))
+    if (snapshot) retain(values)
     return bytes
   }
   const copy = snapshot ? Array.from({ length }, () => undefined as unknown) : undefined
   retain(copy)
   for (let index = length - 1; index >= 0; index--) {
     pending.push({
-      value: descriptors[index]!.value,
+      value: values[index],
       depth: current.depth + 1,
       parent: copy,
       key: index
