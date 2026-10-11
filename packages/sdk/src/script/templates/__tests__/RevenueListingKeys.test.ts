@@ -1,11 +1,14 @@
 import PrivateKey from '../../../primitives/PrivateKey.js'
 import PublicKey from '../../../primitives/PublicKey.js'
+import { outputIdentity } from '../../../overlay-tools/OutputProtocol.js'
 import { revenueListingChildPublicKey } from '../RevenueListingKeys.js'
 
 const root = '037a9375ad6167ad54aa74c6348cc54d344cc5dc9487d847049d5eabb0fa03c8fb'
 const child = '023b4c5ca0fc8a54ad054abd589ed847f4763e0427f2cb67d29c0c4abe9aae64e1'
 
 test('reuses only the immutable public root/child calculation from the independent BRC-197 vector', () => {
+  // Separate the existing curve-point validation cache from child derivation.
+  outputIdentity(root)
   const parse = jest.spyOn(PublicKey, 'fromString')
   try {
     expect(revenueListingChildPublicKey(root)).toBe(child)
@@ -37,6 +40,7 @@ test('public calculation retention stays bounded and eviction preserves the deri
   const identities = Array.from({ length: 129 }, (_, index) =>
     new PrivateKey(1000 + index).toPublicKey().toString()
   )
+  for (const identity of identities) outputIdentity(identity)
   const parse = jest.spyOn(PublicKey, 'fromString')
   try {
     const first = revenueListingChildPublicKey(identities[0])
