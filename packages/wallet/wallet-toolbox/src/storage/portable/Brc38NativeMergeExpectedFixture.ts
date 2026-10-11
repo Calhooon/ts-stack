@@ -5,13 +5,23 @@ import {
 import { composedArchivePostimage, type ComposedSemanticFixture } from './Brc38ComposedSemanticFixture'
 import type { BRC38WalletData } from './index'
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (value === null || typeof value !== 'object') return value
-  return Object.fromEntries(
+/** Independent small-model JSON bytes. Emit sorted keys directly: rebuilding
+ * an object before JSON.stringify reorders integer names numerically. No
+ * production encoder or candidate output supplies this expected spelling. */
+export function nativeMergeExpectedJson(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(nativeMergeExpectedJson).join(',') + ']'
+  if (value === null || typeof value !== 'object') {
+    const scalar = JSON.stringify(value)
+    if (scalar === undefined) throw new Error('Independent native expected JSON requires serializable data')
+    return scalar
+  }
+  return (
+    '{' +
     Object.entries(value)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([name, child]) => [name, canonical(child)])
+      .map(([name, child]) => JSON.stringify(name) + ':' + nativeMergeExpectedJson(child))
+      .join(',') +
+    '}'
   )
 }
 function dateCell(original: unknown, supplied: unknown): unknown {
@@ -61,7 +71,7 @@ export function nativeMergeExpectedFixture(
       updated_at: dateCell(checkpoint.metadata.updated_at, sync.updated_at),
       when: sync.when === null ? null : dateCell(checkpoint.metadata.when ?? checkpoint.metadata.updated_at, sync.when)
     },
-    fields: { ...checkpoint.fields, syncMap: Buffer.from(JSON.stringify(canonical(sync.syncMap)), 'utf8') }
+    fields: { ...checkpoint.fields, syncMap: Buffer.from(nativeMergeExpectedJson(sync.syncMap), 'utf8') }
   }
   return expected
 }
@@ -115,7 +125,7 @@ export function nativeMergeNewBasketExpectedFixture(
   map.outputBasket.idMap['113'] = localId
   expected.sync_states[0] = {
     ...sync,
-    fields: { ...sync.fields, syncMap: Buffer.from(JSON.stringify(canonical(map)), 'utf8') }
+    fields: { ...sync.fields, syncMap: Buffer.from(nativeMergeExpectedJson(map), 'utf8') }
   }
   return expected
 }

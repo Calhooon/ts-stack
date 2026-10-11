@@ -1,5 +1,13 @@
 # #544 implementation map (unpublished candidate)
 
+The finite source inventory accounts for all 24 required behavior families,
+including #542 and #543, with integration, consumer entry points, qualification
+selectors and delivery/rollback documentation present. No missing production
+component or wiring is currently known. This is an implementation checkpoint;
+all eleven whole-program acceptance rows remain open. Complete system, platform,
+resource, compatibility, mutation, exact-head CI and review evidence is still
+required before readiness can be claimed.
+
 Linux native qualification selects immutable build metadata by the actual
 ARM64/x64 Node24.18.0 ABI137 target. The provisioner checks `--check-host` against
 the real kernel architecture before allocating or downloading compiler inputs.
@@ -2639,5 +2647,18 @@ and an independent empty query against every physical family. Other boundaries
 still require one candidate user. Every source-user check and the final complete
 all-47 inventory, original data, mutation, repeated-result, policy-resume and
 reopen assertions remain. This corrects a phase-inappropriate probe, not a
-production refold change. The corrected selection and committed-ACK-loss case
-still require actual qualification; the failed probe receipt is retained.
+production refold change. The corrected foreground-refold selection now passes
+on Linux ARM in 1,166.027 seconds, retaining all final oracles. The original
+committed-ACK-loss/reopen case fails its first complete initial comparison;
+a bounded diagnostic identifies only the syncMap bytes, with matching lengths,
+all row metadata and the other 46 table families. Both failures are retained.
+
+The independent expected JSON helper sorted ordinary objects before calling
+JSON.stringify, which re-enumerates integer property names numerically. The
+canonical contract requires raw UTF-16 key order, including incoming basket keys
+13 and 113. The helper now emits sorted names directly, using literal independent
+regression vectors and no production encoder. All expected values, full bytes,
+all 47 families, source operations and expiry checks remain. Actual semantic
+equality of the failed maps is not inferred from their lengths; the corrected
+complete ACK-loss/refold case still requires fresh execution. No production
+runtime, wire, schema, resource ceiling or consumer migration changes.

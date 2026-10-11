@@ -3,8 +3,12 @@
 This guide describes the unpublished Toolbox 2.15.0 source candidate. It is not
 a release or qualification receipt. PR569 remains open and unmerged. The
 [implementation map](./implementation-544.md) names the source components and
-authored coverage. Complete that graph and its qualification selectors before
-executing the qualification sequence below.
+authored coverage. The finite source inventory currently has no known missing
+production components or integration wiring. The qualification sequence below
+must still demonstrate the complete system; this source checkpoint is not
+merge or production readiness. The native recovery expected-JSON helper has a
+canonical numeric-key ordering correction pending fresh full-contract validation;
+all original data and full byte comparisons remain.
 
 ## Artifact and compatibility boundary
 
