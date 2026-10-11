@@ -25,6 +25,11 @@ expiry monitoring, synchronized lifecycle state, and pre-signed reclaim
 submission.
 IndexedDB `listOutputs` results keep `totalOutputs` equal to the full matching
 count across short final and out-of-range pages.
+BRC-177 anchors cover both the delivery and an economic reclaim. When the
+reclaim floor is larger, the protected action pays the bounded surplus as
+miner fee while retaining no wallet change. Upgrade the active storage
+implementation to receive this funding fix; no wire or database migration is required.
+
 Prepared BEEF persistence remains a server-side Knex capability. Browser
 IndexedDB uses the canonical path, and compatible remote servers can enable
 the optimization without a browser configuration or wire change.

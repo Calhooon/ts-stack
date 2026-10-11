@@ -1,7 +1,4 @@
-import {
-  type ValidInternalizeActionArgs,
-  validateInternalizeActionArgs
-} from '@bsv/sdk/wallet/validationHelpers'
+import { type ValidInternalizeActionArgs, validateInternalizeActionArgs } from '@bsv/sdk/wallet/validationHelpers'
 import {
   Transaction as BsvTransaction,
   WalletPayment,
@@ -26,12 +23,7 @@ import { TableOutputBasket } from '../schema/tables/TableOutputBasket'
 import { TableTransaction } from '../schema/tables/TableTransaction'
 import { WERR_INTERNAL, WERR_INVALID_PARAMETER } from '../../sdk/WERR_errors'
 import { canonicalizeAtomicBeef } from '../../utility/canonicalizeAtomicBeef'
-import {
-  randomBytesBase64,
-  verifyId,
-  verifyOne,
-  verifyOneOrNone
-} from '../../utility/utilityHelpers'
+import { randomBytesBase64, verifyId, verifyOne, verifyOneOrNone } from '../../utility/utilityHelpers'
 import { TransactionStatus } from '../../sdk/types'
 import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
 import {
@@ -64,10 +56,7 @@ export interface SpentInputTransition {
 
 /** Keep each ownership write ordered, including iterator closing on failure.
  * Parallel writes could change conflict handling and rollback transitions. */
-async function internalizeInSeries<T>(
-  values: readonly T[],
-  visit: (value: T) => Promise<void>
-): Promise<void> {
+async function internalizeInSeries<T>(values: readonly T[], visit: (value: T) => Promise<void>): Promise<void> {
   const iterator: Iterator<T> = values[Symbol.iterator]()
   async function next(): Promise<void> {
     const item = iterator.next()
@@ -173,9 +162,7 @@ export async function restoreInputsToSpendable(
   if (transitions.length === 0) return
   await storage.transaction(async trx => {
     await internalizeInSeries(transitions, async t => {
-      const update: Partial<TableOutput> = t.setSpentBy
-        ? { spendable: true, spentBy: undefined }
-        : { spendable: true }
+      const update: Partial<TableOutput> = t.setSpentBy ? { spendable: true, spentBy: undefined } : { spendable: true }
       await storage.updateOutput(verifyId(t.outputId), update, trx)
     })
   }, trx)
@@ -233,10 +220,7 @@ export async function internalizeActionCore(
   if (profile === BRC197_INTERNALIZATION_PROFILE && recovery !== undefined)
     throw new WERR_INVALID_PARAMETER('recovery', 'the installed fixed-profile storage pipeline')
   if (recovery !== undefined)
-    requireFunding(
-      recovery.protocol === 'wallet-funding-recovery-v1',
-      'Unsupported funding recovery protocol'
-    )
+    requireFunding(recovery.protocol === 'wallet-funding-recovery-v1', 'Unsupported funding recovery protocol')
   const ctx = new InternalizeActionContext(storage, auth, args, profile)
   if (recovery !== undefined) {
     // Verification/header I/O occurs before the short ownership transaction.
@@ -371,17 +355,11 @@ class InternalizeActionContext {
       this.profile === BRC197_INTERNALIZATION_PROFILE &&
       txo.lockingScript.toHex() !== brc197ExpectedLockingScript(this.auth.identityKey)
     ) {
-      throw new WERR_INVALID_PARAMETER(
-        'paymentRemittance',
-        'the authenticated BRC-197 fixed-child P2PKH'
-      )
+      throw new WERR_INVALID_PARAMETER('paymentRemittance', 'the authenticated BRC-197 fixed-child P2PKH')
     }
     if (output.protocol === 'basket insertion') {
       if (output.insertionRemittance == null || output.paymentRemittance != null) {
-        throw new WERR_INVALID_PARAMETER(
-          'basket insertion',
-          'valid insertionRemittance and no paymentRemittance'
-        )
+        throw new WERR_INVALID_PARAMETER('basket insertion', 'valid insertionRemittance and no paymentRemittance')
       }
       requireInsertionBasket(output.insertionRemittance.basket)
       this.basketInsertions.push({
@@ -395,10 +373,7 @@ class InternalizeActionContext {
       throw new WERR_INTERNAL(`unexpected protocol ${output.protocol}`)
     }
     if (output.insertionRemittance != null || output.paymentRemittance == null) {
-      throw new WERR_INVALID_PARAMETER(
-        'wallet payment',
-        'valid paymentRemittance and no insertionRemittance'
-      )
+      throw new WERR_INVALID_PARAMETER('wallet payment', 'valid paymentRemittance and no insertionRemittance')
     }
     this.walletPayments.push({
       ...output.paymentRemittance,
@@ -541,9 +516,7 @@ class InternalizeActionContext {
     const merkleRoot = bump.computeRoot(this.txid)
     const index = bump.path[0].find(entry => entry.hash === this.txid)?.offset
     requireFunding(
-      header !== undefined &&
-        deserializeBaseBlockHeader(header).merkleRoot === merkleRoot &&
-        index !== undefined,
+      header !== undefined && deserializeBaseBlockHeader(header).merkleRoot === merkleRoot && index !== undefined,
       'Funding recovery header does not match inclusion proof'
     )
     const now = new Date()
@@ -570,10 +543,7 @@ class InternalizeActionContext {
     await this.setupStorage(trx)
     const existing = this.etx
     const total = (existing?.satoshis ?? 0) + this.satoshis
-    requireFunding(
-      Number.isSafeInteger(total),
-      'Funding recovery transaction balance is not a safe integer'
-    )
+    requireFunding(Number.isSafeInteger(total), 'Funding recovery transaction balance is not a safe integer')
     let proven: TableProvenTx | undefined
     if (this.recoveryProven !== undefined)
       proven = (await this.storage.findOrInsertProvenTx(this.recoveryProven, trx)).proven
@@ -603,11 +573,7 @@ class InternalizeActionContext {
     transactionId: number,
     trx: TrxToken
   ): Promise<void> {
-    const request = EntityProvenTxReq.fromTxid(
-      this.txid,
-      this.tx.toBinary(),
-      this.ab.toBinaryAtomic(this.txid)
-    )
+    const request = EntityProvenTxReq.fromTxid(this.txid, this.tx.toBinary(), this.ab.toBinaryAtomic(this.txid))
     request.status = 'unsent'
     request.addHistoryNote({ what: 'fundingRecovery-queued', userId: this.userId })
     request.addNotifyTransactionId(transactionId)
@@ -655,8 +621,7 @@ class InternalizeActionContext {
     if (!txValid || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER('tx', 'valid AtomicBEEF')
     const txid = ab.atomicTxid
     const btx = ab.findTxid(txid)
-    if (btx == null)
-      throw new WERR_INVALID_PARAMETER('tx', `valid AtomicBEEF with newest txid of ${txid}`)
+    if (btx == null) throw new WERR_INVALID_PARAMETER('tx', `valid AtomicBEEF with newest txid of ${txid}`)
     const tx = btx.tx!
 
     return { ab, tx, txid }
@@ -696,10 +661,7 @@ class InternalizeActionContext {
       if (!this.isMerge)
       // For now, only allow transaction record to pre-exist if it was there at the start.
       {
-        throw new WERR_INVALID_PARAMETER(
-          'tx',
-          'target transaction of internalizeAction is undergoing active changes.'
-        )
+        throw new WERR_INVALID_PARAMETER('tx', 'target transaction of internalizeAction is undergoing active changes.')
       }
       const update: Partial<TableTransaction> = { satoshis: tr.tx.satoshis + satoshis }
       if (provenTx != null) {
@@ -711,11 +673,7 @@ class InternalizeActionContext {
     return tr.tx
   }
 
-  private async findOrInsertProvenTxFromBump(
-    bump: MerklePath,
-    btx: BeefTx,
-    trx?: TrxToken
-  ): Promise<TableProvenTx> {
+  private async findOrInsertProvenTxFromBump(bump: MerklePath, btx: BeefTx, trx?: TrxToken): Promise<TableProvenTx> {
     const now = new Date()
     const merkleRoot = bump.computeRoot(this.txid)
     const indexEntry = bump.path[0].find(p => p.hash === this.txid)
@@ -769,11 +727,7 @@ class InternalizeActionContext {
     })
   }
 
-  private async retireNoSendWithProof(
-    transactionId: number,
-    bump: MerklePath,
-    trx?: TrxToken
-  ): Promise<void> {
+  private async retireNoSendWithProof(transactionId: number, bump: MerklePath, trx?: TrxToken): Promise<void> {
     const beefTx = this.ab.findTxid(this.txid)
     if (beefTx == null) {
       throw new WERR_INTERNAL(`Could not find transaction ${this.txid} in AtomicBEEF`)
@@ -865,11 +819,10 @@ class InternalizeActionContext {
   async newInternalize() {
     // Check if the transaction has a merkle path proof (BUMP)
     const btx = this.ab.findTxid(this.txid)
-    if (btx == null)
-      throw new WERR_INTERNAL(`Could not find transaction ${this.txid} in AtomicBEEF`)
+    if (btx == null) throw new WERR_INTERNAL(`Could not find transaction ${this.txid} in AtomicBEEF`)
     const bump = this.ab.findBump(this.txid)
 
-    let pr: StorageProvenOrReq = { isNew: false, proven: undefined, req: undefined }
+    let pr: StorageProvenOrReq = { proven: undefined, req: undefined }
 
     await this.storage.transaction(async trx => {
       if (bump != null) {
@@ -894,11 +847,7 @@ class InternalizeActionContext {
         //
         // Attempt to create a provenTxReq record for the txid to obtain a proof,
         // while allowing for possible race conditions...
-        const newReq = EntityProvenTxReq.fromTxid(
-          this.txid,
-          this.tx.toBinary(),
-          toArray(this.args.tx)
-        )
+        const newReq = EntityProvenTxReq.fromTxid(this.txid, this.tx.toBinary(), toArray(this.args.tx))
         newReq.status = 'unsent'
         // this history and notify will be merged into an existing req if it exists.
         newReq.addHistoryNote({ what: 'internalizeAction', userId: this.userId })
@@ -909,9 +858,8 @@ class InternalizeActionContext {
 
     const transactionId = this.etx!.transactionId
 
-    if (pr.isNew) {
-      // This storage didn't know about this txid and the beef didn't include a mining proof.
-      // Assume the transaction has never been broadcast.
+    if (pr.proven == null) {
+      // The transaction is new to this user and the beef did not include a mining proof.
       // Attempt to broadcast it to the network, throwing an error if it fails.
 
       // Skip looking up txids and building an aggregate beef,
@@ -956,22 +904,12 @@ class InternalizeActionContext {
   async addLabels(transactionId: number, trx?: TrxToken) {
     await internalizeInSeries(this.vargs.labels, async label => {
       const txLabel = await this.storage.findOrInsertTxLabel(this.userId, label, trx)
-      await this.storage.findOrInsertTxLabelMap(
-        verifyId(transactionId),
-        verifyId(txLabel.txLabelId),
-        trx
-      )
+      await this.storage.findOrInsertTxLabelMap(verifyId(transactionId), verifyId(txLabel.txLabelId), trx)
     })
   }
 
   async markInputsSpent(transactionId: number, trx?: TrxToken): Promise<void> {
-    const transitioned = await markUserInputsSpent(
-      this.storage,
-      this.userId,
-      this.tx,
-      transactionId,
-      trx
-    )
+    const transitioned = await markUserInputsSpent(this.storage, this.userId, this.tx, transactionId, trx)
     this.spentInputs.push(...transitioned)
   }
 
@@ -986,11 +924,7 @@ class InternalizeActionContext {
     })
   }
 
-  async storeNewWalletPaymentForOutput(
-    transactionId: number,
-    payment: WalletPaymentX,
-    trx?: TrxToken
-  ): Promise<void> {
+  async storeNewWalletPaymentForOutput(transactionId: number, payment: WalletPaymentX, trx?: TrxToken): Promise<void> {
     const now = new Date()
     const txOut: TableOutput = {
       created_at: now,
@@ -1021,11 +955,7 @@ class InternalizeActionContext {
     payment.eo = txOut
   }
 
-  async mergeWalletPaymentForOutput(
-    transactionId: number,
-    payment: WalletPaymentX,
-    trx?: TrxToken
-  ) {
+  async mergeWalletPaymentForOutput(transactionId: number, payment: WalletPaymentX, trx?: TrxToken) {
     const outputId = payment.eo!.outputId
     const update: Partial<TableOutput> = {
       basketId: this.changeBasket.basketId,
@@ -1042,11 +972,7 @@ class InternalizeActionContext {
     payment.eo = { ...payment.eo!, ...update }
   }
 
-  async mergeBasketInsertionForOutput(
-    transactionId: number,
-    basket: BasketInsertionX,
-    trx?: TrxToken
-  ) {
+  async mergeBasketInsertionForOutput(transactionId: number, basket: BasketInsertionX, trx?: TrxToken) {
     const outputId = basket.eo!.outputId
     const update: Partial<TableOutput> = {
       basketId: (await this.getBasket(basket.basket, trx)).basketId,

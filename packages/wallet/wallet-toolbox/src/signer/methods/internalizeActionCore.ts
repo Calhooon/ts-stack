@@ -101,7 +101,7 @@ export async function internalizeActionCore(
     commit ?? (selected ? commitSelected : async value => await wallet.storage.internalizeAction(value))
   )({
     ...args,
-    tx: ab.toBinaryAtomic(txid)
+    tx: ab.toUint8ArrayAtomic(txid)
   })
 
   return r

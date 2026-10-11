@@ -8221,3 +8221,9 @@ authorization or validation result. Existing serializer property parity and
 protected-envelope boundary/refusal/custody regressions remain applicable.
 Hosted complete property, coverage and mutation receipts are required before
 claiming either a measured performance improvement or Checkpoint 2 completion.
+
+## Measured native property qualification allowance
+
+Complete native alias coordinator and disclosure properties require all 300 generated histories, seed3242026, empty replay and every original assertion and cleanup. Exact096e coverage interrupts at246/300 and195/300 respectively under the former150-second property/180-second case allowance, with no reported counterexample. The earlier four-import source selection did not resolve that qualification gap. These failure receipts remain historical and unwaived; variable completed counts are not evidence of a speedup or a linear worst-case estimate.
+
+The reviewed harness allowance for only those two properties is300 seconds with a360-second surrounding Jest case; interruption remains a failure. Their diagnostic selectors record those actual values and have a390-second outer guard. Native HTTP retains its original600-second diagnostic and four120-second cases. Minimum runs, generated history domains, assertions, seeds, replay, worker limits, complete shard coverage and thresholds are unchanged, as are production deadlines, API/protocol/custody contracts, all151 mutation targets/398 rows, and the separately approved initial-suite and whole-job allowances. This allowance does not qualify a component or checkpoint. Complete successful exact-head coverage, every other applicable gate and independently reconciled full raw mutation evidence remain required.

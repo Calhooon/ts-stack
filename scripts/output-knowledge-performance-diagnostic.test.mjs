@@ -411,7 +411,7 @@ test('fixed property and native HTTP diagnostics retain their original complete 
   assert.equal(property.kind, 'property')
   assert.equal(property.minimumPropertyRuns, 300)
   assert.equal(property.seed, 3242026)
-  assert.equal(property.interruptAsFailureMilliseconds, 150000)
+  assert.equal(property.interruptAsFailureMilliseconds, 300000)
   assert.equal(native.kind, 'native-http')
   assert.equal(native.minimumPropertyRuns, null)
   assert.equal(native.seed, null)
@@ -419,8 +419,8 @@ test('fixed property and native HTTP diagnostics retain their original complete 
   assert.equal(property.selector, 'test/private-purchase-alias-disclosure.property.test.ts')
   assert.equal(property.packageDirectory, 'packages/application/output-knowledge')
   assert.equal(property.profile, 'property.cpuprofile')
-  assert.equal(property.deadlineSeconds, 210)
-  assert.equal(property.testCaseMilliseconds, 180000)
+  assert.equal(property.deadlineSeconds, 390)
+  assert.equal(property.testCaseMilliseconds, 360000)
   assert.equal(property.requiresMongo, false)
   assert.equal(
     native.selector,
@@ -462,9 +462,9 @@ test('the additive coordinator diagnostic binds the other original property with
   )
   assert.match(source, /MIN_PROPERTY_RUNS = 300/)
   assert.match(source, /seed : 3242026/)
-  assert.match(source, /interruptAfterTimeLimit: 150000/)
+  assert.match(source, /interruptAfterTimeLimit: 300000/)
   assert.match(source, /markInterruptAsFailure: true/)
-  assert.match(source, /}, 180000\)/)
+  assert.match(source, /}, 360000\)/)
 })
 
 test('hosted timing is explicitly opt-in and preserves the ordinary artifact and coverage gates', () => {

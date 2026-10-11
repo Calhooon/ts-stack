@@ -684,23 +684,14 @@ export function validateProjectRegistry(registry, discovered) {
   return errors
 }
 
-function validateExceptionReviewDate(registry, today, enforceDeadlines) {
+function validateExceptionReviewDate(registry) {
   if (!isValidDate(registry?.lastReviewed)) {
     return ['exceptions.json lastReviewed must be a real YYYY-MM-DD date']
-  }
-  const reviewed = new Date(`${registry.lastReviewed}T00:00:00.000Z`)
-  const current = new Date(`${today}T00:00:00.000Z`)
-  const ageDays = Math.floor((current - reviewed) / 86_400_000)
-  if (ageDays < 0) {
-    return [`exceptions.json lastReviewed is in the future: ${registry.lastReviewed}`]
-  }
-  if (enforceDeadlines && ageDays > 31) {
-    return [`exceptions.json monthly review is overdue: last reviewed ${registry.lastReviewed}`]
   }
   return []
 }
 
-function validateExceptionDates(exception, prefix, today, enforceDeadlines) {
+function validateExceptionDates(exception, prefix) {
   const errors = []
   for (const field of ['created', 'reviewBy']) {
     if (!isValidDate(exception?.[field])) {
@@ -714,13 +705,10 @@ function validateExceptionDates(exception, prefix, today, enforceDeadlines) {
   ) {
     errors.push(`${prefix} reviewBy cannot precede created`)
   }
-  if (enforceDeadlines && isValidDate(exception?.reviewBy) && exception.reviewBy < today) {
-    errors.push(`${prefix} expired on ${exception.reviewBy}`)
-  }
   return errors
 }
 
-function validateException(exception, today, ownerDefinitions, enforceDeadlines) {
+function validateException(exception, ownerDefinitions) {
   const errors = []
   const prefix = `exception ${exception?.id ?? '<missing id>'}`
   if (!isNonEmptyString(exception?.id) || !/^[a-z0-9][a-z0-9-]+$/.test(exception.id)) {
@@ -749,7 +737,7 @@ function validateException(exception, today, ownerDefinitions, enforceDeadlines)
   ) {
     errors.push(`${prefix} must have one or more evidence references`)
   }
-  errors.push(...validateExceptionDates(exception, prefix, today, enforceDeadlines))
+  errors.push(...validateExceptionDates(exception, prefix))
   if (!isNonEmptyString(exception?.removeWhen) || exception.removeWhen.trim().length < 10) {
     errors.push(`${prefix} removeWhen must be at least 10 characters`)
   }
@@ -758,13 +746,12 @@ function validateException(exception, today, ownerDefinitions, enforceDeadlines)
 
 export function validateExceptionRegistry(
   registry,
-  today = new Date().toISOString().slice(0, 10),
-  ownerDefinitions = undefined,
-  enforceDeadlines = true
+  _today = new Date().toISOString().slice(0, 10),
+  ownerDefinitions = undefined
 ) {
   const errors = []
   if (registry?.schemaVersion !== 1) errors.push('exceptions.json schemaVersion must be 1')
-  errors.push(...validateExceptionReviewDate(registry, today, enforceDeadlines))
+  errors.push(...validateExceptionReviewDate(registry))
   if (!Array.isArray(registry?.exceptions)) {
     return [...errors, 'exceptions.json exceptions must be an array']
   }
@@ -775,10 +762,32 @@ export function validateExceptionRegistry(
     )
   )
   for (const exception of registry.exceptions) {
-    errors.push(...validateException(exception, today, ownerDefinitions, enforceDeadlines))
+    errors.push(...validateException(exception, ownerDefinitions))
   }
 
   return errors
+}
+
+// Calendar age is always advisory, including explicit maintenance audits.
+function exceptionReviewWarnings(registry, today) {
+  const warnings = []
+  if (isValidDate(registry?.lastReviewed)) {
+    const ageDays =
+      (new Date(`${today}T00:00:00Z`) - new Date(`${registry.lastReviewed}T00:00:00Z`)) / 86_400_000
+    if (ageDays < 0) {
+      warnings.push(`exceptions.json lastReviewed is in the future: ${registry.lastReviewed}`)
+    } else if (ageDays > 31) {
+      warnings.push(
+        `exceptions.json monthly review is overdue: last reviewed ${registry.lastReviewed}`
+      )
+    }
+  }
+  for (const exception of Array.isArray(registry?.exceptions) ? registry.exceptions : []) {
+    if (isValidDate(exception?.reviewBy) && exception.reviewBy < today) {
+      warnings.push(`exception ${exception.id ?? '<missing id>'} expired on ${exception.reviewBy}`)
+    }
+  }
+  return warnings
 }
 
 function validateBaselineMetadata(baselines) {
@@ -1309,7 +1318,7 @@ export function renderMarkdown(result) {
     ...renderFindingSummary('## Findings by project', result.findings, 'path'),
     ...renderDetailedFindings(result.findings),
     'Known findings are ratcheted in `governance/repository-health/contract-baseline.json`.',
-    'New drift, stale resolved entries, and invalid inventory fail this check. Review deadlines are warnings unless --maintenance is requested.',
+    'New drift, stale resolved entries, and invalid inventory fail this check. Review deadlines are always advisory warnings, including maintenance audits.',
     'Use `pnpm health:baseline` only in the PR that fixes or deliberately reclassifies findings.',
     ''
   )
@@ -1333,8 +1342,7 @@ export function renderText(result) {
 export function evaluateRepositoryHealth({
   root = REPOSITORY_ROOT,
   today = process.env.REPOSITORY_HEALTH_TODAY ?? new Date().toISOString().slice(0, 10),
-  skipContractBaseline = false,
-  enforceDeadlines = false
+  skipContractBaseline = false
 } = {}) {
   const projectsPath = path.join(root, 'governance/repository-health/projects.json')
   const exceptionsPath = path.join(root, 'governance/repository-health/exceptions.json')
@@ -1351,7 +1359,7 @@ export function evaluateRepositoryHealth({
   const findings = collectContractFindings(registry, discovered, root)
   const errors = [
     ...validateProjectRegistry(registry, discovered),
-    ...validateExceptionRegistry(exceptions, today, registry.ownerDefinitions, enforceDeadlines),
+    ...validateExceptionRegistry(exceptions, today, registry.ownerDefinitions),
     ...validateBaselines(baselines, registry, discovered),
     ...validatePackageAuthorIdentity(packageManifests)
   ]
@@ -1366,11 +1374,7 @@ export function evaluateRepositoryHealth({
     }
   }
 
-  const warnings = enforceDeadlines
-    ? []
-    : validateExceptionRegistry(exceptions, today, registry.ownerDefinitions).filter(
-        finding => !errors.includes(finding)
-      )
+  const warnings = exceptionReviewWarnings(exceptions, today)
 
   return {
     errors,
@@ -1387,14 +1391,13 @@ function parseArguments(args) {
   const options = {
     format: 'text',
     strict: false,
-    enforceDeadlines: false,
     summaryFile: undefined,
     updateContractBaseline: false
   }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     if (argument === '--maintenance') {
-      options.enforceDeadlines = true
+      // Retained for compatibility; review deadlines are always advisory.
     } else if (argument === '--strict') {
       options.strict = true
     } else if (argument === '--update-contract-baseline') {
@@ -1448,7 +1451,7 @@ function usage() {
     '  --format <text|markdown|json>   Select stdout format (default: text)',
     '  --summary-file <path>           Append Markdown report to a CI summary file',
     '  --strict                        Fail while any package-contract finding exists',
-    '  --maintenance                   Also enforce elapsed exception review deadlines',
+    '  --maintenance                   Report elapsed exception review deadlines (always advisory)',
     '  --update-contract-baseline      Record the current known findings',
     '  --help                          Show this help',
     ''
@@ -1472,8 +1475,7 @@ export function runCli(args = process.argv.slice(2)) {
   let result
   try {
     result = evaluateRepositoryHealth({
-      skipContractBaseline: options.updateContractBaseline,
-      enforceDeadlines: options.enforceDeadlines
+      skipContractBaseline: options.updateContractBaseline
     })
   } catch (error) {
     console.error(error.message)

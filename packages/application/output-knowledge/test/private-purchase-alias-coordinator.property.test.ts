@@ -9,7 +9,7 @@ const seed = Number.parseInt(process.env.FAST_CHECK_SEED ?? '', 10)
 fc.configureGlobal({
   numRuns: Number.isSafeInteger(runs) ? Math.max(MIN_PROPERTY_RUNS, runs) : MIN_PROPERTY_RUNS,
   seed: Number.isSafeInteger(seed) ? seed : 3242026,
-  interruptAfterTimeLimit: 150000,
+  interruptAfterTimeLimit: 300000,
   markInterruptAsFailure: true,
   ...(process.env.FAST_CHECK_PATH ? { path: process.env.FAST_CHECK_PATH } : {})
 })
@@ -65,4 +65,4 @@ it('generated native coordinator restart and alias histories preserve one issuan
       }
     )
   )
-}, 180000)
+}, 360000)

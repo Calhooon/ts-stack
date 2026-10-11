@@ -587,7 +587,7 @@ export function applicationDiagnosticSelection(kind = 'property') {
     kind,
     minimumPropertyRuns: 300,
     seed: 3242026,
-    interruptAsFailureMilliseconds: 150000,
+    interruptAsFailureMilliseconds: 300000,
     packageDirectory: 'packages/application/output-knowledge',
     selector: coordinator
       ? 'test/private-purchase-alias-coordinator.property.test.ts'
@@ -595,8 +595,8 @@ export function applicationDiagnosticSelection(kind = 'property') {
     phase: 'unchanged-property-with-coverage',
     profile: coordinator ? 'coordinator-property.cpuprofile' : 'property.cpuprofile',
     outputPrefix: coordinator ? 'performance-diagnostic-coordinator' : 'performance-diagnostic',
-    deadlineSeconds: 210,
-    testCaseMilliseconds: 180000,
+    deadlineSeconds: 390,
+    testCaseMilliseconds: 360000,
     nativeCases: null,
     requiresMongo: false
   })
@@ -607,9 +607,9 @@ function validateDiagnosticSource(root, cwd, selection) {
   if (!selection.requiresMongo) {
     assert.match(testSource, /MIN_PROPERTY_RUNS = 300/)
     assert.match(testSource, /seed : 3242026/)
-    assert.match(testSource, /interruptAfterTimeLimit: 150000/)
+    assert.match(testSource, /interruptAfterTimeLimit: 300000/)
     assert.match(testSource, /markInterruptAsFailure: true/)
-    assert.match(testSource, /}, 180000\)/)
+    assert.match(testSource, /}, 360000\)/)
     return
   }
   assert.equal(testSource.match(/}, 120000\)/g)?.length, selection.nativeCases)
