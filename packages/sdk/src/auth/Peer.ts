@@ -135,8 +135,7 @@ export class Peer {
    * @param {SessionManager | AsyncSessionManager} [sessionManager] - Optional session store. Pass an {@link AsyncSessionManager} with atomic `claimMessageNonce` and `claimInitialRequestNonce` for shared/durable storage in load-balanced deployments; otherwise the bounded default in-process {@link SessionManager} is used.
    * @param {boolean} [autoPersistLastSession] - Whether to auto-persist the session with the last-interacted-with peer. Defaults to true.
    * @param {OriginatorDomainNameStringUnder250Bytes} [originator] - Optional originator domain name.
-   * @param {AuthMessageValidationOptions} [messageValidation] - Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
-   * @param {number} [authenticationTimeoutMs] - Deadline for initial-response and certificate-validation waits. Defaults to 30 seconds; HTTP clients can allow longer local wallet approval while independently bounding network activity.
+   * @param {object} [messageValidation] - Local options; set maxGeneralPayloadBytes to null to delegate capacity to the transport. authenticationTimeoutMs bounds initial-response and certificate-validation waits, defaulting to 30 seconds. HTTP clients can allow longer local wallet approval while independently bounding network activity. Omission preserves existing limits and deadlines.
    */
   constructor(
     wallet: WalletInterface,
@@ -145,9 +144,9 @@ export class Peer {
     sessionManager?: SessionManager | AsyncSessionManager,
     autoPersistLastSession?: boolean,
     originator?: OriginatorDomainNameStringUnder250Bytes,
-    messageValidation: AuthMessageValidationOptions = {},
-    authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS
+    messageValidation: AuthMessageValidationOptions & { authenticationTimeoutMs?: number } = {}
   ) {
+    const { authenticationTimeoutMs = INITIAL_RESPONSE_TIMEOUT_MS } = messageValidation
     if (
       !Number.isSafeInteger(authenticationTimeoutMs) ||
       authenticationTimeoutMs < 1 ||

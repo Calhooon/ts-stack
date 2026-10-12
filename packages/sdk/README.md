@@ -353,8 +353,8 @@ than that the script is invalid.
   complete transport send, including local response handling; AuthFetch defaults
   this to 10 minutes. Direct transport users retain `requestTimeoutMs` as that
   default. Direct Peer users retain 30-second authentication waits; AuthFetch
-  configures its peers with 10 minutes via the optional `authenticationTimeoutMs`
-  constructor argument. The parser also bounds header count
+  configures its peers with 10 minutes via `authenticationTimeoutMs` in the existing
+  seventh constructor options argument. The parser also bounds header count
   and bytes and rejects truncated, overlong, or trailing wire data.
 
   For BRC-105 payments, a recipient may include the optional

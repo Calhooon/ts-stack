@@ -387,9 +387,9 @@ export class AuthFetch {
             Number.MAX_SAFE_INTEGER,
             this.maxResponseBytes + MAX_AUTH_RESPONSE_FRAME_OVERHEAD_BYTES
           )
-        )
-      },
-      AUTH_RESPONSE_TIMEOUT_MS
+        ),
+        authenticationTimeoutMs: AUTH_RESPONSE_TIMEOUT_MS
+      }
     )
     await newPeer.ready
     const peerState: AuthPeer = {

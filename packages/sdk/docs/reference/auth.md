@@ -1023,7 +1023,9 @@ export class Peer {
     readonly #originator?: OriginatorDomainNameStringUnder250Bytes;
     #identityPublicKey?: string;
     readonly ready: Promise<void>;
-    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {}, authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS)
+    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions & {
+        authenticationTimeoutMs?: number;
+    } = {})
     async toPeer(message: number[], identityKey?: string, options: {
         signal?: AbortSignal;
         onSend?: () => void;
@@ -1062,7 +1064,9 @@ See also: [AsyncSessionManager](./auth.md#interface-asyncsessionmanager), [AuthM
 Creates a new Peer instance
 
 ```ts
-constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {}, authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS)
+constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions & {
+    authenticationTimeoutMs?: number;
+} = {})
 ```
 See also: [AsyncSessionManager](#interface-asyncsessionmanager), [AuthMessageValidationOptions](#interface-authmessagevalidationoptions), [RequestedCertificateSet](#interface-requestedcertificateset), [SessionManager](#class-sessionmanager), [Transport](#interface-transport)
 
@@ -1079,9 +1083,7 @@ Argument Details
 + **originator**
   + Optional originator domain name.
 + **messageValidation**
-  + Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
-+ **authenticationTimeoutMs**
-  + Deadline for initial-response and certificate-validation waits. Defaults to 30 seconds; HTTP clients can allow longer local wallet approval while independently bounding network activity.
+  + Local options; set maxGeneralPayloadBytes to null to delegate capacity to the transport. authenticationTimeoutMs bounds initial-response and certificate-validation waits, defaulting to 30 seconds. HTTP clients can allow longer local wallet approval while independently bounding network activity. Omission preserves existing limits and deadlines.
 
 #### Property ready
 

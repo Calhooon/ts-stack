@@ -103,8 +103,7 @@ describe('AuthFetch authenticated peer lifecycle', () => {
         expect.anything(),
         undefined,
         'app.example',
-        { maxGeneralPayloadBytes: payloadBudget },
-        600000
+        { maxGeneralPayloadBytes: payloadBudget, authenticationTimeoutMs: 600000 }
       )
     }
   )
@@ -183,8 +182,10 @@ describe('AuthFetch authenticated peer lifecycle', () => {
       expect.anything(),
       undefined,
       'app.example',
-      { maxGeneralPayloadBytes: 16 * 1024 * 1024 + 512 * 1024 },
-      600000
+      {
+        maxGeneralPayloadBytes: 16 * 1024 * 1024 + 512 * 1024,
+        authenticationTimeoutMs: 600000
+      }
     )
     expect(response.status).toBe(201)
     expect(response.headers.get('x-test')).toBe('passed')
