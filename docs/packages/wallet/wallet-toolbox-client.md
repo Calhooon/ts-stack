@@ -4,8 +4,8 @@ title: '@bsv/wallet-toolbox-client'
 kind: package
 domain: wallet
 version: '2.15.0'
-last_updated: '2026-10-05'
-last_verified: '2026-10-05'
+last_updated: '2026-10-12'
+last_verified: '2026-10-12'
 review_cadence_days: 30
 npm: 'https://www.npmjs.com/package/@bsv/wallet-toolbox-client'
 repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/wallet-toolbox/client'
@@ -89,6 +89,12 @@ storing recipient outputs, including a sender's no-send transaction already
 known to shared storage. Rejected broadcasts return a review-actions error
 and store no recipient outputs. Transactions backed by a mining proof are
 not rebroadcast. Upgrade active storage; no API, wire or schema migration is required.
+
+Confirmed internalization resolves and checks the block header before the
+IndexedDB writer opens. A valid mined AtomicBEEF is stored after an
+asynchronous header lookup. A missing or malformed header, or an invalid
+proof, still rejects and leaves no proven transaction, transaction, or
+requested output. Upgrade this client; no API, wire or schema migration is required.
 
 ## Backup and recovery
 
