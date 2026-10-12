@@ -51,6 +51,10 @@ retain their existing behavior. Use SDK 2.8.9 or later for full-size authenticat
 CHIRP chunks; its HTTP transport keeps its existing framing and response limits.
 No object, session, advertisement or persistence migration is required.
 
+CHIRP hashing passes bounded 64 KiB typed byte views directly to the SDK, avoiding
+redundant array conversion. Content identifiers, signed bytes, upload limits and
+existing stored objects are unchanged; no migration is required.
+
 ## Advertisement, ownership, and upload trust
 
 The public UHRP token authenticates the host identity, content hash, HTTPS
