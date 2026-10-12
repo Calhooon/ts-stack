@@ -5898,3 +5898,11 @@ both engine memory and the existing 512 MiB RAM-backed data volume. CPU, PID,
 data-volume, case, readiness and cleanup bounds remain unchanged. This is a
 test-fixture allowance, not a production sizing recommendation; later full
 qualification must measure its headroom.
+
+The isolated MySQL server-crash fixture resets its auxiliary journal before the
+first crash child, as it already does between later boundaries. The complete
+production migration now installs that journal; resetting the synthetic fixture
+therefore makes the original CREATE boundaries available. An independent full
+source-row comparison must remain equal after reset. All 24 server-crash cases
+across READ COMMITTED and REPEATABLE READ, source/epoch/marker checks and original
+child deadlines remain unchanged. No customer migration performs this reset.

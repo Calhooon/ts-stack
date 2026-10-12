@@ -212,6 +212,8 @@ async function main() {
       { user: foreign } = await source.findOrInsertUser('03' + '22'.repeat(32))
     await seedArchiveClosure(source, user.userId, foreign.userId)
     const baseline = await rows(k)
+    await clear(k)
+    assert.deepEqual(await rows(k), baseline)
     await source.destroy()
     source = undefined
     k = undefined
