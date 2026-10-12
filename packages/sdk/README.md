@@ -1044,3 +1044,16 @@ independent checks. No input or validation verdict is retained. The helper is an
 additive SDK export and requires no wire or stored-data migration. Hosted
 runtime and mutation qualification remain required; static checks establish no
 performance improvement.
+
+## Pre-construction wallet reviews
+
+The 3.3.0 candidate accepts a storage pre-construction double-spend review through
+`HTTPWalletJSON` only for `createAction` with explicit inputs. It requires one
+empty attempted-TXID result, no constructed-action fields, and complete competing
+transactions that spend those requested outpoints. Malformed, unrelated and
+ID-only evidence remains invalid. The existing bounded retry helper synchronizes
+the winning transactions before re-invoking the operation to read fresh state.
+Use a wallet with the matching Toolbox parser fix. The binary wire format is
+unchanged and cannot carry structured review evidence; choose a compatible
+transport before financial operations rather than retrying an ambiguous failure.
+No BRC-100 call or storage-schema migration is required.
