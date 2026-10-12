@@ -5822,3 +5822,19 @@ all-47 inventory, original data, mutation, repeated-result, policy-resume and
 reopen assertions remain. This corrects a phase-inappropriate probe, not a
 production refold change. The corrected selection and committed-ACK-loss case
 still require actual qualification; the failed probe receipt is retained.
+
+### Jest native fixture setup
+
+The wallet Jest configuration binds the standard `Math` global inside its test
+VM with `sandboxInjectedGlobals: ['Math']`. This avoids Jest global proxy overhead
+during complete native fixture construction. On the same Linux ARM64 inputs,
+the original native proof-pair case failed its existing fixture lifetime with
+the default binding; changing only this setting passed the complete case in
+207.349 seconds. That configuration-only comparison is diagnostic evidence;
+the authored configuration still requires the original native lane capture.
+
+The original independent profiles, 131,073-byte proof, other payloads, assertions,
+600-second fixture lifetime and 660-second case allowance are preserved. This
+setting affects the test harness and changes no production resource ceiling,
+wire format, persisted data or runtime API. Whole native, platform, performance
+and exact-head CI qualification remain separate requirements.

@@ -21,6 +21,8 @@ const getJestConfig = async () => {
     testPathIgnorePatterns: ['/node_modules/', String.raw`<rootDir>/\.stryker-tmp/`],
     // Default is 'node'
     testEnvironment: 'node',
+    // Bind Math inside the Jest VM to avoid proxy overhead in native fixture setup.
+    sandboxInjectedGlobals: ['Math'],
     // default [ '**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[tj]s?(x)' ]
     testMatch: ['**/?(*.)+(test).[tj]s', '**/__test/**/*.test.ts', '**/*.test.cjs'],
     // default []
