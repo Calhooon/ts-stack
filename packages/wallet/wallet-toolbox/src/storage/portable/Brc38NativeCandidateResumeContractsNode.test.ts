@@ -29,7 +29,11 @@ const one = (rows: readonly IndependentLocalCandidateRow[]): IndependentLocalCan
   ): Promise<void> => {
     await fixture.source.manager.runAsStorageProvider(async active => {
       if (active !== fixture.source.storage) throw new Error('Candidate resume fixture selected another source')
-      await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(fixture.source.storage, operation)
+      await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(fixture.source.storage, async writer => {
+        expect(await writer('snapshot_journal_clock').first('enabled', 'reason')).toEqual({ enabled: 1, reason: null })
+        await operation(writer)
+        expect(await writer('snapshot_journal_clock').first('enabled', 'reason')).toEqual({ enabled: 1, reason: null })
+      })
     })
   }
 
@@ -58,16 +62,16 @@ test('actual local candidate resumes all47 copying and catches parent removal, s
       changed.output_baskets = [
         {
           ...basket,
-          rowId: -101,
+          rowId: 101,
           metadata: {
             ...basket.metadata,
-            basketId: integer(basket.metadata.basketId, -101),
+            basketId: integer(basket.metadata.basketId, 101),
             name: 'independent replacement basket'
           }
         }
       ]
       changed.outputs = [
-        { ...output, metadata: { ...output.metadata, basketId: integer(output.metadata.basketId, -101) } }
+        { ...output, metadata: { ...output.metadata, basketId: integer(output.metadata.basketId, 101) } }
       ]
       changed.monitor_events = [reusedMonitor]
       changed.action_batch_blobs = changed.action_batch_blobs.map(row => ({ ...row, fields: { bytes: replacement } }))
@@ -102,7 +106,7 @@ test('actual local candidate resumes all47 copying and catches parent removal, s
                 expect(
                   await writer('outputs')
                     .whereRaw('rowid=CAST(? AS INTEGER)', [BigInt(output.rowId).toString()])
-                    .update({ basketId: -101 })
+                    .update({ basketId: 101 })
                 ).toBe(1)
                 expect(await writer('monitor_events').where({ id: 400 }).delete()).toBe(1)
                 await writer('monitor_events').insert({ ...reusedMonitor.metadata, details: text.toString('utf8') })
@@ -151,10 +155,10 @@ test('actual local candidate drains a UNIQUE rebuild and resumes after natural-k
         throw new Error('Independent unique rebuild requires two distinct original labels')
       const originalKeys = labels.map(row => row.metadata.label)
       changed.output_baskets = [
-        { ...basket, rowId: -101, metadata: { ...basket.metadata, basketId: integer(basket.metadata.basketId, -101) } }
+        { ...basket, rowId: 101, metadata: { ...basket.metadata, basketId: integer(basket.metadata.basketId, 101) } }
       ]
       changed.outputs = [
-        { ...output, metadata: { ...output.metadata, basketId: integer(output.metadata.basketId, -101) } }
+        { ...output, metadata: { ...output.metadata, basketId: integer(output.metadata.basketId, 101) } }
       ]
       changed.tx_labels = labels.map((row, index) => ({
         ...row,
@@ -176,7 +180,7 @@ test('actual local candidate drains a UNIQUE rebuild and resumes after natural-k
                 expect(
                   await writer('outputs')
                     .whereRaw('rowid=CAST(? AS INTEGER)', [BigInt(output.rowId).toString()])
-                    .update({ basketId: -101 })
+                    .update({ basketId: 101 })
                 ).toBe(1)
                 expect(
                   await writer('tx_labels')
@@ -210,10 +214,18 @@ test('actual local candidate drains a UNIQUE rebuild and resumes after natural-k
           await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(source.storage, async writer => {
             const rows = await writer('tx_labels').select('*').limit(2)
             if (rows.length !== 1) throw new Error('Independent key-swap fixture requires one original label')
+            expect(await writer('snapshot_journal_clock').first('enabled', 'reason')).toEqual({
+              enabled: 1,
+              reason: null
+            })
             await writer('tx_labels').insert({
               ...rows[0],
-              txLabelId: -106,
+              txLabelId: 106,
               label: 'independent second original label'
+            })
+            expect(await writer('snapshot_journal_clock').first('enabled', 'reason')).toEqual({
+              enabled: 1,
+              reason: null
             })
           })
         })
