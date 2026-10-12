@@ -69,6 +69,23 @@ test('negotiated ceilings are exact, detached and reject accessors without invok
   expect(() => validateRemoteSnapshotSyncCapabilities({ ...remoteSnapshotSyncCapabilities, maxRows: 129 })).toThrow()
 })
 
+test('closed protocol dictionaries reject reserved and inherited fields without changing input or prototypes', () => {
+  const before = Object.getOwnPropertyDescriptors(Object.prototype)
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    const value = Object.fromEntries([...Object.entries(remoteSnapshotSyncCapabilities), [key, null]])
+    const original = Object.getOwnPropertyDescriptors(value)
+    expect(() => validateRemoteSnapshotSyncCapabilities(value)).toThrow()
+    expect(Object.getOwnPropertyDescriptors(value)).toEqual(original)
+  }
+  const inherited = Object.create({ version: 1 })
+  for (const key of ['maxRows', 'maxBytes', 'maxIoMs'] as const) inherited[key] = remoteSnapshotSyncCapabilities[key]
+  expect(() => validateRemoteSnapshotSyncCapabilities(inherited)).toThrow()
+  expect(validateRemoteSnapshotSyncCapabilities(Object.freeze({ ...remoteSnapshotSyncCapabilities }))).toBe(
+    remoteSnapshotSyncCapabilities
+  )
+  expect(Object.getOwnPropertyDescriptors(Object.prototype)).toEqual(before)
+})
+
 test.each(['', 'a'.repeat(131), 'source\u0000', 'source\u007f', 'source\u0085'])(
   'storage identifiers reject controls and schema overflow',
   key => {

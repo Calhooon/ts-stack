@@ -1,5 +1,6 @@
 import type { TableSettings, TableUser } from '../schema/tables'
 import { decodeSyncTransfer } from '../remoting/SyncTransfer'
+import { defineOwnValues } from '../remoting/BinaryJson'
 import {
   snapshotSyncTables,
   type SnapshotSyncCheckpoint,
@@ -53,12 +54,14 @@ function object(
   const names = Reflect.ownKeys(input)
   if (names.length > required.length + optional.length || required.some(name => !names.includes(name))) invalid()
   const result: Record<string, unknown> = Object.create(null)
+  const values: Array<readonly [string, unknown]> = []
   for (const name of names) {
     if (typeof name !== 'string' || (!required.includes(name) && !optional.includes(name))) invalid()
     const property = Object.getOwnPropertyDescriptor(input, name)
     if (property === undefined || !('value' in property) || !property.enumerable) invalid()
-    result[name] = property.value
+    values.push([name, property.value])
   }
+  defineOwnValues(result, values)
   return result
 }
 function integer(value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number {

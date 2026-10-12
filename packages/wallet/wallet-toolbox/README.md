@@ -6049,3 +6049,13 @@ generated parser and cannot reproduce that build. An explicit
 `TS_STACK_NATIVE_SQLITE_SOURCE` still undergoes the same exact size and digest
 checks. The compiler recipe, executable registry, thirteen standalone contracts
 and full system qualification requirements remain unchanged.
+
+### Own-data remote codec reconstruction
+
+Binary transfer restoration and authenticated snapshot protocol dictionaries
+reuse the JSON-RPC codec's own-data descriptor batch. No remote property name
+uses an assignment or inherited setter. Valid own reserved spellings remain
+round-trippable in general binary frames; the snapshot protocol retains its
+closed field schema and rejects accessor, inherited and extra fields. Framing,
+wire bytes, limits, dates, binary contents and compatibility are unchanged.
+The helper is internal to codecs; package entry exports are unchanged.

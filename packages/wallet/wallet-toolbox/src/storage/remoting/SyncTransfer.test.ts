@@ -186,6 +186,28 @@ describe('bounded durable sync transport', () => {
     expect(() => decodeSyncTransfer(new Uint8Array(3))).toThrow('frame')
   })
 
+  test('framing restores reserved own binary properties and numeric array indices without prototype effects', () => {
+    const names = ['__proto__', 'constructor', 'prototype']
+    const before = Object.getOwnPropertyDescriptors(Object.prototype)
+    const value = Object.fromEntries(names.map((name, index) => [name, new Uint8Array([31 + index])]))
+    const restored = decodeSyncTransfer(encodeSyncTransfer({ value, nested: [new Uint8Array([44])] })) as {
+      value: Record<string, Uint8Array>
+      nested: Uint8Array[]
+    }
+    expect(Object.getPrototypeOf(restored.value)).toBe(Object.prototype)
+    for (const [index, name] of names.entries()) {
+      expect(Object.hasOwn(restored.value, name)).toBe(true)
+      expect(Object.getOwnPropertyDescriptor(restored.value, name)).toEqual({
+        value: new Uint8Array([31 + index]),
+        enumerable: true,
+        configurable: true,
+        writable: true
+      })
+    }
+    expect(restored.nested).toEqual([new Uint8Array([44])])
+    expect(Object.getOwnPropertyDescriptors(Object.prototype)).toEqual(before)
+  })
+
   test('rejects malformed field paths, duplicate fields and trailing bytes', () => {
     const frame = (fields: unknown[], value: unknown = { bytes: null }): Uint8Array => {
       const header = new TextEncoder().encode(JSON.stringify({ version: 1, value, fields }))
