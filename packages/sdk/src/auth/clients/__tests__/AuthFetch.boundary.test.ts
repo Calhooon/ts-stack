@@ -741,8 +741,8 @@ describe('AuthFetch late wallet approval boundary', () => {
     client.remote = server
     server.remote = client
     const serverPeer = new Peer(new ProtoWallet(new PrivateKey(31)), server)
-    serverPeer.listenForGeneralMessages((sender, payload) => {
-      void serverPeer.toPeer(buildResponsePayload(payload.slice(0, 32), 200, {}, []), sender)
+    serverPeer.listenForGeneralMessages(async (sender, payload) => {
+      await serverPeer.toPeer(buildResponsePayload(payload.slice(0, 32), 200, {}, []), sender)
     })
     const wallet = new ProtoWallet(new PrivateKey(32))
     const authFetch = new AuthFetch(wallet)
