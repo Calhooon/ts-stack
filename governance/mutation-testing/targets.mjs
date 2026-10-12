@@ -342,14 +342,18 @@ function walletFundingTarget(repositoryRoot, source, property) {
     'src/signer/methods/internalizeActionCore.ts',
     'src/storage/methods/internalizeBrc197Action.ts',
     'src/signer/methods/internalizeBrc197Action.ts',
-    'src/sdk/Brc197Internalization.ts'
+    'src/sdk/Brc197Internalization.ts',
+    'src/storage/__test/StorageIdb.internalizeConfirmed.test.ts',
+    'src/storage/__test/StorageIdb.internalizeStoredProof.test.ts'
   ]
   target.runnerOptions.jest.config.testMatch = [
     '<rootDir>/src/storage/fundingRecovery/__test/*.test.ts',
     '<rootDir>/src/signer/fundingRecovery/__test/*.test.ts',
     '<rootDir>/test/storage/internalizeActionManagedChangePolicy.test.ts',
     '<rootDir>/test/storage/internalizeActionMarkInputsSpent.test.ts',
-    '<rootDir>/test/storage/internalizeActionBasketReclassification.test.ts'
+    '<rootDir>/test/storage/internalizeActionBasketReclassification.test.ts',
+    '<rootDir>/src/storage/__test/StorageIdb.internalizeConfirmed.test.ts',
+    '<rootDir>/src/storage/__test/StorageIdb.internalizeStoredProof.test.ts'
   ]
   return target
 }
