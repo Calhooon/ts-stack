@@ -29,6 +29,10 @@ additive SDK export and requires no wire or stored-data migration. Hosted
 runtime and mutation qualification remain required; static checks establish no
 performance improvement.
 
+### Fresh authentication byte ownership
+
+Authentication byte ownership captures each external array element through its own data descriptor once. Shape validation then checks values in the private arrays produced by the completed bounded snapshot traversal. Sparse arrays, accessors, invalid byte values and all size, depth and node limits retain their existing refusals. Every operation constructs fresh owned data; no caller input or validation verdict is cached. Public declarations, wire bytes, signature and session checks, errors and defaults are unchanged. No consumer migration is required. Complete composed qualification remains required; this implementation change alone establishes no performance improvement.
+
 ## Table of Contents
 
 - [Unreleased](#unreleased)

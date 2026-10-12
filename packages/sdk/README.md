@@ -140,6 +140,10 @@ applications can update their SDK without changing calls; existing conforming
 applications remain compatible with upgraded wallets. Publication is a separate
 protected workflow step.
 
+### Fresh authentication byte ownership
+
+Authentication byte ownership captures each external array element through its own data descriptor once. Shape validation then checks values in the private arrays produced by the completed bounded snapshot traversal. Sparse arrays, accessors, invalid byte values and all size, depth and node limits retain their existing refusals. Every operation constructs fresh owned data; no caller input or validation verdict is cached. Public declarations, wire bytes, signature and session checks, errors and defaults are unchanged. No consumer migration is required. Complete composed qualification remains required; this implementation change alone establishes no performance improvement.
+
 ### Transport-owned general payload policy
 
 SDK 2.8.5 adds an optional seventh `Peer` constructor argument,
