@@ -55,7 +55,10 @@ describe('actual native RESTORE inside the admitted private destination', () => 
         restorePortableProof(data, proof)
         original = JSON.parse(JSON.stringify(data)) as BRC38WalletData
       },
-      2097152
+      2097152,
+      // The complete native journal schema exceeds the 4 MiB fixture's usable
+      // main-file pages after its unchanged three-image recovery reservation.
+      8388608
     )
     cleanup.push(async () => await staged.close())
     const options = {

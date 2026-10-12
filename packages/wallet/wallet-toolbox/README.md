@@ -5832,6 +5832,25 @@ existing fixture defaults, or already-admitted expiry. Every actual UTC and
 monotonic expiry check, finite operation guard, cleanup owner and complete proof
 byte/metadata assertion remains. These test allowances are not production SLOs.
 
+Explicit PostgreSQL data deletion keeps the journal source and destination
+rollback callbacks under the same existing SQL-dialect guard as forward
+migrations. Their recorded PostgreSQL entries remain no-ops, while SQLite and
+MySQL retain actual journal cleanup and ordinary downgrade refusals. A
+regression exercises both real migration callbacks through `dropAllData()` on a
+PostgreSQL Knex client and refuses any snapshot SQL or connection acquisition.
+No PostgreSQL snapshot capability, schema, API or data-format migration is added.
+
+The complete private native restore success fixture explicitly admits 8 MiB of
+physical storage so the current full journal schema fits after its unchanged
+three-image recovery reservation. The small 4 MiB helper default and exhaustion
+controls remain. All thirteen tables, provenance, foreground profiles, replay,
+cancellation, expiry, 300-case property seed and owner/deadline/allocation bounds
+remain. The schema batching regression chooses the actual settings UPDATE
+observer name from its independent SQL inventory, then checks its canonical
+source definition; retained legacy and compact names preserve identical byte,
+ordering, rollback, query-count and 16 KiB response-bound assertions. These are
+qualification corrections, not production resource or schema changes.
+
 ### Native runner qualification allowances
 
 The three original runner/refold/lost-ACK contract cases now select fresh

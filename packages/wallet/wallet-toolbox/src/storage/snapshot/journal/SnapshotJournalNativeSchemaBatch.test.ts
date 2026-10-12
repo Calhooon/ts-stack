@@ -86,20 +86,31 @@ test('actual native schema batches retain complete exact ordering and fresh roll
         })
         const expected = await oracle(k)
         expect(await measured(k)).toEqual(expected)
+        // Fresh installations and retained compact-name generations use the
+        // same settings UPDATE observer body. Select its actual physical name
+        // from the independent inventory, then require its source definition.
+        const observers = expected.filter(
+          row =>
+            row.type === 'trigger' &&
+            row.tbl_name === 'settings' &&
+            /^brc38_local_baseline_(settings|s1)_update$/.test(row.name)
+        )
+        expect(observers).toHaveLength(1)
+        const observer = observers[0]
         const original = (await brc38NativeLocalBaselineSourceDefinitions(k)).find(sql =>
-          sql.startsWith('CREATE TRIGGER brc38_local_baseline_s1_update ')
+          sql.startsWith('CREATE TRIGGER ' + observer.name + ' AFTER UPDATE ON settings ')
         )!
         expect(typeof original).toBe('string')
         for (const bytes of [16384, 16385]) {
           await k.raw('SAVEPOINT actual_native_schema_bytes')
           try {
-            const row = expected.find(value => value.name === 'brc38_local_baseline_s1_update')!
+            const row = observer
             expect(row).toBeDefined()
             const prefix = original.slice(0, original.indexOf('BEGIN ') + 6) + "SELECT '🙂﻿",
               suffix = "'; " + original.slice(original.indexOf('BEGIN ') + 6)
             const padding = bytes - Buffer.byteLength('trigger' + row.name + row.tbl_name + prefix + suffix)
             expect(padding).toBeGreaterThan(0)
-            await k.raw('DROP TRIGGER brc38_local_baseline_s1_update')
+            await k.raw('DROP TRIGGER ' + observer.name)
             await k.raw(prefix + 'x'.repeat(padding) + suffix)
             const changed = await oracle(k)
             expect(changed).not.toEqual(expected)

@@ -3,20 +3,22 @@ import { KnexMigrations } from '../schema/KnexMigrations'
 import { forSnapshotSqlDialect } from '../schema/snapshotSqlMigration'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
+import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION, SNAPSHOT_JOURNAL_DESTINATION_MIGRATION } from '../schema/KnexMigrations'
 
 const entries = [
   '2026-09-30-001 add durable snapshot sync',
   '2026-09-30-002 add snapshot archive staging',
   '2026-09-30-003 add snapshot archive requests',
   '2026-10-01-001 add snapshot archive source owners',
-  '2026-10-01-002 add snapshot archive source guards'
+  '2026-10-01-002 add snapshot archive source guards',
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION
 ]
 
 test('Postgres snapshot auxiliary migrations never execute SQLite or MySQL SQL', async () => {
   const k = knex({ client: 'pg', connection: { database: 'unused' }, pool: { min: 0, max: 1 } })
   const source = new KnexMigrations('test', 'postgres compatibility', '1'.repeat(64), 10000)
   const names = (await source.getMigrations()).filter(name => name.includes('snapshot'))
-  expect(names).toHaveLength(10)
+  expect(names).toHaveLength(11)
   expect(names).toEqual(expect.arrayContaining(entries))
   const query = jest.spyOn(k.client, 'query').mockRejectedValue(new Error('Snapshot SQL reached Postgres'))
   const acquire = jest.spyOn(k.client, 'acquireConnection').mockRejectedValue(new Error('Snapshot opened Postgres'))
@@ -56,3 +58,40 @@ test.each(['better-sqlite3', 'mysql2'])(
     }
   }
 )
+
+test('explicit PostgreSQL data deletion preserves both journal rollback no-ops without snapshot SQL or acquisition', async () => {
+  const k = knex({ client: 'pg', connection: { database: 'unused' }, pool: { min: 0, max: 1 } })
+  const names = [SNAPSHOT_JOURNAL_SOURCE_MIGRATION, SNAPSHOT_JOURNAL_DESTINATION_MIGRATION]
+  const completed: string[] = []
+  const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
+  const query = jest.spyOn(k.client, 'query').mockRejectedValue(new Error('Snapshot deletion SQL reached Postgres'))
+  const acquire = jest
+    .spyOn(k.client, 'acquireConnection')
+    .mockRejectedValue(new Error('Snapshot deletion opened Postgres'))
+  const version = jest
+    .spyOn(k.migrate, 'currentVersion')
+    .mockImplementation(async () => names[completed.length] ?? 'none')
+  const down = jest.spyOn(k.migrate, 'down').mockImplementation(async config => {
+    const name = names[completed.length]
+    expect(name).toBeDefined()
+    const migration = await config!.migrationSource!.getMigration(name)
+    await migration.down(k)
+    completed.push(name)
+    return [1, [name]]
+  })
+  try {
+    await storage.dropAllData()
+    expect(completed).toEqual(names)
+    expect(down).toHaveBeenCalledTimes(2)
+    expect(query).not.toHaveBeenCalled()
+    expect(acquire).not.toHaveBeenCalled()
+    expect(storage.getSnapshotSync()).toBeUndefined()
+  } finally {
+    version.mockRestore()
+    down.mockRestore()
+    query.mockRestore()
+    acquire.mockRestore()
+    await storage.destroy()
+    await k.destroy()
+  }
+})

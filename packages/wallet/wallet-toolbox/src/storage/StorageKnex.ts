@@ -1,3 +1,4 @@
+import { forSnapshotSqlDialect } from './schema/snapshotSqlMigration'
 import {
   withBrc38NativeLocalPackedWalletMutation,
   withBrc38NativeLocalPackedWalletTransaction,
@@ -3183,9 +3184,12 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       // Only using migrations to migrate down, don't need valid properties for settings table.
       const migrationSource = new KnexMigrations('test', '', '', 1024)
       migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION].down = dropGenerationForDataDeletion
-      migrationSource.migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION].down =
+      migrationSource.migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION].down = forSnapshotSqlDialect(
         dropSnapshotJournalDestinationForDataDeletion
-      migrationSource.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION].down = dropSnapshotJournalSourceForDataDeletion
+      )
+      migrationSource.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION].down = forSnapshotSqlDialect(
+        dropSnapshotJournalSourceForDataDeletion
+      )
 
       // Check if this is a SQLite database by looking at the Knex client config
       const isSQLite = knexDatabaseSystem(this.knex.client) === 'sqlite'
