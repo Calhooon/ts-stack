@@ -16,6 +16,10 @@ import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 
 const nativeCandidateFixtureLifetimeMs = 180000
 const nativeCandidateCaseTimeoutMs = nativeCandidateFixtureLifetimeMs + 30000
+// UNIQUE recovery completes an initial COPY, drains it, then completes a fresh
+// COPY. Admit two existing copy windows under the same finite fixture owner.
+const nativeCandidateRebuildFixtureLifetimeMs = 2 * nativeCandidateFixtureLifetimeMs
+const nativeCandidateRebuildCaseTimeoutMs = nativeCandidateRebuildFixtureLifetimeMs + 30000
 
 const one = (rows: readonly IndependentLocalCandidateRow[]): IndependentLocalCandidateRow => {
     if (rows.length !== 1) throw new Error('Independent resume fixture requires one original row')
@@ -207,7 +211,7 @@ test('actual local candidate drains a UNIQUE rebuild and resumes after natural-k
       }
     },
     {
-      lifetimeMs: nativeCandidateFixtureLifetimeMs,
+      lifetimeMs: nativeCandidateRebuildFixtureLifetimeMs,
       prepareSource: async source => {
         await source.manager.runAsStorageProvider(async active => {
           if (active !== source.storage) throw new Error('Independent key-swap fixture selected another source')
@@ -232,4 +236,4 @@ test('actual local candidate drains a UNIQUE rebuild and resumes after natural-k
       }
     }
   )
-}, nativeCandidateCaseTimeoutMs)
+}, nativeCandidateRebuildCaseTimeoutMs)
