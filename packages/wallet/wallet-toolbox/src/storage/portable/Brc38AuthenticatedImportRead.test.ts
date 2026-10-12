@@ -1,3 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
+import { Brc38SemanticStage } from './Brc38SemanticStage'
+import { semanticStageFixture, options } from './Brc38SemanticStageFixture'
+import { resumeBinding, resumeLimits } from './Brc38ResumeFixture'
 import { previewDestinationFixture, previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { previewBrc38PrivateImport } from './Brc38PrivateImportPreviewNode'
 import { brc38StageTables } from './Brc38SemanticStage'
@@ -21,9 +28,9 @@ describe('actual authenticated bounded private import reads', () => {
   })
   test('actual sealed header and thirteen indexed counts/rows match the authenticated archive without target writes', async () => {
     let escaped!: Readonly<Brc38AuthenticatedImportReader>
-    const queries: string[] = []
-    store().knex.on('query', (query: { sql: string }) => {
-      queries.push(query.sql)
+    const queries: Array<{ sql: string; bindings?: readonly unknown[] }> = []
+    store().knex.on('query', (query: { sql: string; bindings?: readonly unknown[] }) => {
+      queries.push(query)
     })
     await store().withAuthenticatedImportRead(async (json, metadata, reader) => {
       escaped = reader
@@ -47,7 +54,17 @@ describe('actual authenticated bounded private import reads', () => {
       expect(total).toBe(metadata.rows)
     })
     await expect(escaped.header()).rejects.toThrow('unavailable')
-    expect(queries.some(sql => /offset|count\s*\(/i.test(sql))).toBe(false)
+    expect(queries.some(query => /\boffset\b/i.test(query.sql))).toBe(false)
+    // Data rows use keyed metadata and indexes. COUNT is permitted only for
+    // the owner's bounded catalog checks, which verify actual sealing guards.
+    const catalogCounts = queries.filter(query => /count\s*\(/i.test(query.sql))
+    expect(catalogCounts.length).toBeGreaterThan(0)
+    for (const query of catalogCounts) {
+      expect(query.sql).toMatch(
+        /^select count\(\*\) as `count` from (?:`main`\.)?`sqlite_(?:schema|master)` where .+ limit \?$/i
+      )
+      expect(query.bindings?.at(-1)).toBe(1)
+    }
     expect(await target.writer('users')).toEqual([])
   })
   test('unawaited actual native read is drained before preparation releases the kernel owner', async () => {
@@ -77,21 +94,47 @@ describe('actual authenticated bounded private import reads', () => {
       ).rejects.toThrow('coordinate')
     }
   )
-  test('oversized stored payload is refused at native extent before payload loading', async () => {
-    const coordinate = await store().knex('rows').first('tableName', 'position')
-    await store()
-      .knex('rows')
-      .where(coordinate)
-      .update({ payload: 'x'.repeat(store().limits.maximumRowBytes + 1) })
-    const queries: string[] = []
-    store().knex.on('query', (query: { sql: string }) => {
-      queries.push(query.sql)
-    })
+  test('sealed authenticated payload refuses mutation and retains the original readable row', async () => {
+    const original = await store().knex('rows').first('tableName', 'position', 'payload'),
+      coordinate = { tableName: original.tableName, position: original.position }
     await expect(
-      store().withAuthenticatedImportRead(
-        async (_json, _metadata, reader) => await reader.row(coordinate.tableName, coordinate.position)
+      store()
+        .knex('rows')
+        .where(coordinate)
+        .update({ payload: 'x'.repeat(store().limits.maximumRowBytes + 1) })
+    ).rejects.toThrow('Authenticated private source is immutable')
+    await store().withAuthenticatedImportRead(async (_json, _metadata, reader) => {
+      expect(await reader.row(coordinate.tableName, coordinate.position)).toEqual(JSON.parse(original.payload))
+    })
+    expect(await target.writer('users')).toEqual([])
+  })
+  test('oversized stored payload is refused at native extent before payload loading', async () => {
+    // Corrupt a real provisional row: successful authentication makes the
+    // source immutable. Both states use the same physical row-extent reader.
+    const parent = await mkdtemp(join(tmpdir(), 'brc38-import-read-extent-'))
+    let provisional: KnexBrc38StagingStore | undefined
+    try {
+      provisional = await KnexBrc38StagingStore.createOwned(parent, resumeLimits(), resumeBinding())
+      await new Brc38SemanticStage(provisional, options).provisionalRow(
+        'outputBaskets',
+        0,
+        semanticStageFixture().tables.outputBaskets[0]
       )
-    ).rejects.toThrow('length is inconsistent')
-    expect(queries.some(sql => /^select `payload`/i.test(sql))).toBe(false)
+      await provisional
+        .knex('rows')
+        .where({ tableName: 'outputBaskets', position: 0 })
+        .update({
+          payload: 'x'.repeat(provisional.limits.maximumRowBytes + 1)
+        })
+      const queries: string[] = []
+      provisional.knex.on('query', (query: { sql: string }) => {
+        queries.push(query.sql)
+      })
+      await expect(provisional.row('outputBaskets', 0)).rejects.toThrow('length is inconsistent')
+      expect(queries.some(sql => /^select `payload`/i.test(sql))).toBe(false)
+    } finally {
+      await provisional?.close()
+      await rm(parent, { recursive: true, force: true })
+    }
   })
 })

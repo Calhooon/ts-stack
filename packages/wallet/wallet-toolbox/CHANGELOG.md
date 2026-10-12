@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Authenticated import regression tests retain the physical oversized-row extent refusal before payload loading using a genuine owned provisional store, and separately prove sealed-row mutation rejection with unchanged authenticated reads. Indexed data reads still prohibit OFFSET and data aggregates; only bounded SQLite catalog seal checks are admitted. The complete native checkpoint-delta regression uses the existing 180-second fixture lifetime as its outer test guard, preserving the original residual native and staging deadlines, all fields, maps, unknown members, bytes and allocation checks. No production behavior, default or limit changes; full-system qualification remains pending.
+
 - Compile and launch the original staging ownership and crash-resume child fixtures
   from the wallet build, preserving real kernel-lock and crash-prefix checks.
   Align the full allocation refusal test guard with the existing fixture lifetime;

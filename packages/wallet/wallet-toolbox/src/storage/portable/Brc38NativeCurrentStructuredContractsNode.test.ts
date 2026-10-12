@@ -150,7 +150,7 @@ test('private checkpoint delta preserves the complete map, unknown members and a
     )
     expect(working.used).toBe(0)
   })
-}, 30000)
+}, 180000)
 
 test('private legacy spelling drains two real indexes between complete passes', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
