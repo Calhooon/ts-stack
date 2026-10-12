@@ -21,6 +21,7 @@ import { readSnapshotJournalMysqlGeneration } from './SnapshotJournalMysqlGenera
 import { withSnapshotJournalConnections, SnapshotJournalConnectionCleanupError } from './SnapshotJournalConnections'
 import {
   prepareSnapshotJournalCaptureBackend,
+  prepareSnapshotJournalSqliteWriter,
   bindSnapshotJournalCaptureBackend,
   closeSnapshotJournalCapturePool
 } from './SnapshotJournalCaptureBackend'
@@ -158,7 +159,7 @@ export function maintainSnapshotJournal(
         async (write, read) => {
           await bindSnapshotJournalCaptureBackend(writer!, write, verifier!, read, expected)
           assertActive()
-          if (expected.kind === 'sqlite') await writer!.raw('PRAGMA busy_timeout = 0').connection(write)
+          if (expected.kind === 'sqlite') await prepareSnapshotJournalSqliteWriter(writer!, write)
           const trx = await writer!.transaction({ connection: write })
           let operationFailure: { error: unknown } | undefined
           let value: SnapshotJournalMaintenanceResult | undefined

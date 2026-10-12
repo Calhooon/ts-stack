@@ -103,61 +103,59 @@ export function runBrc38PrivateNativeMerge(
     Brc38PrivateNativeMergeRunnerProgress,
     Readonly<Brc38PrivateNativeComposedInventory>
   > {
-    const frame = working.claim(131072)
-    try {
-      for (let operation = 1; operation <= maximumOperations; operation++) {
+    for (let operation = 1; operation <= maximumOperations; operation++) {
+      check()
+      const frame = working.claim(131072)
+      let result:
+        | Readonly<{ progress: Readonly<Brc38PrivateNativeMergeProgress> }>
+        | Readonly<{ inventory: Readonly<Brc38PrivateNativeComposedInventory> }>
+        | Readonly<{ changed: string }>
+      try {
+        result = await Brc38NativeLocalBaselineSource.with(
+          storage,
+          source,
+          options.receiptPolicy,
+          {
+            workingAllocation: working,
+            maximumMetadataBytes: 131072,
+            maximumReadBytes: options.maximumReadBytes,
+            expiresAt,
+            signal: options.signal
+          },
+          async actual =>
+            await Brc38PrivateNativeMergeNode.with(store, actual, options, async merge => {
+              const status = await merge.status()
+              // A changed fresh source needs the normal durable refold step;
+              // only an unchanged completed episode reaches full comparison.
+              if (status.phase === 'IMPORT' && !status.sourceChanged && status.receipt?.state === 'COMPLETE')
+                return Object.freeze({ inventory: await merge.inspectComposedRows() })
+              return Object.freeze({ progress: await merge.step() })
+            })
+        )
+      } catch (cause) {
         check()
-        let result:
-          | Readonly<{ progress: Readonly<Brc38PrivateNativeMergeProgress> }>
-          | Readonly<{ inventory: Readonly<Brc38PrivateNativeComposedInventory> }>
-          | Readonly<{ changed: string }>
-        try {
-          result = await Brc38NativeLocalBaselineSource.with(
-            storage,
-            source,
-            options.receiptPolicy,
-            {
-              workingAllocation: working,
-              maximumMetadataBytes: 131072,
-              maximumReadBytes: options.maximumReadBytes,
-              expiresAt,
-              signal: options.signal
-            },
-            async actual =>
-              await Brc38PrivateNativeMergeNode.with(store, actual, options, async merge => {
-                const status = await merge.status()
-                // A changed fresh source needs the normal durable refold step;
-                // only an unchanged completed episode reaches full comparison.
-                if (status.phase === 'IMPORT' && !status.sourceChanged && status.receipt?.state === 'COMPLETE')
-                  return Object.freeze({ inventory: await merge.inspectComposedRows() })
-                return Object.freeze({ progress: await merge.step() })
-              })
-          )
-        } catch (cause) {
-          check()
-          if (!(cause instanceof Brc38PrivateCompositionRequiredError)) throw cause
-          result = Object.freeze({ changed: cause.sourceRevision })
-        }
-        // Every physical read scope and queued source/merge operation has drained
-        // before user progress or the result can leave this generator.
-        check()
-        if ('inventory' in result) return result.inventory
-        yield Object.freeze({
-          operation,
-          elapsedMilliseconds: Math.max(0, performance.now() - started),
-          progress:
-            'changed' in result
-              ? Object.freeze({ phase: 'SOURCE_CHANGED' as const, sourceRevision: result.changed })
-              : result.progress
-        })
-        check()
-        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        if (!(cause instanceof Brc38PrivateCompositionRequiredError)) throw cause
+        result = Object.freeze({ changed: cause.sourceRevision })
+      } finally {
+        frame.close()
       }
-      throw new Error(
-        'Original private native merge operation bound reached; durable custody remains available for an admitted retry'
-      )
-    } finally {
-      frame.close()
+      // Every physical read scope and queued source/merge operation has drained
+      // before user progress or the result can leave this generator.
+      check()
+      if ('inventory' in result) return result.inventory
+      yield Object.freeze({
+        operation,
+        elapsedMilliseconds: Math.max(0, performance.now() - started),
+        progress:
+          'changed' in result
+            ? Object.freeze({ phase: 'SOURCE_CHANGED' as const, sourceRevision: result.changed })
+            : result.progress
+      })
+      check()
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
     }
+    throw new Error(
+      'Original private native merge operation bound reached; durable custody remains available for an admitted retry'
+    )
   })()
 }

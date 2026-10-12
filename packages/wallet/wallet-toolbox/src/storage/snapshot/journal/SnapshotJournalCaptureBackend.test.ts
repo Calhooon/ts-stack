@@ -6,6 +6,7 @@ import { Duplex } from 'node:stream'
 import { createHash } from 'node:crypto'
 import {
   prepareSnapshotJournalCaptureBackend,
+  prepareSnapshotJournalSqliteWriter,
   bindSnapshotJournalCaptureBackend,
   closeSnapshotJournalCapturePool
 } from './SnapshotJournalCaptureBackend'
@@ -427,5 +428,19 @@ test('fresh native connection IDs do not change the durable backend binding', as
   } finally {
     await Promise.all(pools.map(pool => pool.destroy()))
     jest.restoreAllMocks()
+  }
+})
+
+test('journal SQLite writer preparation uses its reserved connection and restores nonblocking stock policy', async () => {
+  const f = await fixture()
+  let connection: unknown
+  try {
+    connection = await f.writer.client.acquireConnection()
+    await f.writer.raw('PRAGMA busy_timeout = 27').connection(connection)
+    await prepareSnapshotJournalSqliteWriter(f.writer, connection)
+    expect(await f.writer.raw('PRAGMA busy_timeout').connection(connection)).toEqual([{ timeout: 0 }])
+  } finally {
+    if (connection !== undefined) await f.writer.client.releaseConnection(connection)
+    await f.close()
   }
 })

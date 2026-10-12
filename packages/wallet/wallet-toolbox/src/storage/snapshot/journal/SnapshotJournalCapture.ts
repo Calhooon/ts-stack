@@ -47,6 +47,7 @@ import { compareSnapshotJournalRevisions } from './SnapshotJournalRevision'
 import { withSnapshotJournalConnections, SnapshotJournalConnectionCleanupError } from './SnapshotJournalConnections'
 import {
   prepareSnapshotJournalCaptureBackend,
+  prepareSnapshotJournalSqliteWriter,
   bindSnapshotJournalCaptureBackend,
   closeSnapshotJournalCapturePool
 } from './SnapshotJournalCaptureBackend'
@@ -117,7 +118,7 @@ async function commit(trx: Knex.Transaction): Promise<void> {
 }
 async function prepareReader(writer: Knex, write: unknown, reader: Knex, read: unknown): Promise<void> {
   if (reader.client.config.client === 'better-sqlite3' || isOwnedNativeSqlite(reader)) {
-    await writer.raw('PRAGMA busy_timeout = 0').connection(write)
+    await prepareSnapshotJournalSqliteWriter(writer, write)
     await reader.raw('PRAGMA query_only = ON').connection(read)
   } else {
     await reader.raw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY').connection(read)

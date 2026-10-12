@@ -129,12 +129,6 @@ export async function verifyNativePayloadTextSource(
         }
         await refuse(() => reader.readFieldExtent(fixture.table, row.cursor, fixture.field, 0, 65537, descriptor))
         await refuse(() =>
-          reader.readFieldExtent(fixture.table, row.cursor, fixture.field, 0, 1, {
-            ...descriptor,
-            bytes: descriptor.bytes + 1
-          })
-        )
-        await refuse(() =>
           reader.readFieldExtent(
             fixture.table,
             { ...row.cursor, snapshotId: 'ff'.repeat(32) },
@@ -153,5 +147,56 @@ export async function verifyNativePayloadTextSource(
     check()
   } finally {
     await view?.close()
+  }
+  // A mismatched physical extent correctly retires its view. Preserve one
+  // coherent positive view above, then probe every field's fatal failure with
+  // fresh actual metadata and require the original read/close error identity.
+  for (const fixture of fixtures) {
+    check()
+    const faultView = await storage.openWalletReadSnapshot(identityKey, { lifetimeMs: expiresAt - Date.now() })
+    let physicalFailure: { error: unknown } | undefined
+    try {
+      const reader = faultView.fieldReader
+      requireCase(reader !== undefined)
+      const page = await reader.readMetadataPage(fixture.table, undefined, { maxRows: 128, maxBytes: 32768 }),
+        candidates = page.rows.filter(row =>
+          Object.entries(fixture.match).every(
+            ([key, value]) => (row.fields as Readonly<Record<string, unknown>>)[key] === value
+          )
+        )
+      requireCase(candidates.length === 1 && page.payloadBytes <= 32768)
+      const row = candidates[0],
+        descriptor = row.extents[fixture.field],
+        oracle = new TextEncoder().encode(fixture.value)
+      try {
+        requireCase(descriptor?.kind === 'utf8' && descriptor.bytes === oracle.length)
+        try {
+          await reader.readFieldExtent(fixture.table, row.cursor, fixture.field, 0, 1, {
+            ...descriptor,
+            bytes: descriptor.bytes + 1
+          })
+        } catch (error) {
+          physicalFailure = { error }
+        }
+        requireCase(
+          physicalFailure !== undefined &&
+            physicalFailure.error instanceof Error &&
+            physicalFailure.error.message === 'Actual native TEXT length differs'
+        )
+        const closedError = await faultView.closed.then(() => undefined, error => error),
+          closeError = await faultView.close().then(() => undefined, error => error)
+        requireCase(closedError === physicalFailure.error && closeError === physicalFailure.error)
+        await refuse(() => reader.readMetadataPage(fixture.table))
+        check()
+      } finally {
+        oracle.fill(0)
+      }
+    } finally {
+      try {
+        await faultView.close()
+      } catch (error) {
+        if (physicalFailure === undefined || error !== physicalFailure.error) throw error
+      }
+    }
   }
 }

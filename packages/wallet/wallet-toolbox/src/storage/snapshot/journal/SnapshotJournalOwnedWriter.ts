@@ -4,6 +4,7 @@ import { knex as createKnex, type Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import {
   prepareSnapshotJournalCaptureBackend,
+  prepareSnapshotJournalSqliteWriter,
   bindSnapshotJournalDestinationBackend,
   closeSnapshotJournalCapturePool
 } from './SnapshotJournalCaptureBackend'
@@ -45,7 +46,7 @@ export async function withSnapshotJournalOwnedWriter<T>(
   try {
     connection = await k.client.acquireConnection()
     assertActive()
-    if (expected.kind === 'sqlite') await k.raw('PRAGMA busy_timeout=0').connection(connection)
+    if (expected.kind === 'sqlite') await prepareSnapshotJournalSqliteWriter(k, connection)
     else {
       await k.raw('SET SESSION innodb_lock_wait_timeout=1').connection(connection)
       await k.raw('SET SESSION lock_wait_timeout=1').connection(connection)

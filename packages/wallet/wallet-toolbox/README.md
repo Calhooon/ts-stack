@@ -5929,3 +5929,15 @@ The complete valid-source resume run passed COPY/resume in 149.368 seconds; its 
 The full wallet campaign on source451 passed its four original recovery prerequisites but stopped when the private incoming page allocation case reached its 30-second Jest clock. Its existing native fixture owner allows 180 seconds. The same mismatch occurred in 21 declarations across 12 native contract files; those harnesses now admit the original owner plus 30 seconds of cleanup. Fixture lifetimes, shared defaults, operation deadlines, datasets, assertions and production limits are unchanged. Existing longer contract clocks are preserved. This admission remains finite and requires full-file and whole-wallet validation; it is not a production performance claim. The failed sample is retained. The isolated Postgres fixture used 770.668 MiB of fresh disk-backed data without an OOM or storage exhaustion, and its owned container and volume were removed and independently verified before diagnosis.
 
 Native integration failures retain their original merge and capture exceptions instead of replacing unexpected failures with observer-state assertions. The retained-source and scalar TEXT test oracles identify differing field names and extent coordinates without printing archive bytes or identity values. Every original equality, refusal, lifetime and cleanup assertion remains. These diagnostics resolve failed integration evidence; they do not qualify the full source or change production behavior.
+
+The native journal capture, destination writer and maintenance paths inspect
+and require the sealed profile's original zero busy timeout on the actual
+borrowed connection. Fresh stock SQLite writers still set and verify zero.
+The native occupied merge runner releases its original bounded operation frame
+after both scoped actors drain and before invoking progress observers; operation,
+allocation and expiry ceilings remain unchanged. These are compatible integration
+corrections, with no API, wire or schema migration. Qualification remains pending.
+Retained-source tests capture the current persisted user header independently.
+All seventeen scalar TEXT fields retain exact positive windows from one coherent
+view; each forged physical length uses a fresh view and must preserve its original
+read/close error and refuse reuse, because a failed physical read retires the view.

@@ -20,6 +20,16 @@ export type SnapshotJournalCaptureBackend = { kind: 'sqlite'; file: FileIdentity
 function unavailable(): never {
   throw new WERR_INVALID_OPERATION('Snapshot journal capture backend is unavailable or changed')
 }
+/** Native owners pin their nonblocking busy policy before sealing the profile.
+ * Inspect the actual borrowed connection; never reopen its settings authority.
+ * Fresh stock SQLite connections retain explicit nonblocking setup. */
+export async function prepareSnapshotJournalSqliteWriter(k: Knex, connection: unknown): Promise<void> {
+  if (isOwnedNativeSqlite(k)) assertOwnedNativeConnection(k, connection)
+  else await k.raw('PRAGMA busy_timeout = 0').connection(connection)
+  const rows: Array<{ timeout: number }> = await k.raw('PRAGMA busy_timeout').connection(connection)
+  if (rows.length !== 1 || rows[0].timeout !== 0) return unavailable()
+  if (isOwnedNativeSqlite(k)) assertOwnedNativeConnection(k, connection)
+}
 async function fileIdentity(filename: string): Promise<FileIdentity> {
   const path = await realpath(filename)
   const info = await lstat(path, { bigint: true })

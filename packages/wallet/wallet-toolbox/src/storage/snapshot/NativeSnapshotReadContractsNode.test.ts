@@ -22,11 +22,14 @@ const nativeFixtureCaseTimeoutMs = 180000 + 30000
 test('actual native WAL source retains original large history while foreground writing and archive provenance remain live', async () => {
   await withComposedNativeFixture(async fixture => {
     const { storage, manager } = fixture,
-      user = manager.getActiveUser(),
+      users = await storage.findUsers({ partial: { identityKey: manager.getActiveUser().identityKey } }),
+      user = users[0],
       requests = await storage.findProvenTxReqs({ partial: { txid: fixture.proof.txid.toUpperCase() } }),
       states = await storage.findSyncStates({ partial: { userId: user.userId } }),
       originalHistory = JSON.stringify({ notes: [], independent: 'original 雪😀'.repeat(7000) }),
       changedHistory = '{"notes":[],"independent":"foreground replacement"}'
+    expect(users).toHaveLength(1)
+    expect(user.userId).toBe(manager.getActiveUser().userId)
     expect(requests).toHaveLength(1)
     expect(states).toHaveLength(1)
     expect(await storage.updateProvenTxReq(requests[0].provenTxReqId, { history: originalHistory })).toBe(1)
