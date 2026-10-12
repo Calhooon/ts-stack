@@ -5100,7 +5100,10 @@ This new export entry requires a preloaded asynchronous worker/native Argon2id
 backend, refusing a missing/cold backend before deriving on the UI thread.
 `BrowserArgon2idWorkerBackend` supplies an optional first-party worker adapter;
 `installBrowserArgon2idWorker` installs its worker-side protocol only when called
-from the host's fixed trusted bundled dedicated-worker entry. Constructing or
+from the host's fixed trusted bundled dedicated-worker entry. The installed
+handler accepts only native dedicated-worker message events: empty origin, null
+source and a trusted browser dispatch. This is a MessagePort channel check; it
+does not select or restrict the application's hosting domain. Constructing or
 importing the adapter does not launch a worker. Await `preload()` before
 `registerArgon2idBackend()`. Each derivation transfers bounded password/salt/key
 buffers through one newly owned worker. It retains selected scalar parameters,

@@ -70,6 +70,16 @@ export function installBrowserArgon2idWorker(selected: BrowserArgon2idWorkerPoli
   globalThis.addEventListener(
     'message',
     (event: MessageEvent<unknown>) => {
+      // Dedicated workers receive native MessagePort events with an empty
+      // origin and null source. A Window hostname allowlist is not this channel.
+      if (event.origin !== '' || event.source !== null || !event.isTrusted) {
+        try {
+          send({ type: 'failed' })
+        } finally {
+          finish()
+        }
+        return
+      }
       void derive(event.data)
     },
     { once: true }

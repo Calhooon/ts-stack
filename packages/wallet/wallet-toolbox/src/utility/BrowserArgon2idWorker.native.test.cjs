@@ -17,6 +17,12 @@ test(
     expect(result.nativeWorkerCount).toBe(2)
     expect(result.browserChildClose).toEqual({ code: 0, signal: null })
     expect(result.processTreeQualified).toBe(false)
+    for (const receipts of result.workers) {
+      expect(receipts.length).toBeGreaterThan(0)
+      for (const receipt of receipts) {
+        expect(receipt.channel).toEqual({ origin: '', sourceIsNull: true, isTrusted: true })
+      }
+    }
     if (namespace === undefined) return
     const cumulative = { static: {}, perTest: {} }
     const merge = (into, from, maximum) => {

@@ -12,14 +12,26 @@ const nativePost = globalThis.postMessage,
 globalThis.addEventListener(
   'message',
   (event: MessageEvent<unknown>) => {
-    if (event.data !== 'coverage-bootstrap-v1' || event.ports.length !== 1) {
+    // This is the native dedicated-worker channel, not Window messaging.
+    if (
+      event.origin !== '' ||
+      event.source !== null ||
+      !event.isTrusted ||
+      event.data !== 'coverage-bootstrap-v1' ||
+      event.ports.length !== 1
+    ) {
       Reflect.apply(nativeClose, globalThis, [])
       return
     }
     const port = event.ports[0]
     let sequence = 0
     const flush = (phase: string): void => {
-      port.postMessage({ sequence: ++sequence, phase, coverage: scope.__stryker__?.mutantCoverage })
+      port.postMessage({
+        sequence: ++sequence,
+        phase,
+        channel: { origin: event.origin, sourceIsNull: event.source === null, isTrusted: event.isTrusted },
+        coverage: scope.__stryker__?.mutantCoverage
+      })
     }
     globalThis.postMessage = ((value: unknown, transfer: Transferable[] = []) => {
       const phase = typeof value === 'object' && value !== null && 'type' in value ? String(value.type) : 'unknown'

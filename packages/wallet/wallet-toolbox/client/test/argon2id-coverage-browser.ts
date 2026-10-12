@@ -7,6 +7,7 @@ interface Coverage {
 interface Receipt {
   sequence: number
   phase: string
+  channel: { origin: string; sourceIsNull: boolean; isTrusted: boolean }
   coverage?: Coverage
 }
 const scope = globalThis as typeof globalThis & { __stryker__?: { mutantCoverage?: Coverage } }
