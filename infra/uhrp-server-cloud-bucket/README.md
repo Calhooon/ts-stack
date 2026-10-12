@@ -434,3 +434,9 @@ when authenticating full-size chunks. The suite retains its original test
 selection, assertions, request bytes and case deadlines, including the 30-second
 authenticated 4 MiB upload case. Service runtime behavior and production limits
 are unchanged.
+
+The development lock resolves Handlebars 4.7.10 for `ts-jest`, within its existing
+compatible version range, to include the upstream security patches. The update
+changes only that development dependency; first-party versions, service runtime
+dependencies and the production image dependency graph are unchanged. Reinstall
+with `npm ci --ignore-scripts` after updating the branch.
