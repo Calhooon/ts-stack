@@ -18,6 +18,9 @@ import {
 import { brc38StagingBinding } from './Brc38StagingBinding'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 type Fixture = Parameters<Parameters<typeof withComposedNativeFixture>[0]>[0]
 
 async function* chunks(bytes: Uint8Array, width = 4093): AsyncGenerator<Uint8Array> {
@@ -268,5 +271,5 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
       }
     )
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )

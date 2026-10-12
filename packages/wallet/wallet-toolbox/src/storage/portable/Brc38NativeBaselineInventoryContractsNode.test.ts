@@ -11,6 +11,9 @@ import { verifyBrc38NativeLocalBaselineSource } from './Brc38NativeLocalBaseline
 import { verifyBrc38NativePriorImportSource } from './Brc38NativePriorImportSourceNode.case'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // UNRUN. Public fixture APIs populate real restored/published WAL owners;
 // independent bounded SQL reads precede the source under test. No source row,
 // descriptor, point hash or old receipt generates an expected postimage.
@@ -45,7 +48,7 @@ test('all47 native local source tables retain independently read typed metadata 
       wipeIndependentNativeInventory(expected)
     }
   }, nativeTestExecutable())
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('all18 native prior-import families retain complete independent raw bytes and explicit empty inventories', async () => {
   await withComposedNativeFixture(async fixture => {
@@ -81,4 +84,4 @@ test('all18 native prior-import families retain complete independent raw bytes a
         }
     }
   }, nativeTestExecutable())
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

@@ -3,6 +3,9 @@ import { verifyBrc38NativeLocalStructuredSource } from './Brc38NativeLocalStruct
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // Independently authored original spelling. The duplicate's last value is
 // visible to the grammar visitor; every original byte is still checked by the
 // source helper, including the overwritten text crossing transfer boundaries.
@@ -75,5 +78,5 @@ test.each([
       }
     )
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )

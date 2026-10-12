@@ -4,6 +4,9 @@ import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import type { IndependentLocalCandidateRow } from './Brc38PrivateLocalCandidateNode.case'
 import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // UNRUN. These are actual migrated SQLite rows and actual source/candidate
 // actors. NULL primary text keys are inactive storage data, not authenticated
 // sessions. No index, schema, ownership flag or semantic admission is changed.
@@ -87,4 +90,4 @@ test('actual private natural keys distinguish signed reuse, composite edges, sam
       }
     }
   )
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

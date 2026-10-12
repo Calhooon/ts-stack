@@ -15,6 +15,9 @@ import { readSnapshotJournalSqliteGeneration } from '../snapshot/journal/Snapsho
 import type { Brc38NativeLocalCapturePolicy } from './Brc38NativeLocalCaptureNode'
 import type { Brc38DestinationSelection } from './Brc38KnexDestinationFence'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 function selected(fixture: Brc38ComposedNativeBeforeObserver): {
   selection: Brc38DestinationSelection
   policy: Brc38NativeLocalCapturePolicy
@@ -65,7 +68,7 @@ test('native local capture installs through the real source migration and resume
       observed = true
     }
   )
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('a real unexpired capture receipt prevents local observer migration without changing its source', async () => {
   const complete = new Error('Independent refusal assertions completed before fixture observer installation')
@@ -138,4 +141,4 @@ test('a real unexpired capture receipt prevents local observer migration without
   expect(observed).toBe(true)
   expect(failed).toBe(true)
   expect(failure).toBe(complete)
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

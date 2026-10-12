@@ -8,6 +8,9 @@ import { reserveBrc38NativeIncomingIds } from './Brc38NativeIncomingIdReservatio
 import { runBrc38PrivateNativeMerge } from './Brc38PrivateNativeMergeRunnerNode'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 const otherIdentity = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5',
   extraIdentity = '02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9'
 
@@ -205,5 +208,5 @@ test.each(['2026-10-02', '2026-10-03', '2026-10-04'])(
       }
     )
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )

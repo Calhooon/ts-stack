@@ -14,6 +14,9 @@ import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestor
 import { asString } from '../../utility/utilityHelpers.noBuffer'
 import { doubleSha256BE } from '../../utility/utilityHelpers'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // Independent numeric family names and archive counts. Four original merge
 // episodes reserve one incoming entity per family; sync additionally reserves
 // each episode's operational checkpoint. These numbers never admit a source.
@@ -303,4 +306,4 @@ test('actual private page allocation consumes genuine source-reserved IDs and ro
       { first: 1601, used: 0, sourceHigh: 1604 }
     )
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

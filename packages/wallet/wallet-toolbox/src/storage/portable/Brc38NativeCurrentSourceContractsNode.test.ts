@@ -4,6 +4,9 @@ import { verifyBrc38NativeLocalCurrentSource } from './Brc38NativeLocalBaselineS
 import { brc38DestinationSelection } from './Brc38KnexDestinationFence'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // Authored UNRUN. The source retains an actual WAL view while a genuine current
 // writer commits. Each variant opens its own fully restored/published fixture.
 test.each(['transaction', 'request-field', 'auxiliary', 'primary'] as const)(
@@ -72,5 +75,5 @@ test.each(['transaction', 'request-field', 'auxiliary', 'primary'] as const)(
       expect(fixture.merge.workingAllocation.used).toBe(0)
     }, nativeTestExecutable())
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )

@@ -14,6 +14,9 @@ import type { Brc38NativeLocalBaselineTable } from './Brc38NativeLocalBaselineTa
 import { verifyBrc38NativeLocalSnapshotRecoveryChanges } from './Brc38NativeLocalBaselineGenerationNode.case'
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // UNRUN. Each negative runs on a fresh real all47 source/candidate pair. Only
 // actual candidate rows/packed writers change; copied progress/point hashes
 // remain unchanged so they cannot falsely substitute for the byte comparison.
@@ -91,7 +94,7 @@ test.each(['metadata', 'binary', 'text', 'empty-to-null', 'remove', 'extra'] as 
       await assertComposedAuxiliaryFixture(fixture.source.manager, fixture.auxiliary)
     })
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )
 
 test('actual candidate preserves deleted-high AUTOINCREMENT history and idempotent sequence copying', async () => {
@@ -119,7 +122,7 @@ test('actual candidate preserves deleted-high AUTOINCREMENT history and idempote
         await verifyBrc38PrivateLocalAllocationHistory(fixture.store, source, fixture.options, expected, fixture.check)
     )
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('actual all47 source clock observes snapshot checkpoint, mapping and primary epoch writes', async () => {
   await withBrc38NativeCandidateContractFixture(async fixture => {
@@ -154,7 +157,7 @@ test('actual all47 source clock observes snapshot checkpoint, mapping and primar
       }
     )
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('actual candidate allocation history refuses a counter beyond its retained source without regression', async () => {
   await withBrc38NativeCandidateContractFixture(async fixture => {
@@ -171,7 +174,7 @@ test('actual candidate allocation history refuses a counter beyond its retained 
         )
     )
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('actual packed journal payload writers preserve logical quota and caught outer rollback', async () => {
   await withBrc38NativeCandidateContractFixture(async fixture => {
@@ -208,4 +211,4 @@ test('actual packed journal payload writers preserve logical quota and caught ou
     }
     await assertComposedAuxiliaryFixture(fixture.source.manager, fixture.auxiliary)
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

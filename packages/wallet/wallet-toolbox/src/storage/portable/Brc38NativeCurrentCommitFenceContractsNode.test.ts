@@ -7,6 +7,9 @@ import { withComposedFixtureRead } from './Brc38ComposedSemanticFixture'
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // UNRUN. The competing connection is a physical SQLite writer to this fixture's
 // own published source file, used only to prove actual SQLITE_BUSY. It grants
 // no provider/source authority. Its transaction always rolls back; the genuine
@@ -96,4 +99,4 @@ test('actual current-data fence holds the source WAL writer through a distinct d
       await competitor.destroy()
     }
   })
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)

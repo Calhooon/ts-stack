@@ -17,6 +17,9 @@ import type {
 } from './Brc38NativeLocalPackedCoordinate'
 import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 type WithoutRow<T> = T extends unknown ? Omit<T, 'rowId'> : never
 type Damage =
   | Readonly<{
@@ -212,5 +215,5 @@ test.each(damages)(
       }
     })
   },
-  30000
+  nativeFixtureCaseTimeoutMs
 )

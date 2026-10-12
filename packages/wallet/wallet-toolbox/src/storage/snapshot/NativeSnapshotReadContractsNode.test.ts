@@ -13,6 +13,9 @@ import { verifyNativePayloadTextSource, type NativePayloadTextSourceCase } from 
 import { withComposedFixtureRead } from '../portable/Brc38ComposedSemanticFixture'
 import type { WalletSnapshotTable } from './WalletReadSnapshot'
 
+// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
+const nativeFixtureCaseTimeoutMs = 180000 + 30000
+
 // Authored UNRUN. These cases use the actual authenticated native fixture and
 // its original physical owner. No copied actor, historical pin, stock SQLite
 // connection or successful receipt can stand in for the required native host.
@@ -70,7 +73,7 @@ test('actual native WAL source retains original large history while foreground w
     expect(current).toHaveLength(1)
     expect(current[0].history).toBe(changedHistory)
   }, nativeTestExecutable())
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('actual DELETE publication reaches WAL snapshot admission only through its original profile', async () => {
   let observed = false
@@ -110,7 +113,7 @@ test('actual DELETE publication reaches WAL snapshot admission only through its 
   } finally {
     await cleanupScope1.close()
   }
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('actual native field metadata and packed hash windows preserve independent large bytes', async () => {
   const history = JSON.stringify({
@@ -187,7 +190,7 @@ test('actual native field metadata and packed hash windows preserve independent 
   } finally {
     await cleanupScope2.close()
   }
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
 
 test('all seventeen native scalar TEXT fields use exact bounded source windows', async () => {
   const fixtures: readonly NativePayloadTextSourceCase[] = [
@@ -243,4 +246,4 @@ test('all seventeen native scalar TEXT fields use exact bounded source windows',
         }
     }
   )
-}, 30000)
+}, nativeFixtureCaseTimeoutMs)
