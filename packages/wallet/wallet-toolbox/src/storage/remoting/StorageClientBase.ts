@@ -95,6 +95,12 @@ import { pruneBeefForTxids } from '../../utility/beefForTxids'
 const syncChunkResponseRetryLimit = 4
 const minimumSyncChunkRoughSize = 64 * 1024
 
+/** Hold proof data as bytes so negotiated binary JSON carries it compactly. */
+function withBeefBytes<T extends { inputBEEF?: number[] | Uint8Array }>(args: T): T {
+  if (args.inputBEEF == null || args.inputBEEF instanceof Uint8Array) return args
+  return { ...args, inputBEEF: Uint8Array.from(args.inputBEEF) }
+}
+
 function isSyncChunkResponseTooLarge(error: unknown): boolean {
   return error instanceof Error && /WalletStorageClient rpcCall: network error 413(?:\s|$)/.test(error.message)
 }
@@ -228,7 +234,10 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   const dbtype = properties.dbtype?.value
-  if (dbtype !== undefined && (typeof dbtype !== 'string' || !['SQLite', 'MySQL', 'IndexedDB'].includes(dbtype))) {
+  if (
+    dbtype !== undefined &&
+    (typeof dbtype !== 'string' || !['SQLite', 'MySQL', 'Postgres', 'IndexedDB'].includes(dbtype))
+  ) {
     throw new Error('Wallet storage returned invalid settings.')
   }
   const maxOutputScript = properties.maxOutputScript?.value
@@ -496,13 +505,13 @@ export abstract class StorageClientBase implements WalletStorageProvider {
           if (pruned != null) {
             args = {
               ...args,
-              inputBEEF: pruned.toBinary()
+              inputBEEF: pruned.toUint8Array()
             }
           }
         }
       }
     }
-    return await this.rpcCall<StorageCreateActionResult>('createAction', [auth, args])
+    return await this.rpcCall<StorageCreateActionResult>('createAction', [auth, withBeefBytes(args)])
   }
 
   /**
@@ -520,14 +529,17 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   }
 
   async prepareNoSendExpiry(auth: AuthId, args: ValidCreateActionArgs): Promise<StoragePrepareNoSendExpiryResult> {
-    return await this.rpcCall<StoragePrepareNoSendExpiryResult>('prepareNoSendExpiry', [auth, args])
+    return await this.rpcCall<StoragePrepareNoSendExpiryResult>('prepareNoSendExpiry', [auth, withBeefBytes(args)])
   }
 
   async activateNoSendExpiry(
     auth: AuthId,
     args: StorageActivateNoSendExpiryArgs
   ): Promise<StorageActivateNoSendExpiryResult> {
-    return await this.rpcCall<StorageActivateNoSendExpiryResult>('activateNoSendExpiry', [auth, args])
+    return await this.rpcCall<StorageActivateNoSendExpiryResult>('activateNoSendExpiry', [
+      auth,
+      { ...args, target: withBeefBytes(args.target) }
+    ])
   }
 
   async armNoSendExpiry(auth: AuthId, args: StorageArmNoSendExpiryArgs): Promise<void> {

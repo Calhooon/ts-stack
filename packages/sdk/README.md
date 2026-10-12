@@ -8,6 +8,28 @@ BSV BLOCKCHAIN | Software Development Kit for JavaScript and TypeScript
 
 Welcome to the BSV Blockchain Libraries Project, the comprehensive TypeScript SDK designed to provide an updated and unified layer for developing scalable applications on the BSV Blockchain. This SDK addresses the limitations of previous tools by offering a fresh, peer-to-peer approach, adhering to SPV, and ensuring privacy and scalability.
 
+## DID serial-token API retirement (3.0 candidate)
+
+The proposed SDK 3.0 release removes `CanonicalDIDToken`, `DID_TOKEN_PROTOCOL`,
+`MAX_DID_SERIAL_BYTES`, `decodeCanonicalDIDToken` and `normalizeDIDSerialNumber`,
+including the `identity/DIDTokenValidation` deep import. Existing wallet,
+certificate and identity-discovery APIs remain supported.
+
+Use `@bsv/did` for validated identity-key `did:key` encoding/resolution and the
+proposed signature-preserving BRC-52 credential adapter. Use BRC-100 wallet
+identity discovery or the existing `tm_identity` / `ls_identity` overlay for
+public certificate candidates. Verify the original derived-key certificate
+signature and apply selected certifier trust independently of discovery. A
+resolved DID establishes its encoded key; live key control requires a separate
+authentication protocol. Historical serial tokens provide no implicit issuer
+or subject binding.
+
+See [identity integration](../../docs/guides/identity-did-vc.md) and
+[migration guidance](../../docs/guides/identity-did-vc-migration.md) before upgrading.
+This is a source candidate; publication and deployment are separate actions.
+
+## Wallet integration
+
 For application-to-wallet integrations, the SDK exposes the BRC-100 `WalletClient` interface. BSV Desktop and BSV Browser are the BSV Association reference implementations for this interface; vendor distributions such as Babbage's Metanet Desktop / Metanet Explorer and Hudos Browser can implement the same interface with their own branding and service defaults.
 
 The BRC-100 `CreateActionResult` permits AtomicBEEF as either `number[]` or
@@ -186,6 +208,23 @@ The BSV Blockchain Libraries Project aims to structure and maintain a middleware
 
 ## Getting Started
 
+### Package entry points
+
+The SDK3 retirement candidate removes `identity/DIDTokenValidation`; use the
+[identity/DID/VC migration guide](../../docs/guides/identity-did-vc-migration.md)
+for the identity-key DID and original BRC52 envelope replacements.
+
+`@bsv/sdk/umd` is an ESM entry that installs `globalThis.bsv` with the classic
+bundle's export descriptors and re-exports the canonical SDK constructors.
+`@bsv/sdk/umd.ts` supports ESM and CommonJS through the existing wildcard.
+The explicit `./umd` condition remains import-only. The standalone
+`dist/umd/bundle.js` keeps its classic-script interface. These packaging fixes
+preserve its bytes after the intentional DID-token retirement; they do not
+create a second module class graph. Importing the global facade retains all
+SDK exports, so its size is measured separately from selective module imports.
+Cold BasePoint/JacobianPoint leaf entries retain their initialization wrappers
+and original class identity in Node and browser bundlers.
+
 ### Installation
 
 To install the SDK, run:
@@ -315,6 +354,41 @@ than that the script is invalid.
   The header is an optional SDK extension, not a standardized BRC-105 header.
 
 - **Identity**: Comprehensive identity management system supporting identity verification and certificate management.
+
+  `IdentityClient.resolveByAttributes({ attributes: { any: query } }, true)`
+  searches saved contact names and keys with case-insensitive substring matching.
+  Named contact selectors retain exact case-insensitive matching. All supplied
+  selectors must match; empty or malformed selectors never match a contact.
+  Sequential mode retains the contact-hit shortcut; `parallel: true` includes
+  matching contacts alongside fresh public results, with one local override per
+  matching identity key. Contacts are personal assertions, not proof of a
+  third-party certification.
+
+  Contacts are disabled by default. Existing boolean and object callers retain
+  their contact-error behavior. Search UIs can opt into bounded contact recovery:
+
+  ```ts
+  const identities = await client.resolveByAttributes(
+    { attributes: { any: query } },
+    {
+      useContacts: true,
+      contactErrorMode: 'fallback',
+      contactTimeoutMs: 2000,
+      onContactError: () => showContactWarning()
+    }
+  )
+  ```
+
+  Fallback uses a two-second contact deadline unless overridden by an integer
+  from 1 to 60000 milliseconds. It continues public discovery after a contact
+  error or timeout and preserves public-discovery errors and certificate checks.
+  The same options work with `resolveByIdentityKey`. A deadline bounds this
+  call's wait; it cannot cancel a wallet request or dismiss its permission prompt.
+  Render an error separately from a successful empty result, and use the callback
+  for a partial-result warning. Callback exceptions propagate. Omit recovery
+  options to retain strict legacy behavior; omit `useContacts` when contacts are
+  unnecessary. The options require this SDK candidate; upgrading a wallet does
+  not upgrade an application's bundled SDK or its React search component.
 
 - **Key Value Store**: Distributed key-value store for decentralized data storage and retrieval.
 
@@ -524,3 +598,43 @@ These controls authenticate peers and protect message integrity and freshness;
 they do not encrypt the transport. Applications must use a confidential
 transport such as correctly verified TLS and must separately authorize the
 authenticated identity for every protected operation.
+
+## Locally authorized outputs in completed actions
+
+`completeBoundAction` continues to reject an unrequested output funded by a
+caller-supplied input by default. A caller may install
+`authorizeAdditionalOutputs(result)` to return independently approved outputs,
+each bound to an exact `outputIndex`, `lockingScript`, and `satoshis`. This is a
+local policy decision: do not approve outputs merely because an untrusted wallet
+labels them as change or a fee. Input-value conservation, requested-output
+binding, input signing, and signed-template verification still apply.
+
+For example, a local signer can retain its independently verified storage-policy
+decision in a private `WeakMap` keyed by the exact `createAction` result:
+
+```ts
+await completeBoundAction(wallet, args, {
+  inputSigners,
+  authorizeAdditionalOutputs: result => verifiedLocalOutputs.get(result) ?? []
+})
+```
+
+The new `BOUND_ACTION_OUTPUT_AUTHORIZATION_VERSION` export is `1`. The existing function also exposes `completeBoundAction.outputAuthorizationVersion=1`.
+Consumers supporting older SDK peers should detect that function property before supplying the new
+option; older SDKs retain their existing strict behavior. This additive API is
+included in the SDK 3.1 source candidate. The separate SDK3 identity migration
+still applies; SDK2 applications need an additive backport or a coordinated SDK3
+upgrade. No BRC-100 wire or wallet-data changes are introduced by this option.
+
+## Pre-construction wallet reviews
+
+The 3.2.1 candidate accepts a storage pre-construction double-spend review through
+`HTTPWalletJSON` only for `createAction` with explicit inputs. It requires one
+empty attempted-TXID result, no constructed-action fields, and complete competing
+transactions that spend those requested outpoints. Malformed, unrelated and
+ID-only evidence remains invalid. The existing bounded retry helper synchronizes
+the winning transactions before re-invoking the operation to read fresh state.
+Use a wallet with the matching Toolbox parser fix. The binary wire format is
+unchanged and cannot carry structured review evidence; choose a compatible
+transport before financial operations rather than retrying an ambiguous failure.
+No BRC-100 call or storage-schema migration is required.
