@@ -72,12 +72,17 @@ test('native baseline bounded comparisons retain complete schema and exact curre
           }
         }
         const originalObjects = await objects()
-        const observer = expected.find(sql => sql.startsWith('CREATE TRIGGER brc38_local_baseline_s46_update '))!
-        expect(typeof observer).toBe('string')
+        const observers = expected.filter(sql =>
+          /^CREATE TRIGGER [A-Za-z0-9_]+ AFTER UPDATE ON snapshot_reconciliation_window_progress BEGIN /.test(sql)
+        )
+        expect(observers).toHaveLength(1)
+        const observer = observers[0],
+          name = /^CREATE TRIGGER ([A-Za-z0-9_]+) /.exec(observer)![1]
+        expect(name).toMatch(/^brc38_local_baseline_(?:s46|snapshot_reconciliation_window_progress)_update$/)
         for (const changed of [false, true]) {
           await trx.raw('SAVEPOINT actual_baseline_batch_negative')
           try {
-            await trx.raw('DROP TRIGGER brc38_local_baseline_s46_update')
+            await trx.raw('DROP TRIGGER ??', [name])
             if (changed) await trx.raw(observer.replace('BEGIN ', 'BEGIN SELECT 1; '))
             await expect(hasBrc38NativeLocalBaselineGenerationSchema(trx)).rejects.toThrow(
               'Local baseline original generation, schema or progress differs'

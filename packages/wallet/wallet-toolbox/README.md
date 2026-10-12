@@ -5973,3 +5973,10 @@ transaction. Absent TEXT still requires an independent binary check. Full
 observer, family, index and owner checks remain fresh, with no cached verdict
 or increased resource limit. This removes duplicate queries from bounded
 merge operations; whole-workflow performance still requires measurement.
+
+The bounded baseline schema regression targets the original physical
+window-progress table in either supported observer naming family. It requires
+exactly one matching observer, rejects both its removal and altered definition,
+and verifies exact generation, page-count and complete object rollback.
+The fresh private fixture can use historical names without weakening the
+compact-family or mixed-schema checks.
