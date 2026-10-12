@@ -5997,3 +5997,12 @@ owner. Resume, repeat and negative encrypted replays emit at most 1024 bytes per
 chunk, matching the fixture's original ciphertext cap. Payload bytes, all six
 variants and the original semantic/custody/resource assertions remain; full
 native and system qualification is still required.
+
+Confirmed IndexedDB internalization resolves and validates the block header
+before opening the storage writer. The asynchronous header lookup therefore
+cannot finish an IndexedDB transaction before its proven transaction, wallet
+transaction and recipient outputs are stored. Missing or malformed headers and
+invalid proofs still refuse before writes. The upstream five-case regression
+is retained unchanged. This source port carries main's confirmed-internalize
+fix into the unpublished candidate; release metadata and complete main ancestry
+still require reconciliation before whole-system qualification.
