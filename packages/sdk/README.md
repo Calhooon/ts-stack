@@ -43,7 +43,18 @@ using the BRC-104 `-1` body-length sentinel. Conforming 204 and empty error
 responses now verify; non-empty response encoding is unchanged. Servers that
 sign a zero body length for an empty response must adopt the specified sentinel.
 
-AuthFetch allows up to 10 minutes to prepare an authenticated request, including
+### Authenticated request approval and timeouts (3.3 candidate)
+
+Previously, AuthFetch's 30-second authenticated-response timer also counted time
+spent waiting for wallet approval. If it expired during a permission or signature
+prompt, the application could report failure, yet approving the prompt later
+could still send the application request. For a write such as certificate issuance,
+that could create a result the application did not expect; blindly retrying could
+repeat the operation.
+
+AuthFetch now checks cancellation immediately before handing the application
+request to its transport, preventing late approval from sending an expired request.
+It allows up to 10 minutes to prepare an authenticated request, including
 wallet approval and pending certificate permissions. At application dispatch it
 starts a fresh 10-minute response-handling window, allowing local wallet verification
 prompts to complete. Each authenticated HTTP exchange, including reading the response body,
@@ -70,6 +81,11 @@ handshake already underway. `onSend` runs synchronously before the transport
 handoff and can prevent it by throwing or aborting the signal. Once handed off,
 a request cannot be recalled by this signal. Existing two-argument calls retain
 their behavior.
+
+This change covers the authenticated request lifecycle. The unauthenticated
+fallback and automatic BRC-105 payment approval keep their existing behavior.
+No changes to existing calls, wire formats or wallet data are required. SDK 3.3.0
+is a source candidate; publication follows the protected release workflow.
 
 AuthFetch's automatic BRC-105 payment path delegates spending authorization to
 the configured wallet's `createAction` policy. Use a wallet that requires the
