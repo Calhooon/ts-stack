@@ -32,6 +32,8 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## 2.15.0 candidate — bounded sync and portable recovery
 
+- Integrate current main892 interrupted WAB registration continuity. An optional durable checkpoint saver retains the encrypted unpublished UMP token before funding; retries keep the same root and verify an already internalized faucet payment. Existing published tokens and backup identity/network contracts remain. No required consumer migration; use the new callback for cross-process pending registration recovery. Full combined system qualification remains pending.
+
 - Retain recipient output and basket credit when valid AtomicBEEF omits the recipient BUMP but storage already has its proof. The actual lookup and ownership writes share a writer; no header lookup, broadcast or new proof request is needed. Preserve pre-writer header resolution for incoming proofs and the original five confirmed-IDB cases. No schema or API migration. Full system qualification remains pending.
 
 This unpublished source candidate passes core/client/mobile source compilation
