@@ -43,7 +43,7 @@ test('a source adapter exists before availability and negotiates the first open 
     () => source.checkpoint('', ''),
     () => source.prepare(undefined as never, undefined as never)
   ])
-    await expect(operation()).rejects.toThrow('Remote snapshot destination is unavailable')
+    await expect(operation()).rejects.toThrow('Remote snapshot destination is not negotiated')
   expect(client.request).toHaveBeenCalledTimes(1)
 })
 

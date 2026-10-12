@@ -47,8 +47,15 @@ const payloads: Readonly<Record<Brc38ImportFieldPolicyTable, readonly string[]>>
   structured = new Set(['history', 'notify', 'syncMap', 'errorLocal', 'errorOther']),
   hash = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex'),
   budget = () => ({ maximum: 16777216, remaining: 16777216 }),
-  original = (table: Brc38ImportFieldPolicyTable): Record<string, unknown> =>
-    decodePortableRow<Record<string, unknown>>(brc38ImportRowForm(table).kind, semanticStageFixture().tables[table][0])
+  original = (table: Brc38ImportFieldPolicyTable): Record<string, unknown> => {
+    const row = decodePortableRow<Record<string, unknown>>(
+      brc38ImportRowForm(table).kind,
+      semanticStageFixture().tables[table][0]
+    )
+    // Policy DATA requires a wallet SyncStatus, distinct from TX status.
+    if (table === 'syncStates') row.status = 'unknown'
+    return row
+  }
 function incoming(table: Brc38ImportFieldPolicyTable, row: Record<string, unknown>) {
   const metadata = { ...row },
     source: Brc38JsonStreamedRow = { fields: {}, binaries: {}, structured: {}, texts: {} },
@@ -241,3 +248,12 @@ test('field policy refuses partial, overlapping and invalid inline DATA before s
     )
   ).toThrow()
 })
+
+test.each(['completed', '', null, 1])(
+  'invalid sync-state status %p remains refused in original and current DATA',
+  status => {
+    const row = { ...original('syncStates'), status }
+    expect(() => incoming('syncStates', row)).toThrow('Private import field policy differs')
+    expect(() => current('syncStates', row)).toThrow('Private import field policy differs')
+  }
+)

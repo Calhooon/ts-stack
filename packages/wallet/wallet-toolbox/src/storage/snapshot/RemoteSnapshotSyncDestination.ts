@@ -128,31 +128,41 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
   }
 
   async begin(source: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
-    const selected = {
-      version: source.version,
-      snapshotId: source.snapshotId,
-      sourceStorage: {
-        ...source.sourceStorage,
-        created_at: new Date(source.sourceStorage.created_at),
-        updated_at: new Date(source.sourceStorage.updated_at)
-      },
-      user: {
-        ...source.user,
-        created_at: new Date(source.user.created_at),
-        updated_at: new Date(source.user.updated_at)
-      },
-      expiresAt: source.expiresAt
-    }
-    const session = {
-      expiresAt: source.expiresAt,
-      deadline: performance.now() + Math.max(0, source.expiresAt - Date.now()),
-      sourceUserId: source.user.userId
-    }
+    // Detach supplied source DATA before the first await. Reader-only peers
+    // also reject absent DATA with the existing negotiation error.
+    const selected =
+      source == null
+        ? undefined
+        : {
+            version: source.version,
+            snapshotId: source.snapshotId,
+            sourceStorage: {
+              ...source.sourceStorage,
+              created_at: new Date(source.sourceStorage.created_at),
+              updated_at: new Date(source.sourceStorage.updated_at)
+            },
+            user: {
+              ...source.user,
+              created_at: new Date(source.user.created_at),
+              updated_at: new Date(source.user.updated_at)
+            },
+            expiresAt: source.expiresAt
+          }
+    const session =
+      selected === undefined
+        ? undefined
+        : {
+            expiresAt: selected.expiresAt,
+            deadline: performance.now() + Math.max(0, selected.expiresAt - Date.now()),
+            sourceUserId: selected.user.userId
+          }
     for (const [key, value] of this.sessions)
       if (Date.now() >= value.expiresAt || performance.now() >= value.deadline) this.sessions.delete(key)
     if (this.sessions.size >= 8) throw new WERR_INVALID_OPERATION('Remote snapshot local session bound reached')
     const peer = await this.peer()
     if (!peer.supportsDestination) throw new WERR_INVALID_OPERATION('Remote snapshot destination is not negotiated')
+    if (selected === undefined || session === undefined)
+      throw new WERR_INVALID_OPERATION('Remote snapshot begin requires its original source')
     const result = await this.request('beginSnapshotSync', [selected, activeStorage], session)
     const checkpoint = parseRemoteSnapshotSyncCheckpoint(result, {
       identityKey: selected.user.identityKey,
@@ -199,8 +209,13 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
       updates: number
     }>
   > {
-    const session = this.sessions.get(checkpoint.sessionId)
-    if (session === undefined || checkpoint.done || snapshotSyncTables[checkpoint.tableIndex] === undefined)
+    const session = checkpoint == null ? undefined : this.sessions.get(checkpoint.sessionId)
+    if (session === undefined) {
+      const peer = await this.peer()
+      if (!peer.supportsDestination) throw new WERR_INVALID_OPERATION('Remote snapshot destination is not negotiated')
+      throw new WERR_INVALID_OPERATION('Remote snapshot page requires its original negotiated session')
+    }
+    if (checkpoint.done || snapshotSyncTables[checkpoint.tableIndex] === undefined)
       throw new WERR_INVALID_OPERATION('Remote snapshot page requires its original negotiated session')
     // Encoding detaches the whole bounded page before any asynchronous work;
     // raw binary extents never expand through number[] JSON serialization.

@@ -231,3 +231,43 @@ test('failed staged cleanup retains the concrete owner through shared retry and 
   await retained!.retryCleanup()
   expect(releases).toBe(3)
 })
+
+test.each([undefined, null])(
+  'reader-only destination refuses absent %p DATA without a destination RPC',
+  async absent => {
+    const f = fixture()
+    f.peer.mockResolvedValue({ storageIdentityKey: 'destination', supportsDestination: false })
+    for (const operation of [
+      () => f.destination.begin(absent as never, undefined),
+      () => f.destination.begin(f.source, 'source'),
+      () => f.destination.checkpoint(identity, 'source'),
+      () => f.destination.prepare(absent as never, absent as never),
+      () => f.destination.prepare(f.checkpoint, f.page)
+    ])
+      await expect(operation()).rejects.toThrow('Remote snapshot destination is not negotiated')
+    expect(f.rpc).not.toHaveBeenCalled()
+  }
+)
+test('pending peer negotiation cannot change synchronously detached source DATA', async () => {
+  const f = fixture()
+  f.source.user.created_at = new Date(when)
+  let release!: (peer: { storageIdentityKey: string; supportsDestination: boolean }) => void
+  f.peer.mockImplementationOnce(
+    async () =>
+      await new Promise(resolve => {
+        release = resolve
+      })
+  )
+  const opening = f.destination.begin(f.source, 'source')
+  f.source.snapshotId = 'c'.repeat(64)
+  f.source.sourceStorage.storageIdentityKey = 'changed'
+  f.source.user.identityKey = 'changed'
+  f.source.user.created_at.setTime(0)
+  release({ storageIdentityKey: 'destination', supportsDestination: true })
+  expect(await opening).toEqual(f.checkpoint)
+  expect(f.rpc.mock.calls[0][1][0]).toMatchObject({
+    snapshotId: 'a'.repeat(64),
+    sourceStorage: { storageIdentityKey: 'source' },
+    user: { identityKey: identity, created_at: new Date('2026-10-06T00:00:00.000Z') }
+  })
+})

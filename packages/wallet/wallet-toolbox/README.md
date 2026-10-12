@@ -6119,3 +6119,5 @@ against the requested explicit inputs, synchronize the accepted winner, then
 read fresh state before rebuilding. Upgrade the application SDK alongside the
 wallet parser. Use the existing JSON wallet API for structured review errors;
 the binary wire format is unchanged. No database or call migration is required.
+
+Streamed scalar TEXT checks its following row delimiter before finishing a provisional field. Reader-only snapshot peers refuse destination operations through the existing negotiation error even with absent source/session DATA; valid source/page DATA remain detached before asynchronous work. The field-policy success fixture uses a valid sync-state status and retains independent invalid-status rejection. No consumer migration, archive-format, resource-default or capability expansion.

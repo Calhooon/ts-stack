@@ -241,3 +241,20 @@ test('cancellation drains a pending scalar append before rejecting and discardin
   await expect(parsing).rejects.toThrow('original cancellation')
   expect(state.discarded).toHaveLength(1)
 })
+
+test.each(['token', ':', '[', ']'])(
+  'a scalar field followed by %s refuses before field finish or row admission',
+  async suffix => {
+    const text = JSON.stringify(semanticStageFixture()).replace(
+        '"description":"original"',
+        '"description":"original"' + suffix
+      ),
+      state = staging()
+    await expect(readBrc38JsonStream(input(text, 1), state.sink, policy)).rejects.toThrow()
+    expect(state.discarded).toHaveLength(1)
+    expect(
+      state.finish.mock.calls.some(([table, , value]) => table === 'transactions' && value.field === 'description')
+    ).toBe(false)
+    expect(state.rows.transactions).toHaveLength(0)
+  }
+)

@@ -167,6 +167,11 @@ export async function readBrc38JsonTextField(
       })
       await flush()
     }
+    // A quote from the next key can close a malformed scalar. Require its
+    // own row delimiter before finishing even this provisional private field.
+    await input.skip()
+    const delimiter = await input.peek()
+    if (delimiter !== ',' && delimiter !== '}') invalid()
     const result = Object.freeze({ field, encoding: 'utf8' as const, bytes, sha256: toHex(digest.digest()) })
     input.check()
     await sink.finish(table, index, result)
