@@ -1787,6 +1787,14 @@ registered migrator, checks its current journal migration result and publication
 exactly once, and retains the independent index publication and all seventeen
 original process-loss boundaries.
 
+The MySQL destination verifier parses both source-owned index declaration
+spellings, with and without a space before the column list. Live schema checks
+still require the exact column order, ascending full-column visible BTREE keys
+and the owned table, quota and trigger definitions. The pinned native MySQL
+fixture checks valid installation and refuses missing or descending target
+indexes before restoring the exact owned index and running the original archive
+contracts. No emitted DDL, stored schema or protocol changes.
+
 The working native journal candidate now runs a finite maintenance pass before
 ordinary negotiated captures: the default retains at least 1,000,000 event-clock
 positions, reclaims at most 64 actually expired receipts and examines two native

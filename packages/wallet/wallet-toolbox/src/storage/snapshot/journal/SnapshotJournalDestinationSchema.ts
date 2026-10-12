@@ -76,7 +76,7 @@ interface Table {
   options: string
 }
 function index(sql: string): Index {
-  const match = /^CREATE INDEX (\w+) ON (\w+) \(([^)]+)\)$/.exec(sql)
+  const match = /^CREATE INDEX (\w+) ON (\w+) ?\(([^)]+)\)$/.exec(sql)
   if (!match) invalid()
   return { name: match[1], table: match[2], columns: match[3].split(',').map(value => value.trim()), unique: false }
 }

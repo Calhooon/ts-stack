@@ -32,6 +32,9 @@ const {
 const { addSnapshotArchiveTables } = require('../../out/src/storage/schema/snapshotArchiveMigration.js')
 const { StorageKnex } = require('../../out/src/storage/StorageKnex.js')
 const { StorageProvider } = require('../../out/src/storage/StorageProvider.js')
+const {
+  verifySnapshotJournalDestinationSchema
+} = require('../../out/src/storage/snapshot/journal/SnapshotJournalDestinationSchema.js')
 const { exportBRC38 } = require('../../out/src/storage/portable/index.js')
 const { captureKnexSnapshotArchive } = require('../../out/src/storage/snapshot/archive/captureKnexSnapshotArchive.js')
 const { decodeSyncTransfer } = require('../../out/src/storage/remoting/SyncTransfer.js')
@@ -80,6 +83,22 @@ async function captureFixture() {
   const originalAppend = KnexSnapshotArchiveStore.prototype.append
   try {
     await writer.migrate('native capture source', 'native-source')
+    await verifySnapshotJournalDestinationSchema(writer.knex)
+    const membershipIndex = 'snapshot_reconciliation_membership_target'
+    const membershipTable = 'snapshot_reconciliation_memberships'
+    await writer.knex.raw('DROP INDEX ?? ON ??', [membershipIndex, membershipTable])
+    await assert.rejects(verifySnapshotJournalDestinationSchema(writer.knex), /differs from its owned migration/)
+    await writer.knex.raw('CREATE INDEX ?? ON ?? (userId,tableId,id1,id2,exactText DESC)', [
+      membershipIndex,
+      membershipTable
+    ])
+    await assert.rejects(verifySnapshotJournalDestinationSchema(writer.knex), /differs from its owned migration/)
+    await writer.knex.raw('DROP INDEX ?? ON ??', [membershipIndex, membershipTable])
+    await writer.knex.raw('CREATE INDEX ?? ON ?? (userId,tableId,id1,id2,exactText)', [
+      membershipIndex,
+      membershipTable
+    ])
+    await verifySnapshotJournalDestinationSchema(writer.knex)
     await writer.makeAvailable()
     await reader.makeAvailable()
     const { user } = await writer.findOrInsertUser(identity)
