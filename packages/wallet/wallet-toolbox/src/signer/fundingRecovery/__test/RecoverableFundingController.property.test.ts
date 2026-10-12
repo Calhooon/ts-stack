@@ -59,6 +59,19 @@ test('generated local fixed-child payments preserve native ownership and reject 
     const fixture = fundingFixture(context)
     jest.spyOn(context.services, 'getChainTracker').mockResolvedValue(fixture.tracker)
     const script = new P2PKH().lock(PublicKey.fromString(brc197ChildPublicKey(context.identityKey)).toAddress())
+    // This property proves local ownership using public synthetic transactions.
+    // Exercise ordinary publication through an exact-BEEF local processor fixture.
+    const post = jest.spyOn(context.services, 'postBeef').mockImplementation(async (beef, txids) => {
+      expect(txids).toEqual([fixture.tx.id('hex')])
+      expect(beef.findTxid(txids[0])?.tx?.toHex()).toBe(fixture.tx.toHex())
+      return [
+        {
+          name: 'local synthetic processor',
+          status: 'success',
+          txidResults: txids.map(txid => ({ txid, status: 'success' }))
+        }
+      ]
+    })
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 500 }), fc.boolean(), async (amount, altered) => {
         fixture.tx.outputs[0].satoshis = 1000 - amount
@@ -84,16 +97,21 @@ test('generated local fixed-child payments preserve native ownership and reject 
         const before = await context.activeStorage.findOutputs({
           partial: { userId: context.userId, txid: fixture.tx.id('hex') }
         })
+        const submissions = post.mock.calls.length
         if (altered) {
           await expect(context.wallet.internalizeBrc197Action(args)).rejects.toThrow('unique BRC-197 fixed-child')
           expect(
             await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: fixture.tx.id('hex') } })
           ).toEqual(before)
+          expect(post).toHaveBeenCalledTimes(submissions)
         } else {
           const accepted = await context.wallet.internalizeBrc197Action(args)
           expect(accepted.accepted).toBe(true)
           expect(accepted.satoshis).toBe(before.length === 0 ? amount : 0)
+          const expectedSubmissions = submissions + (before.length === 0 ? 1 : 0)
+          expect(post).toHaveBeenCalledTimes(expectedSubmissions)
           expect((await context.wallet.internalizeBrc197Action(args)).satoshis).toBe(0)
+          expect(post).toHaveBeenCalledTimes(expectedSubmissions)
           const rows = await context.activeStorage.findOutputs({
             partial: { userId: context.userId, txid: fixture.tx.id('hex') }
           })
