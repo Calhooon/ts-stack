@@ -724,7 +724,11 @@ class InternalizeActionContext {
         newReq.addHistoryNote({ what: 'internalizeAction', userId: this.userId })
         newReq.addNotifyTransactionId(transactionId)
         pr = await this.storage.getProvenOrReq(this.txid, newReq.toApi(), trx)
-      } else {
+      }
+
+      // A valid incoming BEEF may omit this transaction's BUMP even when
+      // storage already has its proof. Credit both resolved and stored proofs.
+      if (pr.proven != null) {
         await this.persistNewOwnership(transactionId, trx)
       }
     })

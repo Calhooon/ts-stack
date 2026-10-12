@@ -6006,3 +6006,12 @@ invalid proofs still refuse before writes. The upstream five-case regression
 is retained unchanged. The unpublished candidate includes main's confirmed-internalize fix with its
 coherent release and migration notes. Full native and system qualification
 remains required.
+
+The confirmed intake path also retains recipient ownership when valid incoming
+AtomicBEEF carries an anchored parent but omits the recipient BUMP and the actual
+storage lookup finds an existing recipient proof. The lookup remains inside the
+writer; output and basket credit use that same writer without a header lookup,
+network publication or new proof request. A separate genuine IndexedDB regression
+uses the real proof lookup and stored record; the original five upstream cases
+remain unchanged. This compatible correction does not change stored schemas or
+public APIs. Whole-system and physical-platform qualification remain pending.

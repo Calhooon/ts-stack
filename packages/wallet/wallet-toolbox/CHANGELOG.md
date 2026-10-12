@@ -32,6 +32,8 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## 2.15.0 candidate — bounded sync and portable recovery
 
+- Retain recipient output and basket credit when valid AtomicBEEF omits the recipient BUMP but storage already has its proof. The actual lookup and ownership writes share a writer; no header lookup, broadcast or new proof request is needed. Preserve pre-writer header resolution for incoming proofs and the original five confirmed-IDB cases. No schema or API migration. Full system qualification remains pending.
+
 This unpublished source candidate passes core/client/mobile source compilation
 and core/client/worker/mobile assembly and warning-free source lint checks;
 functional qualification remains pending. The
