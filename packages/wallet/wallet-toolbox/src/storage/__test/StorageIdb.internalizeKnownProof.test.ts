@@ -84,7 +84,9 @@ describe('StorageIdb internalization with an existing stored proof', () => {
       }
     )
     expect(lookup).toHaveBeenCalledTimes(1)
-    expect((await lookup.mock.results[0]?.value).proven.provenTxId).toBe(provenTxId)
+    const lookupResult = lookup.mock.results[0]
+    if (lookupResult == null) throw new Error('Expected the actual stored-proof lookup result')
+    expect((await lookupResult.value).proven?.provenTxId).toBe(provenTxId)
     expect(newRequest).not.toHaveBeenCalled()
     expect(header).not.toHaveBeenCalled()
     expect(broadcast).not.toHaveBeenCalled()
