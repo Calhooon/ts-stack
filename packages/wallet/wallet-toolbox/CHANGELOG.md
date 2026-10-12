@@ -1,5 +1,10 @@
 ## Held #569 implementation candidate — unreleased
 
+- Preserve all native field-window positive and negative contracts while isolating
+  fatal physical-length probes in fresh retained views under the original deadline.
+  Verify original read/closed/close error identity and physical cleanup; production
+  snapshot retirement and every original fixture/case/resource limit are unchanged.
+
 - Streamed scalar TEXT checks its following row delimiter before finishing a provisional field. Reader-only snapshot peers refuse destination operations through the existing negotiation error even with absent source/session DATA; valid source/page DATA remain detached before asynchronous work. The field-policy success fixture uses a valid sync-state status and retains independent invalid-status rejection. No consumer migration, archive-format, resource-default or capability expansion.
 
 - Preserve PostgreSQL journal migration no-ops during explicit data deletion by retaining the existing dialect guard on both rollback callbacks; SQLite/MySQL cleanup and normal downgrade refusals remain. Add a real callback regression rejecting snapshot SQL/connection acquisition on PostgreSQL. Complete native restore success setup explicitly admits 8 MiB while small defaults/negative controls remain; the schema batching oracle selects the actual settings UPDATE observer and retains exact byte/order/rollback/resource assertions. No public API, data-format, schema or production resource migration is introduced. Full system qualification remains open.

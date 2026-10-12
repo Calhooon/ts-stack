@@ -46,6 +46,14 @@ qualification remain pending. See the [current implementation map](./docs/implem
 README retain historical checkpoints; their earlier “uncompiled” status does not
 supersede this current result. PR569 remains open and unmerged.
 
+Native field-window qualification keeps positive binary and UTF-8 windows in
+one coherent retained view. Incorrect physical-length probes use separate views
+with fresh metadata and the same original residual deadline, and verify that the
+read, closed promise and explicit close preserve the original failure identity.
+All original large records, bounded windows and invalid-coordinate checks remain.
+This fixture correction does not change production snapshot retirement policy or
+establish whole-system qualification.
+
 ## Backup and recovery: keep both keys and wallet data
 
 **A root key or seed alone is not a complete BRC-100 wallet backup.** Users
