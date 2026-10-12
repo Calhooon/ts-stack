@@ -166,8 +166,11 @@ function pointerObservers(
  * events; exact observer comparison then refuses the incomplete epoch. */
 export async function brc38NativeLocalBaselineSourceDefinitions(k: Knex.Transaction): Promise<readonly string[]> {
   actual(k)
-  const binary = await hasBrc38NativePackedSchema(k),
-    text = await hasBrc38NativePackedTextSchema(k),
+  // A present TEXT family already verifies the complete binary family on
+  // this same actual transaction. Keep the absent-TEXT binary fallback;
+  // no verdict survives this call or replaces the complete observer check.
+  const text = await hasBrc38NativePackedTextSchema(k),
+    binary = text || (await hasBrc38NativePackedSchema(k)),
     local = await hasBrc38NativeLocalPackedLayout(k)
   const installed = (await k('sqlite_schema').where({ type: 'table', name: clock }).first('sql')) as
     { sql: string } | undefined

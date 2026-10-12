@@ -5966,3 +5966,10 @@ rethrows the original error. It helps distinguish setup, repeated baseline work
 and incoming merge costs while preserving the six variants, full dataset,
 allocation assertions and finite workflow limits; it is diagnostic evidence,
 not complete qualification.
+
+Native baseline schema selection reuses successful same-call TEXT-family
+validation, which already verifies the complete binary family on the actual
+transaction. Absent TEXT still requires an independent binary check. Full
+observer, family, index and owner checks remain fresh, with no cached verdict
+or increased resource limit. This removes duplicate queries from bounded
+merge operations; whole-workflow performance still requires measurement.
