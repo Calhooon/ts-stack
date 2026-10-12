@@ -4,8 +4,8 @@ title: '@bsv/wallet-toolbox-client'
 kind: package
 domain: wallet
 version: '2.15.0'
-last_updated: '2026-10-05'
-last_verified: '2026-10-05'
+last_updated: '2026-10-12'
+last_verified: '2026-10-12'
 
 review_cadence_days: 30
 npm: 'https://www.npmjs.com/package/@bsv/wallet-toolbox-client'
