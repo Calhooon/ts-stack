@@ -206,13 +206,22 @@ async function rootCopyFixture() {
   await fs.mkdir(destination, { mode: 0o700 })
   return { source, destination, output: path.join(destination, 'native-contract') }
 }
+async function readRootCopy(filename) {
+  const file = await fs.open(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+  try {
+    return { stat: await file.stat(), bytes: await file.readFile() }
+  } finally {
+    await file.close()
+  }
+}
 test('actual Linux root file-copy fixture preserves exact bytes, closes descriptors and conveys no Darwin ACL grant', async () => {
   const fixture = await rootCopyFixture(),
     copy = require('../../../../tools/Brc38RootNativeInstallation.cjs').copyPinnedRootOwnedExecutable,
     result = await copy(fixture.source, fixture.destination),
     pin = require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').qualifiedNativeComponentBuild(),
-    actual = await fs.lstat(fixture.output)
-  expect(await fs.readFile(fixture.output)).toEqual(await fs.readFile(fixture.source))
+    opened = await readRootCopy(fixture.output),
+    actual = opened.stat
+  expect(opened.bytes).toEqual(await fs.readFile(fixture.source))
   expect(actual.mode & 0o777).toBe(0o555)
   expect(actual.uid).toBe(0)
   expect(actual.nlink).toBe(1)
@@ -225,7 +234,9 @@ test('actual Linux root file-copy fixture preserves exact bytes, closes descript
     require('../../../../out/src/storage/portable/Brc38NativeExecutable.cjs').pinnedNativeLaunchPath(result)
   ).rejects.toThrow('original pinned executable descriptor')
   await expect(copy(fixture.source, fixture.destination)).rejects.toThrow()
-  expect(await fs.readFile(fixture.output)).toEqual(await fs.readFile(fixture.source))
+  const retained = await readRootCopy(fixture.output)
+  expect([retained.stat.dev, retained.stat.ino]).toEqual([actual.dev, actual.ino])
+  expect(retained.bytes).toEqual(await fs.readFile(fixture.source))
 })
 test.each(['symlink', 'writable', 'hard-link', 'truncated', 'corrupted'])(
   'actual root-copy %s source refuses; only a newly created failed file may remain',

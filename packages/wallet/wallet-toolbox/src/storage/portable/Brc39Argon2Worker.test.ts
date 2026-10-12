@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import fc from 'fast-check'
 
 const MIN_PROPERTY_RUNS = 300
@@ -88,10 +87,12 @@ test('generated actual module requests preserve scalar limits, erase originals a
       fc.integer({ min: 1, max: 0xffffffff }),
       fc.integer({ min: 1, max: 0xffffffff }),
       fc.integer({ min: 1, max: 255 }),
-      async (password, salt, iterations, memoryKiB, parallelism) => {
+      fc.uint8Array({ minLength: 32, maxLength: 32 }),
+      async (password, salt, iterations, memoryKiB, parallelism, oracleKey) => {
         const originalPassword = password.slice(),
           originalSalt = salt.slice(),
-          expected = createHash('sha256').update(originalPassword).update(originalSalt).digest(),
+          // The independent mock result is not a password hash or a real KDF.
+          expected = Buffer.from(oracleKey),
           key = new Uint8Array(expected),
           request = {
             password: new Uint8Array(password).buffer,

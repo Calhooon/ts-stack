@@ -1,5 +1,6 @@
 import fc from 'fast-check'
-import { appendFile, chmod, lstat, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { constants, type Stats } from 'node:fs'
+import { appendFile, chmod, lstat, mkdtemp, open, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { types } from 'node:util'
@@ -55,6 +56,21 @@ async function fixture() {
   }
 }
 
+async function readOriginalOwner(path: string, identity: Stats): Promise<Buffer> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const actual = await file.stat()
+    expect(actual.isFile()).toBe(true)
+    expect(actual.nlink).toBe(1)
+    expect([actual.dev, actual.ino]).toEqual([identity.dev, identity.ino])
+    expect(actual.mode & 0o777).toBe(0o600)
+    expect(actual.size).toBeLessThanOrEqual(16384)
+    return await file.readFile()
+  } finally {
+    await file.close()
+  }
+}
+
 describe('actual pinned private staging ownership lifecycle', () => {
   test('generated bindings and clean handoffs preserve the original physical owner and fixed lease', async () => {
     await fc.assert(
@@ -83,13 +99,13 @@ describe('actual pinned private staging ownership lifecycle', () => {
             await old.release()
             await old.release()
             expect(() => old.assertLive()).toThrow('unavailable')
-            const bytes = await readFile(path)
+            const bytes = await readOriginalOwner(path, identity)
             const mismatch = await owned.refuse(
               Brc38StagingOwnershipNode.claimExisting(owned.directory, otherBinding(binding))
             )
             expect(mismatch).toBeInstanceOf(Error)
             expect((mismatch as Error).message).toContain('binding')
-            expect(await readFile(path)).toEqual(bytes)
+            expect(await readOriginalOwner(path, identity)).toEqual(bytes)
             const unchanged = await lstat(path)
             expect([unchanged.dev, unchanged.ino]).toEqual([identity.dev, identity.ino])
             expect(unchanged.mode & 0o777).toBe(0o600)

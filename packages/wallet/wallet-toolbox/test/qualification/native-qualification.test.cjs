@@ -37,17 +37,22 @@ test('actual exclusive delivery refusal preserves a pre-existing file and create
     sentinel = Buffer.from('independent existing delivery')
   try {
     await fs.writeFile(destination, sentinel, { flag: 'wx', mode: 0o600 })
-    const before = await fs.lstat(destination, { bigint: true })
-    await expect(
-      qualifyBrc38NativeCandidate({ sqliteSource: path.join(directory, 'absent-sqlite3.c'), destination })
-    ).rejects.toThrow(/requires its admitted Linux ARM64|destination already exists/)
-    const after = await fs.lstat(destination, { bigint: true })
-    expect(after.dev).toBe(before.dev)
-    expect(after.ino).toBe(before.ino)
-    expect(after.size).toBe(before.size)
-    expect(after.mtimeNs).toBe(before.mtimeNs)
-    expect(await fs.readFile(destination)).toEqual(sentinel)
-    expect(await fs.readdir(directory)).toEqual(['native-contract'])
+    const file = await fs.open(destination, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+    try {
+      const before = await file.stat({ bigint: true })
+      await expect(
+        qualifyBrc38NativeCandidate({ sqliteSource: path.join(directory, 'absent-sqlite3.c'), destination })
+      ).rejects.toThrow(/requires its admitted Linux ARM64|destination already exists/)
+      const after = await fs.lstat(destination, { bigint: true })
+      expect(after.dev).toBe(before.dev)
+      expect(after.ino).toBe(before.ino)
+      expect(after.size).toBe(before.size)
+      expect(after.mtimeNs).toBe(before.mtimeNs)
+      expect(await file.readFile()).toEqual(sentinel)
+      expect(await fs.readdir(directory)).toEqual(['native-contract'])
+    } finally {
+      await file.close()
+    }
   } finally {
     await fs.rm(directory, { recursive: true })
   }
@@ -117,5 +122,36 @@ test('real CLI argument failure exits without touching its destination', async (
     expect(await fs.readdir(directory)).toEqual(['native-contract'])
   } finally {
     await fs.rm(directory, { recursive: true })
+  }
+})
+
+test('compatibility CLI cohort-file reader binds metadata and bytes to one descriptor, closes it and preserves symlink inputs', async () => {
+  const { readWalletSyncCohorts } = require('../compatibility/releasedWalletSync.cjs')
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-cohorts-reader-')),
+    filename = path.join(directory, 'cohorts.json'),
+    alias = path.join(directory, 'cohorts-link.json'),
+    expected = { releasedSdk2: { directory: '/independent/fixture' }, original: true }
+  const originalOpen = fs.open,
+    handles = [],
+    spy = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const file = await originalOpen(...args)
+      handles.push(file)
+      return file
+    })
+  try {
+    await fs.writeFile(filename, JSON.stringify(expected), { flag: 'wx', mode: 0o600 })
+    await fs.symlink(filename, alias)
+    expect(await readWalletSyncCohorts(filename)).toEqual(expected)
+    expect(await readWalletSyncCohorts(alias)).toEqual(expected)
+    expect(handles).toHaveLength(2)
+    expect(handles.every(file => file.fd === -1)).toBe(true)
+    for (const bytes of [Buffer.alloc(0), Buffer.alloc(32769, 32), Buffer.from('{]')]) {
+      await fs.writeFile(filename, bytes)
+      await expect(readWalletSyncCohorts(filename)).rejects.toThrow()
+      expect(handles.at(-1).fd).toBe(-1)
+    }
+  } finally {
+    spy.mockRestore()
+    await fs.rm(directory, { recursive: true, force: true })
   }
 })

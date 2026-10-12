@@ -6073,3 +6073,7 @@ round-trippable in general binary frames; the snapshot protocol retains its
 closed field schema and rejects accessor, inherited and extra fields. Framing,
 wire bytes, limits, dates, binary contents and compatibility are unchanged.
 The helper is internal to codecs; package entry exports are unchanged.
+
+### Qualification descriptor and transfer oracles
+
+Qualification filesystem readers bind metadata and bytes to the same opened descriptor, preserve the original physical inode checks and close handles on refusal. Worker-asset manifests and compatibility cohort inputs retain their existing finite bounds; qualification fixtures retain every original assertion, case and deadline. The Worker-module transfer oracle uses an independent arbitrary 32-byte mock key rather than hashing password inputs; physical Argon2/KDF execution remains separately required. No public API, archive/database format, production KDF or runtime/resource/default migration is introduced. Full system and exact-head analyzer qualification remain pending.

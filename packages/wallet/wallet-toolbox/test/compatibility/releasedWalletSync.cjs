@@ -539,7 +539,38 @@ async function runWalletSyncCompatibilityCohorts(cohorts) {
   return { versions, sdkVersions, cohorts: reports, physicalDeviceQualified: false, processTreeQualified: false }
 }
 
-module.exports = { runReleasedWalletSync, runWalletSyncCompatibilityCohorts, packages, versions, sdkVersions }
+async function readWalletSyncCohorts(filename) {
+  const file = await fs.open(filename, 'r')
+  let cohorts
+  try {
+    const stat = await file.stat({ bigint: true })
+    assert.ok(stat.isFile() && stat.size >= 2n && stat.size <= 32768n)
+    const bytes = Buffer.alloc(Number(stat.size) + 1)
+    let length = 0
+    while (length < bytes.length) {
+      const { bytesRead } = await file.read(bytes, length, bytes.length - length, length)
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    const after = await file.stat({ bigint: true })
+    assert.equal(length, Number(stat.size))
+    assert.equal(after.size, stat.size)
+    assert.equal(after.mtimeNs, stat.mtimeNs)
+    cohorts = JSON.parse(bytes.subarray(0, length).toString('utf8'))
+  } finally {
+    await file.close()
+  }
+  return cohorts
+}
+
+module.exports = {
+  runReleasedWalletSync,
+  runWalletSyncCompatibilityCohorts,
+  readWalletSyncCohorts,
+  packages,
+  versions,
+  sdkVersions
+}
 
 if (require.main === module) {
   const args = process.argv.slice(2)
@@ -548,9 +579,7 @@ if (require.main === module) {
       assert.equal(args.length, 2, 'Usage: releasedWalletSync.cjs --cohorts /absolute/cohorts.json')
       assert.equal(args[0], '--cohorts')
       assert.ok(path.isAbsolute(args[1]))
-      const stat = await fs.stat(args[1])
-      assert.ok(stat.isFile() && stat.size >= 2 && stat.size <= 32768)
-      const cohorts = JSON.parse(await fs.readFile(args[1], 'utf8'))
+      const cohorts = await readWalletSyncCohorts(args[1])
       process.stdout.write(JSON.stringify(await runWalletSyncCompatibilityCohorts(cohorts)) + '\n')
     })
     .catch(cause => {

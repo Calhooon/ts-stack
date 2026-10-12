@@ -139,10 +139,12 @@ describe('private profile identities bind exact owned filesystem objects', () =>
                 )
                 await rm(alias)
               } else {
-                const saved = filename + '.original'
-                await rename(filename, saved)
-                const replacement = await open(filename, 'wx', 0o600)
+                const saved = filename + '.original',
+                  replacementPath = filename + '.replacement',
+                  replacement = await open(replacementPath, 'wx', 0o600)
                 try {
+                  await rename(filename, saved)
+                  await rename(replacementPath, filename)
                   await expect(assertBrc38ProfileFileDescriptor(replacement, bound)).rejects.toThrow(
                     'opened descriptor identity differs'
                   )

@@ -44,10 +44,29 @@ async function read(directory) {
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077n) !== 0n)
     throw new Error('Worker asset ownership directory differs')
   const filename = path.join(directory, 'manifest.json'),
-    metadata = await fs.lstat(filename)
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || metadata.size > 8192)
-    throw new Error('Worker asset ownership manifest differs')
-  const state = JSON.parse(await fs.readFile(filename, 'utf8'))
+    file = await fs.open(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW).catch(cause => {
+      if (cause.code === 'ELOOP') throw new Error('Worker asset ownership manifest differs')
+      throw cause
+    })
+  let state
+  try {
+    const metadata = await file.stat()
+    if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size > 8192)
+      throw new Error('Worker asset ownership manifest differs')
+    const bytes = Buffer.alloc(8193)
+    let length = 0
+    while (length < bytes.length) {
+      const { bytesRead } = await file.read(bytes, length, bytes.length - length, length)
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    if (length > 8192 || length !== metadata.size) throw new Error('Worker asset ownership manifest differs')
+    const currentDirectory = await fs.lstat(directory, { bigint: true })
+    if (!same(currentDirectory, identity(stat))) throw new Error('Worker asset ownership directory differs')
+    state = JSON.parse(bytes.subarray(0, length).toString('utf8'))
+  } finally {
+    await file.close()
+  }
   if (
     state.protocol !== 'wallet-jest-worker-assets/v1' ||
     !same(stat, state.directory) ||

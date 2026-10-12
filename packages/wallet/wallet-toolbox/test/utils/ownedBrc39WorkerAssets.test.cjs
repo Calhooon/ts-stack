@@ -76,3 +76,32 @@ test('a symbolic build input refuses before creating any source worker', async (
     await assert.rejects(fs.lstat(path.join(root, 'test/.jest-worker-assets')), { code: 'ENOENT' })
   })
 })
+
+test('malformed or oversized ownership manifests refuse cleanup, retain every original asset and close their descriptor', async () => {
+  await fixture(async root => {
+    await prepareOwnedWorkerAssets(root)
+    const filename = path.join(root, 'test/.jest-worker-assets/manifest.json'),
+      original = await fs.readFile(filename),
+      originalOpen = fs.open,
+      handles = [],
+      spy = jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
+        const file = await originalOpen(...args)
+        if (args[0] === filename) handles.push(file)
+        return file
+      })
+    try {
+      for (const bytes of [Buffer.alloc(8193, 32), Buffer.from('{]')]) {
+        await fs.writeFile(filename, bytes)
+        await assert.rejects(cleanupOwnedWorkerAssets(root))
+        assert.equal(handles.at(-1).fd, -1)
+        for (const asset of assets)
+          assert.deepEqual(await fs.readFile(path.join(root, asset)), await fs.readFile(path.join(root, 'out', asset)))
+      }
+      await fs.writeFile(filename, original)
+      await cleanupOwnedWorkerAssets(root)
+      assert.equal(handles.at(-1).fd, -1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
