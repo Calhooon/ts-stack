@@ -467,7 +467,7 @@ async function requestFixture(writer, reader) {
       sourceStorageIdentityKey: 'native-source',
       digest: ready.digest
     })
-    assert.equal(verified.manifest.binding.sourceSchema, '2026-10-02-001 repair snapshot SQLite conflict maintenance')
+    assert.equal(verified.manifest.binding.sourceSchema, SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
     const page = await replacement.read(identity, ready.archiveId, 8)
     const decoded = decodeSyncTransfer(verifySnapshotArchivePage(page, verified.receipts[8]))
     assert.equal(decoded.rows[0].label, 'replacement')
