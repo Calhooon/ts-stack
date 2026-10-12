@@ -1849,8 +1849,14 @@ restored and published profiles. Measured setup took 104 and 107 seconds, so the
 first profile's former three-minute lifetime expired before either retained
 view opened. These component cases now select one initial ten-minute lifetime
 per profile and an eleven-minute enclosing allowance for effects and cleanup.
-The general fixture default, original proofs and data, retained-view limit,
-resource bounds and all real UTC/monotonic expiry checks remain unchanged.
+The general fixture default, original proofs and data, resource bounds, and
+all real UTC/monotonic expiry checks remain unchanged. The retained source view
+uses only the remaining lifetime of both original profiles; it never renews
+either deadline. A separate two-minute view cap expired in the complete request
+case before session admission, despite the enclosing profiles still being live.
+Sharing their remaining initial lifetime admits the full predecessor/table
+work within the existing ten-minute fixture and eleven-minute case bounds.
+Production source defaults and expired-source rejection remain unchanged.
 
 The working native candidate now has traceable in-repository C source and an
 internal incremental blob ABI. One operation carries a fixed coordinate header

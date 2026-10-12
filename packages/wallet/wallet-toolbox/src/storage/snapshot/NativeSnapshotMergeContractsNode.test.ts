@@ -48,7 +48,7 @@ type Pair = Readonly<{
  * expected occupied rows are captured through the separate public DTO reader
  * before preparation; authored payload/proof values independently check them.
  * No copied source, installed flag or fabricated mapping admits this fixture.
- * Source-only wiring: all cases remain UNRUN. */
+ * Scoped case results do not qualify the complete original case union. */
 async function withPair(
   table: SnapshotSyncTable | 'packed-field',
   work: (pair: Pair) => Promise<void>,
@@ -107,8 +107,10 @@ async function withPair(
     target.check()
     const capability = origin.storage.getSnapshotSync()
     if (capability === undefined) throw new Error('Actual source profile has no current native snapshot capability')
+    // Use only the remaining original profile lifetime; never renew either
+    // profile or impose an unrelated two-minute view window on late tables.
     const source = await capability.openSource(origin.manager.getActiveUser().identityKey, {
-      lifetimeMs: Math.min(120000, origin.expiresAt - Date.now(), target.expiresAt - Date.now())
+      lifetimeMs: Math.min(pairLifetimeMilliseconds, origin.expiresAt - Date.now(), target.expiresAt - Date.now())
     })
     if (source === undefined || source.fieldReader === undefined)
       throw new Error('Actual source profile did not retain its native field view')
