@@ -5915,3 +5915,5 @@ table or migration row before that installation. Production receipt-policy
 ownership remains strict; the complete current production migration is still
 used by the ordinary archive, generation and server-crash fixtures. All original
 fixture datasets, assertions, isolation modes and time bounds remain.
+
+The native SQLite journal generation crash, capture and retention fixtures use the same explicit pre-journal historical setup as their MySQL counterparts. This retains every preceding migration and independently checks that the journal generation and migration record are absent before installing the original fixture policy. The complete WAL crash boundaries, data assertions and child deadlines remain unchanged; normal production migrations retain their policy ownership checks.

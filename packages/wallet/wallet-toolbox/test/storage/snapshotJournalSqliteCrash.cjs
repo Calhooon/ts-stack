@@ -1,3 +1,4 @@
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const { runInSeries } = require('../../out/src/utility/runInSeries.js')
 const receiptPolicy = { receiptLimit: 128, receiptLifetimeMs: 2592000000 }
 const assert = require('node:assert/strict'),
@@ -121,7 +122,7 @@ async function main() {
           source = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
         try {
           await k.raw('PRAGMA journal_mode=WAL')
-          await source.migrate('journal generation process-loss fixture', 'synthetic-source')
+          await migrateBeforeJournalGeneration(source, 'journal generation process-loss fixture', 'synthetic-source')
           await source.makeAvailable()
           const { user } = await source.findOrInsertUser('02' + '11'.repeat(32)),
             { user: other } = await source.findOrInsertUser('03' + '22'.repeat(32))

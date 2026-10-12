@@ -1,3 +1,4 @@
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const assert = require('node:assert/strict')
 const { fork } = require('node:child_process')
 const { mkdtemp, rm, open: openFile } = require('node:fs/promises')
@@ -72,7 +73,7 @@ async function main() {
   let failure
   try {
     await k.raw('PRAGMA journal_mode=WAL')
-    await storage.migrate('capture native WAL fixture', 'synthetic-capture-native')
+    await migrateBeforeJournalGeneration(storage, 'capture native WAL fixture', 'synthetic-capture-native')
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identity),
       { user: other } = await storage.findOrInsertUser('03' + '22'.repeat(32))

@@ -1,3 +1,4 @@
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const assert = require('node:assert/strict')
 const { mkdtemp, rm } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
@@ -70,7 +71,7 @@ async function main() {
     await k.raw('PRAGMA journal_mode=WAL')
     await k.raw('PRAGMA busy_timeout=0')
     await peer.raw('PRAGMA busy_timeout=0')
-    await storage.migrate('native retention WAL fixture', 'synthetic-retention-native')
+    await migrateBeforeJournalGeneration(storage, 'native retention WAL fixture', 'synthetic-retention-native')
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identity),
       { user: other } = await storage.findOrInsertUser('03' + '22'.repeat(32))
