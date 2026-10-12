@@ -68,10 +68,12 @@ test('explicit PostgreSQL data deletion preserves both journal rollback no-ops w
   const acquire = jest
     .spyOn(k.client, 'acquireConnection')
     .mockRejectedValue(new Error('Snapshot deletion opened Postgres'))
+  const migrator = k.migrate
+  const migratorAccess = jest.spyOn(k, 'migrate', 'get').mockReturnValue(migrator)
   const version = jest
-    .spyOn(k.migrate, 'currentVersion')
+    .spyOn(migrator, 'currentVersion')
     .mockImplementation(async () => names[completed.length] ?? 'none')
-  const down = jest.spyOn(k.migrate, 'down').mockImplementation(async config => {
+  const down = jest.spyOn(migrator, 'down').mockImplementation(async config => {
     const name = names[completed.length]
     expect(name).toBeDefined()
     const migration = await config!.migrationSource!.getMigration(name)
@@ -89,6 +91,7 @@ test('explicit PostgreSQL data deletion preserves both journal rollback no-ops w
   } finally {
     version.mockRestore()
     down.mockRestore()
+    migratorAccess.mockRestore()
     query.mockRestore()
     acquire.mockRestore()
     await storage.destroy()
