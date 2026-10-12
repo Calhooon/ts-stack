@@ -211,17 +211,3 @@ describe('Peer per-message cancellation boundary', () => {
     expect(transport.send).toHaveBeenCalledTimes(1)
   })
 })
-
-test.each([0, -1, 1.5, NaN, Infinity, 2_147_483_648, null])(
-  'rejects invalid authentication timeout %s before registering the transport',
-  timeout => {
-    const transport: Transport = { send: jest.fn(), onData: jest.fn() } as Transport
-    expect(
-      () =>
-        new Peer({} as never, transport, undefined, undefined, undefined, undefined, {
-          authenticationTimeoutMs: timeout as number
-        })
-    ).toThrow('authenticationTimeoutMs must be a positive integer no greater than 2147483647')
-    expect(transport.onData).not.toHaveBeenCalled()
-  }
-)

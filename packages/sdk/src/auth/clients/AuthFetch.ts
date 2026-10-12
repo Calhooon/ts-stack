@@ -87,7 +87,7 @@ interface RequestBodySummary {
 }
 
 const PAYMENT_VERSION = '1.0'
-const AUTH_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000
+const AUTH_RESPONSE_TIMEOUT_MS = 30000
 const MAX_PENDING_AUTH_REQUESTS = 1000
 const MAX_BUFFERED_CERTIFICATES = 1000
 const MAX_AUTH_RESPONSE_HEADERS = 512
@@ -224,8 +224,8 @@ export class AuthFetch {
    * @returns A promise that resolves with the server's response, structured as a Response-like object.
    *
    * @throws Will throw an error if unsupported headers are used or other validation fails.
-   * Each authenticated attempt allows up to 10 minutes for preparation, then a fresh
-   * 10 minutes for local response handling. Individual HTTP exchanges retain the transport request timeout (30 seconds by default).
+   * The existing 30-second authenticated-response deadline includes wallet approval.
+   * Approval after expiry cannot dispatch the application request.
    * Response timeout errors retain the message `Timed out waiting for authenticated response.`
    * and include `requestDispatched`: false means this attempt was never handed to the
    * transport; true means its server-side outcome is unknown.
@@ -302,10 +302,10 @@ export class AuthFetch {
               if (responseValue !== undefined) resolveRequest(responseValue)
             }
           )
-          const expireRequest = (cause?: unknown): void => {
+          const expireRequest = (): void => {
             const timeoutError = Object.assign(
               new Error('Timed out waiting for authenticated response.'),
-              { requestDispatched, cause }
+              { requestDispatched }
             )
             deadline.abort(timeoutError)
             rejectRequest(timeoutError)
@@ -328,22 +328,12 @@ export class AuthFetch {
               signal: deadline.signal,
               onSend: () => {
                 requestDispatched = true
-                // Approval must not consume the response-handling budget.
-                clearTimeout(responseTimeout)
-                responseTimeout = setTimeout(expireRequest, AUTH_RESPONSE_TIMEOUT_MS)
               }
             })
           } catch (error) {
             // Late transport/session failures must not start recovery that
             // replays a request after its response deadline has expired.
             if (cleaned) return
-            if (
-              error instanceof Error &&
-              (error as Error & { code?: string }).code === 'ERR_AUTH_TRANSPORT_TIMEOUT'
-            ) {
-              expireRequest(error)
-              return
-            }
             cleanup()
             try {
               resolveRequest(
@@ -387,8 +377,7 @@ export class AuthFetch {
             Number.MAX_SAFE_INTEGER,
             this.maxResponseBytes + MAX_AUTH_RESPONSE_FRAME_OVERHEAD_BYTES
           )
-        ),
-        authenticationTimeoutMs: AUTH_RESPONSE_TIMEOUT_MS
+        )
       }
     )
     await newPeer.ready
@@ -595,11 +584,7 @@ export class AuthFetch {
   }
 
   #createTransport(baseURL: string): SimplifiedFetchTransport {
-    return new SimplifiedFetchTransport(baseURL, this.fetchClient, {
-      ...this.#transportOptions,
-      responseProcessingTimeoutMs:
-        this.#transportOptions.responseProcessingTimeoutMs ?? AUTH_RESPONSE_TIMEOUT_MS
-    })
+    return new SimplifiedFetchTransport(baseURL, this.fetchClient, this.#transportOptions)
   }
 
   #writeOptionalText(writer: Writer, value: string): void {
@@ -1097,7 +1082,7 @@ export class AuthFetch {
   }
 
   private async waitForPendingCertificateRequests(peer: AuthPeer): Promise<void> {
-    const timeoutMs = AUTH_RESPONSE_TIMEOUT_MS
+    const timeoutMs = 30000
     const checkIntervalMs = 100
     const startedAt = Date.now()
     while (peer.pendingCertificateRequests.length > 0) {

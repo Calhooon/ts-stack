@@ -39,8 +39,6 @@ export interface SimplifiedFetchTransportOptions {
   maxHandshakeResponseBytes?: number
   /** Wall-clock deadline covering fetch and response-body consumption. */
   requestTimeoutMs?: number
-  /** Total send deadline including local response handling. Defaults to requestTimeoutMs. */
-  responseProcessingTimeoutMs?: number
 }
 
 /**
@@ -57,7 +55,6 @@ export class SimplifiedFetchTransport implements Transport {
   private readonly maxResponseBytes: number
   readonly #maxHandshakeResponseBytes: number
   readonly #requestTimeoutMs: number
-  readonly #responseProcessingTimeoutMs: number
 
   /**
    * Constructs a new instance of SimplifiedFetchTransport.
@@ -91,11 +88,6 @@ export class SimplifiedFetchTransport implements Transport {
       options.requestTimeoutMs,
       DEFAULT_SIMPLIFIED_FETCH_REQUEST_TIMEOUT_MS,
       'requestTimeoutMs'
-    )
-    this.#responseProcessingTimeoutMs = positiveLimit(
-      options.responseProcessingTimeoutMs,
-      this.#requestTimeoutMs,
-      'responseProcessingTimeoutMs'
     )
   }
 
@@ -146,42 +138,30 @@ export class SimplifiedFetchTransport implements Transport {
       void (async () => {
         try {
           const url = `${this.baseUrl}/.well-known/auth`
-          const responseWork = this.#withDeadline(
-            url,
-            async processingSignal => {
-              const responseBytes = await this.#withDeadline(
+          const responseWork = this.#withDeadline(url, async signal => {
+            const response = await this.#fetchAuthMessage(url, message, signal)
+            if (!response.ok) {
+              const body = await this.readResponseBody(
                 url,
-                async signal => {
-                  const response = await this.#fetchAuthMessage(url, message, signal)
-                  if (!response.ok) {
-                    const body = await this.readResponseBody(
-                      url,
-                      response,
-                      this.#maxHandshakeResponseBytes,
-                      signal
-                    )
-                    throw this.#createUnauthenticatedResponseError(url, response, body)
-                  }
-                  return await this.readResponseBody(
-                    url,
-                    response,
-                    this.#maxHandshakeResponseBytes,
-                    signal
-                  )
-                },
-                this.#requestTimeoutMs,
-                processingSignal
+                response,
+                this.#maxHandshakeResponseBytes,
+                signal
               )
-              if (processingSignal.aborted) throw processingSignal.reason
-              await this.onDataCallback!(
-                normalizeBRC100ByteFields(JSON.parse(toUTF8(responseBytes)), [
-                  'payload',
-                  'signature'
-                ]) as AuthMessage
-              )
-            },
-            this.#responseProcessingTimeoutMs
-          )
+              throw this.#createUnauthenticatedResponseError(url, response, body)
+            }
+            const responseBytes = await this.readResponseBody(
+              url,
+              response,
+              this.#maxHandshakeResponseBytes,
+              signal
+            )
+            await this.onDataCallback!(
+              normalizeBRC100ByteFields(JSON.parse(toUTF8(responseBytes)), [
+                'payload',
+                'signature'
+              ]) as AuthMessage
+            )
+          })
           if (message.messageType !== 'initialRequest') resolve()
           await responseWork
           if (message.messageType === 'initialRequest') resolve()
@@ -379,25 +359,12 @@ export class SimplifiedFetchTransport implements Transport {
   async #sendGeneralMessage(message: AuthMessage): Promise<void> {
     const request = this.#prepareGeneralRequest(message)
     const url = `${this.baseUrl}${request.urlPostfix}`
-    await this.#withDeadline(
-      url,
-      async processingSignal => {
-        const message = await this.#withDeadline(
-          url,
-          async signal => {
-            const response = await this.#fetchGeneralResponse(url, request, signal)
-            const body = await this.readResponseBody(url, response, this.maxResponseBytes, signal)
-            this.#validateResponseAuthentication(url, response, body)
-            return this.#createGeneralResponseMessage(url, response, body)
-          },
-          this.#requestTimeoutMs,
-          processingSignal
-        )
-        if (processingSignal.aborted) throw processingSignal.reason
-        await this.onDataCallback!(message)
-      },
-      this.#responseProcessingTimeoutMs
-    )
+    await this.#withDeadline(url, async signal => {
+      const response = await this.#fetchGeneralResponse(url, request, signal)
+      const body = await this.readResponseBody(url, response, this.maxResponseBytes, signal)
+      this.#validateResponseAuthentication(url, response, body)
+      await this.onDataCallback!(this.#createGeneralResponseMessage(url, response, body))
+    })
   }
 
   private async readResponseBody(
@@ -452,38 +419,23 @@ export class SimplifiedFetchTransport implements Transport {
     return Array.from(bytes)
   }
 
-  async #withDeadline<T>(
-    url: string,
-    work: (signal: AbortSignal) => Promise<T>,
-    timeoutMs: number = this.#requestTimeoutMs,
-    parentSignal?: AbortSignal
-  ): Promise<T> {
-    if (parentSignal?.aborted === true) throw parentSignal.reason
+  async #withDeadline<T>(url: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController()
-    let rejectDeadline!: (error: unknown) => void
-    const abort = (): void => {
-      controller.abort()
-      rejectDeadline(parentSignal?.reason)
-    }
     let timeout: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_resolve, reject) => {
-      rejectDeadline = reject
       timeout = setTimeout(() => {
         controller.abort()
         reject(
-          Object.assign(
-            new Error(`Authenticated request to ${url} timed out after ${timeoutMs} milliseconds`),
-            { code: 'ERR_AUTH_TRANSPORT_TIMEOUT' }
+          new Error(
+            `Authenticated request to ${url} timed out after ${this.#requestTimeoutMs} milliseconds`
           )
         )
-      }, timeoutMs)
+      }, this.#requestTimeoutMs)
     })
-    parentSignal?.addEventListener('abort', abort, { once: true })
     try {
       return await Promise.race([work(controller.signal), deadline])
     } finally {
       if (timeout !== undefined) clearTimeout(timeout)
-      parentSignal?.removeEventListener('abort', abort)
     }
   }
 

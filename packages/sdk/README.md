@@ -43,49 +43,28 @@ using the BRC-104 `-1` body-length sentinel. Conforming 204 and empty error
 responses now verify; non-empty response encoding is unchanged. Servers that
 sign a zero body length for an empty response must adopt the specified sentinel.
 
-### Authenticated request approval and timeouts (3.3 candidate)
+### Expired authenticated requests (3.3 candidate)
 
-Previously, AuthFetch's 30-second authenticated-response timer also counted time
-spent waiting for wallet approval. If it expired during a permission or signature
-prompt, the application could report failure, yet approving the prompt later
-could still send the application request. For a write such as certificate issuance,
-that could create a result the application did not expect; blindly retrying could
-repeat the operation.
+Previously, AuthFetch could report its 30-second response timeout while waiting
+for wallet approval, then still send the application request when the user
+approved later. A write could therefore succeed after the application reported
+failure, making a blind retry unsafe.
 
-AuthFetch now checks cancellation immediately before handing the application
-request to its transport, preventing late approval from sending an expired request.
-It allows up to 10 minutes to prepare an authenticated request, including
-wallet approval and pending certificate permissions. At application dispatch it
-starts a fresh 10-minute response-handling window, allowing local wallet verification
-prompts to complete. Each authenticated HTTP exchange, including reading the response body,
-retains a separate 30-second network deadline by default (`requestTimeoutMs`).
-These are bounded stages, not a fresh 10 minutes for each individual prompt.
-`AuthFetch.fetch` does not yet accept a caller `AbortSignal`; timing out an outer
-`Promise.race` does not cancel dispatch.
-AuthFetch stops pending application dispatch and session recovery after its
-request deadline. An already dispatched request may still complete on the
-server; callers must resolve its outcome before retrying a non-idempotent write.
-A request still waiting on a wallet prompt at the deadline is never dispatched.
-Response timeouts preserve the exact message
-`Timed out waiting for authenticated response.` and add a boolean
-`requestDispatched` property. `false` means this attempt was never handed to the
-transport; `true` means it may have reached the server and its outcome is unknown.
-Network deadline errors use the same AuthFetch timeout message and metadata,
-with the transport error retained as `cause` for diagnostics.
-Dispatch is not confirmation of delivery or success. The deadline is per request;
-expiring one request does not cancel other requests or invalidate their session.
-`Peer.toPeer` also accepts optional `{ signal, onSend }` controls. An already
-aborted signal prevents authentication from starting; aborting during approval
-prevents application dispatch, but does not dismiss wallet prompts or cancel a
-handshake already underway. `onSend` runs synchronously before the transport
-handoff and can prevent it by throwing or aborting the signal. Once handed off,
-a request cannot be recalled by this signal. Existing two-argument calls retain
-their behavior.
+AuthFetch now checks cancellation immediately before transport handoff, so
+late approval cannot send an expired application request. The existing
+30-second deadline, including wallet approval, is unchanged; it does not restart
+at dispatch. Timeout errors keep the exact message
+`Timed out waiting for authenticated response.` and add `requestDispatched`:
+`false` means this attempt was never handed to the transport; `true` means its
+server-side outcome is unknown. Reconcile possibly dispatched writes before
+retrying. Expiring one request does not cancel other requests on the same peer.
 
-This change covers the authenticated request lifecycle. The unauthenticated
-fallback and automatic BRC-105 payment approval keep their existing behavior.
-No changes to existing calls, wire formats or wallet data are required. SDK 3.3.0
-is a source candidate; publication follows the protected release workflow.
+`Peer.toPeer` accepts an optional third `{ signal, onSend }` argument. The signal
+prevents dispatch before transport handoff; it does not dismiss wallet prompts,
+cancel an existing handshake, or recall an in-flight send. `onSend` runs
+synchronously before handoff and records dispatch intent, not delivery.
+Existing calls, timeout defaults, wire formats and wallet data remain unchanged.
+SDK 3.3.0 is an unpublished source candidate.
 
 AuthFetch's automatic BRC-105 payment path delegates spending authorization to
 the configured wallet's `createAction` policy. Use a wallet that requires the
@@ -339,8 +318,7 @@ than that the script is invalid.
 - **P2P Authentication**: Robust peer-to-peer authentication mechanisms to ensure secure connections between parties.
 
   Authenticated HTTP handshakes register their response waiter before sending,
-  and AuthFetch allows 10 minutes for preparation and a fresh 10 minutes for
-  local response handling, with each authenticated HTTP exchange bounded to 30 seconds by default. A
+  and each authenticated request has a bounded 30-second response window. A
   client retains at most 1,000 pending authenticated requests. Invalid or
   rejected peer responses reject and clean up the owning request; they do not
   become unhandled process errors or leave listeners behind.
@@ -349,12 +327,7 @@ than that the script is invalid.
   enter the signed-message parser. Application bodies default to 16 MiB and
   handshake bodies to 1 MiB; pass `maxResponseBytes` or
   `maxHandshakeResponseBytes` in `SimplifiedFetchTransportOptions` when a
-  deployment needs a different ceiling. `responseProcessingTimeoutMs` bounds the
-  complete transport send, including local response handling; AuthFetch defaults
-  this to 10 minutes. Direct transport users retain `requestTimeoutMs` as that
-  default. Direct Peer users retain 30-second authentication waits; AuthFetch
-  configures its peers with 10 minutes via `authenticationTimeoutMs` in the existing
-  seventh constructor options argument. The parser also bounds header count
+  deployment needs a different ceiling. The parser also bounds header count
   and bytes and rejects truncated, overlong, or trailing wire data.
 
   For BRC-105 payments, a recipient may include the optional

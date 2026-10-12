@@ -15,13 +15,13 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk'
 
 # @bsv/sdk
 
-The 3.3.0 source candidate allows AuthFetch up to 10 minutes for authenticated
-request preparation and a fresh 10 minutes for local response handling, including
-wallet permission prompts. Each authenticated HTTP exchange retains its separate
-30-second default network deadline. Approval after expiry cannot dispatch the
-application request. Direct Peer and transport users retain their timeout defaults.
-See the [SDK README](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk) for timeout metadata and
-retry guidance. This candidate is not yet published.
+The 3.3.0 source candidate prevents AuthFetch from dispatching an expired
+application request after late wallet approval. Its existing 30-second response
+deadline and timeout message are unchanged. Timeout errors add
+`requestDispatched` to distinguish an attempt never handed to the transport
+from one whose server-side outcome is unknown. See the
+[SDK README](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk)
+for retry guidance. This candidate is not yet published.
 
 The isolated SDK3 retirement candidate removes the obsolete serial-DID token
 validation module. Native identity, certificate and authentication APIs remain.

@@ -202,7 +202,6 @@ export function buildMutationTargets(repositoryRoot) {
           '<rootDir>/src/auth/__tests/Peer.boundary.test.ts',
           '<rootDir>/src/auth/__tests/Peer.messageValidation.security.test.ts',
           '<rootDir>/src/auth/clients/__tests__/AuthFetch.boundary.test.ts',
-          '<rootDir>/src/auth/clients/__tests__/AuthFetch.approval.test.ts',
           '<rootDir>/src/auth/clients/__tests__/AuthFetch.property.test.ts',
           '<rootDir>/src/auth/transports/__tests__/SimplifiedFetchTransport*.test.ts'
         ],

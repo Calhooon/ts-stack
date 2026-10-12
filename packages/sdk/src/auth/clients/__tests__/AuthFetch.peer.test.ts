@@ -103,7 +103,7 @@ describe('AuthFetch authenticated peer lifecycle', () => {
         expect.anything(),
         undefined,
         'app.example',
-        { maxGeneralPayloadBytes: payloadBudget, authenticationTimeoutMs: 600000 }
+        { maxGeneralPayloadBytes: payloadBudget }
       )
     }
   )
@@ -173,7 +173,7 @@ describe('AuthFetch authenticated peer lifecycle', () => {
     expect(SimplifiedFetchTransportMock).toHaveBeenCalledWith(
       'https://service.example',
       undefined,
-      { responseProcessingTimeoutMs: 600000 }
+      {}
     )
     expect(PeerMock).toHaveBeenCalledWith(
       wallet,
@@ -182,10 +182,7 @@ describe('AuthFetch authenticated peer lifecycle', () => {
       expect.anything(),
       undefined,
       'app.example',
-      {
-        maxGeneralPayloadBytes: 16 * 1024 * 1024 + 512 * 1024,
-        authenticationTimeoutMs: 600000
-      }
+      { maxGeneralPayloadBytes: 16 * 1024 * 1024 + 512 * 1024 }
     )
     expect(response.status).toBe(201)
     expect(response.headers.get('x-test')).toBe('passed')

@@ -53,7 +53,6 @@ export class Peer {
   // external code that reaches in directly should match the implementation
   // it injected. See `AsyncSessionManager` for the opt-in async contract.
   public sessionManager: SessionManager
-  readonly #authenticationTimeoutMs: number
   readonly #transport: Transport
   readonly #wallet: WalletInterface
   readonly #maxGeneralPayloadBytes: number | null | undefined
@@ -135,7 +134,7 @@ export class Peer {
    * @param {SessionManager | AsyncSessionManager} [sessionManager] - Optional session store. Pass an {@link AsyncSessionManager} with atomic `claimMessageNonce` and `claimInitialRequestNonce` for shared/durable storage in load-balanced deployments; otherwise the bounded default in-process {@link SessionManager} is used.
    * @param {boolean} [autoPersistLastSession] - Whether to auto-persist the session with the last-interacted-with peer. Defaults to true.
    * @param {OriginatorDomainNameStringUnder250Bytes} [originator] - Optional originator domain name.
-   * @param {object} [messageValidation] - Local options; set maxGeneralPayloadBytes to null to delegate capacity to the transport. authenticationTimeoutMs bounds initial-response and certificate-validation waits, defaulting to 30 seconds. HTTP clients can allow longer local wallet approval while independently bounding network activity. Omission preserves existing limits and deadlines.
+   * @param {AuthMessageValidationOptions} [messageValidation] - Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
    */
   constructor(
     wallet: WalletInterface,
@@ -144,19 +143,8 @@ export class Peer {
     sessionManager?: SessionManager | AsyncSessionManager,
     autoPersistLastSession?: boolean,
     originator?: OriginatorDomainNameStringUnder250Bytes,
-    messageValidation: AuthMessageValidationOptions & { authenticationTimeoutMs?: number } = {}
+    messageValidation: AuthMessageValidationOptions = {}
   ) {
-    const { authenticationTimeoutMs = INITIAL_RESPONSE_TIMEOUT_MS } = messageValidation
-    if (
-      !Number.isSafeInteger(authenticationTimeoutMs) ||
-      authenticationTimeoutMs < 1 ||
-      authenticationTimeoutMs > 2_147_483_647
-    ) {
-      throw new TypeError(
-        'authenticationTimeoutMs must be a positive integer no greater than 2147483647'
-      )
-    }
-    this.#authenticationTimeoutMs = authenticationTimeoutMs
     const maxGeneralPayloadBytes = messageValidation.maxGeneralPayloadBytes
     assertGeneralPayloadByteLimit(maxGeneralPayloadBytes)
     this.#maxGeneralPayloadBytes = maxGeneralPayloadBytes
@@ -340,7 +328,7 @@ export class Peer {
           `Timeout waiting for certificate validation from peer ${peerIdentityKey ?? 'unknown'}`
         )
       )
-    }, this.#authenticationTimeoutMs)
+    }, 30000)
     if (typeof timeoutId === 'object' && 'unref' in timeoutId) timeoutId.unref()
 
     this.certificateValidationPromises.set(sessionNonce, {
@@ -688,13 +676,8 @@ export class Peer {
     // can deliver the response before send() resolves.
     const initialResponse = this.waitForInitialResponse(sessionNonce)
     try {
-      // Observe both immediately: wallet approval during response handling can
-      // outlive the waiter, even while transport.send is still pending.
-      const [, nonce] = await Promise.all([
-        this.#transport.send(snapshotBoundedAuthData(initialRequest)),
-        initialResponse
-      ])
-      return nonce
+      await this.#transport.send(snapshotBoundedAuthData(initialRequest))
+      return await initialResponse
     } catch (error) {
       this.stopListeningForInitialResponsesByNonce(sessionNonce)
       const failedSession = await this.sessionManager.getSession(sessionNonce)
@@ -714,7 +697,7 @@ export class Peer {
       const timeoutId = setTimeout(() => {
         this.#stopListeningForInitialResponses(callbackID)
         reject(new Error('Timeout waiting for the BRC-103 initial response.'))
-      }, this.#authenticationTimeoutMs)
+      }, INITIAL_RESPONSE_TIMEOUT_MS)
       if (typeof timeoutId === 'object' && 'unref' in timeoutId) timeoutId.unref()
       const callbackID = this.#listenForInitialResponse(sessionNonce, nonce => {
         this.#stopListeningForInitialResponses(callbackID)

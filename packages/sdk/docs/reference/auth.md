@@ -288,7 +288,6 @@ export interface SimplifiedFetchTransportOptions {
     maxResponseBytes?: number;
     maxHandshakeResponseBytes?: number;
     requestTimeoutMs?: number;
-    responseProcessingTimeoutMs?: number;
 }
 ```
 
@@ -314,14 +313,6 @@ Wall-clock deadline covering fetch and response-body consumption.
 
 ```ts
 requestTimeoutMs?: number
-```
-
-#### Property responseProcessingTimeoutMs
-
-Total send deadline including local response handling. Defaults to requestTimeoutMs.
-
-```ts
-responseProcessingTimeoutMs?: number
 ```
 
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Enums](#enums), [Variables](#variables)
@@ -475,8 +466,8 @@ optional payment retry controls, and optional `labels` merged onto any BRC-105 p
 Throws
 
 Will throw an error if unsupported headers are used or other validation fails.
-Each authenticated attempt allows up to 10 minutes for preparation, then a fresh
-10 minutes for local response handling. Individual HTTP exchanges retain the transport request timeout (30 seconds by default).
+The existing 30-second authenticated-response deadline includes wallet approval.
+Approval after expiry cannot dispatch the application request.
 Response timeout errors retain the message `Timed out waiting for authenticated response.`
 and include `requestDispatched`: false means this attempt was never handed to the
 transport; true means its server-side outcome is unknown.
@@ -1023,9 +1014,7 @@ export class Peer {
     readonly #originator?: OriginatorDomainNameStringUnder250Bytes;
     #identityPublicKey?: string;
     readonly ready: Promise<void>;
-    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions & {
-        authenticationTimeoutMs?: number;
-    } = {})
+    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {})
     async toPeer(message: number[], identityKey?: string, options: {
         signal?: AbortSignal;
         onSend?: () => void;
@@ -1064,9 +1053,7 @@ See also: [AsyncSessionManager](./auth.md#interface-asyncsessionmanager), [AuthM
 Creates a new Peer instance
 
 ```ts
-constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions & {
-    authenticationTimeoutMs?: number;
-} = {})
+constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {})
 ```
 See also: [AsyncSessionManager](#interface-asyncsessionmanager), [AuthMessageValidationOptions](#interface-authmessagevalidationoptions), [RequestedCertificateSet](#interface-requestedcertificateset), [SessionManager](#class-sessionmanager), [Transport](#interface-transport)
 
@@ -1083,7 +1070,7 @@ Argument Details
 + **originator**
   + Optional originator domain name.
 + **messageValidation**
-  + Local options; set maxGeneralPayloadBytes to null to delegate capacity to the transport. authenticationTimeoutMs bounds initial-response and certificate-validation waits, defaulting to 30 seconds. HTTP clients can allow longer local wallet approval while independently bounding network activity. Omission preserves existing limits and deadlines.
+  + Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
 
 #### Property ready
 
