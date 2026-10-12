@@ -1,10 +1,199 @@
 import { expect, it } from '@jest/globals'
-import { canonicalOutputJSON, Utils } from '@bsv/sdk'
+import { canonicalOutputJSON, PrivateKey, Utils } from '@bsv/sdk'
 import { ATOMIC_BEEF } from '@bsv/sdk/transaction/Beef'
 import { WalletBRC78KeyDelivery, signObject, type KeyGrant } from '../src/index.js'
 import { lchOverlayCovenantEntitlementDigest } from '../src/overlayAcquisitionCovenantEntitlement.js'
 import { LCHOverlayCovenantDomain } from '../src/overlayAcquisitionCovenant.js'
+import {
+  decodeLCHOverlayJSON,
+  decodeUnverifiedLCHOverlayContext,
+  encodeLCHOverlayContext,
+  type UnverifiedLCHOverlayContext
+} from '../src/overlayAcquisitionCodec.js'
 import { lchNativeCovenantFixture } from './overlay-acquisition-covenant-native.fixture.js'
+
+it('keeps a covenant entitlement fingerprint stable across issuance and encryption randomness while owning delivery', async () => {
+  const f = await lchNativeCovenantFixture(),
+    original = canonicalOutputJSON(f.delivered),
+    digest = await lchOverlayCovenantEntitlementDigest(f.delivered),
+    result = f.delivered.result
+  if (result.status !== 'delivered') throw new Error('Fixture must be delivered')
+  const context = await decodeUnverifiedLCHOverlayContext(
+      Uint8Array.from(Utils.toArray(result.potatoes.body.secret, 'base64')),
+      'listing-covenant'
+    ),
+    settlement = decodeLCHOverlayJSON(context.settlement) as Record<string, unknown>,
+    grants = (context.license.body.keyGrants as KeyGrant[]).map(grant => {
+      const payload = grant.payload.slice()
+      payload.fill(7, 70)
+      return { ...grant, payload }
+    }),
+    reissue: UnverifiedLCHOverlayContext = {
+      ...context,
+      license: {
+        body: { ...context.license.body, issuedAt: 99, keyGrants: grants as never },
+        signatures: [Uint8Array.of(2)]
+      },
+      evidence: context.evidence.map(entry => ({
+        ...entry,
+        object: { ...entry.object, signatures: [Uint8Array.of(3)] }
+      })),
+      settlement: new TextEncoder().encode(
+        canonicalOutputJSON({ ...settlement, signature: 'ab'.repeat(32) })
+      )
+    },
+    changed = {
+      ...f.delivered,
+      result: {
+        ...result,
+        potatoes: {
+          ...result.potatoes,
+          signature: 'Ag==',
+          body: {
+            ...result.potatoes.body,
+            issuedAt: '99',
+            secret: Utils.toBase64(await encodeLCHOverlayContext(reissue, 'listing-covenant'))
+          }
+        }
+      }
+    }
+  // Fingerprints compare representations; the separate domain verifier checks signatures.
+  expect(digest).toMatch(/^[0-9a-f]{64}$/u)
+  expect(await lchOverlayCovenantEntitlementDigest(changed)).toBe(digest)
+  expect(canonicalOutputJSON(f.delivered)).toBe(original)
+  expect(f.counts).toEqual({ preparation: 0, purchase: 0, release: 0 })
+}, 60000)
+
+it('changes a covenant fingerprint when rights, recipients, purchase or settlement evidence changes', async () => {
+  const f = await lchNativeCovenantFixture(),
+    digest = await lchOverlayCovenantEntitlementDigest(f.delivered),
+    result = f.delivered.result
+  if (result.status !== 'delivered') throw new Error('Fixture must be delivered')
+  const context = await decodeUnverifiedLCHOverlayContext(
+      Uint8Array.from(Utils.toArray(result.potatoes.body.secret, 'base64')),
+      'listing-covenant'
+    ),
+    settlement = decodeLCHOverlayJSON(context.settlement) as { body: Record<string, unknown> },
+    changes: UnverifiedLCHOverlayContext[] = [
+      {
+        ...context,
+        license: {
+          ...context.license,
+          body: { ...context.license.body, subject: new Uint8Array(33).fill(8) }
+        }
+      },
+      {
+        ...context,
+        license: {
+          ...context.license,
+          body: { ...context.license.body, permissions: [{ action: 'unwrap' }] }
+        }
+      },
+      {
+        ...context,
+        settlement: new TextEncoder().encode(
+          canonicalOutputJSON({
+            ...settlement,
+            body: { ...settlement.body, acquisitionId: 'ab'.repeat(32) }
+          })
+        )
+      },
+      { ...context, purchaseEvidence: new TextEncoder().encode('{}') },
+      {
+        ...context,
+        evidence: context.evidence.map(entry => ({
+          ...entry,
+          object: { ...entry.object, body: { ...entry.object.body, issuedAt: 999 } }
+        }))
+      },
+      { ...context, evidence: context.evidence.map(entry => ({ ...entry, type: 'authority' })) }
+    ]
+  for (const offset of [4, 37]) {
+    const grants = (context.license.body.keyGrants as KeyGrant[]).map(grant => {
+      const payload = grant.payload.slice()
+      payload[offset] ^= 1
+      return { ...grant, payload }
+    })
+    changes.push({
+      ...context,
+      license: { ...context.license, body: { ...context.license.body, keyGrants: grants as never } }
+    })
+  }
+  const grants = (context.license.body.keyGrants as KeyGrant[]).map(grant => ({
+    ...grant,
+    keyId: new Uint8Array(32).fill(8)
+  }))
+  changes.push({
+    ...context,
+    license: { ...context.license, body: { ...context.license.body, keyGrants: grants as never } }
+  })
+  for (const context of changes) {
+    const changed = {
+      ...f.delivered,
+      result: {
+        ...result,
+        potatoes: {
+          ...result.potatoes,
+          body: {
+            ...result.potatoes.body,
+            secret: Utils.toBase64(await encodeLCHOverlayContext(context, 'listing-covenant'))
+          }
+        }
+      }
+    }
+    expect(await lchOverlayCovenantEntitlementDigest(changed)).not.toBe(digest)
+  }
+  for (const body of [
+    { ...result.potatoes.body, evidenceDigest: 'ab'.repeat(32) },
+    { ...result.potatoes.body, recipient: new PrivateKey(3).toPublicKey().toString() },
+    { ...result.potatoes.body, recoveryUntil: '90000' }
+  ])
+    expect(
+      await lchOverlayCovenantEntitlementDigest({
+        ...f.delivered,
+        result: { ...result, potatoes: { ...result.potatoes, body } }
+      })
+    ).not.toBe(digest)
+  expect(f.counts).toEqual({ preparation: 0, purchase: 0, release: 0 })
+}, 60000)
+
+it('requires delivered covenant material and a settlement body before fingerprinting', async () => {
+  const f = await lchNativeCovenantFixture(),
+    result = f.delivered.result
+  if (result.status !== 'delivered') throw new Error('Fixture must be delivered')
+  await expect(
+    lchOverlayCovenantEntitlementDigest({
+      result: {
+        version: 1,
+        status: 'prepared',
+        acquisitionId: result.acquisitionId,
+        recoveryUntil: result.recoveryUntil
+      }
+    })
+  ).rejects.toThrow('complete delivered material')
+  const context = await decodeUnverifiedLCHOverlayContext(
+    Uint8Array.from(Utils.toArray(result.potatoes.body.secret, 'base64')),
+    'listing-covenant'
+  )
+  for (const settlement of [null, [], 'invalid', 1, {}]) {
+    const secret = Utils.toBase64(
+        await encodeLCHOverlayContext(
+          { ...context, settlement: new TextEncoder().encode(canonicalOutputJSON(settlement)) },
+          'listing-covenant'
+        )
+      ),
+      changed = {
+        ...f.delivered,
+        result: {
+          ...result,
+          potatoes: { ...result.potatoes, body: { ...result.potatoes.body, secret } }
+        }
+      }
+    await expect(lchOverlayCovenantEntitlementDigest(changed)).rejects.toThrow(
+      'Covenant settlement packet is missing'
+    )
+  }
+}, 60000)
 
 it('executes complete authorized Bitcoin and covenant purchase evidence before retaining playable rights', async () => {
   const f = await lchNativeCovenantFixture(),
