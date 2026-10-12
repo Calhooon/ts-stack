@@ -57,7 +57,7 @@ async function main() {
       '--label',
       'network-ops.fixture-owner=' + owner,
       '--memory',
-      '1g',
+      '2g',
       '--cpus',
       '2',
       '--pids-limit',

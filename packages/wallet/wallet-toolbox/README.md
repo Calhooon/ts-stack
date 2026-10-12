@@ -5889,3 +5889,12 @@ current production migration lifecycle. It requires the latest native journal
 migration in the captured source binding and independently verifies that its
 migration row is published exactly once; the original complete capture, source
 metadata, relationship and byte assertions remain unchanged.
+
+The disposable native MySQL archive and journal qualification fixtures each
+allow 2 GiB of memory. A complete current-schema archive capture passed at the
+former 1 GiB cap, but the subsequent profile fixture was killed by the kernel
+for exceeding it (Docker OOM event and exit 137). The bounded allowance covers
+both engine memory and the existing 512 MiB RAM-backed data volume. CPU, PID,
+data-volume, case, readiness and cleanup bounds remain unchanged. This is a
+test-fixture allowance, not a production sizing recommendation; later full
+qualification must measure its headroom.
