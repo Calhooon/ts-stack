@@ -46,6 +46,21 @@ function makeReport(cohort, testFile, names) {
 
 const report = cohort => makeReport(cohort, composedNativeTestFile, composedNativeCaseNames)
 
+test('clean wallet build installs required CJS assets before loading compiled quota factories', () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL('../packages/wallet/wallet-toolbox/package.json', import.meta.url), 'utf8')
+  )
+  const steps = manifest.scripts.build.split(' && ')
+  const compile = steps.indexOf('tsc --build')
+  const copy = steps.indexOf('node src/storage/portable/native/copy_artifacts.cjs')
+  const check = steps.indexOf(
+    'node src/storage/portable/native/generate_shared_quota_sources.cjs --check'
+  )
+  assert.ok(compile >= 0 && copy > compile && check > copy)
+  assert.equal(steps.filter(value => value.includes('copy_artifacts.cjs')).length, 1)
+  assert.equal(steps.filter(value => value.includes('generate_shared_quota_sources.cjs')).length, 1)
+})
+
 test('routing preserves all21 original cases including both identical completed names and existing coverage lanes', () => {
   assert.equal(composedNativeCaseNames.length, 21)
   assert.equal(composedNativeCohorts.length, 20)

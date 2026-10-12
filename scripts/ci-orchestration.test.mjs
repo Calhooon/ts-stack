@@ -28,6 +28,19 @@ function workflowJobBlocks(workflow) {
   }))
 }
 
+test('repository health installs real locked wallet compiler dependencies before config regressions', () => {
+  const workflow = readFileSync(CI_PATH, 'utf8')
+  const job = workflowJobBlocks(workflow).find(value => value.name === 'repository-health').source
+  const setup = job.indexOf('uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413')
+  const install = job.indexOf(
+    'run: pnpm install --frozen-lockfile --ignore-scripts --filter @bsv/ts-stack --filter @bsv/wallet-toolbox'
+  )
+  const rebuild = job.indexOf('run: pnpm rebuild esbuild')
+  const testControls = job.indexOf('run: node --test scripts/*.test.mjs')
+  assert.ok(setup >= 0 && install > setup && rebuild > install && testControls > rebuild)
+  assert.doesNotMatch(job, /continue-on-error/)
+})
+
 function assertWalletMutationTimeout(job, defaultMinutes) {
   const targets =
     '["revenue-lineage-package","revenue-lineage-graph","sdk-revenue-listing-funding","output-lookup-session-records","output-lookup-session-payloads","wallet-recovery-codec","wallet-recovery-installation","wallet-recovery-store","wallet-funding-store","wallet-recovery-transitions","wallet-recovery-controller","root-eviction-storage","root-eviction-journal","root-eviction-records","wallet-retained-snapshot","wallet-snapshot-journal","wallet-snapshot-sync","wallet-snapshot-sync-destination","wallet-snapshot-sync-rows","wallet-snapshot-archive","wallet-snapshot-remote-http","wallet-snapshot-remote-reader","wallet-snapshot-remote-service"]'

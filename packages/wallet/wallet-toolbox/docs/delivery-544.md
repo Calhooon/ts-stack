@@ -656,3 +656,13 @@ bytes, hashes, private modes, exclusivity, cancellation, fixed expiry, unchanged
 source identity and retirement assertions remain. No production code, native
 binary, API, wire/schema, resource limit or migration changes. Full current-head
 property and system qualification remain required.
+
+Fresh hosted builds require the fixed native CJS/source assets before the
+compiled quota factories are imported. The ordinary wallet build now compiles,
+installs its existing bounded artifact cohort, then checks the original generated
+quota-source bytes. It does not change generated SQL/C, runtime admission or
+qualification. A clean-output build must exercise this order; reused outputs are
+insufficient evidence. The repository-health CI job installs locked root and
+wallet compiler dependencies and rebuilds the audited esbuild binary before
+running its unchanged complete control suite, including real ts-jest/esbuild
+configuration regressions. No check is skipped or suppressed.
