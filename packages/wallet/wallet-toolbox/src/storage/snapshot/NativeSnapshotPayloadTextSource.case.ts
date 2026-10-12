@@ -154,7 +154,19 @@ export async function verifyNativePayloadTextSource(
   for (const fixture of fixtures) {
     check()
     const faultView = await storage.openWalletReadSnapshot(identityKey, { lifetimeMs: expiresAt - Date.now() })
-    let physicalFailure: { error: unknown } | undefined
+    let physicalFailure: { error: unknown } | undefined,
+      operationFailure: { error: unknown } | undefined
+    const closeFaultView = async (): Promise<void> => {
+      try {
+        await faultView.close()
+      } catch (error) {
+        if (physicalFailure === undefined || error !== physicalFailure.error)
+          throw new AggregateError(
+            [...(operationFailure === undefined ? [] : [operationFailure.error]), error],
+            'Native TEXT fault probe retains its original cleanup failure'
+          )
+      }
+    }
     try {
       const reader = faultView.fieldReader
       requireCase(reader !== undefined)
@@ -197,12 +209,11 @@ export async function verifyNativePayloadTextSource(
       } finally {
         oracle.fill(0)
       }
+    } catch (error) {
+      operationFailure = { error }
+      throw error
     } finally {
-      try {
-        await faultView.close()
-      } catch (error) {
-        if (physicalFailure === undefined || error !== physicalFailure.error) throw error
-      }
+      await closeFaultView()
     }
   }
 }
