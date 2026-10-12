@@ -26,11 +26,12 @@ import {
 } from './NativeSnapshotSyncProvenTxReqsNode.case'
 import { verifyPackedNativeSnapshotField } from './preparePackedNativeSnapshotFieldNode.case'
 
-// Genuine setup measured 104s + 107s before the first retained view, exceeding
-// the original 180s source fixture lifetime. Admit both full profiles and their
-// selected effects with one initial ten-minute lifetime; allow another minute
-// for original physical cleanup. Real UTC/monotonic expiry is never renewed.
-const pairLifetimeMilliseconds = 600000
+// The complete request case passed in 566s without coverage; the covered case
+// expired after 621s before completing. Give these two full-profile fixtures
+// an initial twelve-minute lifetime, with the existing minute for cleanup.
+// This measured harness allowance changes no production lifetime or resource
+// default. Real UTC/monotonic expiry is checked throughout and never renewed.
+const pairLifetimeMilliseconds = 720000
 const pairCaseMilliseconds = pairLifetimeMilliseconds + 60000
 
 type NativeFixture = Awaited<ReturnType<typeof composedNativeFixture>>

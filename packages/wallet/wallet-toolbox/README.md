@@ -1847,16 +1847,23 @@ cannot renew it. This aligns the enclosing test budget with its admitted work.
 The original large native snapshot pair uses two independently authenticated,
 restored and published profiles. Measured setup took 104 and 107 seconds, so the
 first profile's former three-minute lifetime expired before either retained
-view opened. These component cases now select one initial ten-minute lifetime
-per profile and an eleven-minute enclosing allowance for effects and cleanup.
+view opened. The complete request later passed in 566 seconds without coverage,
+while the covered run expired after 621 seconds before completing. These paired
+fixtures now select one initial twelve-minute lifetime per profile, a measured
+20% increase, and a thirteen-minute case including the existing minute for
+physical cleanup. The forty-minute lane still encloses the complete case, both
+native delivery steps, and dependency setup.
 The general fixture default, original proofs and data, resource bounds, and
 all real UTC/monotonic expiry checks remain unchanged. The retained source view
 uses only the remaining lifetime of both original profiles; it never renews
 either deadline. A separate two-minute view cap expired in the complete request
 case before session admission, despite the enclosing profiles still being live.
-Sharing their remaining initial lifetime admits the full predecessor/table
-work within the existing ten-minute fixture and eleven-minute case bounds.
-Production source defaults and expired-source rejection remain unchanged.
+Sharing their remaining initial lifetime removes that unrelated early view
+expiry. The twelve-minute fixture allowance adds headroom for the complete
+workflow with coverage; full covered qualification is still required. The
+comparison does not measure an exact coverage overhead because the covered
+case failed before completion. Production source defaults and expired-source
+rejection remain unchanged; performance and workload sizing are separate gates.
 
 The working native candidate now has traceable in-repository C source and an
 internal incremental blob ABI. One operation carries a fixed coordinate header
@@ -5183,7 +5190,7 @@ The required wallet coverage matrix now gives every original native snapshot
 pair case its own lane. The first unchanged original case measured 214.5 seconds
 of genuine two-profile setup, selected effects and cleanup; a shared40-minute
 shard cannot admit all18 cases. Each lane keeps the existing40-minute limit for the original
-660-second case bound, two600-second native delivery steps and dependency setup. The
+780-second case bound, two600-second native delivery steps and dependency setup. The
 ordinary shards route this file to these mandatory lanes. The aggregate gate
 rereads each actual Jest report, checks all18 original names and selected passes,
 and requires every distinct cohort exactly once at the current commit, test-file
@@ -5839,9 +5846,10 @@ the default binding; changing only this setting passed the complete case in
 207.349 seconds. That configuration-only comparison is diagnostic evidence;
 the authored configuration still requires the original native lane capture.
 
-The original independent profiles, 131,073-byte proof, other payloads, assertions,
-600-second fixture lifetime and 660-second case allowance are preserved. This
-setting affects the test harness and changes no production resource ceiling,
+The independent profiles, 131,073-byte proof, other payloads and assertions are
+preserved. The binding comparison used the then-current 600-second fixture and
+660-second case; the paired-fixture budget described above now adds measured
+coverage headroom. This setting affects the test harness and changes no production resource ceiling,
 wire format, persisted data or runtime API. Whole native, platform, performance
 and exact-head CI qualification remain separate requirements.
 
