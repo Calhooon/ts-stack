@@ -1778,6 +1778,11 @@ the historical predecessor schema rather than installing a different complete
 generation before the state under test. Production migrations and the original
 independent property assertions are unchanged; qualification remains deferred.
 
+The native index crash fixtures retain the schema before the SQLite generation
+migration and exclude its dependent registered journal migration as well. This
+keeps the original interrupted index installation under test; the separate
+registered journal recovery fixtures exercise the complete current lifecycle.
+
 The working native journal candidate now runs a finite maintenance pass before
 ordinary negotiated captures: the default retains at least 1,000,000 event-clock
 positions, reclaims at most 64 actually expired receipts and examines two native
