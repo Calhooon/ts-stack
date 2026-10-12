@@ -1,5 +1,4 @@
 import express, { Request, Response, NextFunction } from 'express'
-import bodyParser from 'body-parser'
 import { rateLimit } from 'express-rate-limit'
 import {
   CompletedProtoWallet,
@@ -46,10 +45,10 @@ export const startServer = (_port = 3000): Server => {
   app.use(rateLimit({ windowMs: 60_000, limit: 300 }))
 
   // Middleware setup
-  app.use(bodyParser.json())
+  app.use(express.json())
   app.use(express.urlencoded({ extended: true }))
   app.use(express.text())
-  app.use(bodyParser.raw({ type: 'application/octet-stream', limit: '500mb' }))
+  app.use(express.raw({ type: 'application/octet-stream', limit: '500mb' }))
 
   // Mocked certificate and wallet setup
   // Used in the authentication middleware as needed:
