@@ -92,7 +92,8 @@ it('constructs one real native purchase, authenticates submission, retains actua
   } catch (error) {
     throw new AggregateError(
       [error, ...f.failures.slice(-1)],
-      'Joint integration failed; retained host refusal is supplementary evidence'
+      'Joint integration failed; retained host refusal is supplementary evidence',
+      { cause: error }
     )
   } finally {
     await f.close()
@@ -266,7 +267,8 @@ it('retains a genuinely richer checked same-raw proof after actual delivery with
   } catch (error) {
     throw new AggregateError(
       [error, ...f.failures.slice(-1)],
-      'Richer proof integration failed; original host refusal is supplementary evidence'
+      'Richer proof integration failed; original host refusal is supplementary evidence',
+      { cause: error }
     )
   } finally {
     await f.close()
