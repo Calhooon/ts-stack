@@ -8,21 +8,25 @@ import type { WalletReadSnapshot } from './WalletReadSnapshot'
 export type NativeActionCaseFixture = {
   [K in 'transactions' | 'outputs']: Readonly<{ table: K; expected: readonly Readonly<Brc38ImportRowTypes[K]>[] }>
 }['transactions' | 'outputs']
-function requireCase(condition: boolean): asserts condition {
+function requireCase(condition: boolean, column?: string): asserts condition {
   if (!condition)
-    throw new Error('Independent native action lifecycle, payload, quarantine or atomic ACK oracle differs')
+    throw new Error(
+      'Independent native action lifecycle, payload, quarantine or atomic ACK oracle differs' +
+        (column === undefined ? '' : ` at column ${column}`)
+    )
 }
 function exactRow(wanted: object, actual: object): void {
   for (const [name, expected] of Object.entries(wanted)) {
     const value: unknown = Object.getOwnPropertyDescriptor(actual, name)?.value
-    if (expected instanceof Date) requireCase(value instanceof Date && value.getTime() === expected.getTime())
+    if (expected instanceof Date) requireCase(value instanceof Date && value.getTime() === expected.getTime(), name)
     else if (Array.isArray(expected) || expected instanceof Uint8Array)
       requireCase(
-        (Array.isArray(value) || value instanceof Uint8Array) && Buffer.from(expected).equals(Buffer.from(value))
+        (Array.isArray(value) || value instanceof Uint8Array) && Buffer.from(expected).equals(Buffer.from(value)),
+        name
       )
-    else requireCase(value === expected)
+    else requireCase(value === expected, name)
   }
-  requireCase(!Object.hasOwn(actual, 'rowid'))
+  requireCase(!Object.hasOwn(actual, 'rowid'), 'rowid')
 }
 /** Authored UNRUN. The finite native controller supplies actual issued storage,
  * retained source, complete predecessor mappings/journal/session and independent

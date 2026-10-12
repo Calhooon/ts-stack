@@ -5838,3 +5838,8 @@ The original independent profiles, 131,073-byte proof, other payloads, assertion
 setting affects the test harness and changes no production resource ceiling,
 wire format, persisted data or runtime API. Whole native, platform, performance
 and exact-head CI qualification remain separate requirements.
+
+Native action contract failures identify the mismatched column without printing
+wallet values, payloads or identities. The full original scalar/date/binary row
+comparisons and rejection of internal row identifiers remain intact. A named
+column diagnoses a failed contract; it does not qualify its production behavior.
