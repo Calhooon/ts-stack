@@ -32,6 +32,7 @@ const {
 const { addSnapshotArchiveTables } = require('../../out/src/storage/schema/snapshotArchiveMigration.js')
 const { StorageKnex } = require('../../out/src/storage/StorageKnex.js')
 const { StorageProvider } = require('../../out/src/storage/StorageProvider.js')
+const { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } = require('../../out/src/storage/schema/KnexMigrations.js')
 const {
   verifySnapshotJournalDestinationSchema
 } = require('../../out/src/storage/snapshot/journal/SnapshotJournalDestinationSchema.js')
@@ -176,7 +177,8 @@ async function captureFixture() {
     assert.equal(manifest.pages, 14)
     assert.equal(manifest.binding.sourceStorage.storageIdentityKey, 'native-source')
     assert.equal(manifest.binding.user.activeStorage, 'historical selection')
-    assert.equal(manifest.binding.sourceSchema, '2026-10-02-001 repair snapshot SQLite conflict maintenance')
+    assert.equal(manifest.binding.sourceSchema, SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    assert.equal((await writer.knex('knex_migrations').where('name', SNAPSHOT_JOURNAL_SOURCE_MIGRATION)).length, 1)
     const store = new KnexSnapshotArchiveStore(writer.knex)
     const first = decodeSyncTransfer((await store.read(identity, manifest.archiveId, 8)).bytes)
     const second = decodeSyncTransfer((await store.read(identity, manifest.archiveId, 9)).bytes)

@@ -5883,3 +5883,9 @@ normalize hex inside the original streamed proof oracle, and duplicate-page
 comparison still rejects case aliases. Complete native proof contracts also
 compare the total proof-row count before and after the occupied merge, alongside
 all original bytes, metadata, mapping and durable acknowledgement checks.
+
+The native MySQL archive fixture also records the schema from the complete
+current production migration lifecycle. It requires the latest native journal
+migration in the captured source binding and independently verifies that its
+migration row is published exactly once; the original complete capture, source
+metadata, relationship and byte assertions remain unchanged.
