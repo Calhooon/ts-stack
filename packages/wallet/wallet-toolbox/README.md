@@ -5941,3 +5941,12 @@ Retained-source tests capture the current persisted user header independently.
 All seventeen scalar TEXT fields retain exact positive windows from one coherent
 view; each forged physical length uses a fresh view and must preserve its original
 read/close error and refuse reuse, because a failed physical read retires the view.
+
+Measured native test admission is local to the complete workflows that exceeded
+their original 180-second fixture lifetime: copy/allocation uses 360 seconds;
+each three-date user-inventory workflow uses 540 seconds for setup, initial full
+merge and source-revision refold; large-record metadata/hash uses 480 seconds
+for setup and its original 120-second window phase. Each harness adds 30 seconds
+for cleanup. The fixture default, production operation/IPC/read ceilings and
+all original cases, fault variants and datasets remain unchanged. These finite
+allowances require measured validation; earlier expiry failures remain evidence.

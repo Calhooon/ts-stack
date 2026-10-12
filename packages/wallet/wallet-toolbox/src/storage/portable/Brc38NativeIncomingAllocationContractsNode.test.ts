@@ -14,8 +14,10 @@ import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestor
 import { asString } from '../../utility/utilityHelpers.noBuffer'
 import { doubleSha256BE } from '../../utility/utilityHelpers'
 
-// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
-const nativeFixtureCaseTimeoutMs = 180000 + 30000
+// Original complete copy/allocation exceeded its 180-second fixture owner.
+// Admit two finite setup/copy phases, plus 30 seconds of cleanup locally.
+const nativeFixtureLifetimeMs = 180000 + 180000
+const nativeFixtureCaseTimeoutMs = nativeFixtureLifetimeMs + 30000
 
 // Independent numeric family names and archive counts. Four original merge
 // episodes reserve one incoming entity per family; sync additionally reserves
@@ -267,43 +269,50 @@ test('actual incoming ranges retain deleted-high history, survive retry and excl
   )
 }, 930000)
 
-test('actual private page allocation consumes genuine source-reserved IDs and rolls back a caught unique violation', async () => {
-  await withBrc38NativeCandidateContractFixture(async fixture => {
-    // This expected range follows the authored deleted-high1600 and original
-    // four incoming episodes. No reservation result supplies the expectation.
-    await reserveBrc38NativeIncomingIds(
-      fixture.source.storage,
-      fixture.selection,
-      previewReceiptPolicy,
-      fixture.store,
-      { workingAllocation: fixture.options.workingAllocation }
-    )
-    await fixture.prepareCopied()
-    await fixture.withCandidate(async candidate => {
-      await candidate.copySequences()
-      await candidate.prepareIncomingIds()
-    })
-    const storage = new StorageKnex({
-      ...StorageProvider.createStorageBaseOptions(fixture.source.storage.chain),
-      knex: fixture.store.knex,
-      snapshotSync: false
-    })
-    storage.setServices(fixture.options.services)
-    const userId = await fixture.withRead(async trx => {
-      const rows = await trx('users').select('userId').limit(2)
-      if (rows.length !== 1 || !Number.isSafeInteger(Number(rows[0].userId)))
-        throw new Error('Actual private allocation user differs')
-      return Number(rows[0].userId)
-    })
-    await verifyReservedPrivatePageIds(
-      {
-        storage,
-        userId,
-        expiresAt: fixture.store.limits.expiresAt,
-        withRead: fixture.withRead,
-        withWriter: fixture.withWriter
+test(
+  'actual private page allocation consumes genuine source-reserved IDs and rolls back a caught unique violation',
+  async () => {
+    await withBrc38NativeCandidateContractFixture(
+      async fixture => {
+        // This expected range follows the authored deleted-high1600 and original
+        // four incoming episodes. No reservation result supplies the expectation.
+        await reserveBrc38NativeIncomingIds(
+          fixture.source.storage,
+          fixture.selection,
+          previewReceiptPolicy,
+          fixture.store,
+          { workingAllocation: fixture.options.workingAllocation }
+        )
+        await fixture.prepareCopied()
+        await fixture.withCandidate(async candidate => {
+          await candidate.copySequences()
+          await candidate.prepareIncomingIds()
+        })
+        const storage = new StorageKnex({
+          ...StorageProvider.createStorageBaseOptions(fixture.source.storage.chain),
+          knex: fixture.store.knex,
+          snapshotSync: false
+        })
+        storage.setServices(fixture.options.services)
+        const userId = await fixture.withRead(async trx => {
+          const rows = await trx('users').select('userId').limit(2)
+          if (rows.length !== 1 || !Number.isSafeInteger(Number(rows[0].userId)))
+            throw new Error('Actual private allocation user differs')
+          return Number(rows[0].userId)
+        })
+        await verifyReservedPrivatePageIds(
+          {
+            storage,
+            userId,
+            expiresAt: fixture.store.limits.expiresAt,
+            withRead: fixture.withRead,
+            withWriter: fixture.withWriter
+          },
+          { first: 1601, used: 0, sourceHigh: 1604 }
+        )
       },
-      { first: 1601, used: 0, sourceHigh: 1604 }
+      { lifetimeMs: nativeFixtureLifetimeMs }
     )
-  })
-}, nativeFixtureCaseTimeoutMs)
+  },
+  nativeFixtureCaseTimeoutMs
+)

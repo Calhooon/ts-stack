@@ -183,8 +183,14 @@ export async function verifyNativePayloadTextSource(
             physicalFailure.error instanceof Error &&
             physicalFailure.error.message === 'Actual native TEXT length differs'
         )
-        const closedError = await faultView.closed.then(() => undefined, error => error),
-          closeError = await faultView.close().then(() => undefined, error => error)
+        const closedError = await faultView.closed.then(
+            () => undefined,
+            error => error
+          ),
+          closeError = await faultView.close().then(
+            () => undefined,
+            error => error
+          )
         requireCase(closedError === physicalFailure.error && closeError === physicalFailure.error)
         await refuse(() => reader.readMetadataPage(fixture.table))
         check()
