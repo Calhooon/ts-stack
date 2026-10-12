@@ -160,6 +160,17 @@ async function verifyFatalNativeFieldLength(
   check()
   const view = await storage.openWalletReadSnapshot(identityKey, { lifetimeMs: expiresAt - Date.now() })
   let physicalFailure: { error: unknown } | undefined, operationFailure: { error: unknown } | undefined
+  const closeFaultView = async (): Promise<void> => {
+    try {
+      await view.close()
+    } catch (error_) {
+      if (physicalFailure === undefined || error_ !== physicalFailure.error)
+        throw new AggregateError(
+          [...(operationFailure === undefined ? [] : [operationFailure.error]), error_],
+          'Native field fault probe retains its original cleanup failure'
+        )
+    }
+  }
   try {
     check()
     const reader = view.fieldReader
@@ -202,14 +213,6 @@ async function verifyFatalNativeFieldLength(
     operationFailure = { error: error_ }
     throw error_
   } finally {
-    try {
-      await view.close()
-    } catch (error_) {
-      if (physicalFailure === undefined || error_ !== physicalFailure.error)
-        throw new AggregateError(
-          [...(operationFailure === undefined ? [] : [operationFailure.error]), error_],
-          'Native field fault probe retains its original cleanup failure'
-        )
-    }
+    await closeFaultView()
   }
 }
