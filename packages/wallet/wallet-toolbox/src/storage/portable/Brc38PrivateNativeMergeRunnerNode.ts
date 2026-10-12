@@ -20,9 +20,10 @@ export type Brc38PrivateNativeMergeRunnerProgress = Readonly<{
   elapsedMilliseconds: number
   progress: Readonly<Brc38PrivateNativeMergeProgress> | Readonly<{ phase: 'SOURCE_CHANGED'; sourceRevision: string }>
 }>
-function invalid(): never {
+function invalid(originalFailure?: Readonly<{ cause: unknown }>): never {
   throw new Error(
-    'Private native merge runner differs from its original owner, source selection or finite resource lifetime'
+    'Private native merge runner differs from its original owner, source selection or finite resource lifetime',
+    originalFailure
   )
 }
 /** Actual bounded implementation runner. Each operation reopens a genuine
@@ -85,7 +86,7 @@ export function runBrc38PrivateNativeMerge(
     resources.projectionPolicy.signal !== options.signal
   )
     invalid()
-  const check = (): void => {
+  const check = (originalFailure?: Readonly<{ cause: unknown }>): void => {
     options.signal?.throwIfAborted()
     if (
       store.binding !== binding ||
@@ -94,7 +95,7 @@ export function runBrc38PrivateNativeMerge(
       Date.now() >= expiresAt ||
       performance.now() >= deadline
     )
-      invalid()
+      invalid(originalFailure)
     store.assertPrivateNativeDestination(store.knex)
   }
   // Capture requested DATA synchronously before a caller can mutate it or
@@ -133,7 +134,9 @@ export function runBrc38PrivateNativeMerge(
             })
         )
       } catch (cause) {
-        check()
+        // Keep a failed operation available when the original owner gate also
+        // refuses; retaining its cause never admits an expired or changed owner.
+        check({ cause })
         if (!(cause instanceof Brc38PrivateCompositionRequiredError)) throw cause
         result = Object.freeze({ changed: cause.sourceRevision })
       } finally {

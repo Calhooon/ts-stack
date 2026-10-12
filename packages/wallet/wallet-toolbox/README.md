@@ -5951,13 +5951,15 @@ for cleanup. The fixture default, production operation/IPC/read ceilings and
 all original cases, fault variants and datasets remain unchanged. These finite
 allowances require measured validation; earlier expiry failures remain evidence.
 
-The complete authenticated native merge fixture also selects 540 seconds plus
-30 seconds of harness cleanup after its original repeat variant expired at
-180044 milliseconds during the initial full merge. All six original variants,
-Unicode/NUL data, full semantic/custody/range checks and finite operation bounds
-remain. The original reservation expires without renewal or reset; this is a
-named test-workflow allowance, not a production default change. Full native and
-system qualification remains required.
+The complete authenticated native merge fixture selects one finite 1200-second
+reservation plus 30 seconds of harness cleanup. The measured initial workflow
+expired at 540059 milliseconds during final inventory; the allowance covers
+that 540-second initial window, a second full window for repeat/resume, and
+120 seconds for independent inventory and custody checks. All six original
+variants, Unicode/NUL data, 1024-byte reads, full semantic/custody/range checks
+and finite operation bounds remain. The original reservation expires without
+renewal or reset. Shared fixture defaults and production limits are unchanged;
+full native and system qualification remains required.
 
 Authenticated native merge contract failures report bounded phase counters,
 completed-operation timing and the remaining original reservation lifetime.
@@ -5980,3 +5982,9 @@ exactly one matching observer, rejects both its removal and altered definition,
 and verifies exact generation, page-count and complete object rollback.
 The fresh private fixture can use historical names without weakening the
 compact-family or mixed-schema checks.
+
+If an in-flight native merge operation fails and the runner subsequently refuses
+its original binding, storage root or finite lifetime, the same runner refusal
+retains the original operation failure as `Error.cause`. Its class, message and
+refusal behavior remain; the cause does not renew ownership or permit progress.
+Cancellation and destination-owner assertions retain their existing behavior.

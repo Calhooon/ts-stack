@@ -18,10 +18,11 @@ import {
 import { brc38StagingBinding } from './Brc38StagingBinding'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 
-// The original 180-second owner expired during complete authenticated merge.
-// Admit construction, full merge and resume/repeat or negative replay locally.
-// Keep every variant, original reservation and production/default ceiling.
-const nativeFixtureLifetimeMs = 180000 + 180000 + 180000
+// The initial full workflow consumed its 540-second owner during inventory.
+// Admit that measured window twice for initial merge and repeat/resume, plus
+// 120 seconds for independent inventory and custody checks. One finite owner;
+// all six variants, data/assertions and production/default ceilings remain.
+const nativeFixtureLifetimeMs = 540000 + 540000 + 120000
 const nativeFixtureCaseTimeoutMs = nativeFixtureLifetimeMs + 30000
 
 type Fixture = Parameters<Parameters<typeof withComposedNativeFixture>[0]>[0]
