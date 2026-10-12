@@ -133,6 +133,22 @@ export const nativeMergeCaseNames = Object.freeze(
   nativeMergeCohorts.map(cohort => cohort.name).sort()
 )
 
+export const nativeAuthenticatedMergeTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts'
+
+// Preserve the six full public-entry cases and their original1200s owner/1230s
+// Jest allowance. Separate lanes include the existing two600s delivery steps
+// and bounded installation/build/coverage/cleanup within the90m setup envelope.
+export const nativeAuthenticatedMergeCohorts = Object.freeze(
+  ['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 'wrong-binding'].map(id => {
+    const name = `authenticated native entry point automatically reserves IDs and preserves original custody: ${id}`
+    return Object.freeze({ id, name, cases: 1, minutes: 90, pattern: `^${escapePattern(name)}$` })
+  })
+)
+export const nativeAuthenticatedMergeCaseNames = Object.freeze(
+  nativeAuthenticatedMergeCohorts.map(cohort => cohort.name).sort()
+)
+
 // COMPLETED has the same original name for live and expired admissions. Keep
 // both in one cohort, with multiplicity two; neither original case is renamed.
 export const composedNativeCohorts = Object.freeze(
@@ -169,6 +185,11 @@ const mergePlan = {
   cohorts: nativeMergeCohorts,
   names: nativeMergeCaseNames
 }
+const authenticatedMergePlan = {
+  testFile: nativeAuthenticatedMergeTestFile,
+  cohorts: nativeAuthenticatedMergeCohorts,
+  names: nativeAuthenticatedMergeCaseNames
+}
 
 export function walletCoverageMatrix() {
   return {
@@ -187,6 +208,11 @@ export function walletCoverageMatrix() {
         id: `native-merge-${cohort.id}`,
         native_merge_cohort: cohort.id,
         native_merge_minutes: cohort.minutes
+      })),
+      ...nativeAuthenticatedMergeCohorts.map(cohort => ({
+        id: `native-auth-${cohort.id}`,
+        native_auth_cohort: cohort.id,
+        native_auth_minutes: cohort.minutes
       }))
     ]
   }
@@ -273,22 +299,29 @@ function validateNativeReceiptReport(receipt, bytes, plan) {
 export const composedNativeCohort = id => nativeCohort(id, composedPlan)
 export const nativePairCohort = id => nativeCohort(id, pairPlan)
 export const nativeMergeCohort = id => nativeCohort(id, mergePlan)
+export const nativeAuthenticatedMergeCohort = id => nativeCohort(id, authenticatedMergePlan)
 export const validateComposedNativeReport = (report, id) =>
   validateNativeReport(report, id, composedPlan)
 export const validateNativePairReport = (report, id) => validateNativeReport(report, id, pairPlan)
 export const validateNativeMergeReport = (report, id) => validateNativeReport(report, id, mergePlan)
+export const validateNativeAuthenticatedMergeReport = (report, id) =>
+  validateNativeReport(report, id, authenticatedMergePlan)
 export const validateComposedNativeReceipts = (receipts, identity) =>
   validateNativeReceipts(receipts, identity, composedPlan)
 export const validateNativePairReceipts = (receipts, identity) =>
   validateNativeReceipts(receipts, identity, pairPlan)
 export const validateNativeMergeReceipts = (receipts, identity) =>
   validateNativeReceipts(receipts, identity, mergePlan)
+export const validateNativeAuthenticatedMergeReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, authenticatedMergePlan)
 export const validateComposedNativeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, composedPlan)
 export const validateNativePairReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, pairPlan)
 export const validateNativeMergeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, mergePlan)
+export const validateNativeAuthenticatedMergeReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, authenticatedMergePlan)
 function identity(root, plan) {
   return {
     head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
@@ -305,6 +338,13 @@ function receiptFiles(directory, suffix) {
 }
 
 function commandFamily(command) {
+  if (command?.startsWith('auth-'))
+    return {
+      prefix: 'auth-',
+      plan: authenticatedMergePlan,
+      suffix: '.native-auth.json',
+      label: 'authenticated native merge'
+    }
   if (command?.startsWith('pair-'))
     return { prefix: 'pair-', plan: pairPlan, suffix: '.native-pair.json', label: 'native pair' }
   if (command?.startsWith('merge-'))
@@ -358,7 +398,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       )
     } else
       throw new Error(
-        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs or merge- for native merge contracts'
+        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs, merge- for native merge contracts, or auth- for authenticated native merge contracts'
       )
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))

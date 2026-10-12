@@ -8,6 +8,18 @@ all eleven whole-program acceptance rows remain open. Complete system, platform,
 resource, compatibility, mutation, exact-head CI and review evidence is still
 required before readiness can be claimed.
 
+The six authenticated native public-entry cases now have dedicated mandatory CI
+coverage lanes, alongside the existing 21 composed cases, 18 native pairs and six
+lower-level merge cases. Their exact original six-name report inventory and
+complete receipt union are checked at the current head/source/plan identity;
+ordinary shards exclude the file only after this complete routing is wired.
+Each new lane has a finite 90-minute setup/delivery/case/reporting envelope,
+retaining the original 1200-second owner and 1230-second case limits. Existing
+lane budgets, production/native/resource caps and all assertions remain.
+This closes the identified CI integration gap; it does not claim hosted execution
+or whole-system qualification. Historical measurements below retain their
+original source identities and do not automatically qualify this current source.
+
 Linux native qualification selects immutable build metadata by the actual
 ARM64/x64 Node24.18.0 ABI137 target. The provisioner checks `--check-host` against
 the real kernel architecture before allocating or downloading compiler inputs.

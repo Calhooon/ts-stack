@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import * as nativeRouting from './wallet-composed-native-ci.mjs'
 import {
   composedNativeTestFile,
@@ -49,8 +50,8 @@ test('routing preserves all21 original cases including both identical completed 
   assert.equal(composedNativeCaseNames.length, 21)
   assert.equal(composedNativeCohorts.length, 20)
   const matrix = walletCoverageMatrix().include
-  assert.equal(matrix.length, 50)
-  assert.equal(new Set(matrix.map(value => value.id)).size, 50)
+  assert.equal(matrix.length, 56)
+  assert.equal(new Set(matrix.map(value => value.id)).size, 56)
   assert.deepEqual(
     matrix.filter(value => value.shard).map(value => value.shard),
     [1, 2, 3, 4]
@@ -87,6 +88,51 @@ test('all6 original native merge contracts have disjoint mandatory lanes and bou
     assert.equal(
       selected.find(value => value.native_merge_cohort === cohort.id).native_merge_minutes,
       cohort.minutes
+    )
+  }
+})
+
+test('all6 original authenticated native public-entry cases have mandatory bounded lanes', () => {
+  const variants = [
+    'repeat',
+    'lost-observer',
+    'wrong-password',
+    'truncated',
+    'corrupt',
+    'wrong-binding'
+  ]
+  const source = readFileSync(
+    new URL('../' + nativeRouting.nativeAuthenticatedMergeTestFile, import.meta.url),
+    'utf8'
+  )
+  const declared = source.match(/test\.each\(\[(.*?)\] as const\)\(\s*'([^']+)'/s)
+  assert.ok(declared, 'Original parameterized source inventory must remain explicit')
+  assert.deepEqual(
+    [...declared[1].matchAll(/'([^']+)'/g)].map(value => value[1]),
+    variants
+  )
+  assert.deepEqual(
+    nativeRouting.nativeAuthenticatedMergeCaseNames,
+    variants.map(value => declared[2].replace('%s', value)).sort()
+  )
+  const lanes = walletCoverageMatrix().include.filter(value => value.native_auth_cohort)
+  assert.equal(lanes.length, 6)
+  assert.deepEqual(
+    lanes.map(value => value.native_auth_cohort),
+    variants
+  )
+  for (const cohort of nativeRouting.nativeAuthenticatedMergeCohorts) {
+    assert.deepEqual(
+      nativeRouting.nativeAuthenticatedMergeCaseNames.filter(name =>
+        new RegExp(cohort.pattern).test(name)
+      ),
+      [cohort.name]
+    )
+    assert.equal(new RegExp(cohort.pattern).test(cohort.name + ' changed'), false)
+    assert.equal(cohort.minutes, 90)
+    assert.equal(
+      lanes.find(value => value.native_auth_cohort === cohort.id).native_auth_minutes,
+      90
     )
   }
 })
@@ -137,6 +183,15 @@ for (const family of [
     report: nativeRouting.validateNativeMergeReport,
     receipts: nativeRouting.validateNativeMergeReceipts,
     bytes: nativeRouting.validateNativeMergeReceiptReport
+  },
+  {
+    label: 'authenticated merge',
+    file: nativeRouting.nativeAuthenticatedMergeTestFile,
+    cohorts: nativeRouting.nativeAuthenticatedMergeCohorts,
+    names: nativeRouting.nativeAuthenticatedMergeCaseNames,
+    report: nativeRouting.validateNativeAuthenticatedMergeReport,
+    receipts: nativeRouting.validateNativeAuthenticatedMergeReceipts,
+    bytes: nativeRouting.validateNativeAuthenticatedMergeReceiptReport
   }
 ]) {
   const composedNativeTestFile = family.file

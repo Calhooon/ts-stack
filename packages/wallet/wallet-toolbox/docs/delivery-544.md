@@ -621,6 +621,20 @@ and exact-head CI/analyzers/review. All eleven acceptance rows remain open.
 PR569 stays open, draft and unmerged; no package publication or deployment is
 established by this implementation checkpoint.
 
+The six authenticated native public-entry cases also require separate mandatory
+coverage lanes. Their whole-file run cannot be assigned to a 40-minute ordinary
+shard: each original case can use a 1200-second owner plus 30 seconds of cleanup,
+before installation, build and the two existing 600-second native delivery
+steps. Each lane selects one original name and retains all six in its raw Jest
+report; the aggregate gate requires the exact six-lane union, current head/test
+source/routing-plan identity and unchanged original report bytes. The ordinary
+shard exclusion is paired with these required lanes, never an omitted obligation.
+The new finite 90-minute job envelope uses the existing full-merge setup allowance
+and will be reviewed against actual hosted measurements. Original case, owner,
+native and resource limits and every existing lane allowance remain unchanged.
+Authored routing is implementation evidence; full authenticated workflows and
+all eleven acceptance rows still require qualification on the final source.
+
 ### Full property campaign and exact filesystem/copy oracles
 
 The complete source423 wallet property command ran all 61 registered suites at

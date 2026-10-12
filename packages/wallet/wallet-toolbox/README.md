@@ -22,7 +22,11 @@ native foreground-refold contract passes; the committed-ACK-loss/reopen/refold
 contract now also passes with both complete 47-family comparisons and consumed-ID
 preservation after correcting numeric-key ordering in its independent expected
 JSON helper. All six native merge contracts have separate mandatory CI coverage
-lanes and complete original-report verification. Their combined measured runtime
+lanes and complete original-report verification. The six authenticated public-entry
+merge cases also have dedicated lanes and mandatory complete-report union checks.
+Their original owner/case/resource limits remain; each lane includes native
+delivery, installation and reporting in a finite 90-minute job envelope. This
+envelope requires later hosted measurement and review. Their combined runtime
 cannot fit one ordinary 40-minute shard. This checkpoint does not establish merge
 or production readiness.
 
@@ -5960,6 +5964,16 @@ variants, Unicode/NUL data, 1024-byte reads, full semantic/custody/range checks
 and finite operation bounds remain. The original reservation expires without
 renewal or reset. Shared fixture defaults and production limits are unchanged;
 full native and system qualification remains required.
+
+The authenticated public-entry cases run as six dedicated CI coverage lanes,
+separate from the six lower-level native merge contracts. Each lane reports all
+six original names, one passing selected case and five pending unselected cases.
+The aggregate gate requires every distinct lane at the current head, source and
+routing-plan hashes and rereads the original report bytes. Missing, duplicate,
+stale, changed, failed or skipped evidence refuses the gate. Ordinary wallet
+shards omit this file only because these mandatory lanes cover its full union.
+All existing coverage lanes and their budgets remain. This CI integration does
+not qualify the full workflow or establish production readiness.
 
 Authenticated native merge contract failures report bounded phase counters,
 completed-operation timing and the remaining original reservation lifetime.
