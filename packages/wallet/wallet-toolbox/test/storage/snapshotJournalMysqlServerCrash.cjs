@@ -41,7 +41,7 @@ function ownedServer() {
     owner: process.env.TS_STACK_SNAPSHOT_CONTAINER_OWNER
   })
   assert.deepEqual(actual.Config.Entrypoint, ['/bin/sh'])
-  assert.equal(actual.HostConfig.Memory, 1073741824)
+  assert.equal(actual.HostConfig.Memory, 2147483648)
   assert.equal(actual.HostConfig.NanoCpus, 2000000000)
   assert.equal(actual.HostConfig.Binds, null)
   assert.equal(actual.HostConfig.Tmpfs['/var/lib/mysql'], 'rw,nosuid,nodev,size=512m')
