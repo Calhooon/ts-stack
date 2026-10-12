@@ -169,7 +169,7 @@ test('unsafe files refuse under the owner and failed reopen releases its own loc
   const exact = await reopen(first.directory, limits)
   await exact.close()
   await symlink(join(first.directory, 'stage.sqlite'), join(first.directory, 'stage.sqlite-journal'))
-  await expect(reopen(first.directory, limits)).rejects.toThrow('Invalid private')
+  await expect(reopen(first.directory, limits)).rejects.toThrow('Actual private file type or link count differs')
   await rm(join(first.directory, 'stage.sqlite-journal'))
   await reopen(first.directory, limits)
 })
