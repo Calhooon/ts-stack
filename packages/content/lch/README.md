@@ -54,6 +54,8 @@ allowance from a remotely supplied Offer.
 
 The typed client-side builders are `LCHBuyer`, `LCHMultipayBuyer`, `LCHHttpAcquisitionClient`, `validateQuote`, `createMultipayTransaction`, and `WalletBRC78KeyDelivery`. A player first builds and signs a License Request, preflights it, validates the signed Quote and each embedded Demand, and shows the exact total and split. After an explicit confirmation it creates one multilateral wallet transaction, obtains one profile-valid settlement proof per Demand, and completes issuance.
 
+Wallet encryption and decryption results must contain dense arrays of own integer byte values from 0 through 255. Key delivery and recipient-only recovery copy each byte once, without invoking array accessors or custom iteration. Missing bytes fail with `ERR_LCH_KEY`; valid wallet results, BRC-78 bytes and key identities remain unchanged.
+
 Version 0.2 removes the endpoint-only `quote` overload because an endpoint and
 issuer key cannot bind the buyer to the advertised Asset, Policy, Agreement, or
 key-delivery terms. Migrate from the 0.1 call:

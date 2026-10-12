@@ -84,14 +84,27 @@ export function walletBytes(
   name: string,
   exactLength?: number
 ): Uint8Array {
+  const message = `Wallet returned an invalid ${name}`
+  lchAssert(Array.isArray(value), 'ERR_LCH_KEY', message)
+  const length: unknown = Object.getOwnPropertyDescriptor(value, 'length')?.value
   lchAssert(
-    Array.isArray(value) &&
-      value.length > 0 &&
-      value.length <= maximum &&
-      (exactLength === undefined || value.length === exactLength) &&
-      value.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255),
+    typeof length === 'number' &&
+      Number.isSafeInteger(length) &&
+      length > 0 &&
+      length <= maximum &&
+      (exactLength === undefined || length === exactLength),
     'ERR_LCH_KEY',
-    `Wallet returned an invalid ${name}`
+    message
   )
-  return Uint8Array.from(value)
+  const bytes = new Uint8Array(length)
+  for (let index = 0; index < length; index++) {
+    const byte: unknown = Object.getOwnPropertyDescriptor(value, index)?.value
+    lchAssert(
+      typeof byte === 'number' && Number.isInteger(byte) && byte >= 0 && byte <= 255,
+      'ERR_LCH_KEY',
+      message
+    )
+    bytes[index] = byte
+  }
+  return bytes
 }

@@ -49,7 +49,7 @@ describe('BRC-78 CEK delivery', () => {
       expect(recovered).toEqual({ keyId: f.keyId, cek: f.cek })
       expect(f.wallet.getPublicKey).toHaveBeenCalledWith({ identityKey: true })
       expect(f.wallet.decrypt).toHaveBeenCalledWith({
-        ciphertext: new Array(length - 102).fill(255),
+        ciphertext: Array.from({ length: length - 102 }, () => 255),
         protocolID: [2, 'message encryption'],
         keyID: Utils.toBase64(Array.from(f.messageKeyId)),
         counterparty: f.sender
@@ -226,5 +226,30 @@ describe('BRC-78 CEK delivery', () => {
     await expect(new WalletBRC78KeyRecovery(f.wallet).recover(f.payload)).rejects.toMatchObject({
       code: 'ERR_LCH_KEY'
     })
+  })
+
+  it('copies only own byte values without executing array accessors or custom iteration', () => {
+    let reads = 0
+    const accessor = [0]
+    Object.defineProperty(accessor, '0', {
+      get() {
+        reads++
+        return 0
+      }
+    })
+    const inherited = [0]
+    delete inherited[0]
+    Object.setPrototypeOf(inherited, { 0: 0 })
+    for (const value of [accessor, inherited])
+      expect(() => walletBytes(value, 1, 'fixture', 1)).toThrow('invalid fixture')
+    const original = [0, 255]
+    Object.defineProperty(original, Symbol.iterator, {
+      value() {
+        reads++
+        throw new Error('Custom iteration must not run')
+      }
+    })
+    expect(walletBytes(original, 2, 'fixture', 2)).toEqual(Uint8Array.of(0, 255))
+    expect(reads).toBe(0)
   })
 })

@@ -1,5 +1,5 @@
 import { expect, it } from '@jest/globals'
-import { canonicalOutputJSON, PrivateKey, Utils } from '@bsv/sdk'
+import { canonicalOutputJSON, outputPacketDigest, PrivateKey, Utils } from '@bsv/sdk'
 import { ATOMIC_BEEF } from '@bsv/sdk/transaction/Beef'
 import { WalletBRC78KeyDelivery, signObject, type KeyGrant } from '../src/index.js'
 import { lchOverlayCovenantEntitlementDigest } from '../src/overlayAcquisitionCovenantEntitlement.js'
@@ -143,17 +143,42 @@ it('changes a covenant fingerprint when rights, recipients, purchase or settleme
     }
     expect(await lchOverlayCovenantEntitlementDigest(changed)).not.toBe(digest)
   }
-  for (const body of [
-    { ...result.potatoes.body, evidenceDigest: 'ab'.repeat(32) },
-    { ...result.potatoes.body, recipient: new PrivateKey(3).toPublicKey().toString() },
-    { ...result.potatoes.body, recoveryUntil: '90000' }
+  const releaseEvidence = { ...f.delivered.releaseEvidence!, acceptedAt: '90000' }
+  for (const changed of [
+    {
+      ...f.delivered,
+      releaseEvidence,
+      result: {
+        ...result,
+        potatoes: {
+          ...result.potatoes,
+          body: {
+            ...result.potatoes.body,
+            evidenceDigest: outputPacketDigest('release-evidence', releaseEvidence)
+          }
+        }
+      }
+    },
+    {
+      ...f.delivered,
+      result: {
+        ...result,
+        potatoes: {
+          ...result.potatoes,
+          body: { ...result.potatoes.body, recipient: new PrivateKey(3).toPublicKey().toString() }
+        }
+      }
+    },
+    {
+      ...f.delivered,
+      result: {
+        ...result,
+        recoveryUntil: '90000',
+        potatoes: { ...result.potatoes, body: { ...result.potatoes.body, recoveryUntil: '90000' } }
+      }
+    }
   ])
-    expect(
-      await lchOverlayCovenantEntitlementDigest({
-        ...f.delivered,
-        result: { ...result, potatoes: { ...result.potatoes, body } }
-      })
-    ).not.toBe(digest)
+    expect(await lchOverlayCovenantEntitlementDigest(changed)).not.toBe(digest)
   expect(f.counts).toEqual({ preparation: 0, purchase: 0, release: 0 })
 }, 60000)
 
