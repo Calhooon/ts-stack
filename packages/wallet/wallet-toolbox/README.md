@@ -54,6 +54,15 @@ All original large records, bounded windows and invalid-coordinate checks remain
 This fixture correction does not change production snapshot retirement policy or
 establish whole-system qualification.
 
+Staging ownership and crash-resume qualification compile their original TypeScript
+child fixtures through the wallet build and launch the emitted `out/test/storage`
+JavaScript. The real child processes, kernel locks, fixed leases and all fifteen
+crash prefixes remain part of the tests. Run the wallet build before direct Jest
+invocation. The all-table allocation refusal matrix uses the fixture's existing
+180-second lifetime for its outer test guard, while retaining the original 64 KiB
+allocation limit, all transfer widths and the exact exhaustion assertions. This
+qualification allowance does not renew ownership or change production limits.
+
 ## Backup and recovery: keep both keys and wallet data
 
 **A root key or seed alone is not a complete BRC-100 wallet backup.** Users

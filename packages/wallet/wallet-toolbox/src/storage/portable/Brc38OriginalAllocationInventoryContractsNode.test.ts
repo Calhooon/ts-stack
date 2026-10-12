@@ -219,7 +219,9 @@ test.each([64, 256, 1024] as const)(
     await expect(result).rejects.toBeInstanceOf(SnapshotResourceLimitError)
     await expect(result).rejects.toMatchObject({ message: 'Private import merge exceeds its fixed allocation budget' })
   },
-  30000
+  // The complete native refusal shares the same existing 180-second fixture
+  // lifetime as the positive matrix; neither clock nor allocation is renewed.
+  180000
 )
 
 // Measured workload candidate, independently admitted at128KiB from the start.

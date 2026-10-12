@@ -33,9 +33,13 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 async function child(mode: 'create' | 'claim' | 'probe') {
-  const value = fork(join(__dirname, '../../../test/storage/portableOwnershipChild.js'), [directory, mode, digest], {
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc']
-  })
+  const value = fork(
+    join(__dirname, '../../../out/test/storage/portableOwnershipChild.js'),
+    [directory, mode, digest],
+    {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    }
+  )
   children.push(value)
   const ready = await new Promise<{ status: string; expiresAt: number; message?: string }>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Owned ownership fixture did not report within 2 seconds')), 2000)
@@ -169,6 +173,8 @@ test('a public directory and malformed ownership parameters refuse before creati
   await expect(Brc38StagingOwnershipNode.create(directory, 'invalid', Date.now() + 60000)).rejects.toThrow('digest')
   await expect(Brc38StagingOwnershipNode.create(directory, digest, Date.now())).rejects.toThrow('deadline')
   await chmod(directory, 0o755)
-  await expect(Brc38StagingOwnershipNode.create(directory, digest, Date.now() + 60000)).rejects.toThrow('0700')
+  await expect(Brc38StagingOwnershipNode.create(directory, digest, Date.now() + 60000)).rejects.toThrow(
+    'Actual Unix private ownership or mode differs'
+  )
   expect(await readdir(directory)).toEqual([])
 })

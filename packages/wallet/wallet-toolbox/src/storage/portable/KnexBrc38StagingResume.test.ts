@@ -298,7 +298,7 @@ test.each(Array.from({ length: 15 }, (_, prefix) => prefix))(
   async prefix => {
     const limits = resumeLimits(),
       child = fork(
-        join(__dirname, '../../../test/storage/portableResumeChild.js'),
+        join(__dirname, '../../../out/test/storage/portableResumeChild.js'),
         [parent, String(prefix), JSON.stringify(limits)],
         { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
       )

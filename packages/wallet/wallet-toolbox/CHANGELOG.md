@@ -1,5 +1,10 @@
 ## Held #569 implementation candidate — unreleased
 
+- Compile and launch the original staging ownership and crash-resume child fixtures
+  from the wallet build, preserving real kernel-lock and crash-prefix checks.
+  Align the full allocation refusal test guard with the existing fixture lifetime;
+  original memory limits, ownership expiry and production defaults remain unchanged.
+
 - Preserve all native field-window positive and negative contracts while isolating
   fatal physical-length probes in fresh retained views under the original deadline.
   Verify original read/closed/close error identity and physical cleanup; production
