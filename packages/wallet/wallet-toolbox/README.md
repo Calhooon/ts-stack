@@ -5988,3 +5988,12 @@ its original binding, storage root or finite lifetime, the same runner refusal
 retains the original operation failure as `Error.cause`. Its class, message and
 refusal behavior remain; the cause does not renew ownership or permit progress.
 Cancellation and destination-owner assertions retain their existing behavior.
+
+The authenticated native fixture reads reservation custody with the package's
+existing `better-sqlite3` driver through an independent readonly stock Knex
+connection after controller drainage. The actual driver refuses writes and
+missing files; it does not substitute a retained native facade or authorize an
+owner. Resume, repeat and negative encrypted replays emit at most 1024 bytes per
+chunk, matching the fixture's original ciphertext cap. Payload bytes, all six
+variants and the original semantic/custody/resource assertions remain; full
+native and system qualification is still required.

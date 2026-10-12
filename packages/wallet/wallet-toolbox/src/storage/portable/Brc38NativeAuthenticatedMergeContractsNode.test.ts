@@ -27,7 +27,7 @@ const nativeFixtureCaseTimeoutMs = nativeFixtureLifetimeMs + 30000
 
 type Fixture = Parameters<Parameters<typeof withComposedNativeFixture>[0]>[0]
 
-async function* chunks(bytes: Uint8Array, width = 4093): AsyncGenerator<Uint8Array> {
+async function* chunks(bytes: Uint8Array, width = 1024): AsyncGenerator<Uint8Array> {
   for (let offset = 0; offset < bytes.length; offset += width) yield bytes.slice(offset, offset + width)
 }
 
@@ -71,9 +71,9 @@ async function readCustody(fixture: Fixture, id: string): Promise<unknown> {
   // stock connection after the controller drains. These are custody data;
   // they never authorize a native owner, profile or publication.
   const catalogue = createKnex({
-    client: 'sqlite3',
+    client: 'better-sqlite3',
     useNullAsDefault: true,
-    connection: { filename: join(fixture.admission.directory, 'brc38-admission.sqlite'), flags: ['OPEN_READONLY'] },
+    connection: { filename: join(fixture.admission.directory, 'brc38-admission.sqlite'), options: { readonly: true } },
     pool: { min: 0, max: 1 }
   })
   fixture.retainCleanup(async () => await catalogue.destroy())
