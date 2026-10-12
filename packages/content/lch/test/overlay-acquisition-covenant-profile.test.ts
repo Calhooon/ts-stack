@@ -247,6 +247,11 @@ it('reuses the same protected custody reservation and refuses a different owner 
   // Observe the actual encrypted store through ports installed before custody.
   await domain.initializeCustody(objects)
   await domain.initializeCustody(objects)
+  await LCHOverlayCovenantProfileDomain.open(
+    f.options,
+    { id: domain.id, original: domain.original() },
+    objects
+  )
   expect(objects.reserve).toHaveBeenCalledTimes(2)
   expect(objects.put).toHaveBeenCalledTimes(1)
   await expect(domain.initializeCustody(f.reopen())).rejects.toMatchObject(
@@ -414,13 +419,14 @@ it('distinguishes malformed owned preparation fields from a valid activation ass
 it('bounds detached content and rechecks access across the real source await before releasing authenticated plaintext', async () => {
   const f = await lchNativeCovenantProfileFixture({ detached: true }),
     signal = new AbortController().signal
-  let mode: 'valid' | 'oversized' | 'invalid' | 'revoked' = 'valid'
+  let mode: 'valid' | 'at-bound' | 'oversized' | 'invalid' | 'revoked' = 'valid'
   const options = {
       ...f.options,
       source: {
         id: f.options.source.id,
         read: async (...args: Parameters<typeof f.options.source.read>) => {
           const actual = await f.options.source.read(...args)
+          if (mode === 'at-bound') return new Uint8Array(f.options.maximumCiphertextBytes)
           if (mode === 'oversized') return new Uint8Array(f.options.maximumCiphertextBytes + 1)
           if (mode === 'invalid') return { length: actual.length } as unknown as Uint8Array
           if (mode === 'revoked') f.setAccess(false)
@@ -431,6 +437,13 @@ it('bounds detached content and rechecks access across the real source await bef
     domain = await LCHOverlayCovenantProfileDomain.create(options)
   await domain.initializeCustody(f.objects)
   await domain.verify(f.prepare, f.prepared, f.submission, f.delivered, signal)
+  mode = 'at-bound'
+  // The inclusive resource bound accepts these bytes; content authentication
+  // must then reject their different committed length, never grant plaintext.
+  await expect(domain.playback(f.delivered, signal)).rejects.toMatchObject({
+    message: 'No valid ciphertext source was available',
+    cause: rejection('ERR_LCH_CONTENT_DIGEST', 'Ciphertext length mismatch')
+  })
   for (const value of ['oversized', 'invalid'] as const) {
     mode = value
     await expect(domain.playback(f.delivered, signal)).rejects.toMatchObject({
@@ -448,6 +461,61 @@ it('bounds detached content and rechecks access across the real source await bef
   expect(await domain.playback(f.delivered, signal)).toEqual(f.plaintext)
   expect(await domain.usable(f.delivered, signal)).toBe(true)
   expect(f.counts).toEqual({ preparation: 0, purchase: 1, release: 1 })
+}, 60000)
+
+it('requires the independently verified complete purchase commitment and a finished release guard before recording rights', async () => {
+  const f = await lchNativeCovenantProfileFixture(),
+    signal = new AbortController().signal,
+    purchase = f.options.verification.purchase,
+    release = f.options.verification.release
+  const mismatched = await LCHOverlayCovenantProfileDomain.create({
+    ...f.options,
+    verification: {
+      ...f.options.verification,
+      purchase: async (...args: Parameters<typeof purchase>) => {
+        const actual = await purchase(...args)
+        return { ...actual, purchaseCommitment: '00'.repeat(32) }
+      }
+    }
+  })
+  await mismatched.initializeCustody(f.objects)
+  await expect(
+    mismatched.verify(f.prepare, f.prepared, f.submission, f.delivered, signal)
+  ).rejects.toMatchObject(
+    rejection(
+      'ERR_LCH_PAYMENT',
+      'Settlement differs from independently verified purchase commitment'
+    )
+  )
+  expect(f.counts).toEqual({ preparation: 0, purchase: 1, release: 0 })
+  const unfinished = await LCHOverlayCovenantProfileDomain.create({
+    ...f.options,
+    verification: {
+      ...f.options.verification,
+      release: async (...args: Parameters<typeof release>) => {
+        const actual = await release(...args)
+        return {
+          checkCurrent: () => {
+            actual.checkCurrent()
+            return Promise.resolve()
+          }
+        }
+      }
+    }
+  })
+  await unfinished.initializeCustody(f.objects)
+  await expect(
+    unfinished.verify(f.prepare, f.prepared, f.submission, f.delivered, signal)
+  ).rejects.toMatchObject(
+    rejection('ERR_LCH_LICENSE', 'Purchase verification guard changed or did not finish')
+  )
+  await expect(f.domain.playback(f.delivered, signal)).rejects.toMatchObject(
+    rejection(
+      'ERR_LCH_LICENSE',
+      'Delivered LCH entitlement has not been locally verified and retained'
+    )
+  )
+  expect(f.counts).toEqual({ preparation: 0, purchase: 2, release: 1 })
 }, 60000)
 
 it('rejects missing private material and wrong original transaction association before accepting an entitlement', async () => {
