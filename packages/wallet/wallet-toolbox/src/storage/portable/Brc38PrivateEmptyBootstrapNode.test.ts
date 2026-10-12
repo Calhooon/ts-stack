@@ -18,7 +18,7 @@ describe('actual owned fresh empty private-native bootstrap quantum', () => {
   })
   async function fixture() {
     const proof = restoreProofFixture(),
-      staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+      staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
     cleanup.push(async () => await staged.close())
     const store = staged.value.reservation.store
     async function initialize() {

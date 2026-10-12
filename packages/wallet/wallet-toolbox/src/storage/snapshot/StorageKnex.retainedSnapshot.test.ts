@@ -62,7 +62,9 @@ test('retains an already-pinned SQLite view across independent writes, idle peri
   )
   const { user: other } = await source.findOrInsertUser('03' + '22'.repeat(32))
   await source.findOrInsertTxLabel(other.userId, 'foreign label')
-  const expected = await source.findTxLabels({ partial: { userId: user.userId } })
+  const expected = (await source.findTxLabels({ partial: { userId: user.userId } })).sort(
+    (left, right) => left.txLabelId - right.txLabelId
+  )
   expect(source.supportsRetainedReadSnapshot()).toBe(true)
   const view = await source.openReadSnapshot()
   // There has been no consumer read yet. Opening must already have pinned the

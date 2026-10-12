@@ -70,7 +70,7 @@ test('a real legacy SQLite stage cannot become an authenticated native structure
             },
             work
           )
-        ).rejects.toThrow('actual private read-only receiver')
+        ).rejects.toThrow('Private native read transaction requires its actual source owner')
       })
   )
   expect(work).not.toHaveBeenCalled()

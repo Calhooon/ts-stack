@@ -188,6 +188,7 @@ test.each([
     fixture(incoming, indexes),
     {
       ...policy,
+      legacyNormalizedIntegers: true,
       maximumGrammarAllocationBytes: 1048576,
       maximumIndexAllocationBytes: 1048576,
       workingAllocation: working,

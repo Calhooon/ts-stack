@@ -44,7 +44,17 @@ function fixture() {
       throw new Error('Page preparation must not fetch field bytes')
     }
   }
-  return { ...f, reader, proof }
+  return {
+    ...f,
+    reader,
+    proof,
+    get scalarReads() {
+      return f.scalarReads
+    },
+    get maximumPending() {
+      return f.maximumPending
+    }
+  }
 }
 test('real SDK proof metadata is prepared without full/placeholder binary fields or native effects', async () => {
   const f = fixture(),
