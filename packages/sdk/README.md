@@ -21,13 +21,33 @@ using the BRC-104 `-1` body-length sentinel. Conforming 204 and empty error
 responses now verify; non-empty response encoding is unchanged. Servers that
 sign a zero body length for an empty response must adopt the specified sentinel.
 
-AuthFetch stops pending certificate dispatch and session recovery after its
+AuthFetch allows up to 10 minutes to prepare an authenticated request, including
+wallet approval and pending certificate permissions. At application dispatch it
+starts a fresh 10-minute response-handling window, allowing local wallet verification
+prompts to complete. Each authenticated HTTP exchange, including reading the response body,
+retains a separate 30-second network deadline by default (`requestTimeoutMs`).
+These are bounded stages, not a fresh 10 minutes for each individual prompt.
+`AuthFetch.fetch` does not yet accept a caller `AbortSignal`; timing out an outer
+`Promise.race` does not cancel dispatch.
+AuthFetch stops pending application dispatch and session recovery after its
 request deadline. An already dispatched request may still complete on the
 server; callers must resolve its outcome before retrying a non-idempotent write.
-A request still waiting on a wallet prompt at the deadline is never sent and
-rejects with `Timed out waiting for authenticated response.`; one already sent
-rejects with the same message followed by `The request was sent; its outcome is
-unknown.`
+A request still waiting on a wallet prompt at the deadline is never dispatched.
+Response timeouts preserve the exact message
+`Timed out waiting for authenticated response.` and add a boolean
+`requestDispatched` property. `false` means this attempt was never handed to the
+transport; `true` means it may have reached the server and its outcome is unknown.
+Network deadline errors use the same AuthFetch timeout message and metadata,
+with the transport error retained as `cause` for diagnostics.
+Dispatch is not confirmation of delivery or success. The deadline is per request;
+expiring one request does not cancel other requests or invalidate their session.
+`Peer.toPeer` also accepts optional `{ signal, onSend }` controls. An already
+aborted signal prevents authentication from starting; aborting during approval
+prevents application dispatch, but does not dismiss wallet prompts or cancel a
+handshake already underway. `onSend` runs synchronously before the transport
+handoff and can prevent it by throwing or aborting the signal. Once handed off,
+a request cannot be recalled by this signal. Existing two-argument calls retain
+their behavior.
 
 AuthFetch's automatic BRC-105 payment path delegates spending authorization to
 the configured wallet's `createAction` policy. Use a wallet that requires the
@@ -264,7 +284,8 @@ than that the script is invalid.
 - **P2P Authentication**: Robust peer-to-peer authentication mechanisms to ensure secure connections between parties.
 
   Authenticated HTTP handshakes register their response waiter before sending,
-  and each authenticated request has a bounded 30-second response window. A
+  and AuthFetch allows 10 minutes for preparation and a fresh 10 minutes for
+  local response handling, with each authenticated HTTP exchange bounded to 30 seconds by default. A
   client retains at most 1,000 pending authenticated requests. Invalid or
   rejected peer responses reject and clean up the owning request; they do not
   become unhandled process errors or leave listeners behind.
@@ -273,7 +294,12 @@ than that the script is invalid.
   enter the signed-message parser. Application bodies default to 16 MiB and
   handshake bodies to 1 MiB; pass `maxResponseBytes` or
   `maxHandshakeResponseBytes` in `SimplifiedFetchTransportOptions` when a
-  deployment needs a different ceiling. The parser also bounds header count
+  deployment needs a different ceiling. `responseProcessingTimeoutMs` bounds the
+  complete transport send, including local response handling; AuthFetch defaults
+  this to 10 minutes. Direct transport users retain `requestTimeoutMs` as that
+  default. Direct Peer users retain 30-second authentication waits; AuthFetch
+  configures its peers with 10 minutes via the optional `authenticationTimeoutMs`
+  constructor argument. The parser also bounds header count
   and bytes and rejects truncated, overlong, or trailing wire data.
 
   For BRC-105 payments, a recipient may include the optional

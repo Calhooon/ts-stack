@@ -3,10 +3,10 @@ id: bsv-sdk
 title: '@bsv/sdk'
 kind: package
 domain: sdk
-version: '2.8.12'
+version: '2.9.0'
 npm: '@bsv/sdk'
-last_updated: '2026-09-27'
-last_verified: '2026-09-27'
+last_updated: '2026-10-12'
+last_verified: '2026-10-12'
 review_cadence_days: 30
 status: stable
 tags: ['sdk', 'crypto', 'transactions']
@@ -14,6 +14,14 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk'
 ---
 
 # @bsv/sdk
+
+The 2.9.0 source candidate allows AuthFetch up to 10 minutes for authenticated
+request preparation and a fresh 10 minutes for local response handling, including
+wallet permission prompts. Each authenticated HTTP exchange retains its separate
+30-second default network deadline. Approval after expiry cannot dispatch the
+application request. Direct Peer and transport users retain their timeout defaults.
+See the [SDK README](../../../packages/sdk/README.md) for timeout metadata and
+retry guidance. This candidate is not yet published.
 
 For `RegistryClient` and optional ProtoMap, BasketMap and CertMap descriptions,
 see [registry metadata](../../guides/registry-metadata.md). It covers exact

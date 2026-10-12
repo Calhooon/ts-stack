@@ -309,7 +309,7 @@ describe('AuthFetch pending-request boundary', () => {
       const rejection = expect(request).rejects.toThrow(
         'Timed out waiting for authenticated response.'
       )
-      await jest.advanceTimersByTimeAsync(30000)
+      await jest.advanceTimersByTimeAsync(600000)
 
       await rejection
       expect(stopListeningForGeneralMessages).toHaveBeenCalledWith(42)
@@ -620,7 +620,7 @@ describe('AuthFetch expired-request dispatch boundary', () => {
       const rejected = expect(pending).rejects.toThrow(
         'Timed out waiting for authenticated response.'
       )
-      await jest.advanceTimersByTimeAsync(30000)
+      await jest.advanceTimersByTimeAsync(600000)
       await rejected
       finishCertificates()
       await jest.advanceTimersByTimeAsync(0)
@@ -659,7 +659,7 @@ describe('AuthFetch expired-request dispatch boundary', () => {
       const rejected = expect(pending).rejects.toThrow(
         'Timed out waiting for authenticated response.'
       )
-      await jest.advanceTimersByTimeAsync(30000)
+      await jest.advanceTimersByTimeAsync(600000)
       await rejected
       failSend(new Error('Session not found for nonce'))
       await jest.advanceTimersByTimeAsync(0)
@@ -700,8 +700,7 @@ describe('AuthFetch expired-request dispatch boundary', () => {
 })
 
 describe('AuthFetch late wallet approval boundary', () => {
-  const unknownOutcome =
-    'Timed out waiting for authenticated response. The request was sent; its outcome is unknown.'
+  const timeoutMessage = 'Timed out waiting for authenticated response.'
 
   class LocalTransport implements Transport {
     remote?: LocalTransport
@@ -772,17 +771,22 @@ describe('AuthFetch late wallet approval boundary', () => {
   async function expireThenApprove(
     authFetch: AuthFetch,
     approve: () => void,
-    message: string
+    requestDispatched: boolean
   ): Promise<void> {
     const pending = authFetch.fetch('https://service.example/certificate', {
       method: 'POST',
       body: 'synthetic'
     })
-    const rejected = expect(pending).rejects.toThrow(message)
-    await jest.advanceTimersByTimeAsync(30000)
+    const rejected = expect(pending).rejects.toMatchObject({
+      message: timeoutMessage,
+      requestDispatched
+    })
+    await jest.advanceTimersByTimeAsync(600000)
     await rejected
     approve()
     await jest.advanceTimersByTimeAsync(1000)
+    expect((authFetch as any).pendingRequestNonces.size).toBe(0)
+    expect(jest.getTimerCount()).toBe(0)
   }
 
   beforeEach(() => jest.useFakeTimers())
@@ -792,7 +796,7 @@ describe('AuthFetch late wallet approval boundary', () => {
     const { authFetch, wallet, client } = setup()
     const approve = holdWallet(wallet, 'createHmac')
     const sign = jest.spyOn(wallet, 'createSignature')
-    await expireThenApprove(authFetch, approve, 'Timed out waiting for authenticated response.')
+    await expireThenApprove(authFetch, approve, false)
     expect(client.general).toHaveLength(0)
     expect(sign).not.toHaveBeenCalled()
   })
@@ -800,7 +804,7 @@ describe('AuthFetch late wallet approval boundary', () => {
   test('a signature approved after the deadline never sends the request', async () => {
     const { authFetch, wallet, client } = setup()
     const approve = holdWallet(wallet, 'createSignature')
-    await expireThenApprove(authFetch, approve, 'Timed out waiting for authenticated response.')
+    await expireThenApprove(authFetch, approve, false)
     expect(client.general).toHaveLength(0)
   })
 
@@ -813,7 +817,7 @@ describe('AuthFetch late wallet approval boundary', () => {
     await expireThenApprove(
       authFetch,
       () => failSend(new Error('Session not found for nonce')),
-      unknownOutcome
+      true
     )
     expect(client.general).toHaveLength(1)
   })
@@ -829,11 +833,7 @@ describe('AuthFetch late wallet approval boundary', () => {
       })
       return await sign(...args)
     })
-    await expireThenApprove(
-      authFetch,
-      () => release(),
-      'Timed out waiting for authenticated response.'
-    )
+    await expireThenApprove(authFetch, () => release(), false)
     expect(client.general).toHaveLength(0)
   })
 
@@ -843,6 +843,60 @@ describe('AuthFetch late wallet approval boundary', () => {
       authFetch.fetch('https://service.example/certificate', { method: 'POST', body: 'synthetic' })
     ).resolves.toMatchObject({ status: 200 })
     expect(client.general).toHaveLength(1)
+  })
+
+  test('approval just before the deadline succeeds and clears the timeout', async () => {
+    const { authFetch, wallet, client } = setup()
+    const approve = holdWallet(wallet, 'createSignature')
+    const pending = authFetch.fetch('https://service.example/certificate', {
+      method: 'POST',
+      body: 'synthetic'
+    })
+    await jest.advanceTimersByTimeAsync(599999)
+    approve()
+    await jest.advanceTimersByTimeAsync(0)
+    await expect(pending).resolves.toMatchObject({ status: 200 })
+    await jest.advanceTimersByTimeAsync(1)
+    expect(client.general).toHaveLength(1)
+    expect((authFetch as any).pendingRequestNonces.size).toBe(0)
+    expect(jest.getTimerCount()).toBe(0)
+  })
+
+  test('one expired request does not cancel concurrent or subsequent requests on the same peer', async () => {
+    const { authFetch, wallet, client } = setup()
+    await authFetch.fetch('https://service.example/warmup')
+    client.general.length = 0
+
+    let approve!: () => void
+    const approved = new Promise<void>(resolve => {
+      approve = resolve
+    })
+    const sign = wallet.createSignature.bind(wallet)
+    jest.spyOn(wallet, 'createSignature').mockImplementationOnce(async (...args) => {
+      await approved
+      return await sign(...args)
+    })
+    const expired = authFetch.fetch('https://service.example/expired', { method: 'POST' })
+    const rejected = expect(expired).rejects.toMatchObject({
+      message: timeoutMessage,
+      requestDispatched: false
+    })
+    await jest.advanceTimersByTimeAsync(0)
+    await expect(authFetch.fetch('https://service.example/concurrent')).resolves.toMatchObject({
+      status: 200
+    })
+    await jest.advanceTimersByTimeAsync(600000)
+    await rejected
+    approve()
+    await jest.advanceTimersByTimeAsync(0)
+    expect(client.general).toHaveLength(1)
+
+    await expect(authFetch.fetch('https://service.example/subsequent')).resolves.toMatchObject({
+      status: 200
+    })
+    expect(client.general).toHaveLength(2)
+    expect((authFetch as any).pendingRequestNonces.size).toBe(0)
+    expect(jest.getTimerCount()).toBe(0)
   })
 
   test('a denied signature still rejects without sending', async () => {

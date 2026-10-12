@@ -8,6 +8,7 @@ Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](
 | --- |
 | [AsyncSessionManager](#interface-asyncsessionmanager) |
 | [AuthMessage](#interface-authmessage) |
+| [AuthMessageValidationOptions](#interface-authmessagevalidationoptions) |
 | [PeerSession](#interface-peersession) |
 | [RequestedCertificateSet](#interface-requestedcertificateset) |
 | [RequestedCertificateTypeIDAndFieldList](#interface-requestedcertificatetypeidandfieldlist) |
@@ -93,6 +94,32 @@ See also: [RequestedCertificateSet](./auth.md#interface-requestedcertificateset)
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Enums](#enums), [Variables](#variables)
 
 ---
+### Interface: AuthMessageValidationOptions
+
+Locally selected payload policy; never read from a remote message.
+
+```ts
+export interface AuthMessageValidationOptions {
+    maxGeneralPayloadBytes?: number | null;
+}
+```
+
+#### Property maxGeneralPayloadBytes
+
+Optional separate general-message payload byte budget. Omission preserves
+the existing aggregate message budget. A positive safe integer sets an
+explicit payload budget; null delegates payload capacity to the transport.
+Metadata, byte validity, signatures and non-general messages retain their
+existing validation. Configure the HTTP server/edge before delegating.
+
+```ts
+maxGeneralPayloadBytes?: number | null
+```
+
+Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Enums](#enums), [Variables](#variables)
+
+---
+
 ### Interface: PeerSession
 
 ```ts
@@ -261,6 +288,7 @@ export interface SimplifiedFetchTransportOptions {
     maxResponseBytes?: number;
     maxHandshakeResponseBytes?: number;
     requestTimeoutMs?: number;
+    responseProcessingTimeoutMs?: number;
 }
 ```
 
@@ -286,6 +314,14 @@ Wall-clock deadline covering fetch and response-body consumption.
 
 ```ts
 requestTimeoutMs?: number
+```
+
+#### Property responseProcessingTimeoutMs
+
+Total send deadline including local response handling. Defaults to requestTimeoutMs.
+
+```ts
+responseProcessingTimeoutMs?: number
 ```
 
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Enums](#enums), [Variables](#variables)
@@ -423,7 +459,6 @@ Mutually authenticates and sends a HTTP request to a server.
 ```ts
 async fetch(url: string, config: SimplifiedFetchRequestOptions = {}): Promise<Response>
 ```
-See also: [string](./remittance.md#function-string)
 
 Returns
 
@@ -440,6 +475,11 @@ optional payment retry controls, and optional `labels` merged onto any BRC-105 p
 Throws
 
 Will throw an error if unsupported headers are used or other validation fails.
+Each authenticated attempt allows up to 10 minutes for preparation, then a fresh
+10 minutes for local response handling. Individual HTTP exchanges retain the transport request timeout (30 seconds by default).
+Response timeout errors retain the message `Timed out waiting for authenticated response.`
+and include `requestDispatched`: false means this attempt was never handed to the
+transport; true means its server-side outcome is unknown.
 
 #### Method sendCertificateRequest
 
@@ -983,8 +1023,11 @@ export class Peer {
     readonly #originator?: OriginatorDomainNameStringUnder250Bytes;
     #identityPublicKey?: string;
     readonly ready: Promise<void>;
-    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes)
-    async toPeer(message: number[], identityKey?: string): Promise<void>
+    constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {}, authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS)
+    async toPeer(message: number[], identityKey?: string, options: {
+        signal?: AbortSignal;
+        onSend?: () => void;
+    } = {}): Promise<void>
     async #touchSession(sessionNonce: string): Promise<void>
     async #markSessionAuthenticated(sessionNonce: string): Promise<void>
     async #claimIncomingMessageNonce(sessionNonce: string, messageNonce: string, messageType: AuthMessage["messageType"]): Promise<void>
@@ -1019,9 +1062,9 @@ See also: [AsyncSessionManager](./auth.md#interface-asyncsessionmanager), [AuthM
 Creates a new Peer instance
 
 ```ts
-constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes)
+constructor(wallet: WalletInterface, transport: Transport, certificatesToRequest?: RequestedCertificateSet, sessionManager?: SessionManager | AsyncSessionManager, autoPersistLastSession?: boolean, originator?: OriginatorDomainNameStringUnder250Bytes, messageValidation: AuthMessageValidationOptions = {}, authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS)
 ```
-See also: [AsyncSessionManager](./auth.md#interface-asyncsessionmanager), [OriginatorDomainNameStringUnder250Bytes](./wallet.md#type-originatordomainnamestringunder250bytes), [RequestedCertificateSet](./auth.md#interface-requestedcertificateset), [SessionManager](./auth.md#class-sessionmanager), [Transport](./auth.md#interface-transport), [WalletInterface](./wallet.md#interface-walletinterface)
+See also: [AsyncSessionManager](#interface-asyncsessionmanager), [AuthMessageValidationOptions](#interface-authmessagevalidationoptions), [RequestedCertificateSet](#interface-requestedcertificateset), [SessionManager](#class-sessionmanager), [Transport](#interface-transport)
 
 Argument Details
 
@@ -1035,6 +1078,10 @@ Argument Details
   + Whether to auto-persist the session with the last-interacted-with peer. Defaults to true.
 + **originator**
   + Optional originator domain name.
++ **messageValidation**
+  + Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
++ **authenticationTimeoutMs**
+  + Deadline for initial-response and certificate-validation waits. Defaults to 30 seconds; HTTP clients can allow longer local wallet approval while independently bounding network activity.
 
 #### Property ready
 
@@ -1254,9 +1301,11 @@ Argument Details
 Sends a general message to a peer, and initiates a handshake if necessary.
 
 ```ts
-async toPeer(message: number[], identityKey?: string): Promise<void>
+async toPeer(message: number[], identityKey?: string, options: {
+    signal?: AbortSignal;
+    onSend?: () => void;
+} = {}): Promise<void>
 ```
-See also: [string](./remittance.md#function-string)
 
 Argument Details
 
@@ -1264,10 +1313,13 @@ Argument Details
   + The message payload to send.
 + **identityKey**
   + The identity public key of the peer, or an exact session nonce for a transport response. If not provided, uses the peer from the most recent locally initiated handshake (if any). Inbound messages never select this implicit destination.
++ **options**
+  + Optional controls for this message.
 
 Throws
 
-Will throw an error if the message fails to send.
+Will throw an error if the message fails to send, or the signal's abort reason if
+`options.signal` is aborted before the message is handed to the transport.
 
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Enums](#enums), [Variables](#variables)
 

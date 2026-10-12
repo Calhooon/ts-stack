@@ -53,6 +53,7 @@ export class Peer {
   // external code that reaches in directly should match the implementation
   // it injected. See `AsyncSessionManager` for the opt-in async contract.
   public sessionManager: SessionManager
+  readonly #authenticationTimeoutMs: number
   readonly #transport: Transport
   readonly #wallet: WalletInterface
   readonly #maxGeneralPayloadBytes: number | null | undefined
@@ -135,6 +136,7 @@ export class Peer {
    * @param {boolean} [autoPersistLastSession] - Whether to auto-persist the session with the last-interacted-with peer. Defaults to true.
    * @param {OriginatorDomainNameStringUnder250Bytes} [originator] - Optional originator domain name.
    * @param {AuthMessageValidationOptions} [messageValidation] - Local policy; set maxGeneralPayloadBytes to null to delegate capacity to the transport. Omission preserves existing limits.
+   * @param {number} [authenticationTimeoutMs] - Deadline for initial-response and certificate-validation waits. Defaults to 30 seconds; HTTP clients can allow longer local wallet approval while independently bounding network activity.
    */
   constructor(
     wallet: WalletInterface,
@@ -143,8 +145,19 @@ export class Peer {
     sessionManager?: SessionManager | AsyncSessionManager,
     autoPersistLastSession?: boolean,
     originator?: OriginatorDomainNameStringUnder250Bytes,
-    messageValidation: AuthMessageValidationOptions = {}
+    messageValidation: AuthMessageValidationOptions = {},
+    authenticationTimeoutMs: number = INITIAL_RESPONSE_TIMEOUT_MS
   ) {
+    if (
+      !Number.isSafeInteger(authenticationTimeoutMs) ||
+      authenticationTimeoutMs < 1 ||
+      authenticationTimeoutMs > 2_147_483_647
+    ) {
+      throw new TypeError(
+        'authenticationTimeoutMs must be a positive integer no greater than 2147483647'
+      )
+    }
+    this.#authenticationTimeoutMs = authenticationTimeoutMs
     const maxGeneralPayloadBytes = messageValidation.maxGeneralPayloadBytes
     assertGeneralPayloadByteLimit(maxGeneralPayloadBytes)
     this.#maxGeneralPayloadBytes = maxGeneralPayloadBytes
@@ -175,8 +188,8 @@ export class Peer {
    * @param {number[]} message - The message payload to send.
    * @param {string} [identityKey] - The identity public key of the peer, or an exact session nonce for a transport response. If not provided, uses the peer from the most recent locally initiated handshake (if any). Inbound messages never select this implicit destination.
    * @param {object} [options] - Optional controls for this message.
-   * @param {AbortSignal} [options.signal] - Once aborted, the message is never handed to the transport.
-   * @param {() => void} [options.onSend] - Called synchronously just before the message is handed to the transport.
+   * @param {AbortSignal} [options.signal] - Aborting before transport dispatch prevents this message from being handed to the transport. An in-flight send is not cancelled.
+   * @param {() => void} [options.onSend] - Called synchronously before transport dispatch, not as confirmation of delivery. Throwing or aborting the signal prevents dispatch.
    * @returns {Promise<void>}
    * @throws Will throw an error if the message fails to send, or the signal's abort reason if
    * `options.signal` is aborted before the message is handed to the transport.
@@ -186,6 +199,11 @@ export class Peer {
     identityKey?: string,
     options: { signal?: AbortSignal; onSend?: () => void } = {}
   ): Promise<void> {
+    const { signal, onSend } = options
+    const throwIfCancelled = (): void => {
+      if (signal?.aborted === true) throw signal.reason
+    }
+    throwIfCancelled()
     message = copyAuthByteArray(
       message,
       'general.payload',
@@ -213,9 +231,6 @@ export class Peer {
       throw new Error('Cannot send general message before certificate validation is complete')
     }
 
-    const throwIfCancelled = (): void => {
-      if (options.signal?.aborted === true) throw options.signal.reason
-    }
     // Avoid a pointless signature prompt once the caller has given up.
     throwIfCancelled()
     const requestNonce = toBase64(Random(32))
@@ -252,9 +267,13 @@ export class Peer {
           : snapshotAuthMessage(generalMessage, {
               maxGeneralPayloadBytes: this.#maxGeneralPayloadBytes
             })
-      options.onSend?.()
+      onSend?.()
+      // The callback can abort synchronously. Keep the final check adjacent
+      // to dispatch, with no await or application callback in between.
+      throwIfCancelled()
       await this.#transport.send(outbound)
     } catch (error: unknown) {
+      if (signal?.aborted === true && error === signal.reason) throw error
       this.propagateTransportError(peerSession.peerIdentityKey, error)
     }
   }
@@ -322,7 +341,7 @@ export class Peer {
           `Timeout waiting for certificate validation from peer ${peerIdentityKey ?? 'unknown'}`
         )
       )
-    }, 30000)
+    }, this.#authenticationTimeoutMs)
     if (typeof timeoutId === 'object' && 'unref' in timeoutId) timeoutId.unref()
 
     this.certificateValidationPromises.set(sessionNonce, {
@@ -670,8 +689,13 @@ export class Peer {
     // can deliver the response before send() resolves.
     const initialResponse = this.waitForInitialResponse(sessionNonce)
     try {
-      await this.#transport.send(snapshotBoundedAuthData(initialRequest))
-      return await initialResponse
+      // Observe both immediately: wallet approval during response handling can
+      // outlive the waiter, even while transport.send is still pending.
+      const [, nonce] = await Promise.all([
+        this.#transport.send(snapshotBoundedAuthData(initialRequest)),
+        initialResponse
+      ])
+      return nonce
     } catch (error) {
       this.stopListeningForInitialResponsesByNonce(sessionNonce)
       const failedSession = await this.sessionManager.getSession(sessionNonce)
@@ -691,7 +715,7 @@ export class Peer {
       const timeoutId = setTimeout(() => {
         this.#stopListeningForInitialResponses(callbackID)
         reject(new Error('Timeout waiting for the BRC-103 initial response.'))
-      }, INITIAL_RESPONSE_TIMEOUT_MS)
+      }, this.#authenticationTimeoutMs)
       if (typeof timeoutId === 'object' && 'unref' in timeoutId) timeoutId.unref()
       const callbackID = this.#listenForInitialResponse(sessionNonce, nonce => {
         this.#stopListeningForInitialResponses(callbackID)

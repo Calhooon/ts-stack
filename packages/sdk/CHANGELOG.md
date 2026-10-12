@@ -214,9 +214,9 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
-### Fixed (2.8.12 candidate)
+### Changed (2.9.0 candidate)
 
-- AuthFetch no longer sends a request after its 30 second response deadline when a wallet prompt (handshake or request signature) is approved late; previously the caller saw a timeout while the request was still sent. A request already handed to the transport when the deadline passes now rejects with `Timed out waiting for authenticated response. The request was sent; its outcome is unknown.`, so callers can tell it apart from one that was never sent. Callers matching the previous message still match. `Peer.toPeer` accepts an optional third `{ signal, onSend }` argument that AuthFetch uses for this; existing calls are unchanged. No wire or wallet-data migration is required.
+- AuthFetch no longer dispatches a request after its request deadline when a wallet prompt (handshake or request signature) is approved late. Response timeouts preserve the exact `Timed out waiting for authenticated response.` message and add `requestDispatched`: `false` means this attempt never reached the transport; `true` means its server-side outcome is unknown and must be reconciled before retrying a non-idempotent write. `Peer.toPeer` accepts optional `{ signal, onSend }` controls; an already-aborted signal prevents authentication, and a synchronous `onSend` abort prevents dispatch. AuthFetch allows 10 minutes for preparation and a fresh 10 minutes for local response handling, while each HTTP exchange retains its 30-second default network deadline. Direct Peer and transport users retain their timeout defaults; optional `authenticationTimeoutMs` and `responseProcessingTimeoutMs` controls support the longer AuthFetch wallet approval window. Existing two-argument calls, wire bytes and wallet data are unchanged.
 
 ### Fixed (2.8.11 candidate)
 
