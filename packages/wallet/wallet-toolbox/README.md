@@ -5920,6 +5920,16 @@ data-volume, case, readiness and cleanup bounds remain unchanged. This is a
 test-fixture allowance, not a production sizing recommendation; later full
 qualification must measure its headroom.
 
+The complete native MySQL certificate qualification group has a 90-second child
+allowance; the other eight groups retain 60 seconds. On the pinned local fixture,
+certificate took 34.4 seconds. The preceding archive, profile and relation groups
+ran about twice as slowly in hosted CI, where certificate reached its former
+60-second deadline. This measured allowance preserves every process-loss,
+locking, schedule and seek case, assertion and deterministic property seed.
+The 60-second server-readiness deadline, 15-second Docker commands, 1 MiB child
+output ceiling and fixture resource caps remain unchanged. It is a qualification
+budget, not a production latency target or a performance/headroom claim.
+
 The isolated MySQL server-crash fixture resets its auxiliary journal before the
 first crash child, as it already does between later boundaries. The complete
 production migration now installs that journal; resetting the synthetic fixture

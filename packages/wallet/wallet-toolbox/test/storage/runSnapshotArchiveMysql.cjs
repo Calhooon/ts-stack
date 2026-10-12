@@ -6,7 +6,7 @@ const { join } = require('node:path')
 const assert = require('node:assert/strict')
 const { executable, context, image, validateContext, validateContainer } = require('./snapshotArchiveDocker.cjs')
 const { runInSeries } = require('../../out/src/utility/runInSeries.js')
-const { mysqlFixtureGroups } = require('./snapshotMysqlFixtureGroups.cjs')
+const { mysqlFixtureGroups, mysqlFixtureTimeouts } = require('./snapshotMysqlFixtureGroups.cjs')
 const execute = (file, args, options) =>
   new Promise((resolve, reject) => {
     execFile(
@@ -110,7 +110,7 @@ async function main() {
           TS_STACK_SNAPSHOT_MYSQL_SECRET: secret
         },
         signal: cancellation.signal,
-        timeout: 60000
+        timeout: mysqlFixtureTimeouts[group]
       })
       process.stdout.write(result)
       process.stdout.write(JSON.stringify({ group, status: 'passed', milliseconds: Date.now() - started }) + '\n')

@@ -139,7 +139,7 @@ test('successful fixture retains bounds and proves exact-owner removal after its
   for (const value of [
     '--pull=never',
     '127.0.0.1::3306',
-    '1g',
+    '2g',
     '2',
     '256',
     '/var/lib/mysql:rw,nosuid,nodev,size=512m',
@@ -161,7 +161,7 @@ test('successful fixture retains bounds and proves exact-owner removal after its
   ])
   for (const child of children) {
     expect(child.args[0]).toBe(join(__dirname, 'snapshotArchiveMysql.cjs'))
-    expect(child.options.timeout).toBe(60000)
+    expect(child.options.timeout).toBe(child.args[1] === 'certificate' ? 90000 : 60000)
     expect(child.options.maxBuffer).toBe(1048576)
     expect(child.options.env).toMatchObject({
       TS_STACK_SNAPSHOT_CONTAINER_OWNER: owner,
