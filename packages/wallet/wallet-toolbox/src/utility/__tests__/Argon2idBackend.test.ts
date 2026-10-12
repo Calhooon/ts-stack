@@ -192,9 +192,7 @@ describe('dedicated worker channel rejection', () => {
     }
   })
   test.each(invalid)('installer rejects $label before a request derivation', async metadata => {
-    const derive = jest
-      .spyOn(hashWasm, 'argon2id')
-      .mockImplementation(async options => new Uint8Array(options.hashLength))
+    const derive = jest.spyOn(hashWasm, 'argon2id').mockResolvedValue(new Uint8Array(32))
     installBrowserArgon2idWorker({
       maximumPasswordBytes: 1024,
       maximumIterations: 7,
