@@ -261,12 +261,30 @@ describe('internalizeAction managed-change policy', () => {
 describe('explicit local BRC-197 fixed-child ownership', () => {
   jest.setTimeout(30000)
   let ctx: TestWalletNoSetup
+
+  function syntheticPayoutProcessor(context: TestWalletNoSetup, transaction: Transaction) {
+    return jest.spyOn(context.services, 'postBeef').mockImplementation(async (beef, txids) => {
+      expect(txids).toEqual([transaction.id('hex')])
+      expect(beef.findTxid(txids[0])?.tx?.toHex()).toBe(transaction.toHex())
+      return [
+        {
+          name: 'local synthetic payout processor',
+          status: 'success',
+          txidResults: txids.map(txid => ({ txid, status: 'success' }))
+        }
+      ]
+    })
+  }
   beforeAll(async () => {
     ctx = await _tu.createLegacyWalletSQLiteCopy('brc197-managed-policy', 'legacy')
   })
   afterAll(async () => {
     await ctx.wallet.destroy()
   })
+  beforeEach(() => {
+    jest.spyOn(ctx.services, 'postBeef').mockRejectedValue(new Error('Synthetic payouts require a local processor'))
+  })
+  afterEach(() => jest.restoreAllMocks())
 
   test('credits the exact protected child idempotently while ordinary BRC-29 remains strict', async () => {
     const fixture = fundingFixture(ctx)
@@ -298,6 +316,7 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
       ],
       description: 'Public synthetic fixed-child receipt'
     }
+    const post = syntheticPayoutProcessor(ctx, fixture.tx)
     const before = await ctx.wallet.balance()
     await expect(ctx.wallet.internalizeAction(args)).rejects.toThrow('base64')
     const result = await ctx.wallet.internalizeBrc197Action(args)
@@ -305,6 +324,7 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
     expect(result.satoshis).toBe(100)
     expect(await ctx.wallet.balance()).toBe(before + 100)
     expect((await ctx.wallet.internalizeBrc197Action(args)).satoshis).toBe(0)
+    expect(post).toHaveBeenCalledTimes(1)
     const rows = await ctx.activeStorage.findOutputs({ partial: { userId: ctx.userId, txid: fixture.tx.id('hex') } })
     expect(rows).toHaveLength(1)
     expect(isManagedChangeOutput(rows[0])).toBe(true)
@@ -354,6 +374,7 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
       await ctx.activeStorage.findOutputs({ partial: { userId: ctx.userId, txid: fixture.tx.id('hex') } })
     ).toHaveLength(0)
     expect(await ctx.wallet.balance()).toBe(before)
+    expect(ctx.services.postBeef).not.toHaveBeenCalled()
   })
 
   test.each(['auto', 'legacy'] as const)(
@@ -414,8 +435,11 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
             ],
             description: 'Public synthetic recipient payout'
           }
+          const payout = syntheticPayoutProcessor(local, fixture.tx)
           expect((await local.wallet.internalizeBrc197Action(args)).satoshis).toBe(1000000)
+          expect(payout).toHaveBeenCalledTimes(1)
           await local.wallet.destroy()
+          payout.mockRestore()
           local = await open()
           jest.spyOn(local.services, 'getChainTracker').mockResolvedValue(fixture.tracker)
           jest.spyOn(local.activeStorage, 'getServices').mockReturnValue(local.services)
