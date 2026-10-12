@@ -670,3 +670,17 @@ and keeps any existing inspector configuration. Production startup, database
 migrations, public routes and data formats are unchanged. Install the committed
 lock with `npm ci` before using the updated development command. This removes
 the unpatched `braces` path without an advisory exclusion or dependency override.
+
+## Standalone test dependency security maintenance
+
+The standalone lock selects Handlebars 4.7.10 within the existing ts-jest
+transitive range, addressing the published
+[GHSA-p8wg-vrv2-v86f](https://github.com/advisories/GHSA-p8wg-vrv2-v86f)
+critical advisory. The target is a development/test dependency; package
+manifests, first-party versions and other lock entries are unchanged. Install
+the frozen lock with lifecycle scripts disabled and rebuild only the existing
+allowlisted native modules. No service API, authentication policy, resource
+limit or database migration changes. Existing deployed images receive updated
+build dependencies only through a separately authorized protected container
+release and immutable image promotion. Existing moderate audit findings remain
+recorded; the high/critical gate is not waived.

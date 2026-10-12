@@ -18,6 +18,18 @@ changes. Use the frozen lock and the protected container release process;
 existing deployed images receive the fix only through a separately authorized
 image promotion.
 
+The standalone lock selects Handlebars 4.7.10 within the existing ts-jest
+transitive range, addressing the published
+[GHSA-p8wg-vrv2-v86f](https://github.com/advisories/GHSA-p8wg-vrv2-v86f)
+critical advisory. The target is a development/test dependency; package
+manifests, first-party versions and other lock entries are unchanged. Install
+the frozen lock with lifecycle scripts disabled and rebuild only the existing
+allowlisted native modules. No service API, authentication policy, resource
+limit or database migration changes. Existing deployed images receive updated
+build dependencies only through a separately authorized protected container
+release and immutable image promotion. Existing moderate audit findings remain
+recorded; the high/critical gate is not waived.
+
 See [Service Resource Profiles](../../docs/reference/service-resource-profiles.md)
 for all runtime ceilings, BRC-105 pricing, capacity evidence, and HPA prerequisites.
 
