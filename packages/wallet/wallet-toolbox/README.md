@@ -6039,3 +6039,13 @@ insufficient evidence. The repository-health CI job installs locked root and
 wallet compiler dependencies and rebuilds the audited esbuild binary before
 running its unchanged complete control suite, including real ts-jest/esbuild
 configuration regressions. No check is skipped or suppressed.
+
+### Reproducible native test SQLite input
+
+Native test provisioning selects the UDL-enabled SQLite 3.53.4 amalgamation
+from the frozen `better-sqlite3` installation. Its 9,516,284 bytes and SHA-256
+match the qualified source recipe. The public SQLite ZIP contains a differently
+generated parser and cannot reproduce that build. An explicit
+`TS_STACK_NATIVE_SQLITE_SOURCE` still undergoes the same exact size and digest
+checks. The compiler recipe, executable registry, thirteen standalone contracts
+and full system qualification requirements remain unchanged.

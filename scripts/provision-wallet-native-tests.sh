@@ -29,14 +29,18 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
-if [[ -n ${TS_STACK_NATIVE_SQLITE_SOURCE:-} ]]; then
-  cp -- "$TS_STACK_NATIVE_SQLITE_SOURCE" "$private/sqlite3.c"
-else
-  curl --fail --silent --show-error --location --proto '=https' --max-time 60 \
-    --max-filesize 4194304 https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip \
-    --output "$private/sqlite.zip"
-  unzip -p "$private/sqlite.zip" sqlite-amalgamation-3530400/sqlite3.c > "$private/sqlite3.c"
+# The qualified build uses the UDL-enabled amalgamation shipped by the locked
+# better-sqlite3 dependency. SQLite's public ZIP has a different generated parser.
+# Never substitute those bytes or change the qualified source/build pins.
+sqlite_source=${TS_STACK_NATIVE_SQLITE_SOURCE:-}
+if [[ -z $sqlite_source ]]; then
+  sqlite_source=$(node -e '
+    const path = require("node:path")
+    const manifest = require.resolve("better-sqlite3/package.json", { paths: [process.argv[1]] })
+    process.stdout.write(path.join(path.dirname(manifest), "deps", "sqlite3", "sqlite3.c"))
+  ' "$repo/packages/wallet/wallet-toolbox")
 fi
+cp -- "$sqlite_source" "$private/sqlite3.c"
 [[ $(stat --format=%s "$private/sqlite3.c") == 9516284 ]]
 printf '%s  %s\n' 6a2805f8c1ef020a7086e62258519323cf98b219e9fe87a42065d916cfebaefc \
   "$private/sqlite3.c" | sha256sum --check --status
