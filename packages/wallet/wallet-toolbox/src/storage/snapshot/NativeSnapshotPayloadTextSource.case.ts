@@ -111,8 +111,16 @@ export async function verifyNativePayloadTextSource(
           oracle.length
         ])) {
           check()
-          const length = Math.min(65536, oracle.length - offset),
+          const length = Math.min(65536, oracle.length - offset)
+          let actual: Uint8Array
+          try {
             actual = await reader.readFieldExtent(fixture.table, row.cursor, fixture.field, offset, length, descriptor)
+          } catch (cause) {
+            throw new Error(
+              `Independent native TEXT extent failed at ${fixture.table}.${fixture.field} offset ${offset} length ${length} of ${descriptor.bytes}`,
+              { cause }
+            )
+          }
           try {
             requireCase(actual.length === length && actual.every((byte, index) => byte === oracle[offset + index]))
           } finally {

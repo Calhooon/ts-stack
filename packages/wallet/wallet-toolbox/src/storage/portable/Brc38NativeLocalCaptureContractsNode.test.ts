@@ -138,6 +138,7 @@ test('a real unexpired capture receipt prevents local observer migration without
       )
     }
   }
+  if (!observed && failed) throw failure
   expect(observed).toBe(true)
   expect(failed).toBe(true)
   expect(failure).toBe(complete)

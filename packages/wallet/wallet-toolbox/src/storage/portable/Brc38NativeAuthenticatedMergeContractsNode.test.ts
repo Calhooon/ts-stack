@@ -183,6 +183,7 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
               }
             })
           } catch (cause) {
+            if (variant !== 'lost-observer' || !lost) throw cause
             expect(variant).toBe('lost-observer')
             expect(lost).toBe(true)
             expect(cause).toBeInstanceOf(Brc38AuthenticatedNativeMergeInterruptedError)

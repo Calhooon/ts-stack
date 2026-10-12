@@ -122,8 +122,19 @@ export async function verifyNativeConcurrentSnapshotSource(
         throw new Error('Native concurrent source case lost its original owner or deadline')
     },
     same = (actual: unknown, expected: unknown): void => {
-      if (JSON.stringify(actual) !== JSON.stringify(expected))
-        throw new Error('Independent native retained source oracle differs')
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        const actualRecord = typeof actual === 'object' && actual !== null ? (actual as Record<string, unknown>) : {},
+          expectedRecord =
+            typeof expected === 'object' && expected !== null ? (expected as Record<string, unknown>) : {},
+          actualKeys = Object.keys(actualRecord),
+          expectedKeys = Object.keys(expectedRecord),
+          differing = [...new Set([...actualKeys, ...expectedKeys])].filter(
+            key => JSON.stringify(actualRecord[key]) !== JSON.stringify(expectedRecord[key])
+          )
+        throw new Error(
+          `Independent native retained source oracle differs; keys ${actualKeys.join(',')} / ${expectedKeys.join(',')}; differing fields ${differing.join(',') || '<order-or-scalar>'}`
+        )
+      }
     },
     refuse = async (run: () => Promise<unknown>): Promise<void> => {
       let rejected = false
