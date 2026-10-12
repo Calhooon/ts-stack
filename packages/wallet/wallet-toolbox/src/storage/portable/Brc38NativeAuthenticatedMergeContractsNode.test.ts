@@ -18,8 +18,11 @@ import {
 import { brc38StagingBinding } from './Brc38StagingBinding'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 
-// Admit the existing 180-second fixture owner plus 30 seconds of cleanup.
-const nativeFixtureCaseTimeoutMs = 180000 + 30000
+// The original 180-second owner expired during complete authenticated merge.
+// Admit construction, full merge and resume/repeat or negative replay locally.
+// Keep every variant, original reservation and production/default ceiling.
+const nativeFixtureLifetimeMs = 180000 + 180000 + 180000
+const nativeFixtureCaseTimeoutMs = nativeFixtureLifetimeMs + 30000
 
 type Fixture = Parameters<Parameters<typeof withComposedNativeFixture>[0]>[0]
 
@@ -269,7 +272,8 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
       (_source, incoming) => {
         incoming.tables.transactions[0].description = 'independent public import\u0000雪😀'.repeat(1000)
         incoming.tables.transactions[0].updated_at = '2026-10-04T00:00:00.000Z'
-      }
+      },
+      nativeFixtureLifetimeMs
     )
   },
   nativeFixtureCaseTimeoutMs

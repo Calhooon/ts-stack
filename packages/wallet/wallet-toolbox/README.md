@@ -5950,3 +5950,11 @@ for setup and its original 120-second window phase. Each harness adds 30 seconds
 for cleanup. The fixture default, production operation/IPC/read ceilings and
 all original cases, fault variants and datasets remain unchanged. These finite
 allowances require measured validation; earlier expiry failures remain evidence.
+
+The complete authenticated native merge fixture also selects 540 seconds plus
+30 seconds of harness cleanup after its original repeat variant expired at
+180044 milliseconds during the initial full merge. All six original variants,
+Unicode/NUL data, full semantic/custody/range checks and finite operation bounds
+remain. The original reservation expires without renewal or reset; this is a
+named test-workflow allowance, not a production default change. Full native and
+system qualification remains required.
