@@ -2,14 +2,14 @@ import { nativeSnapshotSyncProofRow } from './NativeSnapshotSyncProofCurrentNode
 
 // Authored only. Execute on the complete immutable program in its qualified
 // native controller; this module imports native current-row transport too.
-test('native proof scalar policy copies dates and canonicalizes exact identifiers', () => {
+test.each(['AB', 'ab', 'Ab'])('native proof scalar policy copies dates and preserves %s storage identifiers', spelling => {
   const created_at = new Date(1),
     updated_at = new Date(2),
     row = {
       provenTxId: 7,
       created_at,
       updated_at,
-      txid: 'AB'.repeat(32),
+      txid: spelling.repeat(32),
       blockHash: 'CD'.repeat(32),
       merkleRoot: 'EF'.repeat(32),
       height: 0,
@@ -22,9 +22,9 @@ test('native proof scalar policy copies dates and canonicalizes exact identifier
     ...row,
     created_at: new Date(1),
     updated_at: new Date(2),
-    txid: 'ab'.repeat(32),
-    blockHash: 'cd'.repeat(32),
-    merkleRoot: 'ef'.repeat(32)
+    txid: spelling.repeat(32),
+    blockHash: 'CD'.repeat(32),
+    merkleRoot: 'EF'.repeat(32)
   })
   expect(Object.isFrozen(proof)).toBe(true)
 })

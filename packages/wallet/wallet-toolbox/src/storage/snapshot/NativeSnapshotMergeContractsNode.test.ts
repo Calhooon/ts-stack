@@ -167,7 +167,9 @@ test(
       expect(expected).toHaveLength(1)
       expect(Buffer.from(expected[0].rawTx)).toEqual(Buffer.from(proof.tx.toBinary()))
       expect(Buffer.from(expected[0].merklePath)).toEqual(Buffer.from(proof.path.toBinary()))
+      expect(await target.storage.findProvenTxs({ partial: {} })).toHaveLength(expected.length)
       await verifyNativeSnapshotSyncProvenTxs(target.storage, source, checkpoint, expected, false)
+      expect(await target.storage.findProvenTxs({ partial: {} })).toHaveLength(expected.length)
     })
   },
   pairCaseMilliseconds

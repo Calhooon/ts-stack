@@ -5843,3 +5843,12 @@ Native action contract failures identify the mismatched column without printing
 wallet values, payloads or identities. The full original scalar/date/binary row
 comparisons and rejection of internal row identifiers remain intact. A named
 column diagnoses a failed contract; it does not qualify its production behavior.
+
+Native proof sync validates hex identifiers while retaining their original
+stored spelling for indexed lookup and persistence. Lowercasing before a
+case-sensitive lookup could miss an existing uppercase proof, insert another
+row and redirect the transaction proof link. Cryptographic comparisons still
+normalize hex inside the original streamed proof oracle, and duplicate-page
+comparison still rejects case aliases. Complete native proof contracts also
+compare the total proof-row count before and after the occupied merge, alongside
+all original bytes, metadata, mapping and durable acknowledgement checks.

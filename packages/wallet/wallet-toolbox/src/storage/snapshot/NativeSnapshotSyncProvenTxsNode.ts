@@ -211,8 +211,8 @@ export async function prepareNativeSnapshotSyncProvenTxs(
       )
         invalid()
       const proof = nativeSnapshotSyncProofRow(fields)
-      if (txids.has(proof.txid)) invalid()
-      txids.add(proof.txid)
+      if (txids.has(proof.txid.toLowerCase())) invalid()
+      txids.add(proof.txid.toLowerCase())
       const allocation = working.claim(8192 + 16 * 65536)
       let current: NativeSnapshotSyncProofCurrent
       try {

@@ -29,7 +29,9 @@ function invalid(): never {
 }
 function hex(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/i.test(value)) invalid()
-  return value.toLowerCase()
+  // Storage indexes and persisted metadata retain their original spelling.
+  // The streamed proof oracle normalizes only its cryptographic comparisons.
+  return value
 }
 function integer(value: unknown, minimum: number): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) invalid()
