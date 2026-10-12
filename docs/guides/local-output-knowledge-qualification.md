@@ -17,7 +17,7 @@ next push. It preserves the governed target registry, complete original tests,
 property corpus, pinned mutation engine, thresholds and supported runtime
 profiles. Hosted merge gates remain separate requirements; a local pass must
 never be presented as a GitHub Actions run or as complete checkpoint acceptance.
-See the [checkpoint inventory](../../specs/output-knowledge/CHECKPOINT2.md) for
+See the [checkpoint inventory](https://github.com/bsv-blockchain/ts-stack/blob/codex/utxo-application-runtime/specs/output-knowledge/CHECKPOINT2.md) for
 the complete implementation and acceptance scope.
 
 ## Freeze the actual candidate and runtime
