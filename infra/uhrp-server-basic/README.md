@@ -128,3 +128,12 @@ and keeps any existing inspector configuration. Production startup, database
 migrations, public routes and data formats are unchanged. Install the committed
 lock with `npm ci` before using the updated development command. This removes
 the unpatched `braces` path without an advisory exclusion or dependency override.
+
+## Test runner
+
+Run `npm test` for the complete service suite. Jest binds the standard `Math`
+object directly inside its test sandbox to avoid VM global-lookup overhead
+when authenticating full-size chunks. The suite retains its original test
+selection, assertions, request bytes and case deadlines, including the 30-second
+authenticated 4 MiB upload case. Service runtime behavior and production limits
+are unchanged.
