@@ -7239,7 +7239,7 @@ regression covers those extensions without narrowing historical acceptance.
 
 ### October 8: reconcile genuine native mutation sites
 
-Published `0a670aa` retains the current BRC295 contract and the fresh native
+Published `0a670aa` retains the current BRC PR295 contract and the fresh native
 header correction. All seven local root gates, five compiler contexts,
 reference compiler and unchanged browser/package ceilings pass. The hosted
 build's original pinned-engine integration refuses old source counts: the
