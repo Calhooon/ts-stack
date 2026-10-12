@@ -6077,3 +6077,13 @@ The helper is internal to codecs; package entry exports are unchanged.
 ### Qualification descriptor and transfer oracles
 
 Qualification filesystem readers bind metadata and bytes to the same opened descriptor, preserve the original physical inode checks and close handles on refusal. Worker-asset manifests and compatibility cohort inputs retain their existing finite bounds; qualification fixtures retain every original assertion, case and deadline. The Worker-module transfer oracle uses an independent arbitrary 32-byte mock key rather than hashing password inputs; physical Argon2/KDF execution remains separately required. No public API, archive/database format, production KDF or runtime/resource/default migration is introduced. Full system and exact-head analyzer qualification remain pending.
+
+## Pre-construction conflict recovery
+
+The held 2.15.0 candidate preserves remote storage's empty attempted-TXID sentinel
+only for a bounded double-spend review before transaction construction. It does
+not authorize a retry. Applications must verify complete competing transactions
+against the requested explicit inputs, synchronize the accepted winner, then
+read fresh state before rebuilding. Upgrade the application SDK alongside the
+wallet parser. Use the existing JSON wallet API for structured review errors;
+the binary wire format is unchanged. No database or call migration is required.
