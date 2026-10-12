@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const { mkdtemp, rm } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
@@ -66,7 +67,7 @@ module.exports = async function main(isolation) {
   const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: k })
   let first, next, failure
   try {
-    await storage.migrate('native retention fixture', 'synthetic-retention-native')
+    await migrateBeforeJournalGeneration(storage, 'native retention fixture', 'synthetic-retention-native')
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identity),
       { user: other } = await storage.findOrInsertUser('03' + '22'.repeat(32))

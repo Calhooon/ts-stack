@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const { fork } = require('node:child_process')
 const { mkdtemp, rm, open: openFile } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
@@ -55,7 +56,7 @@ async function main() {
     results = []
   let failure
   try {
-    await storage.migrate('capture native fixture', 'synthetic-capture-native')
+    await migrateBeforeJournalGeneration(storage, 'capture native fixture', 'synthetic-capture-native')
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identity),
       { user: other } = await storage.findOrInsertUser('03' + '22'.repeat(32))

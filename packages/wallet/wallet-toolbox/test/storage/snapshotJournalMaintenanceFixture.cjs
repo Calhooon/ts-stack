@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict')
+const { migrateBeforeJournalGeneration } = require('./snapshotHistoricalMigrations.cjs')
 const { mkdtemp, rm } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
@@ -74,7 +75,7 @@ module.exports = async function proof(isolation) {
         return value
       }
     }
-    await storage.migrate('owned bounded journal maintenance', 'synthetic-maintenance-controller')
+    await migrateBeforeJournalGeneration(storage, 'owned bounded journal maintenance', 'synthetic-maintenance-controller')
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identity),
       { user: other } = await storage.findOrInsertUser('03' + '22'.repeat(32))

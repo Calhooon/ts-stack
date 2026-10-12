@@ -5906,3 +5906,12 @@ therefore makes the original CREATE boundaries available. An independent full
 source-row comparison must remain equal after reset. All 24 server-crash cases
 across READ COMMITTED and REPEATABLE READ, source/epoch/marker checks and original
 child deadlines remain unchanged. No customer migration performs this reset.
+
+Journal capture, retention and maintenance fixtures use their original custom
+receipt policy. Their explicit historical setup runs every migration preceding
+the registered journal, including the SQLite index generation, then installs
+their original journal policy. It independently requires no journal generation
+table or migration row before that installation. Production receipt-policy
+ownership remains strict; the complete current production migration is still
+used by the ordinary archive, generation and server-crash fixtures. All original
+fixture datasets, assertions, isolation modes and time bounds remain.
