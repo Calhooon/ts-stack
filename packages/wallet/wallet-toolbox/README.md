@@ -1782,6 +1782,10 @@ The native index crash fixtures retain the schema before the SQLite generation
 migration and exclude its dependent registered journal migration as well. This
 keeps the original interrupted index installation under test; the separate
 registered journal recovery fixtures exercise the complete current lifecycle.
+The SQLite generation recovery fixture continues through the full current
+registered migrator, checks its current journal migration result and publication
+exactly once, and retains the independent index publication and all seventeen
+original process-loss boundaries.
 
 The working native journal candidate now runs a finite maintenance pass before
 ordinary negotiated captures: the default retains at least 1,000,000 event-clock

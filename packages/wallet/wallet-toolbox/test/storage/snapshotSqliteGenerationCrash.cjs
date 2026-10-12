@@ -10,6 +10,7 @@ const { StorageKnex } = require('../../out/src/storage/StorageKnex.js')
 const { StorageProvider } = require('../../out/src/storage/StorageProvider.js')
 const { runInSeries } = require('../../out/src/utility/runInSeries.js')
 const { migration, readGenerationIndexState } = require('../../out/src/storage/schema/snapshotSqliteIndexState.js')
+const { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } = require('../../out/src/storage/schema/KnexMigrations.js')
 const { names, metadata, progress } = require('../../out/src/storage/schema/snapshotSqliteIndexGeneration.js')
 const { retiredTables } = require('../../out/src/storage/schema/snapshotSqliteLegacyOwnership.js')
 const { migrateBeforeSqliteGeneration } = require('./snapshotHistoricalMigrations.cjs')
@@ -221,7 +222,11 @@ async function qualifySQLiteGenerationProcessLoss() {
       await k('transactions').insert({ ...seeded.rows[0], transactionId: 3, reference: 'new-low-key' })
       // This exact owned child has exited; no other migrator can own the fixture lock.
       await k.migrate.forceFreeMigrationsLock()
-      assert.equal(await source.migrate('generation loss', 'synthetic-generation-loss'), migration)
+      assert.equal(
+        await source.migrate('generation loss', 'synthetic-generation-loss'),
+        SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+      )
+      assert.equal((await k('knex_migrations').where('name', SNAPSHOT_JOURNAL_SOURCE_MIGRATION)).length, 1)
       assert.equal(await readGenerationIndexState(k), 'v2')
       const mapping = new Map([
         ['snapshot_global_edges', names.edges],
