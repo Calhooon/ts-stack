@@ -348,6 +348,15 @@ or test-case limits and no replacement transaction. Applications must preserve
 unknown outcomes and their original owners when handling the same interruption;
 free recovery alone must never be described as submitting an unreceived candidate.
 
+Authenticated fetch retains the original thrown network value in `Error.cause`,
+including native Errors created in another runtime realm. A socket failure carries
+no authenticated seller decision. Preserve the signed candidate and original
+owners when reconciling that uncertainty; use a free recovery query before any
+explicit resubmission of the original bytes. A cause is local diagnostic evidence,
+not permission for another wallet action. Inspect only bounded, recognised own-data
+error codes, keep protected error details private, and retain authenticated service
+refusals separately. The SDK does not replay a request as part of cause preservation.
+
 The separate current wallet-route demonstration retains the native wallet's
 ordinary finality gate. It signs an expiry route at an earlier selected tip, then
 advances the disclosed synthetic header view before finalizing the wallet action.

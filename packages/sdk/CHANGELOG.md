@@ -33,6 +33,14 @@ performance improvement.
 
 Authentication byte ownership captures each external array element through its own data descriptor once. Shape validation then checks values in the private arrays produced by the completed bounded snapshot traversal. Sparse arrays, accessors, invalid byte values and all size, depth and node limits retain their existing refusals. Every operation constructs fresh owned data; no caller input or validation verdict is cached. Public declarations, wire bytes, signature and session checks, errors and defaults are unchanged. No consumer migration is required. Complete composed qualification remains required; this implementation change alone establishes no performance improvement.
 
+### Authenticated transport failure evidence
+
+Authenticated fetch network failures now preserve the original thrown value as
+the wrapper's optional `Error.cause` when the value is not a same-realm Error.
+This retains cross-realm native error evidence while preserving existing
+messages, Error names, stack behavior and request dispatch counts. No automatic
+replay, payment authorization, wire change or consumer migration is introduced.
+
 ## Table of Contents
 
 - [Unreleased](#unreleased)
