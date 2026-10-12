@@ -5958,3 +5958,11 @@ Unicode/NUL data, full semantic/custody/range checks and finite operation bounds
 remain. The original reservation expires without renewal or reset; this is a
 named test-workflow allowance, not a production default change. Full native and
 system qualification remains required.
+
+Authenticated native merge contract failures report bounded phase counters,
+completed-operation timing and the remaining original reservation lifetime.
+The report retains no operation list, wallet values, payloads or identities and
+rethrows the original error. It helps distinguish setup, repeated baseline work
+and incoming merge costs while preserving the six variants, full dataset,
+allocation assertions and finite workflow limits; it is diagnostic evidence,
+not complete qualification.

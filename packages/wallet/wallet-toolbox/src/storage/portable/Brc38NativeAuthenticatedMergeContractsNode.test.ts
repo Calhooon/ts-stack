@@ -160,8 +160,13 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
           expected = nativeMergeExpectedFixture(initial, before, fixture.incomingData),
           selected = options(fixture),
           sentinel = new Error('Independent public observer ACK loss')
+        const started = performance.now(),
+          phases = new Map<string, { operations: number; milliseconds: number; longestMilliseconds: number }>()
         let id: string | undefined,
-          lost = false
+          lost = false,
+          lastOperation = 0,
+          lastElapsedMilliseconds = 0,
+          authenticatedMilliseconds: number | undefined
         try {
           let result
           try {
@@ -174,6 +179,19 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
                 // runner contract separately probes its read slots after each
                 // operation; this public case checks actual reopen below.
                 expect(fixture.merge.workingAllocation.used).toBe(0)
+                if (value.phase === 'AUTHENTICATED') authenticatedMilliseconds = performance.now() - started
+                if (value.operation !== undefined) {
+                  const operation = value.operation,
+                    milliseconds = operation.elapsedMilliseconds - lastElapsedMilliseconds,
+                    phase = operation.progress.phase,
+                    totals = phases.get(phase) ?? { operations: 0, milliseconds: 0, longestMilliseconds: 0 }
+                  totals.operations++
+                  totals.milliseconds += milliseconds
+                  totals.longestMilliseconds = Math.max(totals.longestMilliseconds, milliseconds)
+                  phases.set(phase, totals)
+                  lastOperation = operation.operation
+                  lastElapsedMilliseconds = operation.elapsedMilliseconds
+                }
                 if (
                   variant === 'lost-observer' &&
                   value.phase === 'MERGE' &&
@@ -186,7 +204,20 @@ test.each(['repeat', 'lost-observer', 'wrong-password', 'truncated', 'corrupt', 
               }
             })
           } catch (cause) {
-            if (variant !== 'lost-observer' || !lost) throw cause
+            if (variant !== 'lost-observer' || !lost) {
+              // Fixed phase counters retain no wallet data or operation list.
+              // Preserve the actual failure, owner, corpus and finite limits.
+              console.info('BRC38_AUTHENTICATED_MERGE_TIMING', {
+                variant,
+                elapsedMilliseconds: performance.now() - started,
+                authenticatedMilliseconds,
+                lastOperation,
+                lastElapsedMilliseconds,
+                remainingOriginalLifetimeMilliseconds: fixture.source.limits.expiresAt - Date.now(),
+                phases: Object.fromEntries(phases)
+              })
+              throw cause
+            }
             expect(variant).toBe('lost-observer')
             expect(lost).toBe(true)
             expect(cause).toBeInstanceOf(Brc38AuthenticatedNativeMergeInterruptedError)
