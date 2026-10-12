@@ -20,7 +20,7 @@ request preparation and a fresh 10 minutes for local response handling, includin
 wallet permission prompts. Each authenticated HTTP exchange retains its separate
 30-second default network deadline. Approval after expiry cannot dispatch the
 application request. Direct Peer and transport users retain their timeout defaults.
-See the [SDK README](../../../packages/sdk/README.md) for timeout metadata and
+See the [SDK README](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk) for timeout metadata and
 retry guidance. This candidate is not yet published.
 
 The isolated SDK3 retirement candidate removes the obsolete serial-DID token
