@@ -732,6 +732,22 @@ contract; its caller must validate before signing or broadcasting. This change
 does not audit historical block-hash metadata or repair every stored proof:
 BEEF root validity and an operator's historical-store audit remain distinct.
 
+### Profile update failures
+
+`CWIStyleWalletManager.addProfile` and `deleteProfile` commit the local profile
+list when the replacement UMP token is published. A factor-decryption or
+publication failure preserves the previous list, so a failed creation can be
+retried with the same name. Concurrent creations reserve names without regard
+to case until each attempt settles. A failed deletion of the active profile
+attempts to restore that profile and preserves the original update error if
+restoration also fails.
+
+Restoring the active wallet can fail after publication has succeeded. In that
+case, the token and profile list already contain the change, and the default
+profile may remain active. Inspect `listProfiles()` before retrying and switch
+to an available profile as needed. This bookkeeping fix does not correct the
+underlying factor-decryption error; diagnose that error separately.
+
 ### UMP account continuity and phone changes
 
 Argon2id password derivation uses a proven-ready host backend when one is
