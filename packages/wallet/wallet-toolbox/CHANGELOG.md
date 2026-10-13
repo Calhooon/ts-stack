@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Align native streamed integration test outer guards with the existing 180-second fixture lifetime plus bounded physical-owner cleanup; retain all data, assertions, operation deadlines and production defaults.
+
 - Private publication and profile-mode regressions match the current filesystem guard error while independently checking the actual restricted mode and unchanged exact device/inode. Copied-root and physical-lease regressions match the current ownership guard. All original refusal, descriptor-close, payload, copy and retirement assertions remain; production guards and defaults are unchanged.
 
 - Integration test fixtures retain exact binary descriptors while keeping read observations outside descriptor data. Authorization query fixtures exercise the coherent read and packed-text query seams with the original authenticated ownership predicate and pagination. Schema-definition tests verify bounded name/SQL projections, exact ordered type/name pairs and each page limit. Complete native allocation/resume workflows explicitly select the existing 16 KiB read option; 1 KiB defaults, original finite owners and all independent data/rollback/custody assertions remain. The occupied IndexedDB request component uses its existing 120-second verifier window with 30 seconds of outer cleanup allowance. No production behavior, default, wire/schema, API or resource limit changes; full-system qualification remains pending.
