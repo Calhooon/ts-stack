@@ -194,16 +194,23 @@ test(
     await withBrc38NativeCandidateContractFixture(
       async fixture => {
         await fixture.prepareCopied()
-        await fixture.withSource(
-          async source =>
-            await verifyBrc38PrivateLocalAllocationRegressionRefusal(
-              fixture.store,
-              source,
-              fixture.options,
-              'output_baskets',
-              '1601',
-              fixture.check
-            )
+        // The helper checks the greater counter, rollback and exact inner
+        // error identity. The original coherent source also drains/refuses
+        // that failed callback; the owning test must observe its refusal.
+        await expect(
+          fixture.withSource(
+            async source =>
+              await verifyBrc38PrivateLocalAllocationRegressionRefusal(
+                fixture.store,
+                source,
+                fixture.options,
+                'output_baskets',
+                '1601',
+                fixture.check
+              )
+          )
+        ).rejects.toThrow(
+          'Private local allocation history differs from the original source, actual candidate or complete copy'
         )
       },
       { lifetimeMs: nativeFixtureLifetimeMs }

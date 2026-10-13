@@ -6170,3 +6170,7 @@ remain. Production deadlines, native per-operation limits, memory/byte caps,
 public APIs, archive formats and provider defaults are unchanged. These test
 budgets are not production SLOs. Full uninstrumented affected-case coverage,
 contended hosted execution and whole-system qualification remain required.
+
+### Authenticated native structured source replay
+
+Canonical structured-field completion on a reopened original native source selects the existing authenticated source-read mode. The helper still proves its actual native owner and read-only slot, sealed metadata, original archive hash and unchanged pre/post source state; receiver and unauthenticated native admission are unchanged. A real encrypted/sealed native regression checks independent raw/canonical history and notify bytes and rejects reuse after physical close. No public authority flag, persistence/wire format, production default or resource limit changes. The allocation-regression contract also observes the original coherent-source refusal after its existing inner error-identity, greater-counter and rollback checks. Full composed recovery and system qualification remain required.

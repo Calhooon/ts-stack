@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Route original authenticated native structured-source completion through its verified read mode, preserving every owner/seal/archive/slot/expiry check. Cover original structured bytes and closed-owner refusal, and observe the allocation-regression source refusal at its original boundary.
+
 - Select finite per-scenario native candidate test fixture lifetimes with measured setup/copy headroom and separate cleanup allowance. Preserve all original cases, real expiry checks, read choices, operation counts and production defaults; complete system qualification remains required.
 
 - Align genuine native qualification scalar/closed-installer fixtures and measured finite SQL observation bounds; select a bounded local-schema physical allowance while retaining the real smaller-quota refusal and every production default.

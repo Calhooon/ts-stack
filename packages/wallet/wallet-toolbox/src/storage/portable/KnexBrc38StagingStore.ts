@@ -1560,11 +1560,14 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
         // No complete derived field before validator EOF AND index close.
         await completeBrc38SqlCanonicalStructuredField(
           async operation =>
+            // The original source may be a reopened authenticated native
+            // reservation. Its existing read helper still proves the actual
+            // sealed source, archive hash and read-only slot before borrowing.
             await this.#withProvisionalStructuredRead(async trx => {
               await this.#assertStructuredSemanticOwner(sourceOnly, trx)
               await verifyBrc38SqlCanonicalStructuredSource(trx, table, index, expected)
               return await operation(trx)
-            }),
+            }, sourceOnly),
           async operation =>
             await ownedTransaction(this.knex, async trx => {
               await this.#assertStructuredSemanticOwner(sourceOnly, trx)
