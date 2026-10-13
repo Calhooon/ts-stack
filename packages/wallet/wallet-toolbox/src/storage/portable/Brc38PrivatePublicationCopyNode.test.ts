@@ -121,8 +121,11 @@ describe('publication verification binds the actual opened descriptor', () => {
   test('descriptor private modes remain required with an otherwise matching identity', async () => {
     const identity = await captureBrc38ProfilePhysicalIdentity(directory, true)
     await fs.chmod(join(directory, 'wallet.sqlite'), 0o400)
+    const actual = await fs.lstat(join(directory, 'wallet.sqlite'), { bigint: true })
+    expect({ device: actual.dev.toString(), inode: actual.ino.toString() }).toEqual(identity.wallet)
+    expect(actual.mode & 0o777n).toBe(0o400n)
     await expect(hashBrc38PublishedDatabase(join(directory, 'wallet.sqlite'), 4096, identity.wallet)).rejects.toThrow(
-      'original private file'
+      'Actual Unix private ownership or mode differs'
     )
   })
   test('a native descriptor metadata error retains the original cause and closes the file', async () => {

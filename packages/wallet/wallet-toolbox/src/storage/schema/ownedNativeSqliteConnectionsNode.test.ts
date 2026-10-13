@@ -19,7 +19,9 @@ test('copied class/config/root/closed flags establish neither a root, connection
   expect(ownedNativeRootIdentity(root)).toBeUndefined()
   expect(nativeOwnedRootCloseState(root)).toBeUndefined()
   expect(() => createOwnedNativeReadDatabase(root)).toThrow('actual currently owned')
-  expect(() => assertOwnedNativeConnection(root, connection)).toThrow('actual current physical lease')
+  expect(() => assertOwnedNativeConnection(root, connection)).toThrow(
+    'Native SQL requires the current physical lease of this database'
+  )
   expect(isClosedOwnedNativeConnection(connection)).toBe(false)
   expect(isClosedOwnedNativeConnection(undefined)).toBe(false)
 })

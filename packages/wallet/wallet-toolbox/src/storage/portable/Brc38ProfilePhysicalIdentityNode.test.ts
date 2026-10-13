@@ -79,9 +79,14 @@ describe('actual private profile physical identity metadata', () => {
   test('private modes remain mandatory even when device and inode are unchanged', async () => {
     const original = await captureBrc38ProfilePhysicalIdentity(directory, true)
     await chmod(join(directory, 'wallet.sqlite'), 0o400)
-    await expect(assertBrc38ProfilePhysicalIdentity(directory, original, true)).rejects.toThrow('original private file')
+    const actual = await lstat(join(directory, 'wallet.sqlite'), { bigint: true })
+    expect({ device: actual.dev.toString(), inode: actual.ino.toString() }).toEqual(original.wallet)
+    expect(actual.mode & 0o777n).toBe(0o400n)
+    await expect(assertBrc38ProfilePhysicalIdentity(directory, original, true)).rejects.toThrow(
+      'Actual Unix private ownership or mode differs'
+    )
     await expect(assertBrc38RetiringProfilePhysicalIdentity(directory, original)).rejects.toThrow(
-      'original private file'
+      'Actual Unix private ownership or mode differs'
     )
   })
 })
