@@ -292,6 +292,27 @@ test(
       expectedHistory = Buffer.from(JSON.stringify(history), 'utf8'),
       expectedNotify = Buffer.from(JSON.stringify(notify), 'utf8')
     try {
+      // A caller without the original authenticated scope cannot borrow the
+      // native profile read. Use its own owner so refusal never grants reuse.
+      await withBrc38NativeStreamedContractFixture(
+        data => {
+          data.tables.provenTxReqs[0].history = history
+          data.tables.provenTxReqs[0].notify = notify
+        },
+        async fixture => {
+          const actual = await fixture.store.streamedRow('provenTxReqs', 0)
+          if (actual === undefined || actual.structured === undefined)
+            throw new Error('Independent unscoped structured source is absent')
+          await expect(
+            fixture.store.validateOwnedSourceStructuredFields(
+              'provenTxReqs',
+              0,
+              actual.structured,
+              fixture.resources.sourcePolicy
+            )
+          ).rejects.toThrow('Native import journal requires an authenticated published-profile transaction')
+        }
+      )
       await withBrc38NativeStreamedContractFixture(
         data => {
           data.tables.provenTxReqs[0].history = history
@@ -304,41 +325,40 @@ test(
             throw new Error('Independent original structured source is absent')
           const descriptors = actual.structured
           expect(Object.keys(descriptors).sort()).toEqual(['history', 'notify'])
-          await fixture.store.validateOwnedSourceStructuredFields(
-            'provenTxReqs',
-            0,
-            descriptors,
-            fixture.resources.sourcePolicy
-          )
-          await fixture.store.withAuthenticatedPrivateStructuredDestination(
-            async () =>
-              await fixture.store.withPrivateNativeDatabase(
-                true,
-                async database =>
-                  await database.transaction(async trx => {
-                    const assertCurrent = (): void => {
-                      fixture.check()
-                      fixture.store.assertPrivateNativeReadTransaction(trx)
-                    }
-                    for (const family of ['raw', 'canonical'] as const) {
-                      await verifyNativeStructuredSqlWindowOracle(
-                        trx,
-                        family,
-                        { table: 'provenTxReqs', position: 0, field: 'history' },
-                        expectedHistory,
-                        assertCurrent
-                      )
-                      await verifyNativeStructuredSqlWindowOracle(
-                        trx,
-                        family,
-                        { table: 'provenTxReqs', position: 0, field: 'notify' },
-                        expectedNotify,
-                        assertCurrent
-                      )
-                    }
-                  })
-              )
-          )
+          await fixture.store.withAuthenticatedPrivateStructuredDestination(async () => {
+            await fixture.store.validateOwnedSourceStructuredFields(
+              'provenTxReqs',
+              0,
+              descriptors,
+              fixture.resources.sourcePolicy
+            )
+            await fixture.store.withPrivateNativeDatabase(
+              true,
+              async database =>
+                await database.transaction(async trx => {
+                  const assertCurrent = (): void => {
+                    fixture.check()
+                    fixture.store.assertPrivateNativeReadTransaction(trx)
+                  }
+                  for (const family of ['raw', 'canonical'] as const) {
+                    await verifyNativeStructuredSqlWindowOracle(
+                      trx,
+                      family,
+                      { table: 'provenTxReqs', position: 0, field: 'history' },
+                      expectedHistory,
+                      assertCurrent
+                    )
+                    await verifyNativeStructuredSqlWindowOracle(
+                      trx,
+                      family,
+                      { table: 'provenTxReqs', position: 0, field: 'notify' },
+                      expectedNotify,
+                      assertCurrent
+                    )
+                  }
+                })
+            )
+          })
           await fixture.store.close()
           await expect(
             fixture.store.validateOwnedSourceStructuredFields(
