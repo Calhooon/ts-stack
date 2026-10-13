@@ -27,11 +27,17 @@ describe('actual native exact generation-definition reads', () => {
       const match = /^CREATE (TABLE|INDEX|TRIGGER) ("[^"]+"|\w+)/.exec(sql)!
       return [match[1].toLowerCase(), match[2].replaceAll('"', '')]
     })
-    const pages = queries.filter(query => query.sql.startsWith('select `type`, `name`, `sql` from `sqlite_master`'))
+    const pages = queries.filter(query =>
+      query.sql.startsWith('select `type`, substr(name,1,129) AS name, substr(sql,1,65537) AS sql from `sqlite_master`')
+    )
     expect(expected.length).toBeGreaterThan(16)
     expect(pages).toHaveLength(Math.ceil(expected.length / 16))
-    expect(pages.every(query => query.bindings.length > 0 && query.bindings.length <= 32)).toBe(true)
-    expect(pages.flatMap(query => query.bindings)).toEqual(expected.flat())
+    expect(pages.every(query => query.bindings.length > 1 && query.bindings.length <= 33)).toBe(true)
+    expect(pages.flatMap(query => query.bindings.slice(0, -1))).toEqual(expected.flat())
+    for (const page of pages) {
+      expect(page.sql.endsWith('limit ?')).toBe(true)
+      expect(page.bindings.at(-1)).toBe((page.bindings.length - 1) / 2 + 1)
+    }
     expect(queries.every(query => /^(select|PRAGMA|EXPLAIN)\b/i.test(query.sql))).toBe(true)
     const later = { ...plan, ddl: [...plan.ddl] }
     later.ddl[0] += '\n'

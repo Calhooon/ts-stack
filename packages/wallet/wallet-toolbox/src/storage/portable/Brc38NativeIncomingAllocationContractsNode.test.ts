@@ -265,7 +265,7 @@ test('actual incoming ranges retain deleted-high history, survive retry and excl
         counts
       )
     },
-    { lifetimeMs: 900000 }
+    { lifetimeMs: 900000, maximumNativeReadBytes: 16384 }
   )
 }, 930000)
 
@@ -311,7 +311,7 @@ test(
           { first: 1601, used: 0, sourceHigh: 1604 }
         )
       },
-      { lifetimeMs: nativeFixtureLifetimeMs }
+      { lifetimeMs: nativeFixtureLifetimeMs, maximumNativeReadBytes: 16384 }
     )
   },
   nativeFixtureCaseTimeoutMs

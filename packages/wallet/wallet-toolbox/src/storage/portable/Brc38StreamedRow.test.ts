@@ -11,16 +11,23 @@ const policy: Brc38StreamedRowPolicy = {
   maximumRowBytes: 1500000,
   maximumChunkBytes: 64
 }
-function binary(bytes: Uint8Array): Brc38StreamedBinary & { extents: Array<[number, number]> } {
+const binaryReads = new WeakMap<Brc38StreamedBinary, Array<[number, number]>>()
+function extents(source: Brc38StreamedBinary): Array<[number, number]> {
+  const reads = binaryReads.get(source)
+  if (reads === undefined) throw new Error('Independent binary observation missing')
+  return reads
+}
+function binary(bytes: Uint8Array): Brc38StreamedBinary {
+  const reads: Array<[number, number]> = []
   const result = {
     length: bytes.byteLength,
     sha256: createHash('sha256').update(bytes).digest('hex'),
-    extents: [] as Array<[number, number]>,
     async read(offset: number, length: number) {
-      result.extents.push([offset, length])
+      reads.push([offset, length])
       return bytes.slice(offset, offset + length)
     }
   }
+  binaryReads.set(result, reads)
   return result
 }
 async function text(chunks: AsyncIterable<Uint8Array>): Promise<string> {
@@ -54,8 +61,8 @@ test.each([0, 1, 2, 3, 47, 48, 49, 1000])(
       updated_at: '2026-01-01T00:00:00.000Z',
       rawTx: Buffer.from(bytes).toString('base64')
     })
-    expect(source.extents.every(([, size]) => size <= 48)).toBe(true)
-    expect(source.extents.reduce((total, [, size]) => total + size, 0)).toBe(length)
+    expect(extents(source).every(([, size]) => size <= 48)).toBe(true)
+    expect(extents(source).reduce((total, [, size]) => total + size, 0)).toBe(length)
   }
 )
 
@@ -175,7 +182,7 @@ test.each([0, 1, 15, 16, 17, 1000])(
       )
     )
     expect(value).toBe(JSON.stringify({ noSendExpiryReclaimRawTx: Array.from(bytes) }))
-    expect(source.extents.every(([, size]) => size <= 16)).toBe(true)
+    expect(extents(source).every(([, size]) => size <= 16)).toBe(true)
   }
 )
 test('number-array byte accounting accepts small digits without charging the worst-case array representation', async () => {
@@ -191,4 +198,23 @@ test('number-array byte accounting accepts small digits without charging the wor
     )
   )
   expect(value).toBe(JSON.stringify({ noSendExpiryReclaimRawTx: Array(100).fill(0) }))
+})
+
+test('an extra binary descriptor field rejects before a payload read', async () => {
+  const source = binary(new Uint8Array([1, 2, 3])),
+    read = jest.spyOn(source, 'read'),
+    descriptor = { ...source, observation: [] }
+  await expect(
+    text(
+      encodeBrc38StreamedRow(
+        'transactions',
+        {
+          fields: {},
+          binaries: { rawTx: descriptor }
+        },
+        policy
+      )
+    )
+  ).rejects.toThrow('Invalid BRC-38 streamed row or binary extent')
+  expect(read).not.toHaveBeenCalled()
 })
