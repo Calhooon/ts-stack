@@ -65,11 +65,21 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
   private readonly ownerId: string
   private readonly ledger: PrivateServiceDomain['ledger']
   private readonly identity: PrivateServiceDomain['identity']
+  private readonly format: string
+  private readonly pendingWork: boolean
   constructor(
     private readonly domain: PrivateServiceDomain,
     private readonly contracts: PrivatePurchaseContracts,
-    limits: PrivatePurchaseEvidenceLimits
+    limits: PrivatePurchaseEvidenceLimits,
+    profile?: 'pending-candidate-work-v1'
   ) {
+    outputAssert(
+      profile === undefined || profile === 'pending-candidate-work-v1',
+      'Unsupported pending candidate installation',
+      'unsupported'
+    )
+    this.pendingWork = profile !== undefined
+    this.format = this.pendingWork ? 'private-purchase-pending-evidence/1' : FORMAT
     const owned = ownOutputJSON(limits).value
     closedOutputObject(owned, [
       'maximumCandidateBytes',
@@ -85,7 +95,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
     }
     this.chunks = Math.ceil((Math.ceil(this.limits.maximumCandidateBytes / 3) * 4) / CHUNK)
     this.id = outputPacketDigest('purchase', {
-      purpose: FORMAT,
+      purpose: this.format,
       scope: domain.scope,
       limits: this.limits
     })
@@ -98,6 +108,14 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
       pin(domain.identity, 'address'),
       pin(contracts, 'original')
     ]
+  }
+  installedOn(domain: PrivateServiceDomain, contracts: PrivatePurchaseContracts): void {
+    this.current()
+    outputAssert(
+      domain === this.domain && contracts === this.contracts,
+      'Pending candidate work differs from its physical owner',
+      'context-changed'
+    )
   }
   private current(): void {
     outputAssert(
@@ -143,7 +161,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
   private addresses(binding: OutputJSONObject): ProtectedLedgerAddress[] {
     return Array.from({ length: this.chunks + 1 }, (_, index) =>
       this.domain.identity.address('candidate', {
-        purpose: FORMAT,
+        purpose: this.format,
         acquisitionId: binding.acquisitionId,
         index
       })
@@ -155,7 +173,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
     candidate: OutputPurchaseSubmit | null
   ): OutputJSONObject {
     return {
-      format: FORMAT,
+      format: this.format,
       binding,
       updates,
       txid: candidate?.txid ?? null,
@@ -163,7 +181,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
     }
   }
   private chunk(index: number, data: string): OutputJSONObject {
-    return { format: FORMAT, index, data }
+    return { format: this.format, index, data }
   }
   reserve(input: PrivatePurchaseOriginal, clock: () => string, guard: ProtectedLedgerGuard): void {
     const binding = this.binding(input),
@@ -206,7 +224,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
     const header = records[0].value
     closedOutputObject(header, ['format', 'binding', 'updates', 'txid', 'digest'])
     outputAssert(
-      header.format === FORMAT &&
+      header.format === this.format &&
         canonicalOutputJSON(header.binding) === canonicalOutputJSON(binding),
       'Purchase proof binding changed',
       'context-changed'
@@ -226,7 +244,7 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
         const chunk = record.value
         closedOutputObject(chunk, ['format', 'index', 'data'])
         outputAssert(
-          chunk.format === FORMAT &&
+          chunk.format === this.format &&
             chunk.index === offset + 1 &&
             typeof chunk.data === 'string' &&
             chunk.data.length <= CHUNK &&
@@ -318,11 +336,14 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
   ): OutputPurchaseSubmit {
     const next = this.assembled(input, incoming)
     outputAssert(
-      next.target && next.missing.length === 0,
+      this.pendingWork || (next.target && next.missing.length === 0),
       'Complete purchase proof is required',
       'unavailable'
     )
     if (saved === null) return incoming
+    // This explicit bounded slot owns no financial identity or external work.
+    // Replacing it cannot erase a reserved admission or an accepted obligation.
+    if (this.pendingWork && saved.txid !== incoming.txid) return incoming
     if (
       text(saved, this.limits.maximumCandidateBytes) ===
       text(incoming, this.limits.maximumCandidateBytes)
@@ -335,7 +356,8 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
     )
     const prior = this.assembled(input, saved)
     outputAssert(
-      prior.target?.rawTransaction === next.target.rawTransaction,
+      (this.pendingWork && (!prior.target || !next.target)) ||
+        prior.target?.rawTransaction === next.target?.rawTransaction,
       'Purchase proofs name different raw transactions',
       'conflict'
     )
@@ -432,6 +454,19 @@ export class SQLitePrivatePurchaseEvidence implements PrivatePurchaseEvidence {
       }
     }
     return plan
+  }
+}
+/** One explicitly prepaid pending candidate slot, with bounded cumulative proof
+ * updates. It is independent of immutable financial/alias/result custody.
+ * Retention requires a fresh installed pending assessment; it does not pin an
+ * economic identity or authorize admission. Legacy evidence formats are intact. */
+export class SQLitePrivatePurchaseCandidateWork extends SQLitePrivatePurchaseEvidence {
+  constructor(
+    domain: PrivateServiceDomain,
+    contracts: PrivatePurchaseContracts,
+    limits: PrivatePurchaseEvidenceLimits
+  ) {
+    super(domain, contracts, limits, 'pending-candidate-work-v1')
   }
 }
 function pin<T, K extends keyof T>(owner: T, key: K): () => boolean {

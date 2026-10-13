@@ -219,7 +219,7 @@ The npm artifact also carries a scoped [third-party notice](./THIRD_PARTY_NOTICE
 ## Optional private-overlay representations
 
 The current implementation target is BRC PR295 at
-`1b9a75e497b5856675af1ce01fd86843c37d07f9`. The optional covenant profile is
+`bdbd7aec0731347230e6b4190864e90b9ff27898`. The optional covenant profile is
 implemented as separate optional components: the two-stage frozen Script, immutable
 schedule, fixed-child wallet and native alias custody. Current Linux compositions
 exercise them together; complete final-source acceptance is tracked separately.

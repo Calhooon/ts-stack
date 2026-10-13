@@ -14,7 +14,7 @@ tags: [utxo, scripts, revenue, signing, custody]
 
 The optional `RevenueListingProfileAuthority` adapter implements the signing
 selection for the current BRC-197 exemplar at BRC PR295 commit
-`1b9a75e497b5856675af1ce01fd86843c37d07f9`. It uses a BRC-100 wallet's
+`bdbd7aec0731347230e6b4190864e90b9ff27898`. It uses a BRC-100 wallet's
 `getPublicKey` and `createSignature` methods. Applications supply the independently
 selected seller identity, explicit originator and synchronous authorization fence.
 No private scalar crosses that interface. Other transaction domains may install

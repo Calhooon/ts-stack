@@ -4,7 +4,9 @@ import {
   OutputProtocolError,
   ScriptResourceLimitError,
   Utils,
+  outputU64,
   outputPacketDigest,
+  type Transaction,
   type OutputOutpoint
 } from '@bsv/sdk'
 import {
@@ -15,6 +17,7 @@ import {
 import { SDKEvidenceVerifier, type ChainViewResolver } from '../SDKEvidenceVerifier.js'
 import { parseVerificationContext } from '../validation.js'
 import { asyncValues } from '../internal/asyncValues.js'
+import { isOutputTransactionFinal } from '../SpendReconciler.js'
 import type { VerificationContext, VerificationResult } from '../ports.js'
 import {
   assembleLineage,
@@ -28,7 +31,7 @@ import {
   type RevenueListingProfileLineagePackage
 } from './ProfileLineagePackage.js'
 
-type NegativeStatus = Exclude<VerificationResult['status'], 'verified'>
+type NegativeStatus = Exclude<VerificationResult['status'], 'verified'> | 'pending-finality'
 export type RevenueListingProfileLineageResult =
   | {
       status: 'verified'
@@ -231,6 +234,15 @@ export class RevenueListingProfileLineageVerifier {
         executeProfileInput(assembly, transition.transaction, index, this.limits.scriptMemoryBytes)
         check()
       }
+      const finality = await this.finality(
+        transition.transaction,
+        result.placement,
+        context,
+        signal,
+        check
+      )
+      check()
+      if (finality !== 'verified') return negative(finality)
     }
     check()
     return {
@@ -245,5 +257,44 @@ export class RevenueListingProfileLineageVerifier {
       rawTransaction: graph.rawTransaction,
       transactions: packet.transactions.map(entry => entry.txid)
     }
+  }
+  private async finality(
+    transaction: Transaction,
+    placement: Extract<VerificationResult, { status: 'verified' }>['placement'],
+    context: VerificationContext,
+    signal: AbortSignal,
+    check: () => void
+  ): Promise<'verified' | 'pending-finality' | 'unresolved' | 'invalid'> {
+    if (
+      transaction.lockTime === 0 ||
+      transaction.inputs.every(input => input.sequence === 0xffffffff)
+    )
+      return 'verified'
+    if (placement === undefined)
+      return isOutputTransactionFinal(transaction, context.view) ? 'verified' : 'pending-finality'
+    const height = outputU64(placement.height)
+    if (transaction.lockTime < 500000000)
+      return BigInt(transaction.lockTime) < height ? 'verified' : 'invalid'
+    // Inclusion and its containing-block finality context are separate checks.
+    // A missing historical MTP is unresolved, never today's MTP or an invalid
+    // verdict derived from the context in which the transaction first arrived.
+    const ancestry = await this.chains.resolve(context.view, signal)
+    check()
+    if (canonicalOutputJSON(ancestry.view) !== canonicalOutputJSON(context.view))
+      throw new OutputProtocolError(
+        'context-changed',
+        'Finality ancestry differs from the selected view'
+      )
+    const before = ancestry.medianTimePastBefore
+    if (before === undefined) return 'unresolved'
+    requireLineage(height <= BigInt(Number.MAX_SAFE_INTEGER), 'Unrepresentable finality height')
+    const medianTimePast = outputU64(await before.call(ancestry, Number(height), signal))
+    check()
+    if (
+      ancestry.medianTimePastBefore !== before ||
+      canonicalOutputJSON(ancestry.view) !== canonicalOutputJSON(context.view)
+    )
+      throw new OutputProtocolError('context-changed', 'Historical finality capability changed')
+    return BigInt(transaction.lockTime) < medianTimePast ? 'verified' : 'invalid'
   }
 }

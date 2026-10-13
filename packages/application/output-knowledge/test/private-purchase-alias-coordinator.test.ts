@@ -246,3 +246,133 @@ it('reads installed getters afresh in original order before each caller assessme
     await f.dispose()
   }
 })
+
+it.each(['pending-finality', 'pending-evidence'] as const)(
+  'retains %s before economic reservation and reassesses it after native restart',
+  async status => {
+    const f = purchaseAliasCoordinatorFixture({}, true)
+    try {
+      await f.prepare()
+      const candidate = f.f.f.variant(50)
+      f.setPending(status)
+      await f.submit(candidate)
+      const pending = f.load()
+      expect(pending.progress.status).toBe('prepared')
+      expect(pending.state.firstReservedAt).toBeNull()
+      expect(pending.aliases.state.purchaseCommitment).toBeNull()
+      expect(f.base.counts.admission).toBe(0)
+      expect(f.base.counts.issue).toBe(0)
+      await f.reopen()
+      await f.recover()
+      expect(f.load().progress.status).toBe('prepared')
+      expect(f.base.counts.admission).toBe(0)
+      f.setPending(undefined)
+      await f.recover()
+      expect(f.load().progress.status).toBe('delivered')
+      expect(f.base.counts.admission).toBe(1)
+      expect(f.base.counts.issue).toBe(1)
+      await f.recover()
+      expect(f.base.counts.admission).toBe(1)
+      expect(f.base.counts.issue).toBe(1)
+    } finally {
+      await f.dispose()
+    }
+  }
+)
+
+it('preserves rejection history, ignores unchanged retries, and recovers the same commitment without a second release', async () => {
+  const f = purchaseAliasCoordinatorFixture({ recoverRejected: true })
+  try {
+    await f.prepare()
+    const candidate = f.f.f.variant(51)
+    f.setRejected(true)
+    await f.submit(candidate)
+    const first = f.load()
+    expect(first.progress.status).toBe('admission-rejected')
+    expect(f.audit().map(({ event }) => event.type)).toEqual(['intent', 'outcome'])
+    await f.reopen()
+    await f.recover()
+    await f.submit(candidate)
+    expect(f.base.counts.admission).toBe(1)
+    expect(f.load().progress.decision).toEqual(first.progress.decision)
+    f.setEligible('c1'.repeat(32))
+    await f.recover()
+    expect(f.base.counts.admission).toBe(2)
+    expect(f.load().progress.status).toBe('admission-rejected')
+    const rejectedAgain = f.audit()
+    expect(rejectedAgain.map(({ event }) => event.type)).toEqual([
+      'intent',
+      'outcome',
+      'recovery',
+      'outcome'
+    ])
+    await f.reopen()
+    await f.recover()
+    expect(f.base.counts.admission).toBe(2)
+    expect(f.audit()).toEqual(rejectedAgain)
+    f.setEligible('c2'.repeat(32))
+    f.setRejected(false)
+    f.base.setIssue(false)
+    await expect(f.recover()).rejects.toThrow('issuer unavailable')
+    const admitted = f.load()
+    expect(admitted.progress.status).toBe('admitted-delivery-pending')
+    expect(admitted.progress.decision).toBeNull()
+    expect(admitted.progress.acquisitionId).toBe(first.progress.acquisitionId)
+    expect(admitted.progress.purchaseCommitment).toBe(first.progress.purchaseCommitment)
+    expect(admitted.state.firstReservedAt).toBe(first.state.firstReservedAt)
+    expect(admitted.custody.original).toEqual(first.custody.original)
+    expect(f.audit().slice(0, 4)).toEqual(rejectedAgain)
+    f.base.setIssue(true)
+    await f.recover()
+    expect(f.load().progress.status).toBe('delivered')
+    const count = f.base.counts.admission
+    await f.recover()
+    expect(f.base.counts.admission).toBe(count)
+    expect(f.base.counts.potatoes).toBe(1)
+  } finally {
+    await f.dispose()
+  }
+})
+
+it('does not extend an unadmitted recovery promise when eligible evidence arrives after its deadline', async () => {
+  const f = purchaseAliasCoordinatorFixture({ recoverRejected: true })
+  try {
+    await f.prepare()
+    f.setRejected(true)
+    await f.submit(f.f.f.variant(52))
+    const first = f.load(),
+      audit = f.audit(),
+      count = f.base.counts.admission
+    f.setEligible('c3'.repeat(32))
+    f.setRejected(false)
+    f.f.base.setNow(first.custody.original.terms.body.recoveryUntil)
+    await expect(f.recover()).rejects.toThrow('recovery promise elapsed')
+    expect(f.base.counts.admission).toBe(count)
+    expect(f.load().progress.decision).toEqual(first.progress.decision)
+    expect(f.audit()).toEqual(audit)
+  } finally {
+    await f.dispose()
+  }
+})
+
+it('refuses a new alias after the original rejection recovery deadline without changing financial identity or audit', async () => {
+  const f = purchaseAliasCoordinatorFixture({ recoverRejected: true })
+  try {
+    await f.prepare()
+    f.setRejected(true)
+    await f.submit(f.f.f.variant(53))
+    const first = f.load(),
+      audit = f.audit(),
+      count = f.base.counts.admission
+    f.setRejected(false)
+    f.f.base.setNow(first.custody.original.terms.body.recoveryUntil)
+    await expect(f.submit(f.f.f.variant(54))).rejects.toThrow('recovery promise elapsed')
+    expect(f.load().state).toEqual(first.state)
+    expect(f.load().aliases.state).toEqual(first.aliases.state)
+    expect(f.audit()).toEqual(audit)
+    expect(f.base.counts.admission).toBe(count)
+    expect(f.base.counts.issue).toBe(0)
+  } finally {
+    await f.dispose()
+  }
+})

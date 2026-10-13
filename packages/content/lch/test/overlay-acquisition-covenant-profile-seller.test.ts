@@ -28,6 +28,36 @@ it('prepares current immutable material and issues complete independently verifi
   expect(f.sellerCounts).toEqual({ load: 1, lineage: 1, purchase: 2, release: 1 })
 }, 60000)
 
+it('keeps the existing complete verifier as the default assessment and requires explicit installation for pending assessments', async () => {
+  const f = await lchCovenantProfileSellerFixture(),
+    custody = await f.prepareSeller(),
+    abort = signal()
+  const result = await f.sellerDomain.assess(f.submission, custody, abort)
+  expect(result.status).toBe('verified')
+  if (result.status !== 'verified') throw new Error('Default assessment refused complete proof')
+  expect(result.validation.purchaseCommitment).toBe(f.purchaseCommitment)
+  result.validation.checkCurrent()
+  const verification = {
+    ...f.sellerOptions.verification,
+    assessPurchase: async () => ({ status: 'pending-finality' as const, checkCurrent: () => {} })
+  }
+  const installed = new LCHOverlayCovenantProfileSeller({ ...f.sellerOptions, verification })
+  expect(installed.id).not.toBe(f.sellerDomain.id)
+  await expect(installed.assess(f.submission, custody, abort)).rejects.toThrow()
+  const fresh = await f.prepareSeller(installed),
+    pending = await installed.assess(f.submission, fresh, abort)
+  expect(pending.status).toBe('pending-finality')
+  if (pending.status === 'verified')
+    throw new Error('Controlled pending assessment granted authority')
+  pending.checkCurrent()
+  expect(f.sellerCounts.release).toBe(0)
+  verification.assessPurchase = async () => ({
+    status: 'pending-finality' as const,
+    checkCurrent: () => {}
+  })
+  await expect(installed.assess(f.submission, fresh, abort)).rejects.toThrow('assessment changed')
+}, 60000)
+
 it('fulfills retained current rights after catalogue withdrawal and Offer expiry without rewriting original custody', async () => {
   const f = await lchCovenantProfileSellerFixture(),
     custody = await f.prepareSeller(),
@@ -134,4 +164,70 @@ it('uses a distinct current installation and refuses historical reinterpretation
   await expect(
     f.sellerDomain.verify({ ...f.submission, acquisitionId: 'ac'.repeat(32) }, custody, abort)
   ).rejects.toThrow('another original request')
+}, 60000)
+
+it.each(['pending-finality', 'pending-evidence'] as const)(
+  'retains the installed %s assessment without granting purchase or release authority',
+  async status => {
+    const f = await lchCovenantProfileSellerFixture(),
+      abort = signal()
+    let current = true
+    const seller = new LCHOverlayCovenantProfileSeller({
+      ...f.sellerOptions,
+      verification: {
+        ...f.sellerOptions.verification,
+        assessPurchase: async () => ({
+          status,
+          checkCurrent() {
+            if (!current) throw new Error('Installed assessment context changed')
+          }
+        })
+      }
+    })
+    const custody = await f.prepareSeller(seller)
+    const result = await seller.assess(f.submission, custody, abort)
+    expect(result.status).toBe(status)
+    if (result.status === 'verified') throw new Error('Pending assessment granted authority')
+    result.checkCurrent()
+    expect(f.sellerCounts.purchase).toBe(0)
+    expect(f.sellerCounts.release).toBe(0)
+    current = false
+    expect(() => result.checkCurrent()).toThrow('Installed assessment context changed')
+  },
+  60000
+)
+
+it('retains a complete installed positive assessment and refuses its changed verification context', async () => {
+  const f = await lchCovenantProfileSellerFixture(),
+    abort = signal()
+  let current = true
+  const seller = new LCHOverlayCovenantProfileSeller({
+    ...f.sellerOptions,
+    verification: {
+      ...f.sellerOptions.verification,
+      assessPurchase: async (...args) => {
+        const verified = await f.sellerOptions.verification.purchase(...args)
+        return {
+          status: 'verified' as const,
+          validation: {
+            purchaseCommitment: verified.purchaseCommitment,
+            checkCurrent() {
+              verified.checkCurrent()
+              if (!current) throw new Error('Installed assessment context changed')
+            }
+          }
+        }
+      }
+    }
+  })
+  const custody = await f.prepareSeller(seller)
+  const result = await seller.assess(f.submission, custody, abort)
+  expect(result.status).toBe('verified')
+  if (result.status !== 'verified') throw new Error('Complete installed assessment refused')
+  expect(result.validation.purchaseCommitment).toBe(f.purchaseCommitment)
+  result.validation.checkCurrent()
+  expect(f.sellerCounts.purchase).toBe(1)
+  expect(f.sellerCounts.release).toBe(0)
+  current = false
+  expect(() => result.validation.checkCurrent()).toThrow('Installed assessment context changed')
 }, 60000)

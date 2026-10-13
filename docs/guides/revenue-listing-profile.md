@@ -87,11 +87,23 @@ eight recipient proof slots, or the active ABI. Funding and fee selection remain
 caller responsibilities. `prepare(fundedTransaction)` owns and checks source
 transactions, exact input-zero identity, all required outputs, amounts, input
 count, optional change and route finality before requesting any signature.
-Activation, purchase, split, payout and early retirement use zero locktime and
-final sequences on every input. Expiry retirement authenticates a height at
-least the descriptor expiry and below 500000000, with a nonfinal listing
-sequence. Strict Bitcoin height finality first permits inclusion at lockHeight
-plus one; Script construction is not a chain-finality assessment.
+By default, activation, purchase, split, payout and early retirement are
+constructed with zero locktime and final sequences on every input. These are
+recommendations, not extra validator acceptance rules. The additive
+`preparePreservingHeader(fundedTransaction)` checks the complete same plan and
+source/output layout while retaining its ordinary U32 locktime and input
+sequences. It recomputes the full commitment and witnesses for those exact
+bytes; changing a header afterwards fails the prepared-layout fence. It does
+not declare the transaction Bitcoin-final or Script/domain-valid.
+
+Expiry retirement authenticates a height at least the descriptor expiry and
+below 500000000, with a nonfinal listing sequence. Strict Bitcoin height finality
+first permits inclusion at lockHeight plus one. Validators independently execute
+all Scripts and accept any ordinary Bitcoin-final transition meeting the frozen
+domain rules, including alternative headers and descendants of transitions that
+were non-final when first observed. A currently non-final valid transition is
+pending finality and cannot consume projected state, invoke topic admission or
+release private material.
 
 `signingRequests()` returns only the seller's fixed-child request for split and
 early retirement. Use a protected BRC-100 `createSignature` implementation with

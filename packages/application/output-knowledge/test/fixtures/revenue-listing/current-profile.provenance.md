@@ -18,3 +18,18 @@ sources and protected child-signing APIs with disclosed offline toy actors. Scri
 execution of unsigned retirement alone does not establish height finality or
 selected-chain inclusion. Native custody, alias recovery, wallet containment,
 all adapter integrations and full qualification remain independent requirements.
+
+The final merged PR295 revision is
+`bdbd7aec0731347230e6b4190864e90b9ff27898`. Its clarification accepts ordinary
+Bitcoin-final transitions and changes recovery requirements; the frozen programs,
+descriptor and positive vector bytes above did not change. The original archive
+commit and digests above remain the corpus provenance, not a superseded claim of
+current specification authority.
+
+The fixture now supplies the synthetic ancestry through height102, preserving the
+original headers through height101. Additional finality cases use disclosed toy
+transactions with alternative headers and a genuine synthetic height102 Merkle
+placement. Height and timestamp locktimes are checked against the containing
+block height and preceding median-time-past. Missing verified historical MTP is
+unresolved. Currently immature, Script-valid unconfirmed candidates are pending;
+neither status establishes topical admission or a private release.

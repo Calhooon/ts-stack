@@ -40,6 +40,11 @@ export interface PrivatePurchaseValidation {
   readonly purchaseCommitment?: string
   checkCurrent(): void
 }
+/** Installed local assessment, never an HTTP verdict. Pending evidence confers
+ * no candidate identity, financial reservation, admission or release authority. */
+export type PrivatePurchaseCandidateAssessment =
+  | { status: 'verified'; validation: PrivatePurchaseValidation }
+  | { status: 'pending-finality' | 'pending-evidence'; checkCurrent(): void }
 export interface PrivatePurchaseDomain {
   /** Independently validate listing authority, complete Bitcoin/domain evidence
    * and private readiness before promising the original bounded material.
@@ -57,6 +62,13 @@ export interface PrivatePurchaseDomain {
     custody: PrivatePurchaseCustody,
     signal: AbortSignal
   ): Promise<PrivatePurchaseValidation>
+  /** Explicit companion for domains that distinguish currently non-final or
+   * incomplete candidates. Existing verify-only domains retain their behavior. */
+  assess?(
+    candidate: OutputPurchaseSubmit,
+    custody: PrivatePurchaseCustody,
+    signal: AbortSignal
+  ): Promise<PrivatePurchaseCandidateAssessment>
   /** Catalogue withdrawal must not discard an already retained obligation. */
   isCurrent(original: PrivatePurchaseOriginal): boolean
   /** Pure/idempotent issuance from the retained accepted right; no new payment. */
@@ -112,6 +124,18 @@ export interface PrivatePurchaseAdmission {
     signal: AbortSignal,
     context: { checkCurrent(): void }
   ): Promise<PrivatePurchaseAdmissionOutcome>
+  /** Read-only independent re-evaluation under the original selected policy.
+   * Undefined preserves the rejection. eligibilityId binds the verified evidence
+   * and policy assessment, and must remain stable for unchanged retries. It is
+   * not a request ID or timestamp. This method cannot admit or account a sale.
+   * The retained guard may run inside the native writer: it must not open a
+   * ledger read. Native custody fences use that writer's supplied view. */
+  assessRecovery?(
+    job: PrivatePurchaseAdmissionJob,
+    rejection: Extract<PrivatePurchaseAdmissionOutcome, { status: 'rejected' }>,
+    signal: AbortSignal,
+    context: { readonly purchaseCommitment?: string; checkCurrent(): void }
+  ): Promise<({ eligibilityId: string } & PrivatePurchaseValidation) | undefined>
 }
 export interface PrivatePurchaseRelease {
   /** Undefined leaves the durable admitted obligation pending without issuing a secret. */

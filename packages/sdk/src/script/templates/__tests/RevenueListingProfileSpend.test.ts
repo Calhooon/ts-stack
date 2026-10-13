@@ -78,6 +78,46 @@ test('retains its own plan and source bytes rather than a caller-owned mutable r
 })
 
 test.each([
+  { lockTime: 1, listingSequence: 0xffffffff, fundingSequence: 0xffffffff },
+  { lockTime: 0, listingSequence: 0xfffffffe, fundingSequence: 0xffffffff },
+  { lockTime: 0, listingSequence: 0xffffffff, fundingSequence: 0xfffffffe },
+  { lockTime: 900000000, listingSequence: 0xfffffffe, fundingSequence: 0xfffffffd }
+])(
+  'preserves an explicitly selected Bitcoin header without changing recommended defaults: %j',
+  async header => {
+    const result = await construct(
+      purchase,
+      { operation: 'payout', units: '100' },
+      fixture.descriptor,
+      10,
+      true,
+      header
+    )
+    expect(result.completed.lockTime).toBe(header.lockTime)
+    expect(result.completed.inputs.map(input => input.sequence)).toEqual([
+      header.listingSequence,
+      header.fundingSequence
+    ])
+    const recommended = new RevenueListingProfileSpend(
+      profile,
+      fixture.descriptor,
+      [{ rawTransaction: purchase.toHex(), outputIndex: 0 }],
+      { operation: 'payout', units: '100' }
+    )
+    expect(recommended.plan().lockTime).toBe(0)
+    expect(recommended.plan().requireAllFinalInputs).toBe(true)
+    expect(() => recommended.prepare(result.completed)).toThrow()
+    const changed = Transaction.fromHex(result.completed.toHex())
+    changed.inputs.forEach((input, index) => {
+      input.sourceTransaction = result.completed.inputs[index].sourceTransaction
+    })
+    changed.lockTime++
+    expect(() => result.prepared.assertFinalLayout(changed)).toThrow()
+  },
+  30000
+)
+
+test.each([
   { operation: 'split', firstAmount: '301' },
   { operation: 'payout', units: '100' },
   { operation: 'retire', authority: 'seller' },

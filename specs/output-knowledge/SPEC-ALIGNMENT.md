@@ -1,8 +1,8 @@
 # Current specification alignment
 
 The implementation target is [BRC PR295](https://github.com/bsv-blockchain/BRCs/pull/295)
-at immutable commit `1b9a75e497b5856675af1ce01fd86843c37d07f9`. This is a
-pre-adoption replacement of the reference family. Earlier component receipts,
+at immutable commit `bdbd7aec0731347230e6b4190864e90b9ff27898`. This is the final merged
+revision of the replacement reference family. Earlier component receipts,
 integration marks and mutation campaigns cannot qualify the new contract.
 This record tracks implementation work, not amendments to the BRCs.
 
@@ -177,8 +177,9 @@ recorded in the PR completion evidence.
 - [x] Support purchase, seller-child split, permissionless proportional payout,
       early seller-child retirement and permissionless expiry retirement. Reject
       merge and schedule amendment. Changed distributions require a new lineage.
-- [x] Apply zero-locktime/all-final rules per route, with the specified exception
-      for unsigned expiry retirement. Inclusion in candidate block expiryHeight
+- [x] Accept ordinary Bitcoin-final, Script/domain-valid transitions on every
+      route; zero locktime and final sequences are construction recommendations.
+      Unsigned expiry retirement retains its Script-enforced height and sequence. Inclusion in candidate block expiryHeight
       remains forbidden; strict height finality first permits inclusion in block
       expiryHeight + 1. An observed tip at expiryHeight evaluates that next block.
       Pre-maturity intent remains non-consuming. Test
@@ -212,3 +213,33 @@ recorded in the PR completion evidence.
 - [ ] Verify final packed consumers, platforms, conformance, actual CodeQL and zero-new Sonar findings on the same published head.
 
 These gates remain open. Demonstrated reference components do not by themselves complete Checkpoint 2.
+
+## Final merged revision follow-up
+
+The final merged revision retains every frozen Script, descriptor, ABI and
+positive fixture byte. Validators accept ordinary Bitcoin-final transitions
+with alternative locktime/sequences. Currently non-final Script-valid histories
+return `pending-finality`; verified inclusion uses the containing block's context.
+Recommended constructors retain their defaults. Initial working-tree SDK and
+application finality regressions passed; complete final-source qualification
+remains outstanding.
+
+The explicit protected pending-candidate companion retains bounded evidence
+before an economic identity or external effect is reserved. A separately
+selected journaled alias installation prepays append-only admission history and
+completion capacity. Authorized rejection recovery independently rechecks the
+original commitment and selected policy, atomically records a fresh reconciliation
+intent, and consults exact durable topic history before submission. Earlier
+operations/rejections remain durable after alias eviction. Unchanged eligibility
+identities cannot restart rejected work. These source additions are undergoing
+regression and integration qualification; this section does not mark Checkpoint 2
+complete. Historical installations, formats and qualification evidence retain
+their original meanings.
+
+The user-selected second review checkpoint is local-first. Its handoff requires
+complete local qualification of the final source, with the applicable corpus,
+seeds, limits, thresholds, platform and packed-consumer checks preserved. The user
+will run hosted CI after that review. A local pass is never reported as hosted CI
+green; the exact-head repository merge, Sonar and CodeQL gates remain required
+before merge or publication. The implementation and documentation checkmarks
+below do not by themselves qualify either checkpoint.

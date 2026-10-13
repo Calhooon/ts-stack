@@ -62,6 +62,15 @@ and successor history succeed. These portable components leave asset authority,
 currentness, native wallet/alias custody and private release to installed owners.
 See the [current-profile guide](../../../docs/guides/revenue-listing-profile-lineage.md).
 
+The final merged profile uses ordinary Bitcoin finality. Script-valid immature
+histories return `pending-finality`; they cannot consume projected state or
+authorize admission/release. The optional native pending-candidate and journaled
+rejection-recovery companions retain original financial identity, deadlines and
+all earlier decisions. See the
+[purchase custody guide](../../../docs/guides/private-purchase-alias-custody.md#pending-candidates-and-rejection-recovery)
+for explicit installation and independent policy/admission responsibilities.
+These final-revision additions are undergoing qualification.
+
 The same optional entry supplies `RevenueListingProfileAuthority`. Its asynchronous
 creation preflight checks an installed BRC-100 wallet's actual identity, own fixed
 child and protected signing before funding. Split and early-retirement signatures

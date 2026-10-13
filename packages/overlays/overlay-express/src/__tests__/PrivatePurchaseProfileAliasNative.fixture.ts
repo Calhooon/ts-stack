@@ -70,6 +70,8 @@ import {
   REVENUE_LISTING_LINEAGE_SCHEMA
 } from '../../../../application/output-knowledge/src/revenue-listing/RevenueListingPurchaseVerifier.js'
 import { SQLitePrivatePurchaseAliases } from '../../../../application/output-knowledge/src/private/SQLitePrivatePurchaseAliases.js'
+import { SQLitePrivatePurchaseAdmissionJournal } from '../../../../application/output-knowledge/src/private/SQLitePrivatePurchaseAdmissionJournal.js'
+import { SQLitePrivatePurchaseCandidateWork } from '../../../../application/output-knowledge/src/private/SQLitePrivatePurchaseEvidence.js'
 import { SDKPrivatePurchaseAliasCurrentness } from '../../../../application/output-knowledge/src/private/SDKPrivatePurchaseAliasCurrentness.js'
 import { PrivatePurchaseAliasDisclosure } from '../../../../application/output-knowledge/src/private/PrivatePurchaseAliasDisclosure.js'
 import { PrivatePurchaseBuyerAliasCurrentness } from '../../../../application/output-knowledge/src/private/PrivatePurchaseBuyerAliasCurrentness.js'
@@ -360,7 +362,7 @@ export async function privatePurchaseProfileAliasNativeFixture(
         checkCurrent: stillCurrent
       }
     },
-    validatePurchase = async (
+    assessPurchase = async (
       ...args: [
         Parameters<typeof purchase.verify>[0],
         Parameters<typeof purchase.verify>[1],
@@ -370,12 +372,29 @@ export async function privatePurchaseProfileAliasNativeFixture(
       const selectedView = view(),
         result = await purchase.verify(args[0], args[1], selectedView, args[2]),
         stillCurrent = verificationGuard(selectedView)
+      stillCurrent()
+      if (result.status === 'pending-finality')
+        return { status: 'pending-finality' as const, checkCurrent: stillCurrent }
+      if (result.status === 'unresolved')
+        return { status: 'pending-evidence' as const, checkCurrent: stillCurrent }
       outputAssert(
         result.status === 'verified',
         'Complete selected purchase refused: ' + canonicalOutputJSON(result)
       )
       stillCurrent()
-      return { purchaseCommitment: result.purchaseCommitment, checkCurrent: stillCurrent }
+      return {
+        status: 'verified' as const,
+        validation: { purchaseCommitment: result.purchaseCommitment, checkCurrent: stillCurrent }
+      }
+    },
+    validatePurchase = async (...args: Parameters<typeof assessPurchase>) => {
+      const assessment = await assessPurchase(...args)
+      outputAssert(
+        assessment.status === 'verified',
+        'Pending purchase cannot be admitted or released',
+        'unavailable'
+      )
+      return assessment.validation
     },
     validateBuyerLineage = async (
       packet: Parameters<typeof buyerLineage.verify>[0],
@@ -485,6 +504,7 @@ export async function privatePurchaseProfileAliasNativeFixture(
         id: 'actual-genesis-script-and-native-admission',
         lineage: validateLineage,
         purchase: validatePurchase,
+        assessPurchase,
         release: releaseAssessment
       }
     }),
@@ -500,6 +520,7 @@ export async function privatePurchaseProfileAliasNativeFixture(
       maximumRequestBytes: 524288
     })
   const issue = seller.issue.bind(seller)
+  let localRejection = false
   seller.issue = (...args) => {
     counts.issuance++
     return issue(...args)
@@ -512,7 +533,14 @@ export async function privatePurchaseProfileAliasNativeFixture(
         codec
       ),
       closeDomain = track(() => domain.close()),
-      aliases = new SQLitePrivatePurchaseAliases(domain, contracts, proofLimits),
+      admissionJournal = new SQLitePrivatePurchaseAdmissionJournal(domain, contracts, 16),
+      aliases = new SQLitePrivatePurchaseAliases(domain, contracts, proofLimits, admissionJournal),
+      candidateWork = new SQLitePrivatePurchaseCandidateWork(domain, contracts, {
+        maximumCandidateBytes: proofLimits.maximumCandidateBytes,
+        maximumUpdates: proofLimits.maximumWrites,
+        maximumTransactions: 4096,
+        maximumDependencies: 16384
+      }),
       store = new SQLitePrivatePurchaseAliasStore(domain, contracts, aliases, limits, policy, 8),
       access = new PrivatePurchaseAccess(
         domain,
@@ -534,9 +562,26 @@ export async function privatePurchaseProfileAliasNativeFixture(
         serviceDomain: domain,
         aliases,
         currentness,
+        candidateWork,
+        recoverRejected: true,
         access,
         domain: seller,
-        admission,
+        admission: {
+          recover: async (job, signal, context) => {
+            if (localRejection) {
+              context.checkCurrent()
+              return {
+                status: 'rejected',
+                operationId: job.operationId,
+                txid: job.candidate.txid,
+                reason: 'Disclosed local refusal; global outcome remains unknown',
+                evidence: 'AA=='
+              }
+            }
+            return admission.recover(job, signal, context)
+          },
+          assessRecovery: (...args) => admission.assessRecovery(...args)
+        },
         release: {
           assess: async (custody, progress, candidate, signal) => {
             outputAssert(progress.admission && progress.txid, 'Retained admission required')
@@ -590,6 +635,8 @@ export async function privatePurchaseProfileAliasNativeFixture(
       domain,
       store,
       aliases,
+      admissionJournal,
+      candidateWork,
       currentness,
       coordinator,
       historicalDisclosure,
@@ -869,6 +916,9 @@ export async function privatePurchaseProfileAliasNativeFixture(
     retained,
     clock,
     requests,
+    setLocalRejection(value: boolean) {
+      localRejection = value
+    },
     lostReplies,
     wire,
     get buyerDomain() {

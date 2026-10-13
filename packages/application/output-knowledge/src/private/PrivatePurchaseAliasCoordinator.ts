@@ -7,6 +7,7 @@ import {
   outputIdentity,
   outputPacketDigestWithInlineStrings as outputPacketDigest,
   outputString,
+  outputU64,
   OutputProtocolError,
   parseOutputPurchasePrepareWithOwnedRecords as parseOutputPurchasePrepare,
   parseOutputPurchaseSubmitWithOwnedRecords as parseOutputPurchaseSubmit,
@@ -50,6 +51,7 @@ import {
   type PrivatePurchaseProgress
 } from './PrivatePurchaseProgress.js'
 import type { PrivatePurchaseCustody } from './SQLitePrivatePurchaseStore.js'
+import type { SQLitePrivatePurchaseCandidateWork } from './SQLitePrivatePurchaseEvidence.js'
 /** Ephemeral report scoped to the original native acquisition. The wire carries
  * only currentAlias; this guard rechecks domain, selected chain, authentication
  * and the native head immediately before physical disclosure. */
@@ -65,6 +67,10 @@ export interface PrivatePurchaseAliasCoordinatorOptions {
   store: PrivatePurchaseAliasOwner
   aliases: SQLitePrivatePurchaseAliases
   currentness: PrivatePurchaseAliasCurrentness
+  /** Explicit protected pre-reservation evidence owner for assess-capable domains. */
+  candidateWork?: SQLitePrivatePurchaseCandidateWork
+  /** Select only with journaled aliases and read-only admission.assessRecovery. */
+  recoverRejected?: true
   /** Optional installed assessment of irrecoverable local material failure.
    * Ordinary issue/sign/transport errors remain pending and never call fail. */
   failure?: {
@@ -152,6 +158,34 @@ export class PrivatePurchaseAliasCoordinator {
       pin(options.currentness, 'assess')
     ]
     if (options.failure) this.unchanged = [...this.unchanged, pin(options.failure, 'assess')]
+    if (options.candidateWork) {
+      options.candidateWork.installedOn(options.serviceDomain, options.contracts)
+      outputAssert(
+        typeof options.domain.assess === 'function',
+        'Pending candidate work needs an installed domain assessor'
+      )
+      this.unchanged = [
+        ...this.unchanged,
+        pin(options.domain, 'assess'),
+        pin(options.candidateWork, 'installedOn'),
+        pin(options.candidateWork, 'reserve'),
+        pin(options.candidateWork, 'read'),
+        pin(options.candidateWork, 'propose')
+      ]
+    }
+    if (options.recoverRejected) {
+      outputAssert(
+        options.aliases.supportsRecovery() &&
+          typeof options.admission.assessRecovery === 'function',
+        'Rejected recovery needs journaled custody and an installed policy assessor'
+      )
+      this.unchanged = [
+        ...this.unchanged,
+        pin(options.aliases, 'supportsRecovery'),
+        pin(options.aliases, 'recoverAdmission'),
+        pin(options.admission, 'assessRecovery')
+      ]
+    }
     for (const fn of [options.clock, options.manifest, options.sign])
       outputAssert(typeof fn === 'function', 'Purchase installation callback is required')
     this.work = new BoundedOutputWork(
@@ -231,6 +265,7 @@ export class PrivatePurchaseAliasCoordinator {
         validation()
         this.ports.contracts.retain(selected.record.manifest, view.observedAt)
       }
+      this.ports.candidateWork?.reserve(original, this.ports.clock, preparedGuard)
       this.ports.store.prepare(
         {
           format: 'private-purchase-custody/1',
@@ -251,51 +286,149 @@ export class PrivatePurchaseAliasCoordinator {
       candidate = parseOutputPurchaseSubmit(input)
     return this.run(caller, async signal => {
       const loaded = this.load(candidate.acquisitionId, caller, signal)
-      const verification = await this.verifyCandidate(candidate, loaded, caller, signal)
-      const assessment = await this.placement(loaded, candidate, caller, signal)
-      const guard = this.guard(candidate.acquisitionId, caller, signal, loaded.custody.original)
-      const proposal = this.ports.aliases.propose(
-        loaded.custody.original,
-        candidate,
-        verification,
-        assessment?.placement,
-        this.ports.clock,
-        guard
-      )
-      outputAssert(
-        proposal.status === 'ready' && proposal.candidate !== undefined,
-        'Alias custody is occupied by unresolved external operations',
-        'limited'
-      )
-      // Merging BEEF can introduce evidence. Independently verify the complete
-      // cumulative candidate before its first identity and raw bytes are committed.
-      const combined = await this.verifyCandidate(proposal.candidate, loaded, caller, signal)
-      outputAssert(
-        combined.purchaseCommitment === verification.purchaseCommitment,
-        'Combined alias changes the economic commitment',
-        'conflict'
-      )
-      this.ports.store.retain(
-        loaded,
-        proposal,
-        this.ports.clock,
-        view => {
-          guard(view)
-          verification.checkCurrent()
-          combined.checkCurrent()
-          assessment?.placement.checkCurrent()
-        },
-        combined
-      )
-      await this.admitJob(candidate.acquisitionId, candidate.txid, caller, signal)
-      await this.progress(candidate.acquisitionId, caller, signal, new Set([candidate.txid]))
+      if (await this.retainPendingCandidate(candidate, loaded, caller, signal))
+        return candidate.acquisitionId
+      await this.acceptCandidate(candidate, loaded, caller, signal)
       return candidate.acquisitionId
     })
+  }
+  private async acceptCandidate(
+    candidate: OutputPurchaseSubmit,
+    loaded: PrivatePurchaseAliasedLoaded,
+    caller: PrivatePurchaseCaller,
+    signal: AbortSignal
+  ): Promise<void> {
+    const rejectedRecovery =
+      this.ports.recoverRejected &&
+      loaded.progress.status === 'admission-rejected' &&
+      candidate.txid !== loaded.progress.txid
+    const recoveryUntil = outputU64(loaded.custody.original.terms.body.recoveryUntil)
+    const checkRecoveryWindow = (observedAt: string) => {
+      if (rejectedRecovery)
+        outputAssert(
+          outputU64(observedAt) < recoveryUntil,
+          'Unadmitted recovery promise elapsed',
+          'limited'
+        )
+    }
+    if (rejectedRecovery) checkRecoveryWindow(this.ports.clock())
+    const verification = await this.verifyCandidate(candidate, loaded, caller, signal)
+    const assessment = await this.placement(loaded, candidate, caller, signal)
+    const originalGuard = this.guard(
+      candidate.acquisitionId,
+      caller,
+      signal,
+      loaded.custody.original
+    )
+    const guard: ProtectedLedgerGuard = view => {
+      originalGuard(view)
+      checkRecoveryWindow(view.observedAt)
+    }
+    const proposal = this.ports.aliases.propose(
+      loaded.custody.original,
+      candidate,
+      verification,
+      assessment?.placement,
+      this.ports.clock,
+      guard
+    )
+    outputAssert(
+      proposal.status === 'ready' && proposal.candidate !== undefined,
+      'Alias custody is occupied by unresolved external operations',
+      'limited'
+    )
+    // Merging BEEF can introduce evidence. Independently verify the complete
+    // cumulative candidate before its first identity and raw bytes are committed.
+    const combined = await this.verifyCandidate(proposal.candidate, loaded, caller, signal)
+    outputAssert(
+      combined.purchaseCommitment === verification.purchaseCommitment,
+      'Combined alias changes the economic commitment',
+      'conflict'
+    )
+    this.ports.store.retain(
+      loaded,
+      proposal,
+      this.ports.clock,
+      view => {
+        guard(view)
+        verification.checkCurrent()
+        combined.checkCurrent()
+        assessment?.placement.checkCurrent()
+      },
+      combined
+    )
+    await this.admitJob(candidate.acquisitionId, candidate.txid, caller, signal)
+    await this.progress(candidate.acquisitionId, caller, signal, new Set([candidate.txid]))
+  }
+  private async retainPendingCandidate(
+    candidate: OutputPurchaseSubmit,
+    loaded: PrivatePurchaseAliasedLoaded,
+    caller: PrivatePurchaseCaller,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const work = this.ports.candidateWork
+    if (!work) return false
+    const guard = this.guard(candidate.acquisitionId, caller, signal, loaded.custody.original)
+    const assessment = await this.ports.domain.assess!(
+      structuredClone(candidate),
+      structuredClone(loaded.custody),
+      signal
+    )
+    this.requireCurrent(caller, signal)
+    if (assessment.status === 'verified') return false
+    outputAssert(
+      assessment.status === 'pending-finality' || assessment.status === 'pending-evidence',
+      'Unsupported pending candidate assessment',
+      'unsupported'
+    )
+    const check = this.validation(assessment),
+      status = assessment.status
+    const current = () => {
+      outputAssert(
+        Object.getOwnPropertyDescriptor(assessment, 'status')?.value === status,
+        'Pending assessment changed',
+        'context-changed'
+      )
+      check()
+    }
+    current()
+    // This slot cannot reserve a candidate identity or external operation. Its
+    // complete cumulative bytes are reassessed independently before later pinning.
+    const plan = work.propose(loaded.custody.original, candidate, this.ports.clock, guard)
+    plan.retain(this.ports.clock, view => {
+      guard(view)
+      loaded.aliases.checkCurrent(view)
+      current()
+    })
+    return true
   }
   recover(idInput: string, supplied: PrivatePurchaseCaller): Promise<string> {
     const id = outputHex32(idInput),
       caller = this.caller(supplied)
     return this.run(caller, async signal => {
+      const loaded = this.load(id, caller, signal)
+      if (
+        this.ports.candidateWork &&
+        loaded.progress.status !== 'delivered' &&
+        loaded.progress.status !== 'delivery-failed' &&
+        loaded.progress.status !== 'expired'
+      ) {
+        const saved = this.ports.candidateWork.read(
+          loaded.custody.original,
+          this.ports.clock,
+          this.guard(id, caller, signal, loaded.custody.original)
+        )
+        if (
+          saved.candidate &&
+          !(await this.retainPendingCandidate(saved.candidate, loaded, caller, signal))
+        )
+          await this.acceptCandidate(saved.candidate, this.load(id, caller, signal), caller, signal)
+      }
+      if (this.ports.recoverRejected) {
+        const rejected = this.load(id, caller, signal)
+        if (rejected.progress.status === 'admission-rejected')
+          await this.admitJob(id, rejected.progress.txid!, caller, signal)
+      }
       await this.progress(id, caller, signal)
       return id
     })
@@ -465,11 +598,13 @@ export class PrivatePurchaseAliasCoordinator {
       ...loaded.aliases.state.unconfirmed,
       ...loaded.aliases.state.pending
     ]
+    if (entries.some(entry => entry?.txid === txid && entry.admission === 'admitted')) return
+    const rejected = entries.some(entry => entry?.txid === txid && entry.admission === 'rejected')
     if (
-      entries.some(
-        entry =>
-          entry?.txid === txid && (entry.admission === 'admitted' || entry.admission === 'rejected')
-      )
+      rejected &&
+      (!this.ports.recoverRejected ||
+        loaded.progress.status === 'delivered' ||
+        loaded.progress.status === 'delivery-failed')
     )
       return
     const candidate = [...loaded.aliases.candidates.values()].find(value => value.txid === txid)
@@ -479,6 +614,64 @@ export class PrivatePurchaseAliasCoordinator {
     const authorized: ProtectedLedgerGuard = view => {
       guard(view)
       validation.checkCurrent()
+    }
+    if (rejected) {
+      const prior = [...loaded.aliases.outcomes.values()].find(
+        outcome => outcome.txid === txid && outcome.status === 'rejected'
+      )
+      outputAssert(
+        prior?.status === 'rejected',
+        'Recovery lacks its retained rejection',
+        'unavailable'
+      )
+      const eligibility = await this.ports.admission.assessRecovery!(
+        {
+          operationId: privatePurchaseOperation(loaded.custody.original, txid),
+          original: structuredClone(loaded.custody.original),
+          candidate: structuredClone(candidate)
+        },
+        structuredClone(prior),
+        signal,
+        {
+          purchaseCommitment: validation.purchaseCommitment,
+          // This retained guard also runs inside the recovery writer. Keep it
+          // free of native reads; the original alias fence is checked against
+          // that writer's supplied view below.
+          checkCurrent: () => {
+            this.requireCurrent(caller, signal)
+            outputAssert(
+              permitted(this.ports.domain.isCurrent(structuredClone(loaded.custody.original))),
+              'Purchase domain authority changed',
+              'context-changed'
+            )
+            validation.checkCurrent()
+          }
+        }
+      )
+      this.requireCurrent(caller, signal)
+      if (!eligibility) return
+      const eligibilityCheck = this.validation(eligibility)
+      eligibilityCheck()
+      outputAssert(
+        eligibility.purchaseCommitment === validation.purchaseCommitment,
+        'Recovery changes the original purchase commitment',
+        'conflict'
+      )
+      const recoveryGuard: ProtectedLedgerGuard = view => {
+        authorized(view)
+        loaded.aliases.checkCurrent(view)
+        eligibilityCheck()
+      }
+      const recovery = this.ports.aliases.recoverAdmission(
+        loaded.custody.original,
+        txid,
+        eligibility,
+        this.ports.clock,
+        recoveryGuard
+      )
+      if (!recovery) return
+      this.ready(recovery).retain(this.ports.clock, recoveryGuard)
+      loaded = this.load(id, caller, signal)
     }
     // The persistent exact job MUST precede the first external call. Its unknown
     // outcome remains durable across restart, selection changes and issued history.

@@ -96,6 +96,16 @@ export interface LCHCovenantSellerVerification<
     original: { request: OutputPurchasePrepare; terms: OutputSignedPurchaseTerms; seller: string },
     signal: AbortSignal
   ): Promise<LCHOverlayVerifiedCovenantPurchase>
+  /** Optional local pre-reservation assessment. Pending results confer no
+   * settlement, License, admission or economic identity. */
+  assessPurchase?(
+    evidence: OutputEvidence,
+    original: { request: OutputPurchasePrepare; terms: OutputSignedPurchaseTerms; seller: string },
+    signal: AbortSignal
+  ): Promise<
+    | { status: 'verified'; validation: LCHOverlayVerifiedCovenantPurchase }
+    | { status: 'pending-finality' | 'pending-evidence'; checkCurrent(): void }
+  >
   release(
     evidence: OutputReleaseEvidence,
     expected: OutputReleaseBinding,
@@ -173,6 +183,7 @@ export class LCHCovenantSellerCore<
   private readonly seller: string
   private readonly issuerIdentity: string
   private readonly issuer: LCHIssuer
+  private readonly pendingAssessment: LCHCovenantSellerVerification<D, A>['assessPurchase']
   private readonly delivery: WalletBRC78KeyDelivery
   private readonly pins: (() => boolean)[]
   protected constructor(
@@ -180,6 +191,7 @@ export class LCHCovenantSellerCore<
     private readonly profile: LCHCovenantSellerProfile<D, A>
   ) {
     this.seller = toHex(ports.sellerSigner.identityKey)
+    this.pendingAssessment = ports.verification.assessPurchase
     this.issuerIdentity = toHex(ports.issuerSigner.identityKey)
     lchAssert(
       ports.id.length > 0 &&
@@ -204,7 +216,10 @@ export class LCHCovenantSellerCore<
           revocations: ports.revocations?.id ?? null,
           maximumCiphertextBytes: ports.maximumCiphertextBytes,
           purchaseSeconds: ports.purchaseSeconds,
-          adapter: profile.adapter
+          adapter: profile.adapter,
+          ...(this.pendingAssessment
+            ? { pendingCandidateAssessment: 'ordinary-bitcoin-finality-v1' }
+            : {})
         })
       )
     )
@@ -239,6 +254,8 @@ export class LCHCovenantSellerCore<
     ]
     if (ports.revocations !== undefined)
       this.pins.push(pin(ports.revocations, 'id'), pin(ports.revocations, 'at'))
+    if (ports.verification.assessPurchase !== undefined)
+      this.pins.push(pin(ports.verification, 'assessPurchase'))
   }
   isCurrent(_original?: LCHOverlayCovenantSellerCustody['original']): boolean {
     if (
@@ -607,6 +624,77 @@ export class LCHCovenantSellerCore<
         verified.checkCurrent()
       }
     }
+  }
+  /** Additive assessment companion for protected pending candidate custody.
+   * All original signature, recipient and retained-material checks precede the
+   * installed complete purchase assessment. Existing verify callers are intact. */
+  async assess(
+    candidate: OutputPurchaseSubmit,
+    custody: LCHOverlayCovenantSellerCustody,
+    signal: AbortSignal
+  ) {
+    lchAssert(
+      this.ports.verification.assessPurchase === this.pendingAssessment,
+      'ERR_LCH_LICENSE',
+      'Installed pending purchase assessment changed'
+    )
+    if (this.ports.verification.assessPurchase === undefined)
+      return {
+        status: 'verified' as const,
+        validation: await this.verify(candidate, custody, signal)
+      }
+    this.check(signal)
+    candidate = parseOutputPurchaseSubmit(own(candidate))
+    custody = own(custody)
+    const retained = await this.original(custody, signal)
+    canonicalOutputJSON(candidate, { bytes: retained.selection.profile.maxRequestBytes })
+    lchAssert(
+      candidate.acquisitionId === custody.original.terms.body.acquisitionId,
+      'ERR_LCH_PAYMENT',
+      'Purchase names another original request'
+    )
+    const result = await this.ports.verification.assessPurchase(
+      { txid: candidate.txid, outputIndex: 0, beef: candidate.beef },
+      {
+        request: own(custody.original.request),
+        terms: own(custody.original.terms),
+        seller: this.seller
+      },
+      signal
+    )
+    this.check(signal)
+    if (result.status === 'verified') {
+      const validation = retainLCHCovenantPurchaseAssessment(result.validation)
+      validation.checkCurrent()
+      return {
+        status: 'verified' as const,
+        validation: {
+          purchaseCommitment: validation.purchaseCommitment,
+          checkCurrent: () => {
+            this.check(signal)
+            validation.checkCurrent()
+          }
+        }
+      }
+    }
+    lchAssert(
+      result.status === 'pending-finality' || result.status === 'pending-evidence',
+      'ERR_LCH_PAYMENT',
+      'Unsupported pending purchase assessment'
+    )
+    const status = result.status,
+      check = this.assessment(result)
+    const checkCurrent = () => {
+      this.check(signal)
+      lchAssert(
+        Object.getOwnPropertyDescriptor(result, 'status')?.value === status,
+        'ERR_LCH_PAYMENT',
+        'Pending purchase assessment changed'
+      )
+      check()
+    }
+    checkCurrent()
+    return { status, checkCurrent }
   }
   async issue(
     custody: LCHOverlayCovenantSellerCustody,

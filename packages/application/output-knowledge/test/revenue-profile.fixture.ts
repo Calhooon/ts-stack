@@ -3,6 +3,7 @@ import { gunzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import {
   Beef,
+  MerklePath,
   Hash,
   Utils,
   Transaction,
@@ -56,7 +57,7 @@ export const profile = new RevenueListingProfile(
 // Disclosed easy-work ancestry, preserved normative headers followed by a
 // reproducible extension for coinbase maturity. This is not mainnet evidence.
 const headers = fixture.headers.map(header => ({ ...header }))
-while (headers.length <= 101) {
+while (headers.length <= 102) {
   const previous = headers.at(-1)!,
     bytes = Uint8Array.from(Utils.toArray(previous.raw, 'hex'))
   bytes.set(Utils.toArray(previous.hash, 'hex').reverse(), 4)
@@ -75,22 +76,21 @@ while (headers.length <= 101) {
     merkleRoot: Utils.toHex(Array.from(bytes.slice(36, 68)).reverse())
   })
 }
-export function context(): VerificationContext {
+export function context(height = 101): VerificationContext {
   const now = Math.floor(Date.now() / 1000)
   return {
-    id: 'current-profile-101',
+    id: `current-profile-${height}`,
     partition: { application: 'current-profile', account: 'synthetic', access: 'test' },
     generation: '0',
     view: {
-      id: 'current-profile-easy-work-101',
+      id: `current-profile-easy-work-${height}`,
       chain: structuredClone(fixture.descriptor.chain),
-      tipHash: headers[101].hash,
-      tipHeight: '101',
+      tipHash: headers[height].hash,
+      tipHeight: String(height),
       medianTimePast: String(
-        new DataView(Uint8Array.from(Utils.toArray(headers[96].raw, 'hex')).buffer).getUint32(
-          68,
-          true
-        )
+        new DataView(
+          Uint8Array.from(Utils.toArray(headers[height - 5].raw, 'hex')).buffer
+        ).getUint32(68, true)
       ),
       chainPolicyDigest: '11'.repeat(32)
     },
@@ -113,6 +113,69 @@ export const chains: ChainViewResolver = {
           ? Promise.resolve(headers[height])
           : Promise.reject(new Error('Missing fixture header'))
     })
+}
+
+/** Independently mined easy-work containing block, with the original ancestry
+ * preserved byte for byte. Its historical MTP is the median of the eleven
+ * preceding headers, never the selected tip's later observation time. */
+export function includeAt102(packet: RevenueListingProfileLineagePackage) {
+  const owned = structuredClone(packet),
+    target = owned.target.txid,
+    beef = Beef.fromBinaryStrict(
+      Utils.toArray(owned.transactions.find(entry => entry.txid === target)!.beef, 'base64')
+    ),
+    path = new MerklePath(102, [
+      [
+        { offset: 0, hash: '01'.repeat(32) },
+        { offset: 1, hash: target, txid: true }
+      ]
+    ]),
+    root = path.computeRoot()
+  beef.mergeBump(path)
+  owned.transactions = owned.transactions.map(entry =>
+    entry.txid === target
+      ? { txid: target, beef: Utils.toBase64(beef.toBinaryAtomic(target)) }
+      : entry
+  )
+  const bytes = Uint8Array.from(Utils.toArray(headers[102].raw, 'hex')),
+    data = new DataView(bytes.buffer)
+  bytes.set(Utils.toArray(root, 'hex').reverse(), 36)
+  let hash = '',
+    nonce = 0
+  do {
+    data.setUint32(76, nonce++, true)
+    hash = Utils.toHex(Hash.hash256(Array.from(bytes)).reverse())
+  } while (BigInt('0x' + hash) > 0x7fffffn << 232n)
+  const containing = { height: 102, raw: Utils.toHex(Array.from(bytes)), hash, merkleRoot: root },
+    selected = context(102)
+  selected.view.tipHash = hash
+  const times = headers
+      .slice(91, 102)
+      .map(header =>
+        new DataView(Uint8Array.from(Utils.toArray(header.raw, 'hex')).buffer).getUint32(68, true)
+      )
+      .sort((a, b) => a - b),
+    historicalMTP = String(times[5])
+  const resolver: ChainViewResolver = {
+    resolve: async view => ({
+      view,
+      tracker: {
+        currentHeight: async () => 102,
+        isValidRootForHeight: async (root, height) =>
+          root === (height === 102 ? containing : headers[height])?.merkleRoot
+      },
+      header: async height => {
+        const header = height === 102 ? containing : headers[height]
+        if (!header) throw new Error('Missing fixture header')
+        return header
+      },
+      medianTimePastBefore: async height => {
+        if (height !== 102) throw new Error('Unexpected containing height')
+        return historicalMTP
+      }
+    })
+  }
+  return { packet: owned, context: selected, chains: resolver, historicalMTP }
 }
 export function atGenesis(): RevenueListingProfileLineagePackage {
   const txid = prepared.genesis.body.genesis.txid
@@ -148,7 +211,8 @@ export async function construct(
   outputIndex: number,
   selected: RevenueListingProfileAction,
   fee = 10,
-  version = 1
+  version = 1,
+  header?: { lockTime: number; listingSequence: number; fundingSequence: number }
 ) {
   const builder = new RevenueListingProfileSpend(
     profile,
@@ -165,14 +229,14 @@ export async function construct(
         sourceTransaction: previous,
         sourceTXID: previous.id('hex'),
         sourceOutputIndex: outputIndex,
-        sequence: plan.listingSequence,
+        sequence: header?.listingSequence ?? plan.listingSequence,
         unlockingScript: new UnlockingScript()
       },
       {
         sourceTransaction: previous,
         sourceTXID: previous.id('hex'),
         sourceOutputIndex: fundingIndex,
-        sequence: 0xffffffff,
+        sequence: header?.fundingSequence ?? 0xffffffff,
         unlockingScript: new UnlockingScript()
       }
     ],
@@ -180,7 +244,7 @@ export async function construct(
       satoshis: Number(output.satoshis),
       lockingScript: LockingScript.fromHex(output.lockingScript)
     })),
-    plan.lockTime
+    header?.lockTime ?? plan.lockTime
   )
   const amount =
     previous.outputs[outputIndex].satoshis! +
@@ -192,7 +256,10 @@ export async function construct(
     satoshis: amount,
     lockingScript: previous.outputs[fundingIndex].lockingScript
   })
-  const prepared = builder.prepare(transaction),
+  const prepared =
+      header === undefined
+        ? builder.prepare(transaction)
+        : builder.preparePreservingHeader(transaction),
     wallet = new ProtoWallet(new PrivateKey(fixture.testActors.seller.scalar)),
     signatures: { seller?: string } = {}
   const requests = prepared.signingRequests()

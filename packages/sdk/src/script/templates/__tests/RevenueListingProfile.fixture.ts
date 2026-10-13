@@ -73,7 +73,8 @@ export async function construct(
   action: RevenueListingProfileAction,
   descriptor = fixture.descriptor,
   fee = 10,
-  includeChange = true
+  includeChange = true,
+  header?: { lockTime: number; listingSequence: number; fundingSequence: number }
 ) {
   const builder = new RevenueListingProfileSpend(
     profile,
@@ -90,14 +91,14 @@ export async function construct(
         sourceTXID: previous.id('hex'),
         sourceTransaction: previous,
         sourceOutputIndex: 0,
-        sequence: plan.listingSequence,
+        sequence: header?.listingSequence ?? plan.listingSequence,
         unlockingScript: new UnlockingScript()
       },
       {
         sourceTXID: funding.id('hex'),
         sourceTransaction: funding,
         sourceOutputIndex: purchase.inputs[1].sourceOutputIndex,
-        sequence: 0xffffffff,
+        sequence: header?.fundingSequence ?? 0xffffffff,
         unlockingScript: new UnlockingScript()
       }
     ],
@@ -105,7 +106,7 @@ export async function construct(
       satoshis: Number(output.satoshis),
       lockingScript: LockingScript.fromHex(output.lockingScript)
     })),
-    plan.lockTime
+    header?.lockTime ?? plan.lockTime
   )
   const sourceFunding = funding.outputs[purchase.inputs[1].sourceOutputIndex]
   const change =
@@ -119,7 +120,7 @@ export async function construct(
       satoshis: change,
       lockingScript: LockingScript.fromHex(sourceFunding.lockingScript.toHex())
     })
-  const prepared = builder.prepare(tx)
+  const prepared = header === undefined ? builder.prepare(tx) : builder.preparePreservingHeader(tx)
   const wallet = new ProtoWallet(new PrivateKey(fixture.testActors.seller.scalar))
   const signatures: { seller?: string } = {}
   const requests = prepared.signingRequests()

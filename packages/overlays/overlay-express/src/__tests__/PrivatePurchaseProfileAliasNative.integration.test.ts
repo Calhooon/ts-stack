@@ -14,6 +14,94 @@ import { privatePurchaseProfileAliasNativeFixture } from './PrivatePurchaseProfi
 
 type Fixture = Awaited<ReturnType<typeof privatePurchaseProfileAliasNativeFixture>>
 
+it('recovers a rejected private purchase through its exact durable public topic acceptance without another payment or admission', async () => {
+  const f = await privatePurchaseProfileAliasNativeFixture()
+  let owner = await f.openBuyer(true)
+  try {
+    f.setLocalRejection(true)
+    let rejected: OutputPurchaseEnvelope | undefined
+    try {
+      rejected = await retryClockConflict(() => owner.buyer.advance())
+    } catch (error) {
+      if (
+        !(error instanceof OutputProtocolError) ||
+        error.code !== 'unavailable' ||
+        !error.retryable ||
+        error.message !== 'Purchase buyer deadline'
+      )
+        throw error
+      expect(await owner.buyer.status()).toBe('funded')
+      await owner.close()
+      await f.reopenSeller()
+      owner = await f.openBuyer(false)
+      rejected = await retryClockConflict(() => owner.buyer.recover())
+    }
+    expect(rejected?.result.status).toBe('admission-rejected')
+    expect(f.counts.admission).toBe(0)
+    const original = loadOriginal(f),
+      candidate = original.candidate!,
+      audit = f.active.admissionJournal.read(original.custody.original, f.clock, () => {}).entries
+    expect(audit.map(({ event }) => event.type)).toEqual(['intent', 'outcome'])
+    expect(f.native.counts.prepare).toBe(1)
+    expect(f.native.counts.finalize).toBe(1)
+    await retryClockConflict(() => owner.buyer.recover())
+    expect(f.counts.admission).toBe(0)
+    // A public submit processes only Bitcoin evidence. It cannot disclose the
+    // private grant; subsequent authenticated recovery links its existing STEAK.
+    await f.engine.submit({
+      beef: decodeOutputBytes(candidate.beef, 524288),
+      topics: [original.custody.original.request.topic]
+    })
+    expect(f.counts.admission).toBe(1)
+    expect(f.counts.issuance).toBe(0)
+    f.setLocalRejection(false)
+    await f.reopenSeller()
+    const delivered = await retryClockConflict(() => owner.buyer.recover())
+    expect(delivered?.result.status).toBe('delivered')
+    if (!delivered || delivered.result.status !== 'delivered')
+      throw new Error('Retained topical purchase did not recover')
+    expect(delivered.result.acquisitionId).toBe(original.progress.acquisitionId)
+    expect(delivered.result.purchaseCommitment).toBe(original.progress.purchaseCommitment)
+    expect('decision' in delivered.result).toBe(false)
+    const current = loadOriginal(f)
+    expect(current.custody.original).toEqual(original.custody.original)
+    expect(current.state.firstReservedAt).toBe(original.state.firstReservedAt)
+    const history = f.active.admissionJournal.read(
+      current.custody.original,
+      f.clock,
+      () => {}
+    ).entries
+    expect(history.slice(0, 2)).toEqual(audit)
+    expect(history.map(({ event }) => event.type)).toEqual([
+      'intent',
+      'outcome',
+      'recovery',
+      'outcome'
+    ])
+    await retryClockConflict(() => owner.buyer.recover())
+    expect(f.counts.admission).toBe(1)
+    expect(f.counts.issuance).toBe(1)
+    expect(f.native.counts.prepare).toBe(1)
+    expect(f.native.counts.finalize).toBe(1)
+    await expect(f.playback(delivered)).rejects.toThrow(
+      'Delivered LCH entitlement has not been locally verified and retained'
+    )
+    expect(await owner.buyer.status()).toBe('received')
+    await expect(owner.buyer.usableResult()).rejects.toThrow('Purchase buyer result is not usable')
+    expect(await owner.buyer.validate()).toBe('usable')
+    const usable = await owner.buyer.usableResult()
+    expect(historical(usable)).toBe(historical(delivered))
+    expect(await f.playback(usable)).toEqual(f.asset.plaintext)
+    expect(f.counts.admission).toBe(1)
+    expect(f.counts.issuance).toBe(1)
+    expect(f.native.counts.prepare).toBe(1)
+    expect(f.native.counts.finalize).toBe(1)
+  } finally {
+    await owner.close()
+    await f.close()
+  }
+}, 180000)
+
 // A bounded retry of the same durable operation reconciles a wall-clock/CAS
 // conflict. It cannot construct another candidate, fund, or relax any guard.
 async function retryClockConflict<T>(operation: () => Promise<T>, remaining = 8): Promise<T> {

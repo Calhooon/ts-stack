@@ -7,19 +7,32 @@ import { PrivatePurchaseAccess } from '../src/private/PrivatePurchaseAccess.js'
 import { identity } from './private-purchase-aliases.fixture.js'
 import { purchaseAliasOwnerFixture } from './private-purchase-alias-owner.fixture.js'
 import { purchaseCoordinatorFixture } from './private-purchase-coordinator.fixture.js'
+import { SQLitePrivatePurchaseCandidateWork } from '../src/private/SQLitePrivatePurchaseEvidence.js'
+import { SQLitePrivatePurchaseAdmissionJournal } from '../src/private/SQLitePrivatePurchaseAdmissionJournal.js'
 
 /** Actual protected SQLite effect custody; controlled domain/admission/chain
  * premises. This demonstrates composition and restart, not BRC197 execution,
  * production chain selection, topical admission or portable License validity. */
 export function purchaseAliasCoordinatorFixture(
-  options: Partial<PrivatePurchaseAliasCoordinatorOptions> = {}
+  options: Partial<PrivatePurchaseAliasCoordinatorOptions> = {},
+  pendingCandidates = false
 ) {
-  const f = purchaseAliasOwnerFixture(),
+  const f = purchaseAliasOwnerFixture(8, 2 * 1048576, options.recoverRejected ? 8 : undefined),
     base = purchaseCoordinatorFixture({}, f.base)
   let mined = false,
     current = true,
-    failure = false
+    failure = false,
+    rejected = false,
+    eligibility: string | undefined,
+    pending: 'pending-finality' | 'pending-evidence' | undefined
   const counts = { assessments: 0 }
+  const work = (domain = f.base.owner.domain) =>
+    new SQLitePrivatePurchaseCandidateWork(domain, f.base.f.f.contracts, {
+      maximumCandidateBytes: 8192,
+      maximumUpdates: 8,
+      maximumTransactions: 16,
+      maximumDependencies: 32
+    })
   const installation: PrivatePurchaseAliasCoordinatorOptions = {
     ...base.owner,
     serviceDomain: f.base.owner.domain,
@@ -35,10 +48,73 @@ export function purchaseAliasCoordinatorFixture(
     domain: {
       ...base.domain,
       async verify(candidate, custody, signal) {
+        outputAssert(pending === undefined, 'Pending candidate cannot reserve external work')
         const validation = await base.domain.verify(candidate, custody, signal)
         return { ...validation, purchaseCommitment: identity }
-      }
+      },
+      ...(pendingCandidates
+        ? {
+            async assess(candidate, custody, signal) {
+              const status = pending
+              if (status)
+                return {
+                  status,
+                  checkCurrent() {
+                    outputAssert(
+                      pending === status,
+                      'Pending finality context changed',
+                      'context-changed'
+                    )
+                  }
+                }
+              const validation = await base.domain.verify(candidate, custody, signal)
+              return {
+                status: 'verified' as const,
+                validation: { ...validation, purchaseCommitment: identity }
+              }
+            }
+          }
+        : {})
     },
+    ...(pendingCandidates ? { candidateWork: work() } : {}),
+    ...(options.recoverRejected
+      ? {
+          admission: {
+            async recover(job, signal, context) {
+              if (!rejected) return base.owner.admission.recover(job, signal, context)
+              context.checkCurrent()
+              base.counts.admission++
+              return {
+                status: 'rejected' as const,
+                operationId: job.operationId,
+                txid: job.candidate.txid,
+                reason: 'Controlled selected policy rejection',
+                evidence: 'AA=='
+              }
+            },
+            async assessRecovery(_job, _rejection, _signal, context) {
+              context.checkCurrent()
+              const eligibilityId = eligibility
+              return eligibilityId === undefined
+                ? undefined
+                : {
+                    eligibilityId,
+                    purchaseCommitment: identity,
+                    checkCurrent() {
+                      // Match the real admission bridge: its retained guard
+                      // delegates to the original context inside native writes.
+                      context.checkCurrent()
+                      outputAssert(
+                        eligibility === eligibilityId,
+                        'Eligibility context changed',
+                        'context-changed'
+                      )
+                    }
+                  }
+            }
+          }
+        }
+      : {}),
     currentness: {
       async assess(_subject, candidate) {
         counts.assessments++
@@ -105,6 +181,7 @@ export function purchaseAliasCoordinatorFixture(
     installation.store = opened.owner
     installation.aliases = opened.aliases
     installation.serviceDomain = opened.domain
+    if (pendingCandidates) installation.candidateWork = work(opened.domain)
     installation.access = new PrivatePurchaseAccess(
       opened.domain,
       f.base.custody.original.request.topic,
@@ -143,6 +220,22 @@ export function purchaseAliasCoordinatorFixture(
     },
     setFailure(value: boolean) {
       failure = value
+    },
+    setPending(value: typeof pending) {
+      pending = value
+    },
+    setRejected(value: boolean) {
+      rejected = value
+    },
+    setEligible(value: string | undefined) {
+      eligibility = value
+    },
+    audit() {
+      return new SQLitePrivatePurchaseAdmissionJournal(active, f.base.f.f.contracts, 8).read(
+        f.base.custody.original,
+        f.f.clock,
+        f.f.guard
+      ).entries
     }
   }
 }

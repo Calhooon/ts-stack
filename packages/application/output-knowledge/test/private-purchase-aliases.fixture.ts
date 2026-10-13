@@ -4,6 +4,7 @@ import {
   type PrivatePurchaseAliasWrite
 } from '../src/private/SQLitePrivatePurchaseAliases.js'
 import { privatePurchaseOperation } from '../src/private/PrivatePurchaseProgress.js'
+import { SQLitePrivatePurchaseAdmissionJournal } from '../src/private/SQLitePrivatePurchaseAdmissionJournal.js'
 import { purchaseEvidenceFixture } from './private-purchase-evidence.fixture.js'
 
 // Real encrypted native persistence, with disclosed toy OP_TRUE/identity/placement
@@ -15,7 +16,7 @@ export function retained(plan: PrivatePurchaseAliasWrite) {
   if (plan.status !== 'ready') throw new Error('Expected retained native proposal')
   return plan
 }
-export function purchaseAliasesFixture(maximumWrites = 64) {
+export function purchaseAliasesFixture(maximumWrites = 64, journalEvents?: number) {
   const e = purchaseEvidenceFixture(),
     limits = {
       maximumCandidateBytes: 8192,
@@ -25,7 +26,14 @@ export function purchaseAliasesFixture(maximumWrites = 64) {
       maximumBatchBytes: 2 * 1048576
     }
   const construct = (domain = e.base.owner.domain) =>
-    new SQLitePrivatePurchaseAliases(domain, e.base.f.f.contracts, limits)
+    new SQLitePrivatePurchaseAliases(
+      domain,
+      e.base.f.f.contracts,
+      limits,
+      journalEvents === undefined
+        ? undefined
+        : new SQLitePrivatePurchaseAdmissionJournal(domain, e.base.f.f.contracts, journalEvents)
+    )
   const owner = construct(),
     { clock, guard } = e.base
   function variant(n: number): OutputPurchaseSubmit {

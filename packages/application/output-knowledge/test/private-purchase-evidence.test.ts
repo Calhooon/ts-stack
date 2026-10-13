@@ -11,8 +11,69 @@ import {
 } from '@bsv/sdk'
 import { PrivatePurchaseCoordinator } from '../src/private/PrivatePurchaseCoordinator.js'
 import { purchaseCoordinatorFixture } from './private-purchase-coordinator.fixture.js'
-import { SQLitePrivatePurchaseEvidence } from '../src/private/SQLitePrivatePurchaseEvidence.js'
+import {
+  SQLitePrivatePurchaseEvidence,
+  SQLitePrivatePurchaseCandidateWork
+} from '../src/private/SQLitePrivatePurchaseEvidence.js'
 import { purchaseEvidenceFixture } from './private-purchase-evidence.fixture.js'
+
+it('explicit pending candidate custody retains incomplete evidence and recovers its complete proof without reinterpreting the financial proof owner', () => {
+  const f = purchaseEvidenceFixture(),
+    { clock, guard } = f.base,
+    work = new SQLitePrivatePurchaseCandidateWork(
+      f.base.owner.domain,
+      f.base.f.f.contracts,
+      f.limits
+    )
+  try {
+    expect(work.id).not.toBe(f.owner.id)
+    f.owner.reserve(f.original, clock, guard)
+    work.reserve(f.original, clock, guard)
+    const partial = Beef.fromBinaryStrict(decodeOutputBytes(f.candidate.beef, 8192))
+    partial.makeTxidOnly(f.candidate.txid)
+    const incomplete = {
+      ...f.candidate,
+      beef: Utils.toBase64(partial.toBinaryAtomic(f.candidate.txid))
+    }
+    expect(() => f.owner.propose(f.original, incomplete, clock, guard)).toThrow(
+      'Complete purchase proof'
+    )
+    work.propose(f.original, incomplete, clock, guard).retain(clock, guard)
+    const opened = f.base.open()
+    try {
+      const reopened = new SQLitePrivatePurchaseCandidateWork(
+        opened.domain,
+        f.base.f.f.contracts,
+        f.limits
+      )
+      expect(reopened.read(f.original, clock, guard).candidate).toEqual(incomplete)
+      const complete = reopened.propose(f.original, f.candidate, clock, guard)
+      complete.retain(clock, guard)
+      const saved = reopened.read(f.original, clock, guard).candidate!
+      expect(
+        Beef.fromBinaryStrict(decodeOutputBytes(saved.beef, 8192)).findTxid(saved.txid)!.tx!.toHex()
+      ).toBe(f.target.toHex())
+    } finally {
+      f.base.close(opened.domain)
+    }
+    expect(f.owner.read(f.original, clock, guard).candidate).toBeNull()
+    const other = Transaction.fromHex(f.target.toHex())
+    other.outputs[0].satoshis = 998
+    other.inputs[0].sourceTransaction = f.target.inputs[0].sourceTransaction
+    const beef = new Beef()
+    beef.mergeTransaction(other)
+    const replacement = {
+      ...f.candidate,
+      txid: other.id('hex'),
+      beef: Utils.toBase64(beef.toBinaryAtomic(other.id('hex')))
+    }
+    work.propose(f.original, replacement, clock, guard).retain(clock, guard)
+    expect(work.read(f.original, clock, guard).candidate).toEqual(replacement)
+    expect(f.owner.read(f.original, clock, guard).candidate).toBeNull()
+  } finally {
+    f.base.dispose()
+  }
+})
 import type { ProtectedLedgerRecord } from '../src/private/ProtectedLedgerCodec.js'
 
 it('reserves native proof custody, merges a same-transaction Merkle view and recovers its exact original bytes', () => {

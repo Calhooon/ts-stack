@@ -13,7 +13,7 @@ tags: [utxo, scripts, evidence, overlays]
 # Immutable listing lineage and purchase verification
 
 The current BRC-197 target is PR295 commit
-`1b9a75e497b5856675af1ce01fd86843c37d07f9`. Select
+`bdbd7aec0731347230e6b4190864e90b9ff27898`. Select
 `RevenueListingProfileLineageVerifier`, `RevenueListingProfilePurchaseVerifier`
 and `parseRevenueListingProfileLineagePackage` from the optional
 `@bsv/output-knowledge/revenue-listing` entry. These additive components use
@@ -51,6 +51,21 @@ cannot establish the profile's own predicates. Route inspection uses the source
 stage and output receipts, followed by actual Script execution. There is no
 canonical scriptSig chunk-count requirement or extra rejection solely for
 another Bitcoin-valid unlocking spelling.
+
+Ordinary Bitcoin finality applies to every route. Zero locktime and final
+sequences are recommended constructor defaults, not additional validator
+restrictions. An otherwise verified but immature unmined history returns
+`pending-finality`; retain bounded candidate work and reassess under the selected
+view without projecting it as consuming state. A verified included height-locked
+transaction is assessed against its containing block height. For an included
+time-locked transaction with a nonfinal sequence, install
+`ImmutableChainView.medianTimePastBefore(height, signal)` from the same verified
+header ancestry. It returns the median of the previous eleven block timestamps
+(or the available prefix at genesis), in seconds. Missing historical time context
+is `unresolved`; substituting the current tip's median time is forbidden. Strict
+locktime comparison and all-input final-sequence bypass remain Bitcoin rules.
+This finality result supplies no current unspentness, topical admission or private
+release authorization.
 
 ```ts
 import { RevenueListingProfile } from '@bsv/sdk/script/templates/RevenueListingProfile'

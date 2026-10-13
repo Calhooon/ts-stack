@@ -3587,7 +3587,10 @@ export function buildMutationTargets(repositoryRoot) {
     [
       'private-purchase-alias-custody',
       'sqlite-private-purchase-aliases.property.test.ts',
-      ['src/private/SQLitePrivatePurchaseAliases.ts']
+      [
+        'src/private/SQLitePrivatePurchaseAliases.ts',
+        'src/private/SQLitePrivatePurchaseAdmissionJournal.ts'
+      ]
     ]
   ]) {
     targets[id] = {

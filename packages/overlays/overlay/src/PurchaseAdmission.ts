@@ -7,6 +7,7 @@ import {
   outputAssert,
   outputHex32,
   outputIdentity,
+  outputPacketDigest,
   outputString,
   outputU64,
   OUTPUT_PROFILES,
@@ -155,6 +156,70 @@ export class OverlayPurchaseAdmission {
     signal: AbortSignal,
     context: OverlayPurchaseAdmissionContext
   ): Promise<OverlayPurchaseAdmissionOutcome> {
+    return this.recoverOwned(input, signal, context, false)
+  }
+  /** Read-only recovery eligibility for an already durably admitted exact
+   * transaction. The context commitment comes from the coordinator's fresh full
+   * domain verification; it is neither a wire claim nor verified by this bridge.
+   * Missing topical history remains ineligible, even if a transaction mined. */
+  async assessRecovery(
+    input: OverlayPurchaseAdmissionJob,
+    rejection: {
+      status: 'rejected'
+      operationId: string
+      txid: string
+      reason: string
+      evidence: string
+    },
+    signal: AbortSignal,
+    context: OverlayPurchaseAdmissionContext & { readonly purchaseCommitment?: string }
+  ) {
+    outputAssert(
+      rejection.status === 'rejected' &&
+        outputHex32(rejection.operationId) === outputHex32(input.operationId) &&
+        outputHex32(rejection.txid) === input.candidate.txid,
+      'Admission recovery changes its retained exact rejection',
+      'conflict'
+    )
+    if (context.purchaseCommitment === undefined) return undefined
+    const purchaseCommitment = outputHex32(context.purchaseCommitment),
+      check = context.checkCurrent
+    const checkCurrent = () => {
+      outputAssert(
+        context.checkCurrent === check && context.purchaseCommitment === purchaseCommitment,
+        'Admission recovery domain context changed',
+        'context-changed'
+      )
+      outputAssert(
+        typeof check === 'function' && check.constructor.name !== 'AsyncFunction',
+        'Admission recovery requires a synchronous domain guard'
+      )
+      const checked: unknown = check.call(context)
+      if (checked instanceof Promise) void checked.catch(() => undefined)
+      outputAssert(
+        checked === undefined && !signal.aborted,
+        'Admission recovery context changed or cancelled',
+        'context-changed'
+      )
+      this.currentHistory()
+    }
+    checkCurrent()
+    const outcome = await this.recoverOwned(input, signal, { checkCurrent }, true)
+    checkCurrent()
+    if (outcome.status !== 'admitted') return undefined
+    const eligibilityId = outputPacketDigest('purchase', {
+      purpose: 'purchase-admission-eligibility',
+      purchaseCommitment,
+      outcome
+    })
+    return { eligibilityId, purchaseCommitment, checkCurrent }
+  }
+  private async recoverOwned(
+    input: OverlayPurchaseAdmissionJob,
+    signal: AbortSignal,
+    context: OverlayPurchaseAdmissionContext,
+    readOnly: boolean
+  ): Promise<OverlayPurchaseAdmissionOutcome> {
     outputAssert(
       typeof context?.checkCurrent === 'function' &&
         context.checkCurrent.constructor.name !== 'AsyncFunction',
@@ -282,6 +347,7 @@ export class OverlayPurchaseAdmission {
     }
     const prior = await read()
     if (prior) return prior
+    if (readOnly) return { status: 'unresolved', operationId, txid: candidate.txid }
     current()
     try {
       await this.submit.call(this.engine, {

@@ -99,7 +99,8 @@ function isFamilySource(script: number[]): boolean {
 function fundedSnapshot(
   transaction: Transaction,
   plan: RevenueListingProfilePlan,
-  previous: Transaction
+  previous: Transaction,
+  preserveHeader = false
 ): Transaction {
   outputAssert(
     transaction.inputs.length >= 2 &&
@@ -108,8 +109,28 @@ function fundedSnapshot(
       transaction.outputs.length <= 11,
     'Funded transaction layout exceeds profile'
   )
+  if (preserveHeader) {
+    outputAssert(
+      Number.isInteger(transaction.version) &&
+        transaction.version >= 0 &&
+        transaction.version <= 0xffffffff &&
+        Number.isInteger(transaction.lockTime) &&
+        transaction.lockTime >= 0 &&
+        transaction.lockTime <= 0xffffffff &&
+        transaction.inputs.every(
+          input =>
+            Number.isInteger(input.sequence) &&
+            input.sequence! >= 0 &&
+            input.sequence! <= 0xffffffff
+        ),
+      'Invalid preserved transaction header'
+    )
+  }
   const tx = copyTransaction(transaction, maximumRawBytes)
-  outputAssert(tx.lockTime === plan.lockTime, 'Funded transaction locktime changed')
+  outputAssert(
+    (preserveHeader && plan.requireAllFinalInputs) || tx.lockTime === plan.lockTime,
+    'Funded transaction locktime changed'
+  )
   const seen = new Set<string>()
   let inputTotal = 0n,
     outputTotal = 0n
@@ -119,7 +140,7 @@ function fundedSnapshot(
         input.sequence! >= 0 &&
         input.sequence! <= 0xffffffff &&
         (plan.requireAllFinalInputs
-          ? input.sequence === 0xffffffff
+          ? preserveHeader || input.sequence === 0xffffffff
           : index !== 0 || input.sequence! < 0xffffffff),
       'Funded input finality differs from the route'
     )
@@ -395,7 +416,21 @@ export class RevenueListingProfileSpend {
     )
   }
   prepare(transaction: Transaction): PreparedRevenueListingProfileSpend {
-    const tx = fundedSnapshot(transaction, this.planned, this.previous),
+    return this.prepared(transaction, false)
+  }
+  /** Preserve an explicitly selected Bitcoin header and input sequences instead
+   * of requiring the recommended construction. Expiry retirement still uses its
+   * selected Script-enforced height and nonfinal listing sequence. This builds
+   * witnesses and commitments, not a finality, Script or lineage verdict.
+   */
+  preparePreservingHeader(transaction: Transaction): PreparedRevenueListingProfileSpend {
+    return this.prepared(transaction, true)
+  }
+  private prepared(
+    transaction: Transaction,
+    preserveHeader: boolean
+  ): PreparedRevenueListingProfileSpend {
+    const tx = fundedSnapshot(transaction, this.planned, this.previous, preserveHeader),
       pre = preimage(tx)
     const authority = this.planned.sellerAuthorization
     const request: RevenueListingProfileSigningRequest | undefined =
@@ -421,7 +456,7 @@ export class RevenueListingProfileSpend {
           (signed.seller !== undefined) === (authority !== undefined),
           'Exact seller-child signature presence required'
         )
-        const completed = fundedSnapshot(tx, this.planned, this.previous)
+        const completed = fundedSnapshot(tx, this.planned, this.previous, preserveHeader)
         const signature =
           authority === undefined ? [] : sellerSignature(signed.seller!, authority.publicKey, pre)
         completed.inputs[0].unlockingScript = witness(
@@ -438,7 +473,7 @@ export class RevenueListingProfileSpend {
         return completed
       },
       assertFinalLayout: final => {
-        const checked = fundedSnapshot(final, this.planned, this.previous)
+        const checked = fundedSnapshot(final, this.planned, this.previous, preserveHeader)
         outputAssert(
           toHex(preimage(checked)) === toHex(pre),
           'Wallet changed the authenticated transaction layout'

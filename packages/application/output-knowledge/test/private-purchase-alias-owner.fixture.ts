@@ -7,6 +7,7 @@ import { SQLitePrivatePurchaseAliasStore } from '../src/private/SQLitePrivatePur
 import type { PrivatePurchaseAliasedLoaded } from '../src/private/PrivatePurchaseAliasOwnerPorts.js'
 import { SQLitePrivatePurchaseAliases } from '../src/private/SQLitePrivatePurchaseAliases.js'
 import { privatePurchaseOperation } from '../src/private/PrivatePurchaseProgress.js'
+import { SQLitePrivatePurchaseAdmissionJournal } from '../src/private/SQLitePrivatePurchaseAdmissionJournal.js'
 import {
   purchaseAliasesFixture,
   identity,
@@ -19,8 +20,12 @@ import { signPurchaseFixturePacket } from './private-purchase-signing.fixture.js
 /** Actual encrypted SQLite composition with disclosed OP_TRUE transactions and
  * controlled identity/admission/placement premises. This proves effect custody,
  * not BRC197 execution, mining, topical admission or private licence issuance. */
-export function purchaseAliasOwnerFixture(maximumSelections = 8, maximumBatchBytes = 2 * 1048576) {
-  const f = purchaseAliasesFixture(),
+export function purchaseAliasOwnerFixture(
+  maximumSelections = 8,
+  maximumBatchBytes = 2 * 1048576,
+  journalEvents?: number
+) {
+  const f = purchaseAliasesFixture(64, journalEvents),
     base = f.e.base,
     limits = { ...base.limits, maximumBatchBytes },
     store = new SQLitePrivatePurchaseAliasStore(
@@ -111,7 +116,18 @@ export function purchaseAliasOwnerFixture(maximumSelections = 8, maximumBatchByt
   }
   function reopen() {
     const opened = base.open(),
-      aliases = new SQLitePrivatePurchaseAliases(opened.domain, base.f.f.contracts, f.limits)
+      aliases = new SQLitePrivatePurchaseAliases(
+        opened.domain,
+        base.f.f.contracts,
+        f.limits,
+        journalEvents === undefined
+          ? undefined
+          : new SQLitePrivatePurchaseAdmissionJournal(
+              opened.domain,
+              base.f.f.contracts,
+              journalEvents
+            )
+      )
     const owner = new SQLitePrivatePurchaseAliasStore(
       opened.domain,
       base.f.f.contracts,

@@ -23,6 +23,10 @@ import type {
 } from './PrivatePurchaseContracts.js'
 import { privatePurchaseOperation } from './PrivatePurchaseProgress.js'
 import {
+  type SQLitePrivatePurchaseAdmissionJournal,
+  type PrivatePurchaseAdmissionJournalPlan
+} from './SQLitePrivatePurchaseAdmissionJournal.js'
+import {
   ownPrivatePurchaseAdmissionOutcome,
   type PrivatePurchaseAdmissionOutcome,
   type PrivatePurchaseValidation
@@ -106,6 +110,8 @@ interface AliasPlan {
   verification: ProtectedLedgerGuard
   extra: readonly ProtectedLedgerChange[]
   cumulative?: OutputPurchaseSubmit
+  journal?: PrivatePurchaseAdmissionJournalPlan
+  restoredTerminalTime?: ReadonlyMap<string, string>
 }
 /** Owned contribution for a separately installed SAME-ledger effect owner.
  * It grants no admission/release authority. Commit these exact changes with the
@@ -155,8 +161,10 @@ export class SQLitePrivatePurchaseAliases {
   constructor(
     private readonly domain: PrivateServiceDomain,
     private readonly contracts: PrivatePurchaseContracts,
-    limits: PrivatePurchaseAliasLimits
+    limits: PrivatePurchaseAliasLimits,
+    private readonly admissionJournal?: SQLitePrivatePurchaseAdmissionJournal
   ) {
+    admissionJournal?.installedOn(domain, contracts)
     const value = ownOutputJSON(limits, { bytes: 4096 }).value
     assertAliasLimitFields(value)
     this.limits = Object.freeze({
@@ -200,7 +208,8 @@ export class SQLitePrivatePurchaseAliases {
     this.id = outputPacketDigest('purchase', {
       purpose: FORMAT,
       scope: domain.scope,
-      limits: this.limits
+      limits: this.limits,
+      ...(admissionJournal ? { admissionJournal: admissionJournal.id } : {})
     })
     this.installedId = this.id
     const configured = contracts.configuration()
@@ -219,6 +228,19 @@ export class SQLitePrivatePurchaseAliases {
       pin(this.identity, 'address'),
       pin(contracts, 'original')
     ]
+    if (admissionJournal)
+      this.pins.push(
+        pin(admissionJournal, 'installedOn'),
+        pin(admissionJournal, 'reserve'),
+        pin(admissionJournal, 'read'),
+        pin(admissionJournal, 'prepare')
+      )
+  }
+  /** Explicit opt-in companion; old installations and wire/state formats remain
+   * unchanged. A journaled owner has a distinct installation binding. */
+  supportsRecovery(): boolean {
+    this.current()
+    return this.admissionJournal !== undefined
   }
   /** Owned local capacity descriptor for SAME-writer effect composition.
    * It is not admission, chain or release authority. */
@@ -358,6 +380,7 @@ export class SQLitePrivatePurchaseAliases {
       read = this.ledger.read(addresses, clock, this.authorized(guard))
     if (read.records[0]) {
       this.snapshot(original, clock, guard)
+      this.admissionJournal?.reserve(original, clock, guard)
       return
     }
     outputAssert(
@@ -403,6 +426,7 @@ export class SQLitePrivatePurchaseAliases {
     this.ledger.commit(read.revision, changes, clock, this.authorized(guard), {
       maximumBatchBytes: this.limits.maximumBatchBytes
     })
+    this.admissionJournal?.reserve(original, clock, guard)
   }
   read(
     original: PrivatePurchaseOriginal,
@@ -659,6 +683,35 @@ export class SQLitePrivatePurchaseAliases {
       'Alias acquisition differs'
     )
     validation.checkCurrent()
+    const journalView = this.admissionJournal?.read(original, clock, guard)
+    const retainedBefore = this.roles.some(
+      role => this.entry(snapshot.state, role)?.txid === candidate.txid
+    )
+    const lastAudit = journalView
+      ? [...journalView.entries]
+          .reverse()
+          .find(
+            ({ event }) =>
+              (event.type === 'outcome' ? event.outcome.txid : event.txid) === candidate.txid
+          )
+      : undefined
+    const oldOutcome =
+      !retainedBefore && lastAudit?.event.type === 'outcome' ? lastAudit.event.outcome : undefined
+    if (!retainedBefore && lastAudit)
+      outputAssert(
+        oldOutcome,
+        'Unresolved journal operation cannot lose its exact candidate',
+        'unavailable'
+      )
+    const admissionPreflight =
+      this.admissionJournal && !retainedBefore && !oldOutcome
+        ? this.admissionJournal.prepare(
+            original,
+            { type: 'intent', txid: candidate.txid, operationId: entry.operationId },
+            clock,
+            guard
+          )
+        : undefined
     const place = placement ? capturedCheck(placement) : undefined
     // Retry proof custody is cumulative, independently of cache routing. A
     // byte-identical immutable role needs no optional cache allocation: full
@@ -718,19 +771,30 @@ export class SQLitePrivatePurchaseAliases {
     const { candidates, outcomes } = remapCandidates()
     candidates.set(proposal.role, combined)
     if (place) candidates.set('selected', combined)
+    let state = proposal.state
+    if (oldOutcome) {
+      state = advancePrivatePurchaseAliasAdmission(state, candidate.txid, 'pending')
+      state = advancePrivatePurchaseAliasAdmission(state, candidate.txid, oldOutcome.status)
+      for (const role of this.roles)
+        if (this.entry(state, role)?.txid === candidate.txid) outcomes.set(role, oldOutcome)
+    }
     return this.plan({
       original,
       snapshot,
-      state: proposal.state,
+      state,
       candidates,
       outcomes,
       guard,
-      verification: () => {
+      verification: view => {
         validation.checkCurrent()
         place?.()
+        journalView?.checkCurrent(view)
+        admissionPreflight?.checkCurrent(view)
       },
       extra: [],
-      cumulative: combined
+      cumulative: combined,
+      restoredTerminalTime:
+        oldOutcome && lastAudit ? new Map([[candidate.txid, lastAudit.observedAt]]) : undefined
     })
   }
   /** Durably reserve the exact job BEFORE an external admission call. Unknown
@@ -756,7 +820,7 @@ export class SQLitePrivatePurchaseAliases {
         .find(entry => entry?.txid === id),
       terminal = retained?.admission === 'admitted' || retained?.admission === 'rejected'
     outputAssert(
-      retained !== undefined,
+      retained !== undefined && retained !== null,
       'Alias exact admission candidate is missing',
       'unavailable'
     )
@@ -780,6 +844,24 @@ export class SQLitePrivatePurchaseAliases {
         )
         outcomes.set(role, owned)
       }
+    const journal =
+      this.admissionJournal && !terminal
+        ? retained.admission === 'retained'
+          ? this.admissionJournal.prepare(
+              original,
+              { type: 'intent', txid: id, operationId: retained.operationId },
+              clock,
+              guard
+            )
+          : owned && owned.status !== 'unresolved'
+            ? this.admissionJournal.prepare(
+                original,
+                { type: 'outcome', outcome: owned },
+                clock,
+                guard
+              )
+            : undefined
+        : undefined
     return this.plan({
       original,
       snapshot,
@@ -788,7 +870,94 @@ export class SQLitePrivatePurchaseAliases {
       outcomes,
       guard,
       verification: () => undefined,
-      extra: []
+      extra: [],
+      journal
+    })
+  }
+  /** Independent domain and selected-policy eligibility precede this call.
+   * Commit the retained rejection's audit history and fresh reconciliation intent
+   * in the SAME writer. An unchanged eligibility identity cannot restart work. */
+  recoverAdmission(
+    original: PrivatePurchaseOriginal,
+    txid: string,
+    eligibility: { eligibilityId: string } & PrivatePurchaseValidation,
+    clock: () => string,
+    guard: ProtectedLedgerGuard
+  ): PrivatePurchaseAliasWrite | undefined {
+    outputAssert(
+      this.admissionJournal,
+      'Rejected recovery requires an explicitly installed journal',
+      'unsupported'
+    )
+    const snapshot = this.snapshot(original, clock, guard),
+      id = outputHex32(txid),
+      validation = ownedValidation(eligibility),
+      eligibilityId = outputHex32(
+        Object.getOwnPropertyDescriptor(eligibility, 'eligibilityId')?.value
+      )
+    validation.checkCurrent()
+    outputAssert(
+      snapshot.state.historical === null &&
+        snapshot.state.purchaseCommitment === validation.purchaseCommitment,
+      'Rejected recovery cannot alter history or the original economic commitment',
+      'conflict'
+    )
+    const journalView = this.admissionJournal.read(original, clock, guard)
+    if (
+      journalView.entries.some(
+        ({ event }) =>
+          event.type === 'recovery' && event.txid === id && event.eligibilityId === eligibilityId
+      )
+    )
+      return undefined
+    const entries = [
+      snapshot.state.original,
+      snapshot.state.selected,
+      ...snapshot.state.unconfirmed,
+      ...snapshot.state.pending
+    ]
+    outputAssert(
+      entries.some(entry => entry?.txid === id && entry.admission === 'rejected'),
+      'Rejected recovery lacks its retained exact rejection',
+      'conflict'
+    )
+    const state = parsePrivatePurchaseAliasState(snapshot.state),
+      outcomes = new Map(snapshot.outcomes)
+    for (const role of this.roles) {
+      const entry = this.entry(state, role)
+      if (entry?.txid === id) {
+        entry.admission = 'pending'
+        outcomes.delete(role)
+      }
+    }
+    const journal = this.admissionJournal.prepare(
+      original,
+      {
+        type: 'recovery',
+        txid: id,
+        operationId: privatePurchaseOperation(original, id),
+        eligibilityId
+      },
+      clock,
+      guard
+    )
+    return this.plan({
+      original,
+      snapshot,
+      state,
+      candidates: snapshot.candidates,
+      outcomes,
+      guard,
+      verification: () => {
+        validation.checkCurrent()
+        outputAssert(
+          Object.getOwnPropertyDescriptor(eligibility, 'eligibilityId')?.value === eligibilityId,
+          'Recovery eligibility changed',
+          'context-changed'
+        )
+      },
+      extra: [],
+      journal
     })
   }
   /** Call under independent release/selected-view guards; include signed result
@@ -851,7 +1020,9 @@ export class SQLitePrivatePurchaseAliases {
       guard,
       verification,
       extra,
-      cumulative
+      cumulative,
+      journal,
+      restoredTerminalTime
     } = input
 
     const addresses = this.addresses(snapshot.binding),
@@ -919,7 +1090,11 @@ export class SQLitePrivatePurchaseAliases {
           r => this.entry(snapshot.state, r)?.txid === entry.txid && snapshot.completedAt.has(r)
         ),
         completedAt =
-          existingTimeRole === undefined ? null : snapshot.completedAt.get(existingTimeRole)!,
+          outcome === null
+            ? null
+            : existingTimeRole === undefined
+              ? (restoredTerminalTime?.get(entry.txid) ?? null)
+              : snapshot.completedAt.get(existingTimeRole)!,
         header = this.header(snapshot.binding, role, entry, candidate, outcome, completedAt),
         oldHeader = snapshot.records[offset]
       if (
@@ -958,7 +1133,7 @@ export class SQLitePrivatePurchaseAliases {
     }
     for (let slot = 0; slot < this.roles.length; slot++) appendSlot(slot)
     outputAssert(
-      changes.length + extra.length <= 64,
+      changes.length + extra.length + (journal ? 2 : 0) <= 64,
       'Alias effect exceeds atomic native rows',
       'limited'
     )
@@ -966,6 +1141,7 @@ export class SQLitePrivatePurchaseAliases {
       this.authorized(guard)(view)
       snapshot.checkCurrent(view)
       verification(view)
+      journal?.checkCurrent(view)
     }
     // Own every external result change before any later callback or effect.
     const extras = extra.map(
@@ -1018,7 +1194,7 @@ export class SQLitePrivatePurchaseAliases {
         const prepareChanges = (view: ProtectedLedgerView): readonly ProtectedLedgerChange[] => {
           authorize(view)
           const now = outputU64(view.observedAt).toString()
-          const changes = ownedChanges.map(change => {
+          const changes = [...ownedChanges, ...(journal?.changes(view) ?? [])].map(change => {
             const owned = ownOutputJSON(change, { bytes: 2 * 1024 * 1024 + 8192 })
               .value as unknown as ProtectedLedgerChange
             if (

@@ -169,6 +169,7 @@ export {
   type PrivatePurchaseCaller,
   type PrivatePurchasePreparation,
   type PrivatePurchaseValidation,
+  type PrivatePurchaseCandidateAssessment,
   type PrivatePurchaseDomain,
   type PrivatePurchaseAccessPort,
   type PrivatePurchaseAdmission,
@@ -184,6 +185,7 @@ export type {
 } from './PrivatePurchaseEvidence.js'
 export {
   SQLitePrivatePurchaseEvidence,
+  SQLitePrivatePurchaseCandidateWork,
   type PrivatePurchaseEvidenceLimits
 } from './SQLitePrivatePurchaseEvidence.js'
 
@@ -200,6 +202,12 @@ export {
   type PrivatePurchaseAliasSnapshot,
   type PrivatePurchaseAliasWrite
 } from './SQLitePrivatePurchaseAliases.js'
+export {
+  SQLitePrivatePurchaseAdmissionJournal,
+  type PrivatePurchaseAdmissionJournalEvent,
+  type PrivatePurchaseAdmissionJournalEntry,
+  type PrivatePurchaseAdmissionJournalPlan
+} from './SQLitePrivatePurchaseAdmissionJournal.js'
 export { SQLitePrivatePurchaseAliasStore } from './SQLitePrivatePurchaseAliasStore.js'
 export type {
   PrivatePurchaseAliasOwner,

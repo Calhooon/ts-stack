@@ -3,30 +3,27 @@
 This inventory tracks completion of the approved BRC-192–199 reference
 implementation. It complements the chronological [implementation record](./IMPLEMENTATION.md).
 The current specification baseline is [BRC PR295](https://github.com/bsv-blockchain/BRCs/pull/295)
-at `1b9a75e497b5856675af1ce01fd86843c37d07f9`. The source implements its
-pre-adoption replacement, including the complete current native reference
-compositions. Final published-source acceptance additionally requires the complete
-governed mutation campaign and terminal successful applicable checks.
-Historical integration evidence for the earlier exemplar does not qualify the
-replacement. Implemented contract alignment and remaining qualification are
-tracked in [specification alignment](./SPEC-ALIGNMENT.md).
-Passing a component test does not complete an end-to-end row. Integration marks
-below describe demonstrated reference workflows, not production deployment or
-final hosted qualification. The final review checkpoint additionally requires the
-complete mutation campaign and successful applicable checks on the exact
-published PR commit. Their immutable run IDs and terminal results are recorded in
-the PR completion evidence; this document does not self-certify those gates.
+at `bdbd7aec0731347230e6b4190864e90b9ff27898`. Its final merged clarification preserves
+all frozen reference Script and positive vector bytes. Implemented contracts and
+remaining qualification are tracked in [specification alignment](./SPEC-ALIGNMENT.md).
+Historical integration evidence for an earlier exemplar retains its own identity.
+
+The user-selected second review checkpoint is local-first. Its handoff requires
+complete local qualification of the final source, with the applicable corpus,
+seeds, limits, thresholds, platform and packed-consumer checks preserved. The user
+will run hosted CI after that review. A local pass is never reported as hosted CI
+green; the exact-head repository merge, Sonar and CodeQL gates remain required
+before merge or publication. The implementation and documentation checkmarks
+below do not by themselves qualify either checkpoint.
 
 The current alias owner, coordinator, independent currentness, physical disclosure,
-buyer recovery and candidate-bound LCH layers are now assembled with current-profile
-wallet routes and authenticated native HTTP fixtures. The current source passes
-repository health, lint, formatting, types, build, audit and documentation checks;
-the composed application/native workflows are exercised by the current Linux
-reference fixtures, actual wallet routes and authenticated HTTP. The acceptance
-rows describe that implemented and demonstrated composition. Complete mutation
-and exact final published-source qualification are additional checkpoint gates;
-the PR completion evidence records their immutable results. Earlier receipts
-remain historical evidence.
+buyer recovery and candidate-bound LCH layers are assembled with current-profile
+wallet routes and authenticated native HTTP fixtures. The final merged additions
+have passed working-source finality, protected custody, admission and LCH assessor
+regressions, including the complete current-family native HTTP integration.
+Earlier root, coverage, browser, artifact and mutation results remain tied to the
+source they tested. Complete qualification of the final coherent source remains
+open; these reference demonstrations alone do not complete Checkpoint 2.
 
 ## Public and private state discovery
 

@@ -16,7 +16,7 @@ BRC-197 is an optional reference transaction domain for private-overlay
 acquisition. The shared discovery, protected-operation and private-acquisition
 ports support other independently specified domains. Its current definition is
 [BRC PR295](https://github.com/bsv-blockchain/BRCs/pull/295) at immutable commit
-`1b9a75e497b5856675af1ce01fd86843c37d07f9`.
+`bdbd7aec0731347230e6b4190864e90b9ff27898`.
 
 A purchase has a stable economic commitment and one or more exact transaction
 identifiers. `revenueListingPurchaseCommitment(transaction)`, exported through

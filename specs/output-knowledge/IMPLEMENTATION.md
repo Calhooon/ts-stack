@@ -2,7 +2,7 @@
 
 This branch implements the application-neutral BRC-192–199 packet at the current
 [BRC PR295](https://github.com/bsv-blockchain/BRCs/pull/295) baseline
-at `1b9a75e497b5856675af1ce01fd86843c37d07f9`. The specification checkpoint is
+at `bdbd7aec0731347230e6b4190864e90b9ff27898`. The specification checkpoint is
 approved for implementation. The implementation
 checkpoint remains open; neither an initial package version nor passing foundation
 tests announces completion, publication or production qualification.
@@ -8197,6 +8197,7 @@ exact batch selection and complete successful assertions, recomputes both merged
 results and coverage from raw batches, then applies the original global coverage
 gate. Missing, skipped, repeated, relabeled or mismatched evidence fails closed.
 Hosted execution and complete exact-head mutation qualification remain required.
+
 ### Native boundary dispatch after serial isolation
 
 Fresh serial processes do not by themselves establish completion of the two
@@ -8227,3 +8228,38 @@ claiming either a measured performance improvement or Checkpoint 2 completion.
 Complete native alias coordinator and disclosure properties require all 300 generated histories, seed3242026, empty replay and every original assertion and cleanup. Exact096e coverage interrupts at246/300 and195/300 respectively under the former150-second property/180-second case allowance, with no reported counterexample. The earlier four-import source selection did not resolve that qualification gap. These failure receipts remain historical and unwaived; variable completed counts are not evidence of a speedup or a linear worst-case estimate.
 
 The reviewed harness allowance for only those two properties is300 seconds with a360-second surrounding Jest case; interruption remains a failure. Their diagnostic selectors record those actual values and have a390-second outer guard. Native HTTP retains its original600-second diagnostic and four120-second cases. Minimum runs, generated history domains, assertions, seeds, replay, worker limits, complete shard coverage and thresholds are unchanged, as are production deadlines, API/protocol/custody contracts, all151 mutation targets/398 rows, and the separately approved initial-suite and whole-job allowances. This allowance does not qualify a component or checkpoint. Complete successful exact-head coverage, every other applicable gate and independently reconciled full raw mutation evidence remain required.
+
+## Final merged finality and rejection-recovery clarification
+
+The current authority is the final merged PR295 revision
+`bdbd7aec0731347230e6b4190864e90b9ff27898`. The frozen programs, descriptors and
+positive vector bytes are unchanged. The additive header-preserving planner and
+current profile lineage verifier accept ordinary Bitcoin-final, Script-valid
+headers; immature unconfirmed histories remain pending. Verified inclusion uses
+the containing block's height or its preceding independently verified MTP.
+
+The explicit pending-candidate owner reserves bounded protected evidence before
+any economic identity or external operation. Journaled alias custody prepays
+append-only per-txid intents, outcomes and eligible recovery, preserving every
+rejection after cache turnover. Read-only assessment and the recovery writer
+separate installed verification/authentication guards from native custody fences:
+the latter use the supplied native view and cannot open a reentrant ledger read.
+Original terms, recipient, commitment, first financial time and deadlines remain
+unchanged; no payment or logical private issuance is repeated.
+
+Working-source feedback passed all 39 package builds, 140 protected custody tests
+including the original 300-case journal property, 59 admission tests and nine
+current-profile LCH seller tests. The complete current-family native HTTP suite
+passed all five scenarios. Its added scenario recovers a locally rejected private
+purchase through the exact transaction's retained public topic admission, retains
+its earlier rejection audit, and proves one wallet preparation/finalization, one
+Engine admission and one LCH issuance. The buyer first retains delivery, then
+explicitly validates it, reads its usable original custody and plays the licensed
+plaintext. Delivery alone remains unusable. Earlier failed integration samples
+remain failed; their corrections do not relabel their original receipts.
+
+The installation guide and compiled package example show neutral domain/custody
+composition, bounded reservations and physical shutdown. This is working-tree
+feedback, not final-source mutation or hosted qualification. Complete local
+qualification remains required before the user's second review checkpoint; the
+repository's exact-head remote merge/analyzer gates remain required afterward.

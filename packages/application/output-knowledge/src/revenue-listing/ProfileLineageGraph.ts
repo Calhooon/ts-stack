@@ -95,9 +95,10 @@ function action(
     }
     case 5:
       requireLineage(index === 0 && bytes.length === 90, 'Invalid retirement receipt position')
-      return tx.lockTime === 0
-        ? { operation: 'retire', authority: 'seller' }
-        : { operation: 'retire', authority: 'expiry', lockHeight: tx.lockTime }
+      // Both retirement authorities have identical mandatory distribution.
+      // Actual Script execution authenticates the seller signature or expiry
+      // route; a nonzero locktime cannot identify that choice by itself.
+      return { operation: 'retire', authority: 'seller' }
     default:
       throw new Error('Unknown immutable listing route')
   }
@@ -152,7 +153,6 @@ export function inspectProfileTransition(
     [{ rawTransaction: previous.toHex(), outputIndex: input.sourceOutputIndex }],
     selectedAction
   )
-  requireLineage(tx.lockTime === plan.lockTime, 'Listing route locktime differs')
   requireLineage(
     tx.outputs.length === plan.outputs.length || tx.outputs.length === plan.outputs.length + 1,
     'Listing output count differs'
@@ -164,11 +164,8 @@ export function inspectProfileTransition(
     requireLineage(
       Number.isInteger(funding.sequence) &&
         funding.sequence! >= 0 &&
-        funding.sequence! <= 0xffffffff &&
-        (plan.requireAllFinalInputs
-          ? funding.sequence === 0xffffffff
-          : index !== 0 || funding.sequence! < 0xffffffff),
-      'Listing route sequence differs'
+        funding.sequence! <= 0xffffffff,
+      'Invalid listing input sequence'
     )
     const key = `${funding.sourceTXID}.${funding.sourceOutputIndex}`
     requireLineage(!seen.has(key), 'Duplicate listing input')

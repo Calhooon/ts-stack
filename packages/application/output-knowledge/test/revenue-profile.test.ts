@@ -20,7 +20,8 @@ import {
   purchased,
   purchaseTransaction,
   construct,
-  extend
+  extend,
+  includeAt102
 } from './revenue-profile.fixture.js'
 
 it('owns the exact immutable descriptor and signed reserve-stage genesis', () => {
@@ -169,6 +170,145 @@ it('verifies a seller-child split and permissionless payout with both split succ
   expect(result.status).toBe('verified')
   if (result.status !== 'verified') throw new Error(JSON.stringify(result))
   expect(result.satoshis).toBe('11')
+}, 60000)
+
+it.each([
+  { lockTime: 1, listingSequence: 0xffffffff, fundingSequence: 0xffffffff },
+  { lockTime: 0, listingSequence: 0xfffffffe, fundingSequence: 0xffffffff },
+  { lockTime: 0, listingSequence: 0xffffffff, fundingSequence: 0xfffffffe }
+])(
+  'accepts an actual Script-valid payout and its descendants with an alternative final header: %j',
+  async header => {
+    const payout = await construct(
+      purchaseTransaction(),
+      0,
+      { operation: 'payout', units: '99' },
+      10,
+      3,
+      header
+    )
+    const packet = extend(purchased(), payout)
+    const verifier = new RevenueListingProfileLineageVerifier(profile, chains)
+    expect((await verifier.verify(packet, context())).status).toBe('verified')
+    const descendant = await construct(payout, 0, { operation: 'split', firstAmount: '6' })
+    expect((await verifier.verify(extend(packet, descendant), context())).status).toBe('verified')
+  },
+  60000
+)
+
+it('retains actual Script-valid nonfinal lineage as pending and reassesses it after height maturity', async () => {
+  const payout = await construct(
+    purchaseTransaction(),
+    0,
+    { operation: 'payout', units: '99' },
+    10,
+    3,
+    {
+      lockTime: 102,
+      listingSequence: 0xfffffffe,
+      fundingSequence: 0xffffffff
+    }
+  )
+  const packet = extend(purchased(), payout)
+  expect(
+    (await new RevenueListingProfileLineageVerifier(profile, chains).verify(packet, context()))
+      .status
+  ).toBe('pending-finality')
+  const later = context(102)
+  const advanced = {
+    resolve: async (view: typeof later.view, signal: AbortSignal) => {
+      const ancestry = await chains.resolve(view, signal)
+      return { ...ancestry, tracker: { ...ancestry.tracker, currentHeight: async () => 102 } }
+    }
+  }
+  expect(
+    (await new RevenueListingProfileLineageVerifier(profile, advanced).verify(packet, later)).status
+  ).toBe('verified')
+}, 60000)
+
+it.each([101, 102])(
+  'checks included height locktime %i against its containing block, preserving all actual Script checks',
+  async lockTime => {
+    const payout = await construct(
+      purchaseTransaction(),
+      0,
+      { operation: 'payout', units: '99' },
+      10,
+      3,
+      { lockTime, listingSequence: 0xfffffffe, fundingSequence: 0xffffffff }
+    )
+    const included = includeAt102(extend(purchased(), payout))
+    const result = await new RevenueListingProfileLineageVerifier(profile, included.chains).verify(
+      included.packet,
+      included.context
+    )
+    expect(result.status).toBe(lockTime === 101 ? 'verified' : 'invalid')
+  },
+  60000
+)
+
+it('uses containing-block historical MTP for included timestamp finality and leaves missing historical evidence unresolved', async () => {
+  const historical = BigInt(includeAt102(purchased()).historicalMTP)
+  for (const offset of [-1n, 0n]) {
+    const payout = await construct(
+      purchaseTransaction(),
+      0,
+      { operation: 'payout', units: '99' },
+      10,
+      3,
+      {
+        lockTime: Number(historical + offset),
+        listingSequence: 0xfffffffe,
+        fundingSequence: 0xffffffff
+      }
+    )
+    const included = includeAt102(extend(purchased(), payout))
+    // Today's selected MTP must never substitute for the containing block's MTP.
+    included.context.view.medianTimePast = String(historical + 100000n)
+    expect(
+      (
+        await new RevenueListingProfileLineageVerifier(profile, included.chains).verify(
+          included.packet,
+          included.context
+        )
+      ).status
+    ).toBe(offset === -1n ? 'verified' : 'invalid')
+    const unavailable = {
+      resolve: async (view: typeof included.context.view, signal: AbortSignal) => {
+        const ancestry = await included.chains.resolve(view, signal)
+        delete ancestry.medianTimePastBefore
+        return ancestry
+      }
+    }
+    expect(
+      (
+        await new RevenueListingProfileLineageVerifier(profile, unavailable).verify(
+          included.packet,
+          included.context
+        )
+      ).status
+    ).toBe('unresolved')
+    const changed = {
+      resolve: async (view: typeof included.context.view, signal: AbortSignal) => {
+        const ancestry = await included.chains.resolve(view, signal),
+          before = ancestry.medianTimePastBefore!
+        ancestry.medianTimePastBefore = async height => {
+          const result = await before(height, signal)
+          ancestry.medianTimePastBefore = async () => result
+          return result
+        }
+        return ancestry
+      }
+    }
+    expect(
+      (
+        await new RevenueListingProfileLineageVerifier(profile, changed).verify(
+          included.packet,
+          included.context
+        )
+      ).status
+    ).toBe('context-changed')
+  }
 }, 60000)
 
 it('executes early-child and unsigned height retirement with exact externally funded top-up', async () => {

@@ -129,8 +129,8 @@ export async function lchCovenantProfileSellerFixture(fixtureOptions: { detached
         rules: new Map([[f.selection.service.rules.id, () => {}]])
       }
     )
-  async function prepare() {
-    const ready = await seller.prepare(f.prepare, f.selection, signal)
+  async function prepare(use = seller) {
+    const ready = await use.prepare(f.prepare, f.selection, signal)
     ready.validation.checkCurrent()
     const contract = contracts.prepare(
       f.prepare,

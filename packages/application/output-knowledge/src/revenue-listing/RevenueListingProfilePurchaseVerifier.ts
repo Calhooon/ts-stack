@@ -224,7 +224,7 @@ export class RevenueListingProfilePurchaseVerifier {
       packet.descriptor,
       [{ rawTransaction: previous.toHex(), outputIndex: packet.target.outputIndex }],
       action
-    ).prepare(transaction).purchaseCommitment
+    ).preparePreservingHeader(transaction).purchaseCommitment
     requireLineage(commitment !== undefined, 'Purchase commitment unavailable')
     return commitment
   }

@@ -25,6 +25,11 @@ export interface ImmutableChainView {
   readonly tracker: ChainTracker
   /** Header from this exact validated ancestry, not a current-height lookup. */
   header(height: number, signal: AbortSignal): Promise<{ hash: string; merkleRoot: string }>
+  /** Median of the applicable preceding headers in this same validated ancestry.
+   * Required only when an included transaction has a timestamp lock and a
+   * nonfinal input sequence. Never substitute the latest tip's MTP.
+   */
+  medianTimePastBefore?(height: number, signal: AbortSignal): Promise<string>
 }
 export interface ChainViewResolver {
   /** Missing historical ancestry is reset-required, never a different latest view. */

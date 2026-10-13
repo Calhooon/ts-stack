@@ -85,6 +85,36 @@ test('recovers original selected-topic admission without resubmitting or disclos
   expect(await f.run()).toEqual(first)
 })
 
+test('rejection eligibility is read-only and requires original retained topical history and a fresh guarded domain commitment', async () => {
+  const f = fixture(),
+    signal = new AbortController().signal,
+    rejection = {
+      status: 'rejected' as const,
+      operationId: f.job.operationId,
+      txid: f.job.candidate.txid,
+      reason: 'local-test-policy',
+      evidence: ''
+    },
+    context = { ...f.context, purchaseCommitment: 'a1'.repeat(32) }
+  expect(await f.bridge.assessRecovery(f.job, rejection, signal, context)).toBeUndefined()
+  expect(f.submit).not.toHaveBeenCalled()
+  f.read.mockResolvedValue({ state: 'committed', admission: f.original() })
+  const eligible = await f.bridge.assessRecovery(f.job, rejection, signal, context)
+  expect(eligible?.purchaseCommitment).toBe(context.purchaseCommitment)
+  expect(eligible?.eligibilityId).toMatch(/^[0-9a-f]{64}$/)
+  expect((await f.bridge.assessRecovery(f.job, rejection, signal, context))?.eligibilityId).toBe(
+    eligible?.eligibilityId
+  )
+  expect(f.submit).not.toHaveBeenCalled()
+  expect(await f.bridge.assessRecovery(f.job, rejection, signal, f.context)).toBeUndefined()
+  await expect(
+    f.bridge.assessRecovery(f.job, { ...rejection, txid: 'ff'.repeat(32) }, signal, context)
+  ).rejects.toMatchObject({ code: 'conflict' })
+  context.purchaseCommitment = 'b2'.repeat(32)
+  expect(() => eligible!.checkCurrent()).toThrow('context changed')
+  expect(f.submit).not.toHaveBeenCalled()
+})
+
 test('a lost Engine response recovers the original receipt; returned duplicate STEAK is ignored', async () => {
   const f = fixture()
   f.read

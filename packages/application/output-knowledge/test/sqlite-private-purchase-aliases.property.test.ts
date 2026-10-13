@@ -1,6 +1,8 @@
 import { expect, test } from '@jest/globals'
 import fc from 'fast-check'
 import { SQLitePrivatePurchaseAliases } from '../src/private/SQLitePrivatePurchaseAliases.js'
+import { SQLitePrivatePurchaseAdmissionJournal } from '../src/private/SQLitePrivatePurchaseAdmissionJournal.js'
+import { privatePurchaseOperation } from '../src/private/PrivatePurchaseProgress.js'
 import type { ProtectedLedgerChange } from '../src/private/ProtectedLedgerCodec.js'
 import { purchaseAliasesFixture, retained } from './private-purchase-aliases.fixture.js'
 
@@ -16,6 +18,67 @@ fc.configureGlobal({
   interruptAfterTimeLimit: 150000,
   markInterruptAsFailure: true
 })
+
+test('preserves complete rejected and recovered operation history through 300 generated native journal restarts', () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 1, max: 250 }),
+      fc.integer({ min: 1, max: 2 }),
+      (n, recoveries) => {
+        const f = purchaseAliasesFixture(64, 6),
+          domain = f.e.base.owner.domain,
+          journal = new SQLitePrivatePurchaseAdmissionJournal(domain, f.e.base.f.f.contracts, 6),
+          txid = f.variant(n).txid,
+          operationId = privatePurchaseOperation(f.e.original, txid)
+        try {
+          journal.reserve(f.e.original, f.clock, f.guard)
+          const append = (event: Parameters<typeof journal.prepare>[1]) => {
+            const plan = journal.prepare(f.e.original, event, f.clock, f.guard)
+            domain.ledger.commitPrepared(plan.revision, plan.changes, f.clock, plan.checkCurrent)
+          }
+          const reject = () =>
+            append({
+              type: 'outcome',
+              outcome: {
+                status: 'rejected',
+                txid,
+                operationId,
+                reason: 'local-policy',
+                evidence: ''
+              }
+            })
+          append({ type: 'intent', txid, operationId })
+          reject()
+          const first = journal.read(f.e.original, f.clock, f.guard).entries
+          for (let index = 0; index < recoveries; index++) {
+            const eligibilityId = String(index + 1).padStart(64, '0')
+            append({ type: 'recovery', txid, operationId, eligibilityId })
+            reject()
+            expect(() => append({ type: 'recovery', txid, operationId, eligibilityId })).toThrow(
+              'Unchanged'
+            )
+          }
+          const saved = journal.read(f.e.original, f.clock, f.guard).entries
+          expect(saved.slice(0, 2)).toEqual(first)
+          expect(saved).toHaveLength(2 + 2 * recoveries)
+          const opened = f.e.base.open()
+          try {
+            const recovered = new SQLitePrivatePurchaseAdmissionJournal(
+              opened.domain,
+              f.e.base.f.f.contracts,
+              6
+            )
+            expect(recovered.read(f.e.original, f.clock, f.guard).entries).toEqual(saved)
+          } finally {
+            f.e.base.close(opened.domain)
+          }
+        } finally {
+          f.e.base.dispose()
+        }
+      }
+    )
+  )
+}, 180000)
 
 // Genuine ordinary file-backed encrypted native histories. This fixture uses
 // disclosed toy domain/placement premises and proves custody only; it does not

@@ -2,8 +2,8 @@
 id: compiled-package-examples
 title: 'Compiled Package Boundary Examples'
 kind: guide
-version: '1.1.1'
-last_updated: '2026-10-06'
+version: '1.2.0'
+last_updated: '2026-10-12'
 last_verified: '2026-10-06'
 review_cadence_days: 30
 status: stable
@@ -2988,4 +2988,76 @@ function inspectProofBytes(field: unknown): number[] {
 }
 void retainEncodedProof
 void inspectProofBytes
+```
+
+## Protected pending candidates and journaled purchase recovery
+
+This explicit new-acquisition composition uses caller-installed domain and custody
+policies. It supplies no Bitcoin, Script, recipient, topical admission or release
+verdict. See the [alias custody guide](./private-purchase-alias-custody.md) for
+aggregate reservation, current guards and shutdown requirements.
+
+```ts compile
+// example-id: journaled-pending-purchase-custody
+import {
+  PrivatePurchaseAliasCoordinator,
+  SQLitePrivatePurchaseAdmissionJournal,
+  SQLitePrivatePurchaseAliases,
+  SQLitePrivatePurchaseAliasStore,
+  SQLitePrivatePurchaseCandidateWork,
+  type PrivatePurchaseAliasCoordinatorOptions,
+  type PrivatePurchaseAliasLimits,
+  type PrivatePurchaseEvidenceLimits as JournaledPendingLimits,
+  type PrivatePurchaseStoreLimits,
+  type PrivatePurchaseContracts as JournaledPurchaseContracts,
+  type PrivateServiceDomain as JournaledPurchaseDomain
+} from '@bsv/output-knowledge/private/node'
+
+export function composeJournaledPurchaseCustody(
+  serviceDomain: JournaledPurchaseDomain,
+  contracts: JournaledPurchaseContracts,
+  aliasLimits: PrivatePurchaseAliasLimits,
+  pendingLimits: JournaledPendingLimits,
+  storeLimits: PrivatePurchaseStoreLimits,
+  policy: PrivatePurchaseAliasCoordinatorOptions['validationPolicy'],
+  maximumSelections: number
+) {
+  const admissionJournal = new SQLitePrivatePurchaseAdmissionJournal(serviceDomain, contracts, 16)
+  const aliases = new SQLitePrivatePurchaseAliases(
+    serviceDomain,
+    contracts,
+    aliasLimits,
+    admissionJournal
+  )
+  const store = new SQLitePrivatePurchaseAliasStore(
+    serviceDomain,
+    contracts,
+    aliases,
+    storeLimits,
+    policy,
+    maximumSelections
+  )
+  const candidateWork = new SQLitePrivatePurchaseCandidateWork(
+    serviceDomain,
+    contracts,
+    pendingLimits
+  )
+  return { admissionJournal, aliases, store, candidateWork }
+}
+
+export function composeJournaledPurchaseCoordinator(
+  ports: Omit<
+    PrivatePurchaseAliasCoordinatorOptions,
+    'aliases' | 'store' | 'candidateWork' | 'recoverRejected'
+  >,
+  custody: ReturnType<typeof composeJournaledPurchaseCustody>
+) {
+  return new PrivatePurchaseAliasCoordinator({
+    ...ports,
+    aliases: custody.aliases,
+    store: custody.store,
+    candidateWork: custody.candidateWork,
+    recoverRejected: true
+  })
+}
 ```

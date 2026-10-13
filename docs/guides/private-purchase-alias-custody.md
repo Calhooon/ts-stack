@@ -2,8 +2,8 @@
 id: private-purchase-alias-custody
 title: 'Purchase Commitment and Transaction Alias Custody'
 kind: guide
-version: '0.1.8'
-last_updated: '2026-10-09'
+version: '0.1.9'
+last_updated: '2026-10-12'
 last_verified: '2026-10-09'
 review_cadence_days: 30
 status: experimental
@@ -446,3 +446,161 @@ performance improvement.
 Native protected-envelope framing checks each canonical six-field ASCII record against an exact closed lexical grammar before constructing fresh null-prototype own data. Other key orders, whitespace, escapes, malformed fields and refusals retain the original duplicate-aware bounded JSON parser. Exact UTF-8 capacity, ordinary reader dispatch, scalar framing, current custody resolution, HKDF and GCM authentication still apply independently to every operation. A native Base64 companion validates each complete canonical representation before its bounded Buffer allocation; malformed forms retain the original native decoder and refusal precedence. No graph, encoded input, secret, custody or authority verdict is cached, and the original native decoder remains available. The three ledger engines, their operation order and persistence formats, existing public declarations and all original tests are unchanged. Five appended regressions cover independent byte oracle parity, all final padding sextets, boundary/refusal order, changed ciphertext and custody, duplicate/escaped text, fresh graphs and current reader dispatch. Hosted runtime and full exact-source mutation qualification are required; this source change makes no speedup or checkpoint acceptance claim.
 
 Authentication messages capture external array descriptors once per fresh snapshot. Signature and payload shape checks use only the independently owned dense arrays after the complete bounded traversal. The source optimization retains malformed-array refusals, all metadata and payload limits, signatures, identity, replay rules and original operation and test deadlines. It does not retain any message, signature verdict, secret, custody or authority decision. The native purchase composition must pass the original coverage scenarios independently; SDK regressions or CPU diagnostics do not establish recovery qualification.
+
+## Pending candidates and rejection recovery
+
+Select `SQLitePrivatePurchaseCandidateWork` with a local `domain.assess` port
+and the alias coordinator's `candidateWork` option. This explicitly bounded
+protected slot has its own `private-purchase-pending-evidence/1` installation;
+it does not reinterpret the historical proof owner. Reserve it before returning
+signed terms. `pending-finality` and `pending-evidence` retain owned candidate
+bytes without pinning a purchase commitment or reserving an external operation.
+Authenticated recovery reassesses those retained bytes. Once independently
+verified, the normal complete cumulative-proof, original-recipient, commitment,
+policy and native effect guards precede any admission. Pending evidence alone
+never authorizes payment, admission, settlement, a License or POTATOES.
+
+For rejection recovery, install `SQLitePrivatePurchaseAdmissionJournal` on the
+same physical domain/contracts and pass it as the fourth argument to
+`SQLitePrivatePurchaseAliases`. This selects a distinct alias-owner binding.
+Existing prepared owners cannot be silently opened as journaled owners. Prepay
+all event slots before signed preparation leaves the service; the journal always
+retains a completion slot for every outstanding intent. Cache eviction cannot
+erase an earlier operation, rejection or acceptance. Capacity exhaustion refuses
+new work before external effects and cannot discard an accepted obligation.
+
+Enable `recoverRejected: true` only with that journal and an installed read-only
+`admission.assessRecovery`. The assessor independently re-evaluates the exact
+transaction under the original terms, recipient, full commitment and selected
+policy. Its stable `eligibilityId` binds the complete evidence/policy assessment;
+clock ticks and unchanged retries must not manufacture new identities. Undefined
+preserves the rejection. Eligible recovery atomically commits its audit entry
+and reconciliation intent before an external call, clearing the old decision
+from the newly pending projection while preserving it in history. The admission
+port consults actual durable exact-txid topic history before any submission: an
+already admitted transaction links its retained STEAK without duplicate admission
+or accounting. Mining alone supplies neither topical admission nor STEAK.
+
+Recovery retains the acquisition, full commitment, first financial time, signed
+terms, material and deadlines. A newly eligible alias may be selected before
+first release; an issued historical txid/result is immutable thereafter. No new
+payment or second logical release is authorized. Unadmitted recovery cannot
+extend its promised deadline. Outstanding admitted delivery retains the existing
+obligation rules. Public replay and reindexing cannot initiate private release.
+
+The coordinator regression fixtures exercise actual encrypted SQLite custody
+and restart with explicitly controlled domain/policy premises; they are not
+production chain evidence. Full current-family Script, retained Engine/Mongo,
+authenticated HTTP and LCH compositions qualify those independent boundaries
+separately. Complete final-source qualification remains required.
+
+The optional companions are a new installation for new acquisitions. This
+composition example deliberately takes the existing domain, authenticated
+contracts and capacity policies as inputs; it supplies no chain, Script,
+recipient or policy verdict of its own.
+
+```ts
+import {
+  PrivatePurchaseAliasCoordinator,
+  SQLitePrivatePurchaseAdmissionJournal,
+  SQLitePrivatePurchaseAliases,
+  SQLitePrivatePurchaseAliasStore,
+  SQLitePrivatePurchaseCandidateWork,
+  type PrivatePurchaseAliasCoordinatorOptions,
+  type PrivatePurchaseAliasLimits,
+  type PrivatePurchaseEvidenceLimits as JournaledPendingLimits,
+  type PrivatePurchaseStoreLimits,
+  type PrivatePurchaseContracts as JournaledPurchaseContracts,
+  type PrivateServiceDomain as JournaledPurchaseDomain
+} from '@bsv/output-knowledge/private/node'
+
+export function composeJournaledPurchaseCustody(
+  serviceDomain: JournaledPurchaseDomain,
+  contracts: JournaledPurchaseContracts,
+  aliasLimits: PrivatePurchaseAliasLimits,
+  pendingLimits: JournaledPendingLimits,
+  storeLimits: PrivatePurchaseStoreLimits,
+  policy: PrivatePurchaseAliasCoordinatorOptions['validationPolicy'],
+  maximumSelections: number
+) {
+  const admissionJournal = new SQLitePrivatePurchaseAdmissionJournal(serviceDomain, contracts, 16)
+  const aliases = new SQLitePrivatePurchaseAliases(
+    serviceDomain,
+    contracts,
+    aliasLimits,
+    admissionJournal
+  )
+  const store = new SQLitePrivatePurchaseAliasStore(
+    serviceDomain,
+    contracts,
+    aliases,
+    storeLimits,
+    policy,
+    maximumSelections
+  )
+  const candidateWork = new SQLitePrivatePurchaseCandidateWork(
+    serviceDomain,
+    contracts,
+    pendingLimits
+  )
+  return { admissionJournal, aliases, store, candidateWork }
+}
+
+export function composeJournaledPurchaseCoordinator(
+  ports: Omit<
+    PrivatePurchaseAliasCoordinatorOptions,
+    'aliases' | 'store' | 'candidateWork' | 'recoverRejected'
+  >,
+  custody: ReturnType<typeof composeJournaledPurchaseCustody>
+) {
+  return new PrivatePurchaseAliasCoordinator({
+    ...ports,
+    aliases: custody.aliases,
+    store: custody.store,
+    candidateWork: custody.candidateWork,
+    recoverRejected: true
+  })
+}
+```
+
+Install a real `domain.assess` alongside the existing complete `domain.verify`;
+install the read-only `admission.assessRecovery` alongside reconciliation. The
+constructors check that these methods and every custody component belong to the
+same installation. For the LCH exemplar, `LCHOverlayProfileCovenantSeller.assess`
+uses an explicitly installed `verification.assessPurchase`. A verified result
+still goes through the complete purchase verifier before admission or issuance.
+For the Engine adapter, `OverlayPurchaseAdmission.assessRecovery` obtains
+eligibility from the exact durable topic history and a freshly guarded domain
+commitment; it never calls `Engine.submit` during assessment.
+
+The example's sixteen-event journal reserves seventeen native records, 8,192
+header bytes and 139,264 bytes per event, plus update capacity. These are only
+the journal's reservations: the configured physical namespace must also cover
+the original result owner, all alias roles and pending candidate work. Check the
+aggregate and largest writer batch before signing terms. Every new intent or
+recovery must leave a completion slot for each unfinished operation. An exhausted
+journal refuses additional work and preserves its complete existing history.
+
+The current-family native integration demonstrates a local private rejection,
+then exact public topical processing, then authenticated private recovery using
+that retained admission. It checks one original wallet preparation/finalization,
+one Engine admission, one LCH issuance, unchanged original terms and financial
+time, retained rejection audit entries and successful playback. The public topic
+submit returns no private License or key. The pending-finality tests separately
+check that retained evidence has no financial identity or external operation
+until reassessment succeeds, and the lineage tests execute the actual Scripts
+before checking height or containing-block timestamp finality.
+
+A returned eligibility guard must remain synchronous and safe within the native
+writer. It checks installed domain, authentication and verification context;
+custody and revision fences use the SAME supplied writer view. It must not open
+a second ledger read from that transaction. Drain the coordinator with
+`await coordinator.stop()` before closing caller-owned SQLite connections.
+
+On the buyer, `recover()` obtains and retains authenticated delivery; it does not
+prove that delivery is locally usable. Call `await buyer.validate()` to perform
+the independent original-terms, Bitcoin/domain, release and License verification
+and retain the verified entitlement. Require its `usable` result, then obtain
+`await buyer.usableResult()` before playback. `usableResult()` reads the already
+validated original custody; it is not the validation action. These steps do not
+create a wallet action, another payment or another provider issuance.

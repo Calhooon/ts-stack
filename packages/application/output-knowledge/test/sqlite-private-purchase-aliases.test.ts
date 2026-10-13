@@ -1,7 +1,11 @@
 import { assembleOutputEvidence } from '../src/EvidenceAssembler.js'
 import { expect, jest, test } from '@jest/globals'
-import { Beef, decodeOutputBytes, ownOutputJSON } from '@bsv/sdk'
+import { Beef, decodeOutputBytes, ownOutputJSON, type OutputJSONObject } from '@bsv/sdk'
 import { SQLitePrivatePurchaseAliases } from '../src/private/SQLitePrivatePurchaseAliases.js'
+import {
+  SQLitePrivatePurchaseAdmissionJournal,
+  type PrivatePurchaseAdmissionJournalEvent
+} from '../src/private/SQLitePrivatePurchaseAdmissionJournal.js'
 import { privatePurchaseOperation } from '../src/private/PrivatePurchaseProgress.js'
 import { purchaseEvidenceFixture } from './private-purchase-evidence.fixture.js'
 import type { ProtectedLedgerChange } from '../src/private/ProtectedLedgerCodec.js'
@@ -29,6 +33,272 @@ test('native alias custody requires complete prior reservations and preserves th
     maximumUnconfirmed: 2
   })
   expect(() => changed.reserve(f.e.original, f.clock, f.guard)).toThrow()
+})
+
+function journalFixture(maximumEvents = 4) {
+  const f = fixture(64, maximumEvents),
+    domain = f.e.base.owner.domain,
+    journal = new SQLitePrivatePurchaseAdmissionJournal(
+      domain,
+      f.e.base.f.f.contracts,
+      maximumEvents
+    )
+  const intent = (txid: string): PrivatePurchaseAdmissionJournalEvent => ({
+    type: 'intent',
+    txid,
+    operationId: privatePurchaseOperation(f.e.original, txid)
+  })
+  const rejection = (txid: string): PrivatePurchaseAdmissionJournalEvent => ({
+    type: 'outcome',
+    outcome: {
+      status: 'rejected',
+      txid,
+      operationId: privatePurchaseOperation(f.e.original, txid),
+      reason: 'local-test-policy',
+      evidence: ''
+    }
+  })
+  const append = (event: PrivatePurchaseAdmissionJournalEvent) => {
+    const plan = journal.prepare(f.e.original, event, f.clock, f.guard)
+    domain.ledger.commitPrepared(plan.revision, plan.changes, f.clock, plan.checkCurrent)
+  }
+  return {
+    f,
+    domain,
+    journal,
+    intent,
+    rejection,
+    append,
+    read: () => journal.read(f.e.original, f.clock, f.guard)
+  }
+}
+
+test('journal reservation is mandatory, idempotent and bound to the original physical owner', () => {
+  const { f, journal, read } = journalFixture()
+  try {
+    expect(() => read()).toThrow('missing')
+    journal.reserve(f.e.original, f.clock, f.guard)
+    journal.reserve(f.e.original, f.clock, f.guard)
+    expect(read().entries).toEqual([])
+    const other = purchaseEvidenceFixture()
+    try {
+      expect(() => journal.installedOn(other.base.owner.domain, f.e.base.f.f.contracts)).toThrow(
+        'physical purchase owner'
+      )
+    } finally {
+      other.base.dispose()
+    }
+    expect(
+      () =>
+        new SQLitePrivatePurchaseAdmissionJournal(f.e.base.owner.domain, f.e.base.f.f.contracts, 3)
+    ).toThrow('completion capacity')
+    expect(
+      () =>
+        new SQLitePrivatePurchaseAdmissionJournal(f.e.base.owner.domain, f.e.base.f.f.contracts, 61)
+    ).toThrow('capacity')
+    expect(() => journal.read(f.e.original, f.clock, async () => {})).toThrow('synchronous')
+  } finally {
+    f.e.base.dispose()
+  }
+})
+
+test('journal cannot spend the reserved completion of another unfinished operation', () => {
+  const { f, journal, intent, rejection, append, read } = journalFixture()
+  try {
+    journal.reserve(f.e.original, f.clock, f.guard)
+    const a = f.variant(61).txid,
+      b = f.variant(62).txid,
+      c = f.variant(63).txid
+    append(intent(a))
+    append(intent(b))
+    expect(() => append(intent(c))).toThrow('outstanding completion')
+    expect(read().entries.map(({ event }) => event.type)).toEqual(['intent', 'intent'])
+    append(rejection(a))
+    append(rejection(b))
+    expect(read().entries.map(({ event }) => event.type)).toEqual([
+      'intent',
+      'intent',
+      'outcome',
+      'outcome'
+    ])
+    expect(() => append(intent(c))).toThrow('outstanding completion')
+  } finally {
+    f.e.base.dispose()
+  }
+})
+
+test('journal owns event bytes, rejects stale plans and never allows duplicate intents or unpaired outcomes', () => {
+  const { f, domain, journal, intent, rejection, append, read } = journalFixture(6)
+  try {
+    journal.reserve(f.e.original, f.clock, f.guard)
+    const a = f.variant(64).txid,
+      b = f.variant(65).txid
+    expect(() => append(rejection(a))).toThrow('durable intent')
+    const input = intent(a),
+      plan = journal.prepare(f.e.original, input, f.clock, f.guard),
+      stale = journal.prepare(f.e.original, intent(b), f.clock, f.guard)
+    if (input.type !== 'intent') throw new Error('Wrong fixture event')
+    input.txid = b
+    domain.ledger.read(
+      [domain.identity.address('delivery', { purpose: 'journal-owned-plan-probe' })],
+      f.clock,
+      view => {
+        const changes = plan.changes(view),
+          binding = changes[0].value.binding
+        if (binding !== null && typeof binding === 'object')
+          Reflect.set(binding, 'owner', 'ff'.repeat(32))
+        changes[1].value.binding = { owner: 'ee'.repeat(32) }
+      }
+    )
+    domain.ledger.commitPrepared(plan.revision, plan.changes, f.clock, plan.checkCurrent)
+    expect(read().entries[0].event).toEqual(intent(a))
+    expect(() =>
+      domain.ledger.commitPrepared(stale.revision, stale.changes, f.clock, stale.checkCurrent)
+    ).toThrow()
+    expect(() => append(intent(a))).toThrow('restart')
+    expect(() =>
+      append({ ...intent(b), operationId: 'ff'.repeat(32) } as PrivatePurchaseAdmissionJournalEvent)
+    ).toThrow('original admission operation')
+    const copy = read().entries
+    copy[0].observedAt = '0'
+    expect(read().entries[0].observedAt).not.toBe('0')
+    append(rejection(a))
+    expect(() => append(rejection(a))).toThrow('durable intent')
+  } finally {
+    f.e.base.dispose()
+  }
+})
+
+test('journal pins installed methods and preserves native rejection time through restart', () => {
+  const { f, domain, journal, intent, rejection, append, read } = journalFixture()
+  try {
+    journal.reserve(f.e.original, f.clock, f.guard)
+    append(intent(f.e.candidate.txid))
+    append(rejection(f.e.candidate.txid))
+    const saved = read().entries,
+      opened = f.e.base.open()
+    try {
+      const reopened = new SQLitePrivatePurchaseAdmissionJournal(
+        opened.domain,
+        f.e.base.f.f.contracts,
+        4
+      )
+      expect(reopened.read(f.e.original, f.clock, f.guard).entries).toEqual(saved)
+    } finally {
+      f.e.base.close(opened.domain)
+    }
+    const original = domain.ledger.commit
+    domain.ledger.commit = () => {
+      throw new Error('Replacement must not execute')
+    }
+    expect(() => read()).toThrow('installation changed')
+    domain.ledger.commit = original
+    expect(read().entries).toEqual(saved)
+  } finally {
+    f.e.base.dispose()
+  }
+})
+
+test('journal binds the signed promise across a later native preparation observation without rebinding the terms', () => {
+  const { f, domain, journal, intent, read } = journalFixture()
+  try {
+    journal.reserve(f.e.original, f.clock, f.guard)
+    const later = { ...f.e.original, createdAt: String(BigInt(f.e.original.createdAt) + 1n) }
+    f.e.base.setNow(later.createdAt)
+    expect(journal.read(later, f.clock, f.guard).entries).toEqual([])
+    const plan = journal.prepare(later, intent(f.e.candidate.txid), f.clock, f.guard)
+    domain.ledger.commitPrepared(plan.revision, plan.changes, f.clock, plan.checkCurrent)
+    expect(journal.read(later, f.clock, f.guard).entries).toEqual(read().entries)
+    expect(read().entries[0].observedAt).toBe(later.createdAt)
+    const changed = structuredClone(later)
+    changed.request.requestId = 'ff'.repeat(32)
+    expect(() => journal.read(changed, f.clock, f.guard)).toThrow()
+  } finally {
+    f.e.base.dispose()
+  }
+})
+
+test.each([
+  'header-format',
+  'header-binding',
+  'header-counter',
+  'header-fields',
+  'slot-format',
+  'slot-binding',
+  'slot-index',
+  'slot-fields',
+  'missing-entry',
+  'event-fields',
+  'event-type',
+  'event-operation',
+  'past-time',
+  'future-time'
+])('journal independently rejects authenticated but malformed owned metadata: %s', selected => {
+  const { f, domain, journal, intent, read } = journalFixture()
+  try {
+    journal.reserve(f.e.original, f.clock, f.guard)
+    const plan = journal.prepare(f.e.original, intent(f.e.candidate.txid), f.clock, f.guard)
+    let changes: readonly ProtectedLedgerChange[] = []
+    domain.ledger.read(
+      [domain.identity.address('delivery', { purpose: 'journal-malformed-plan-probe' })],
+      f.clock,
+      view => {
+        changes = structuredClone(plan.changes(view))
+      }
+    )
+    const header = changes[0].value,
+      slot = changes[1].value,
+      entry = slot.entry as OutputJSONObject,
+      event = entry.event as OutputJSONObject
+    switch (selected) {
+      case 'header-format':
+        header.format = 'unknown'
+        break
+      case 'header-binding':
+        header.binding = {}
+        break
+      case 'header-counter':
+        header.next = 2
+        break
+      case 'header-fields':
+        header.extra = true
+        break
+      case 'slot-format':
+        slot.format = 'unknown'
+        break
+      case 'slot-binding':
+        slot.binding = {}
+        break
+      case 'slot-index':
+        slot.index = 1
+        break
+      case 'slot-fields':
+        slot.extra = true
+        break
+      case 'missing-entry':
+        slot.entry = null
+        break
+      case 'event-fields':
+        event.extra = true
+        break
+      case 'event-type':
+        event.type = 'unresolved'
+        break
+      case 'event-operation':
+        event.operationId = 'ff'.repeat(32)
+        break
+      case 'past-time':
+        entry.observedAt = String(BigInt(f.e.original.createdAt) - 1n)
+        break
+      case 'future-time':
+        entry.observedAt = String(BigInt(f.clock()) + 1n)
+        break
+    }
+    domain.ledger.commit(plan.revision, changes, f.clock, plan.checkCurrent)
+    expect(() => read()).toThrow()
+  } finally {
+    f.e.base.dispose()
+  }
 })
 
 test('native alias proof union retains shared rows while original bytes stay immutable', () => {
