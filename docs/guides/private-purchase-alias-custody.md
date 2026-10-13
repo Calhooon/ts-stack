@@ -4,7 +4,7 @@ title: 'Purchase Commitment and Transaction Alias Custody'
 kind: guide
 version: '0.1.9'
 last_updated: '2026-10-12'
-last_verified: '2026-10-09'
+last_verified: '2026-10-12'
 review_cadence_days: 30
 status: experimental
 tags: [utxo, private-overlays, purchase, custody, recovery]

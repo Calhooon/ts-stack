@@ -4,7 +4,7 @@ title: 'Compiled Package Boundary Examples'
 kind: guide
 version: '1.2.0'
 last_updated: '2026-10-12'
-last_verified: '2026-10-06'
+last_verified: '2026-10-12'
 review_cadence_days: 30
 status: stable
 tags: [guide, typescript, packages, consumers, examples]
