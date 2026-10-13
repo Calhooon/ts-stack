@@ -96,7 +96,7 @@ export async function verifyNativeExistingFieldWriterFence(
       ),
     prepared = await read(),
     rollback = new Error('Rollback stale metadata writer countercase')
-  if (prepared.length !== 1 || typeof prepared[0].metadata?.outputDescription !== 'string')
+  if (prepared.length !== 1 || !Number.isSafeInteger(prepared[0].metadata?.satoshis))
     throw new Error('Output metadata fixture differs')
   try {
     await store.withPrivateNativeDatabase(
@@ -105,9 +105,9 @@ export async function verifyNativeExistingFieldWriterFence(
         await database.transaction(async trx => {
           store.assertPrivateNativeWriteTransaction(trx)
           await assertBrc38ImportExistingFieldTargets(trx, storage, userId, 'outputs', [target], prepared, 65536)
-          const changed =
-            prepared[0].metadata?.outputDescription === 'stale-metadata-A' ? 'stale-metadata-B' : 'stale-metadata-A'
-          await trx('outputs').where({ outputId: target.localId, userId }).update({ outputDescription: changed })
+          const changed = prepared[0].metadata?.satoshis === 1 ? 2 : 1
+          if ((await trx('outputs').where({ outputId: target.localId, userId }).update({ satoshis: changed })) !== 1)
+            throw new Error('Stale scalar countercase did not change exactly one original output')
           let refused = false
           try {
             await assertBrc38ImportExistingFieldTargets(trx, storage, userId, 'outputs', [target], prepared, 65536)

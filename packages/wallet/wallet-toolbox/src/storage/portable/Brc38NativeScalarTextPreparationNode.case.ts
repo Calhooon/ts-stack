@@ -90,12 +90,19 @@ export async function verifyNativeScalarTextPreparationRecovery(
       async database =>
         await database.transaction(async trx => {
           if (escaped === undefined) throw new Error('Missing expired installer countercase')
+          const beforeEscape = await image(trx)
           try {
             await escaped(trx, 'transactions', sourceIndex, rowId, field, 'text')
             throw new Error('Escaped TEXT installer ran')
           } catch (cause) {
-            if (!(cause instanceof Error) || !cause.message.includes('retained source')) throw cause
+            if (
+              !(cause instanceof Error) ||
+              !cause.message.includes('Owned private import read is unavailable or already pending')
+            )
+              throw cause
           }
+          if (JSON.stringify(await image(trx)) !== JSON.stringify(beforeEscape))
+            throw new Error('Expired TEXT installer changed original wallet metadata or pointer')
           await trx('transactions').where({ transactionId: rowId }).update({ description: '' })
           await install(trx, 'transactions', sourceIndex, rowId, field, 'text')
         })

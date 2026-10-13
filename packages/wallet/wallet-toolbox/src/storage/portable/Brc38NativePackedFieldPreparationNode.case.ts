@@ -126,6 +126,15 @@ export async function verifyNativePackedFieldPreparationReadDrain(
     !Object.values(page.data.rows[0].source.binaries).some(field => field.bytes > 65536)
   )
     throw new Error('Independent multichunk source fixture required')
+  // Original fixture source windows are 1 KiB. The complete 129-window
+  // sample observes 15,822 statements, including native seal checks.
+  const expectedSourceWindows = Object.values(page.data.rows[0].source.binaries).reduce(
+      (total, field) => total + Math.ceil(field.bytes / 1024),
+      0
+    ),
+    maximumQueries = 512 + 128 * expectedSourceWindows
+  if (!Number.isSafeInteger(maximumQueries) || expectedSourceWindows < 1 || maximumQueries > 131584)
+    throw new Error('Finite native SQL observation fixture extent differs')
   const original = store.withPrivateNativeDatabase,
     borrow = original.bind(store),
     ownMethod = Object.hasOwn(store, 'withPrivateNativeDatabase')
@@ -140,7 +149,8 @@ export async function verifyNativePackedFieldPreparationReadDrain(
     try {
       return await borrow(readOnly, async database => {
         const observe = (query: { sql: string }): void => {
-          if (++queries > 8192 || query.sql.length > 65536) throw new Error('Finite native SQL observation exceeded')
+          if (++queries > maximumQueries || query.sql.length > 65536)
+            throw new Error('Finite native SQL observation exceeded')
           if (/^select/i.test(query.sql) && /private_binary_chunks/i.test(query.sql) && /payload/i.test(query.sql)) {
             if (!readOnly) throw new Error('Source payload was read in an append writer')
             if (/substr\(payload/i.test(query.sql)) sourceWindows++

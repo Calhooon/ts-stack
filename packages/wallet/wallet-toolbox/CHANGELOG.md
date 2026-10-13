@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Align genuine native qualification scalar/closed-installer fixtures and measured finite SQL observation bounds; select a bounded local-schema physical allowance while retaining the real smaller-quota refusal and every production default.
+
 - Align native streamed integration test outer guards with the existing 180-second fixture lifetime plus bounded physical-owner cleanup; retain all data, assertions, operation deadlines and production defaults.
 
 - Private publication and profile-mode regressions match the current filesystem guard error while independently checking the actual restricted mode and unchanged exact device/inode. Copied-root and physical-lease regressions match the current ownership guard. All original refusal, descriptor-close, payload, copy and retirement assertions remain; production guards and defaults are unchanged.
