@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Select finite per-scenario native candidate test fixture lifetimes with measured setup/copy headroom and separate cleanup allowance. Preserve all original cases, real expiry checks, read choices, operation counts and production defaults; complete system qualification remains required.
+
 - Align genuine native qualification scalar/closed-installer fixtures and measured finite SQL observation bounds; select a bounded local-schema physical allowance while retaining the real smaller-quota refusal and every production default.
 
 - Align native streamed integration test outer guards with the existing 180-second fixture lifetime plus bounded physical-owner cleanup; retain all data, assertions, operation deadlines and production defaults.

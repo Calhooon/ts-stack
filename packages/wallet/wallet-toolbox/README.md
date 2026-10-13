@@ -6148,3 +6148,25 @@ Private publication and profile-mode regressions match the current filesystem gu
 Native streamed integration cases use a finite 210-second outer test window around the fixture's existing 180-second wall-clock and monotonic lifetime, leaving 30 seconds for its original physical-owner cleanup. This does not renew the fixture or change native operation deadlines, resource limits, data, assertions or production defaults. Schema-order cases retain their original 30-second test guard; their observed query-abort failure requires separate cause evidence. Full system qualification remains pending.
 
 Native streamed qualification uses genuine scalar satoshi metadata for its stale-writer countercase, and independently checks that closed prepared-TEXT installers leave wallet metadata and pointers unchanged. Its finite SQL observer bound is derived from the original 1 KiB window count (15,822 measured statements across 129 windows; 17,024 observations allowed for that fixture), retaining the SQL-byte cap and every read-drain, payload and writer assertion. The optional local-schema positive case selects a supported 5 MiB aggregate physical allowance to cover the existing native database/rollback page formula; the ordinary case and default remain 4 MiB, and a separate real 4 MiB negative retains the original SQLITE_FULL cause. All original datasets, cases, operation deadlines, row allocations and production defaults remain; full-system qualification is pending.
+
+### Complete native candidate fixture envelopes
+
+The complete original natural-key and current-data-fence coverage cases measured
+176.103 and 175.889 seconds in the Linux qualifier. The preceding current-data
+case failed at 180.028 seconds, at the original coherent-source admission check.
+The supported ten-minute diagnostic retained every original callback, data,
+assertion, 1 KiB read and real expiry check; it is diagnostic evidence only.
+These cases and the full independent inventory matrix now explicitly select one
+initial five-minute test fixture lifetime and a further 30 seconds for cleanup.
+The larger COPY/resume case selects ten minutes; its complete UNIQUE rebuild
+selects twenty minutes. The private page allocation case selects two five-minute
+setup/copy windows, while the incoming-range case retains its existing fifteen
+minutes. Each lifetime is fixed at creation, shared by its actual actors, and
+cannot be renewed. The ordinary fixture default remains three minutes.
+
+All original cases, datasets, negative/rollback/custody checks, source WAL busy
+proof, escaped-source refusal, finite operation counts and native read choices
+remain. Production deadlines, native per-operation limits, memory/byte caps,
+public APIs, archive formats and provider defaults are unchanged. These test
+budgets are not production SLOs. Full uninstrumented affected-case coverage,
+contended hosted execution and whole-system qualification remain required.

@@ -14,9 +14,10 @@ import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestor
 import { asString } from '../../utility/utilityHelpers.noBuffer'
 import { doubleSha256BE } from '../../utility/utilityHelpers'
 
-// Original complete copy/allocation exceeded its 180-second fixture owner.
-// Admit two finite setup/copy phases, plus 30 seconds of cleanup locally.
-const nativeFixtureLifetimeMs = 180000 + 180000
+// Original complete copy/allocation reached its 360-second owner under hosted
+// coverage. Select two five-minute setup/copy windows once at creation.
+// The outer guard adds only 30 seconds for physical cleanup.
+const nativeFixtureLifetimeMs = 300000 + 300000
 const nativeFixtureCaseTimeoutMs = nativeFixtureLifetimeMs + 30000
 
 // Independent numeric family names and archive counts. Four original merge

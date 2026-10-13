@@ -14,7 +14,9 @@ import {
 } from './Brc38IndependentNativeInventoryFixture'
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 
-const nativeCandidateFixtureLifetimeMs = 180000
+// This scenario owns initial COPY, resumed changes and full postimage reads.
+// Give those two complete phases one fixed envelope; never renew it.
+const nativeCandidateFixtureLifetimeMs = 2 * 300000
 const nativeCandidateCaseTimeoutMs = nativeCandidateFixtureLifetimeMs + 30000
 // UNIQUE recovery completes an initial COPY, drains it, then completes a fresh
 // COPY. Admit two existing copy windows under the same finite fixture owner.
