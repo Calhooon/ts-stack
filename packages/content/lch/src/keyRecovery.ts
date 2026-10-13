@@ -6,9 +6,9 @@ import { keyIdFor } from './encryption.js'
 import { isCompressedPublicKey } from './signatures.js'
 import { requiredOwnDataValue, snapshotBytes } from './boundary.js'
 
-const BRC78_VERSION = Uint8Array.of(0x42, 0x42, 0x10, 0x33)
-const ENCRYPTION_PROTOCOL = [2, 'message encryption'] as const
-const MAX_BRC78_PAYLOAD_BYTES = 64 * 1024
+export const BRC78_VERSION = Uint8Array.of(0x42, 0x42, 0x10, 0x33)
+export const ENCRYPTION_PROTOCOL = [2, 'message encryption'] as const
+export const MAX_BRC78_PAYLOAD_BYTES = 64 * 1024
 
 /** Internal recipient-only owner; it holds no encryption or delivery capability. */
 export class WalletBRC78KeyRecovery {
@@ -20,34 +20,25 @@ export class WalletBRC78KeyRecovery {
     }
   }
   async recover(payload: Uint8Array): Promise<{ keyId: Uint8Array; cek: Uint8Array }> {
-    lchAssert(
+    assertKey(
       payload instanceof Uint8Array &&
         payload.length > 102 &&
         payload.length <= MAX_BRC78_PAYLOAD_BYTES,
-      'ERR_LCH_KEY',
       'BRC-78 payload is truncated or oversized'
     )
     payload = snapshotBytes(payload, 'BRC-78 payload')
-    lchAssert(
+    assertKey(
       BRC78_VERSION.every((byte, index) => payload[index] === byte),
-      'ERR_LCH_KEY',
       'Invalid BRC-78 version'
     )
     const sender = payload.slice(4, 37)
     const recipient = payload.slice(37, 70)
-    const identityValue = requiredOwnDataValue(
-      await this.wallet.getPublicKey({ identityKey: true }),
-      'publicKey',
-      'Wallet getPublicKey result'
-    )
-    lchAssert(typeof identityValue === 'string', 'ERR_LCH_KEY', 'Wallet identity key is invalid')
-    const identity = fromHex(identityValue)
-    lchAssert(
+    const identity = await walletIdentity(this.wallet)
+    assertKey(
       isCompressedPublicKey(sender) &&
         isCompressedPublicKey(recipient) &&
         isCompressedPublicKey(identity) &&
         toHex(recipient) === toHex(identity),
-      'ERR_LCH_KEY',
       'BRC-78 payload identity binding is invalid'
     )
     const messageKeyId = payload.slice(70, 102)
@@ -69,13 +60,21 @@ export class WalletBRC78KeyRecovery {
     const recovered = walletBytes(plaintext, 64, 'decrypted key payload', 64)
     const keyId = recovered.slice(0, 32)
     const cek = recovered.slice(32)
-    lchAssert(
-      toHex(await keyIdFor(cek)) === toHex(keyId),
-      'ERR_LCH_KEY',
-      'Recovered CEK does not match Key ID'
-    )
+    assertKey(toHex(await keyIdFor(cek)) === toHex(keyId), 'Recovered CEK does not match Key ID')
     return { keyId, cek }
   }
+}
+
+export async function walletIdentity(
+  wallet: Pick<WalletInterface, 'getPublicKey'>
+): Promise<Uint8Array> {
+  const identity = requiredOwnDataValue(
+    await wallet.getPublicKey({ identityKey: true }),
+    'publicKey',
+    'Wallet getPublicKey result'
+  )
+  assertKey(typeof identity === 'string', 'Wallet identity key is invalid')
+  return fromHex(identity)
 }
 
 export function walletBytes(
@@ -85,26 +84,29 @@ export function walletBytes(
   exactLength?: number
 ): Uint8Array {
   const message = `Wallet returned an invalid ${name}`
-  lchAssert(Array.isArray(value), 'ERR_LCH_KEY', message)
+  assertKey(Array.isArray(value), message)
   const length: unknown = Object.getOwnPropertyDescriptor(value, 'length')?.value
-  lchAssert(
+  assertKey(
     typeof length === 'number' &&
       Number.isSafeInteger(length) &&
       length > 0 &&
       length <= maximum &&
       (exactLength === undefined || length === exactLength),
-    'ERR_LCH_KEY',
     message
   )
   const bytes = new Uint8Array(length)
   for (let index = 0; index < length; index++) {
     const byte: unknown = Object.getOwnPropertyDescriptor(value, index)?.value
-    lchAssert(
+    assertKey(
       typeof byte === 'number' && Number.isInteger(byte) && byte >= 0 && byte <= 255,
-      'ERR_LCH_KEY',
       message
     )
     bytes[index] = byte
   }
   return bytes
+}
+
+/** Internal BRC-78 key guard; callers retain their exact condition and message. */
+export function assertKey(condition: unknown, message: string): asserts condition {
+  lchAssert(condition, 'ERR_LCH_KEY', message)
 }
