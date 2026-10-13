@@ -1,3 +1,20 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Brc38StagingAdmissionNode } from './Brc38StagingAdmissionNode'
+import {
+  stageAuthenticatedBrc39PrivateImport,
+  authenticateBrc39PrivateNativeImport
+} from './Brc38AuthenticatedPrivateStageNode'
+import {
+  authenticatedStageOptions,
+  authenticatedStagePassword,
+  encrypted
+} from './Brc38AuthenticatedPrivateStageFixture'
+import { semanticStageFixture } from './Brc38SemanticStageFixture'
+import { restorePortableProof, restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestoreFixture'
+import { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
+import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { withBrc38NativeStreamedContractFixture } from './Brc38NativeStreamedContractFixture'
 import {
   verifyNativePackedFieldPreparationRecovery,
@@ -313,63 +330,122 @@ test(
           ).rejects.toThrow('Native import journal requires an authenticated published-profile transaction')
         }
       )
-      await withBrc38NativeStreamedContractFixture(
-        data => {
-          data.tables.provenTxReqs[0].history = history
-          data.tables.provenTxReqs[0].notify = notify
-        },
-        async fixture => {
-          const actual = await fixture.store.streamedRow('provenTxReqs', 0)
-          expect(actual).toBeDefined()
-          if (actual === undefined || actual.structured === undefined)
-            throw new Error('Independent original structured source is absent')
-          const descriptors = actual.structured
-          expect(Object.keys(descriptors).sort()).toEqual(['history', 'notify'])
-          await fixture.store.withAuthenticatedPrivateStructuredDestination(async () => {
-            await fixture.store.validateOwnedSourceStructuredFields(
-              'provenTxReqs',
-              0,
-              descriptors,
-              fixture.resources.sourcePolicy
-            )
-            await fixture.store.withPrivateNativeDatabase(
-              true,
-              async database =>
-                await database.transaction(async trx => {
-                  const assertCurrent = (): void => {
-                    fixture.check()
-                    fixture.store.assertPrivateNativeReadTransaction(trx)
-                  }
-                  for (const family of ['raw', 'canonical'] as const) {
-                    await verifyNativeStructuredSqlWindowOracle(
-                      trx,
-                      family,
-                      { table: 'provenTxReqs', position: 0, field: 'history' },
-                      expectedHistory,
-                      assertCurrent
-                    )
-                    await verifyNativeStructuredSqlWindowOracle(
-                      trx,
-                      family,
-                      { table: 'provenTxReqs', position: 0, field: 'notify' },
-                      expectedNotify,
-                      assertCurrent
-                    )
-                  }
-                })
-            )
+      const directory = await mkdtemp(join(tmpdir(), 'brc38-original-native-replay-')),
+        data = semanticStageFixture(),
+        workingAllocation = new Brc38WorkingAllocation(8388608),
+        expiresAt = Date.now() + 180000,
+        closes: Array<() => Promise<void>> = []
+      try {
+        restorePortableProof(data, restoreProofFixture())
+        data.tables.provenTxReqs[0].history = history
+        data.tables.provenTxReqs[0].notify = notify
+        expect(expectedHistory.byteLength).toBeLessThanOrEqual(1024)
+        expect(expectedNotify.byteLength).toBeLessThanOrEqual(1024)
+        const bytes = await encrypted(data),
+          packet = authenticatedStageOptions(bytes),
+          // Original source replay uses the same policy as the composed
+          // authentication path. Packed destination read enrollment is a
+          // separate contract, tested above; it is not a source replay grant.
+          policy = {
+            privateIndexParent: directory,
+            maximumTemporaryIndexBytes: 2097152,
+            maximumIndexMembers: 10000,
+            maximumStructuredBytes: 1048576,
+            maximumCanonicalBytes: 1048576,
+            workingAllocation
+          },
+          selected = {
+            ...packet,
+            limits: {
+              ...packet.limits,
+              maximumPhysicalBytes: 16777216,
+              maximumRowAllocationBytes: workingAllocation.maximum,
+              expiresAt
+            },
+            streamedFields: { maximumBinaryBytes: 1048576, maximumChunkBytes: 1024 },
+            streamedTextFields: { maximumTextBytes: 1048576, maximumChunkBytes: 1024 },
+            streamedStructuredFields: {
+              fields: { maximumStructuredBytes: 1048576, maximumChunkBytes: 1024 },
+              staging: policy
+            }
+          },
+          root = await Brc38StagingAdmissionNode.create(directory, {
+            maximumImports: 1,
+            maximumPhysicalBytes: 19922944,
+            maximumLogicalBytes: 1048576
           })
-          await fixture.store.close()
-          await expect(
-            fixture.store.validateOwnedSourceStructuredFields(
-              'provenTxReqs',
-              0,
-              descriptors,
-              fixture.resources.sourcePolicy
-            )
-          ).rejects.toThrow('Private native stage owner is unavailable or expired')
+        closes.push(async () => await root.close())
+        async function* chunks(): AsyncGenerator<Uint8Array> {
+          for (let offset = 0; offset < bytes.length; offset += 137) yield bytes.slice(offset, offset + 137)
         }
-      )
+        const original = await stageAuthenticatedBrc39PrivateImport(
+          chunks(),
+          authenticatedStagePassword,
+          root,
+          selected
+        )
+        closes.push(async () => await original.reservation.store.close())
+        await original.reservation.store.close()
+        const replay = await authenticateBrc39PrivateNativeImport(
+            chunks(),
+            authenticatedStagePassword,
+            root,
+            { ...selected, reservationId: original.reservation.id },
+            nativeTestExecutable()
+          ),
+          store = replay.reservation.store
+        closes.push(async () => await store.close())
+        expect(replay.reservation.id).toBe(original.reservation.id)
+        expect(replay.archiveSha256).toBe(original.archiveSha256)
+        expect(replay.document).toEqual(original.document)
+        expect(store.limits.expiresAt).toBe(expiresAt)
+        const actual = await store.streamedRow('provenTxReqs', 0)
+        if (actual === undefined || actual.structured === undefined)
+          throw new Error('Actual original replay source is absent')
+        const descriptors = actual.structured
+        expect(Object.keys(descriptors).sort()).toEqual(['history', 'notify'])
+        // Validate outside a destination callback: the validator itself owns
+        // the exclusive source operation and borrows only its actual slot3.
+        await store.validateOwnedSourceStructuredFields('provenTxReqs', 0, descriptors, policy)
+        await store.withAuthenticatedPrivateStructuredDestination(async () => {
+          await store.withPrivateNativeDatabase(
+            true,
+            async database =>
+              await database.transaction(async trx => {
+                const assertCurrent = (): void => {
+                  store.assertPrivateNativeReadTransaction(trx)
+                }
+                for (const family of ['raw', 'canonical'] as const) {
+                  await verifyNativeStructuredSqlWindowOracle(
+                    trx,
+                    family,
+                    { table: 'provenTxReqs', position: 0, field: 'history' },
+                    expectedHistory,
+                    assertCurrent
+                  )
+                  await verifyNativeStructuredSqlWindowOracle(
+                    trx,
+                    family,
+                    { table: 'provenTxReqs', position: 0, field: 'notify' },
+                    expectedNotify,
+                    assertCurrent
+                  )
+                }
+              })
+          )
+        })
+        await store.close()
+        await expect(store.validateOwnedSourceStructuredFields('provenTxReqs', 0, descriptors, policy)).rejects.toThrow(
+          'Private native stage owner is unavailable or expired'
+        )
+        expect(workingAllocation.used).toBe(0)
+      } finally {
+        while (closes.length !== 0) {
+          await closes[closes.length - 1]()
+          closes.pop()
+        }
+        await rm(directory, { recursive: true, force: true })
+      }
     } finally {
       expectedHistory.fill(0)
       expectedNotify.fill(0)
