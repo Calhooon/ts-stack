@@ -90,7 +90,9 @@ describe('confirmed faucet payment recovery', () => {
     })
   }
   it('recovers a mined grant and registration retries reuse it without funding', async () => {
-    const walletCreation = jest.spyOn(Setup, 'createWalletClientNoEnv')
+    const walletCreation = jest
+      .spyOn(Setup, 'createWalletClientNoEnv')
+      .mockRejectedValue(new Error('Storage unavailable'))
     await expect(UserService.getOrCreateFaucetPayment(userId, 6000)).rejects.toBeInstanceOf(
       FaucetPaymentPendingError
     )
@@ -107,7 +109,7 @@ describe('confirmed faucet payment recovery', () => {
     })
     expect(Transaction.fromAtomicBEEF([...ready.beef]).id('hex')).toBe(tx.id('hex'))
     expect(tracker.isValidRootForHeight).toHaveBeenCalledTimes(1)
-    expect(walletCreation).not.toHaveBeenCalled()
+    expect(walletCreation).toHaveBeenCalledTimes(1)
     expect(await db('payments').where({ userId })).toHaveLength(1)
     expect(Boolean((await db('auth_methods').where({ userId }).first()).receivedFaucet)).toBe(true)
   })

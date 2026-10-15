@@ -29,12 +29,17 @@ function matchingReadyPayment(payment: PaymentEntity, txid: string): boolean {
   return true
 }
 
-function recoveredPaymentBeef(payment: PaymentEntity, transaction: Transaction): number[] {
+export function faucetPaymentScript(k: string): string {
+  if (!/^[0-9a-f]{64}$/i.test(k)) conflict()
   const curve = new Curve()
-  const rValue = curve.g.mul(Utils.toArray(payment.k, 'hex')).x?.umod(curve.n)?.toArray()
+  const rValue = curve.g.mul(Utils.toArray(k, 'hex')).x?.umod(curve.n)?.toArray()
   if (rValue == null) conflict()
   const r = rValue[0] > 127 ? [0, ...rValue] : rValue
-  const expectedScript = new RPuzzle('raw').lock(r).toHex()
+  return new RPuzzle('raw').lock(r).toHex()
+}
+
+function recoveredPaymentBeef(payment: PaymentEntity, transaction: Transaction): number[] {
+  const expectedScript = faucetPaymentScript(payment.k)
   const output = transaction.outputs[payment.outputIndex]
   if (
     payment.outputIndex !== 0 ||
@@ -48,6 +53,40 @@ function recoveredPaymentBeef(payment: PaymentEntity, transaction: Transaction):
   if (beef.length > MAX_BEEF_BYTES) conflict()
 
   return beef
+}
+
+export async function saveRecoveredFaucetPayment(
+  payment: PaymentEntity,
+  txid: string,
+  beef: number[]
+): Promise<void> {
+  const paymentId = payment.id
+  // Match normal funding/deletion lock order; keep network calls outside the transaction.
+  await db.transaction(async trx => {
+    const user = await trx('users').where({ id: payment.userId }).forUpdate().first()
+    if (user == null) conflict()
+    const current = await trx<PaymentEntity>('payments')
+      .where({ id: paymentId })
+      .forUpdate()
+      .first()
+    if (
+      current?.userId !== payment.userId ||
+      current.k !== payment.k ||
+      current.amount !== payment.amount ||
+      current.outputIndex !== payment.outputIndex
+    )
+      conflict()
+    if (matchingReadyPayment(current, txid)) return
+    if (current.status !== 'creating' || current.txid !== payment.txid) conflict()
+    const changed = await trx('payments')
+      .where({ id: paymentId, status: 'creating' })
+      .update({
+        txid,
+        beef: Buffer.from(beef),
+        status: 'ready'
+      })
+    if (changed !== 1) conflict()
+  })
 }
 
 /** Support recovery only: authenticate a mined payment, never create or broadcast one. */
@@ -70,41 +109,7 @@ export class FaucetRecoveryService {
 
     const transaction = await this.confirmedTransaction(txid)
     const beef = recoveredPaymentBeef(payment, transaction)
-    await this.saveRecoveredPayment(payment, txid, beef)
-  }
-
-  private async saveRecoveredPayment(
-    payment: PaymentEntity,
-    txid: string,
-    beef: number[]
-  ): Promise<void> {
-    const paymentId = payment.id
-    // Match normal funding/deletion lock order; keep network calls outside the transaction.
-    await db.transaction(async trx => {
-      const user = await trx('users').where({ id: payment.userId }).forUpdate().first()
-      if (user == null) conflict()
-      const current = await trx<PaymentEntity>('payments')
-        .where({ id: paymentId })
-        .forUpdate()
-        .first()
-      if (
-        current?.userId !== payment.userId ||
-        current.k !== payment.k ||
-        current.amount !== payment.amount ||
-        current.outputIndex !== payment.outputIndex
-      )
-        conflict()
-      if (matchingReadyPayment(current, txid)) return
-      if (current.status !== 'creating' || current.txid !== payment.txid) conflict()
-      const changed = await trx('payments')
-        .where({ id: paymentId, status: 'creating' })
-        .update({
-          txid,
-          beef: Buffer.from(beef),
-          status: 'ready'
-        })
-      if (changed !== 1) conflict()
-    })
+    await saveRecoveredFaucetPayment(payment, txid, beef)
   }
 
   private async confirmedTransaction(txid: string): Promise<Transaction> {

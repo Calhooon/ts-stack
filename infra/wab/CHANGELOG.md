@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- WAB 1.8.14 also labels funding actions from durable reservation state and
+  automatically reconciles retained signed payments after an ambiguous response
+  or process replacement. It verifies ancestry and scripts before resubmitting
+  the same transaction ID; it never allocates a second grant. Bounded legacy
+  discovery covers older unlabelled reservations.
 - WAB 1.8.14 adds admin-authenticated reconciliation of an ambiguous faucet
   reservation against a confirmed transaction and Chaintracks-validated proof.
   Recovery requires the saved puzzle, amount and output index, preserves

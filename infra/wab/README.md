@@ -368,6 +368,41 @@ only an absent/empty value intentionally disables the routes.
 - `POST /admin/phone-change/restore` restores the associations recorded for a
   `changeId`; it refuses automatic restoration after another ownership change.
 
+### Automatic recovery after an ambiguous faucet result
+
+New faucet actions carry a stable `wab-faucet-…` correlation label derived from
+the reservation's already-saved random recovery secret. The secret itself is
+never placed in the label. WAB keeps the reservation and claim markers before
+wallet work, and attempts recovery both after an ambiguous funding error and
+when the same registration retries. Recovery does not depend on in-memory
+signing state and works after process replacement.
+
+WAB searches the authenticated faucet wallet's history for that label, checks
+the exact reserved output, and obtains the retained signed transaction from
+Storage. Older unlabelled reservations can be found by their unique R-puzzle
+in a complete history of at most 1,000 actions. Truncated, larger or ambiguous
+legacy histories require the administrator recovery route below. A missing
+history entry never authorizes another payout.
+
+Before resubmission, WAB reconstructs complete ancestry, validates Merkle roots
+and unlocking scripts, and bounds each transaction to 32 inputs, traversal to
+64 ancestors and evidence to 8 MiB. Only `sendWith` of the retained transaction
+ID is permitted during recovery: there are no new outputs or new funding
+allocation. After an affirmative submission result, WAB saves the same payment
+as `ready` with locked ownership/field checks. Repeated or concurrent retries
+return that payment; claim eligibility is never reset. Mining is not required
+for automatic recovery of an accepted existing transaction.
+
+Provider outages, invalid proofs/scripts, unknown or conflicting history, and
+rejected/pending submission still fail closed with 503. Retry the retained
+registration later; do not recreate its identity or discard its local recovery
+state. Recovery can finish server-side even if the original caller disconnected.
+This repairs the stranded-registration failure mode, but does not make chain
+providers infallible or prove the trigger of an earlier transient verification
+failure. Existing ready payments and the faucet response format are unchanged.
+No schema migration is needed; older binaries ignore action labels and continue
+to replay ready rows, while pending rows still need upgraded WAB or support.
+
 ### Recover an ambiguous faucet payment
 
 A Storage error or lost response after signing can leave an existing faucet
@@ -412,8 +447,8 @@ and transaction ID, never the recovery secret or BEEF.
 No database migration is required. Deploy a reviewed immutable WAB image using
 the normal staged rollout. Rolling back removes only this support route;
 recovered rows remain ordinary `ready` payments compatible with older versions.
-This bounded support path does not automatically discover stranded transactions
-or resolve the original Storage/Chaintracks verification failure.
+This support route complements automatic recovery when legacy history is too
+large or discovery is indeterminate. Neither route bypasses proof checks.
 
 Follow [UMP account support](../../docs/infrastructure/wab-ump-account-support.md)
 for evidence requirements, commands, auditing, rollout, and rollback.
