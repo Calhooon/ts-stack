@@ -98,4 +98,16 @@ describe('Certificate with a legacy (sub-32-byte) type', () => {
     const historical = historicalPreimage(certificate, Utils.toArray(legacyType, 'base64'))
     expect(() => Certificate.fromBinary(historical)).toThrow()
   })
+
+  it.each([
+    ['non-canonical base64', 'not*base64'],
+    ['empty', ''],
+    ['oversized', Utils.toBase64(Array.from({ length: 33 }, () => 7))]
+  ])('reports an unusable %s type as unverified rather than throwing', async (_name, type) => {
+    const certificate = legacyCertificate()
+    await signHistorically(certificate, Utils.toArray(legacyType, 'base64'))
+    certificate.type = type
+
+    await expect(certificate.verify()).resolves.toBe(false)
+  })
 })

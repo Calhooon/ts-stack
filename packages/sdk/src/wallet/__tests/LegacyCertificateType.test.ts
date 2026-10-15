@@ -265,6 +265,17 @@ describe('legacy certificate types on the binary wallet wire', () => {
     )
   })
 
+  it('rejects a proveCertificate request without a type before invoking the wallet', async () => {
+    const proveCertificate = jest.fn()
+    const processor = new WalletWireProcessor({ proveCertificate } as unknown as WalletInterface)
+    const client = new WalletWireTransceiver(processor)
+
+    await expect(
+      client.proveCertificate({ certificate: {}, fieldsToReveal: [], verifier: VERIFIER })
+    ).rejects.toThrow(/decodes to 0 bytes/)
+    expect(proveCertificate).not.toHaveBeenCalled()
+  })
+
   it('still carries a canonical certificate across the wire', async () => {
     const processor = new WalletWireProcessor({
       listCertificates: async () => ({

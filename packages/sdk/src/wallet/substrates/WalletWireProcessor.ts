@@ -2486,8 +2486,8 @@ export default class WalletWireProcessor implements WalletWire {
    * returned over the binary wire. Fail with a clear reason instead of a
    * misaligned certificate the client cannot parse.
    */
-  #requireWireCertificateType(type: unknown, context: string): void {
-    const typeBytes = typeof type === 'string' ? UtilsToUint8Array(type, 'base64') : []
+  #requireWireCertificateType(type: string, context: string): void {
+    const typeBytes = UtilsToUint8Array(type, 'base64')
     if (typeBytes.length !== 32) {
       throw new Error(
         `The binary wallet wire carries only 32-byte certificate types; ${context} decodes to ${typeBytes.length} bytes. ` +
