@@ -1478,12 +1478,24 @@ function validateCertificate(value: unknown, call: string, field: string): Unkno
   const certificate = record(value, call, field)
   try {
     let encodedLength = 0
-    const encodedFieldNames = ['type', 'serialNumber'] as const
-    for (let index = 0; index < encodedFieldNames.length; index++) {
-      const name = encodedFieldNames[index]
+    // A canonical type is 32 bytes, but certificates issued before SDK 2.8.0
+    // may hold a shorter one; a wallet must still be able to return those so
+    // the application can migrate them. Serial numbers were always 32 bytes.
+    const encodedFields = [
+      ['type', 1],
+      ['serialNumber', 32]
+    ] as const
+    for (let index = 0; index < encodedFields.length; index++) {
+      const [name, minimumLength] = encodedFields[index]
       const encoded = base64(certificate[name], call, `${field}.${name}`)
       const decoded = base64ToBytes(encoded)
-      if (decoded.length !== 32 || bytesToBase64(decoded) !== encoded) throw new Error()
+      if (
+        decoded.length < minimumLength ||
+        decoded.length > 32 ||
+        bytesToBase64(decoded) !== encoded
+      ) {
+        throw new Error()
+      }
       encodedLength += decoded.length
     }
     const publicKeyFieldNames = ['subject', 'certifier'] as const
