@@ -40,8 +40,7 @@ function recoveredPaymentBeef(payment: PaymentEntity, transaction: Transaction):
     payment.outputIndex !== 0 ||
     !Number.isSafeInteger(payment.amount) ||
     payment.amount <= 0 ||
-    output == null ||
-    output.satoshis !== payment.amount ||
+    output?.satoshis !== payment.amount ||
     output.lockingScript.toHex() !== expectedScript
   )
     conflict()
@@ -89,8 +88,7 @@ export class FaucetRecoveryService {
         .forUpdate()
         .first()
       if (
-        current == null ||
-        current.userId !== payment.userId ||
+        current?.userId !== payment.userId ||
         current.k !== payment.k ||
         current.amount !== payment.amount ||
         current.outputIndex !== payment.outputIndex
