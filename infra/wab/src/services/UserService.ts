@@ -297,6 +297,20 @@ async function tryRecoverFaucet(
   }
 }
 
+async function tryRecoverFaucetById(
+  paymentId: number,
+  userId: number,
+  wallet: Wallet | undefined
+): Promise<PaymentEntity | undefined> {
+  if (wallet == null) return undefined
+  try {
+    const pending = await db<PaymentEntity>('payments').where({ id: paymentId, userId }).first()
+    return await tryRecoverFaucet(pending, userId, wallet)
+  } catch {
+    return undefined
+  }
+}
+
 export class UserService {
   /**
    * Create a new user with a given presentationKey
@@ -796,13 +810,8 @@ export class UserService {
       )
     } catch (error) {
       // Recover even if the caller disconnected after Storage committed the transaction.
-      if (wallet != null) {
-        const pending = await db<PaymentEntity>('payments')
-          .where({ id: reservation.paymentId, userId })
-          .first()
-        const recovered = await tryRecoverFaucet(pending, userId, wallet)
-        if (recovered != null) return recovered
-      }
+      const recovered = await tryRecoverFaucetById(reservation.paymentId, userId, wallet)
+      if (recovered != null) return recovered
       log.error(
         { operation: 'service.user.faucet_funding', err: error, outcome: 'ambiguous' },
         'Faucet payment requires reconciliation'

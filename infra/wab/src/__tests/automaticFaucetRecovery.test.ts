@@ -263,4 +263,56 @@ describe('automatic recovery of an ambiguous faucet grant', () => {
     )
     expect(f.api.createAction).not.toHaveBeenCalled()
   })
+  it('stops an expired traversal before starting another lookup or submission', async () => {
+    const f = fixture()
+    install(f)
+    const now = Date.now()
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now)
+    f.api.listActions.mockImplementationOnce(async () => {
+      clock.mockReturnValue(now + 30_001)
+      return { totalActions: 1, actions: [f.action()] }
+    })
+    await expect(UserService.getOrCreateFaucetPayment(userId, 6000, false)).rejects.toBeInstanceOf(
+      FaucetPaymentPendingError
+    )
+    expect(f.api.storage.findProvenTxReqs).not.toHaveBeenCalled()
+    expect(f.api.createAction).not.toHaveBeenCalled()
+  })
+  it('reconstructs several confirmed funding inputs in one bounded frontier', async () => {
+    const f = fixture()
+    install(f)
+    const second = new Transaction()
+    second.version = 2
+    second.addOutput({ satoshis: 10000, lockingScript: Script.fromHex('51') })
+    const proof = new MerklePath(100, [
+      [
+        { offset: 2, hash: f.parent.id('hex'), txid: true },
+        { offset: 3, hash: second.id('hex'), txid: true }
+      ],
+      [{ offset: 0, hash: 'ab'.repeat(32) }]
+    ])
+    const subject = f.subject()
+    subject.addInput({
+      sourceTransaction: second,
+      sourceOutputIndex: 0,
+      unlockingScript: Script.fromHex(''),
+      sequence: 0xffffffff
+    })
+    f.setSubject(subject)
+    f.getRawTx.mockImplementation(async (txid?: string) => {
+      const tx = txid === second.id('hex') ? second : f.parent
+      return { txid: tx.id('hex'), rawTx: tx.toBinary() }
+    })
+    f.getMerklePath.mockResolvedValue({ merklePath: proof })
+    f.tracker.isValidRootForHeight.mockImplementation(
+      async (root: string, height: number) =>
+        height === 100 && root === proof.computeRoot(f.parent.id('hex'))
+    )
+    await expect(UserService.getOrCreateFaucetPayment(userId, 6000, false)).resolves.toMatchObject({
+      status: 'ready',
+      txid: subject.id('hex')
+    })
+    expect(f.getRawTx).toHaveBeenCalledTimes(2)
+    expect(f.api.createAction.mock.calls[0][0].outputs).toBeUndefined()
+  })
 })

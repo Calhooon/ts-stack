@@ -386,7 +386,9 @@ history entry never authorizes another payout.
 
 Before resubmission, WAB reconstructs complete ancestry, validates Merkle roots
 and unlocking scripts, and bounds each transaction to 32 inputs, traversal to
-64 ancestors and evidence to 8 MiB. Only `sendWith` of the retained transaction
+64 ancestors and evidence to 8 MiB. A 30-second traversal budget is checked
+between remote steps and root checks; an already-running provider call retains
+its own transport timeout. Only `sendWith` of the retained transaction
 ID is permitted during recovery: there are no new outputs or new funding
 allocation. After an affirmative submission result, WAB saves the same payment
 as `ready` with locked ownership/field checks. Repeated or concurrent retries

@@ -7,6 +7,11 @@ const MAX_LEGACY_ACTIONS = 1000
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024
 const MAX_INPUTS = 32
 const MAX_ANCESTORS = 64
+const RECOVERY_BUDGET_MS = 30_000
+
+function checkBudget(deadline: number): void {
+  if (Date.now() > deadline) throw new Error('Faucet recovery traversal budget exceeded')
+}
 
 /** Durable correlation uses the secret already committed before wallet work, without disclosing it. */
 export function faucetActionLabel(k: string): string {
@@ -29,7 +34,8 @@ function candidate(action: WalletAction, payment: PaymentEntity, script: string)
 async function findRetainedAction(
   wallet: Wallet,
   payment: PaymentEntity,
-  script: string
+  script: string,
+  deadline: number
 ): Promise<string> {
   const label = faucetActionLabel(payment.k)
   const history = await wallet.listActions({
@@ -40,6 +46,7 @@ async function findRetainedAction(
     includeOutputLockingScripts: true,
     limit: 2
   })
+  checkBudget(deadline)
   let matches = history.actions.filter(
     action => action.labels?.includes(label) && candidate(action, payment, script)
   )
@@ -58,6 +65,7 @@ async function findRetainedAction(
       includeOutputLockingScripts: true,
       limit: MAX_LEGACY_ACTIONS
     })
+    checkBudget(deadline)
     if (legacy.totalActions > MAX_LEGACY_ACTIONS || legacy.actions.length !== legacy.totalActions) {
       throw new Error('Legacy faucet history needs operator reconciliation')
     }
@@ -74,13 +82,15 @@ async function retainedTransaction(
   wallet: Wallet,
   payment: PaymentEntity,
   txid: string,
-  script: string
+  script: string,
+  deadline: number
 ): Promise<Transaction> {
   const reqs = await wallet.storage.findProvenTxReqs({
     partial: {},
     txids: [txid],
     paged: { limit: 2, offset: 0 }
   })
+  checkBudget(deadline)
   if (
     reqs.length !== 1 ||
     reqs[0].txid !== txid ||
@@ -109,46 +119,103 @@ async function retainedTransaction(
   return transaction
 }
 
-async function appendAncestor(
-  beef: Beef,
+interface AncestorEvidence {
+  parent: Transaction
+  proof?: number[]
+}
+
+async function readAncestor(
   services: ReturnType<Wallet['getServices']>,
-  sourceTxid: string
-): Promise<Array<string | undefined>> {
+  sourceTxid: string,
+  deadline: number
+): Promise<AncestorEvidence> {
   const raw = await services.getRawTx(sourceTxid)
   if (raw.rawTx == null || raw.rawTx.length > MAX_EVIDENCE_BYTES)
     throw new Error('Faucet input unavailable')
+  checkBudget(deadline)
   const parent = Transaction.fromBinary(raw.rawTx)
   if (parent.id('hex') !== sourceTxid || parent.inputs.length > MAX_INPUTS)
     throw new Error('Faucet input mismatch')
-  beef.mergeRawTx(parent.toBinary())
-  const proof = await services.getMerklePath(sourceTxid)
-  const dependencies: Array<string | undefined> = []
-  if (proof.merklePath != null) {
-    beef.mergeBump(MerklePath.fromBinary(proof.merklePath.toBinary()))
-  } else {
-    dependencies.push(...parent.inputs.map(input => input.sourceTXID))
-  }
-  if (beef.toBinary().length > MAX_EVIDENCE_BYTES)
-    throw new Error('Faucet ancestry exceeds evidence bound')
-  return dependencies
+  const result = await services.getMerklePath(sourceTxid)
+  checkBudget(deadline)
+  return { parent, proof: result.merklePath?.toBinary() }
 }
 
-async function verifiedRecoveryBeef(wallet: Wallet, transaction: Transaction): Promise<number[]> {
+function scheduleInputs(
+  inputs: Array<string | undefined>,
+  queue: string[],
+  scheduled: Set<string>
+): void {
+  for (const txid of inputs) {
+    if (txid == null) throw new Error('Missing faucet input transaction')
+    if (scheduled.has(txid)) continue
+    if (scheduled.size >= MAX_ANCESTORS)
+      throw new Error('Faucet ancestry exceeds transaction bound')
+    scheduled.add(txid)
+    queue.push(txid)
+  }
+}
+
+async function readAncestryBatch(
+  beef: Beef,
+  services: ReturnType<Wallet['getServices']>,
+  queue: string[],
+  scheduled: Set<string>,
+  deadline: number
+): Promise<void> {
+  checkBudget(deadline)
+  // Each bounded frontier is independent; merge only after all its reads complete.
+  const batch = queue.splice(0, 4)
+  const evidence = await Promise.all(
+    batch.map(async txid => await readAncestor(services, txid, deadline))
+  )
+  for (const { parent, proof } of evidence) {
+    beef.mergeRawTx(parent.toBinary())
+    if (proof != null) beef.mergeBump(MerklePath.fromBinary(proof))
+    else
+      scheduleInputs(
+        parent.inputs.map(input => input.sourceTXID),
+        queue,
+        scheduled
+      )
+    if (beef.toBinary().length > MAX_EVIDENCE_BYTES)
+      throw new Error('Faucet ancestry exceeds evidence bound')
+  }
+  if (queue.length > 0) await readAncestryBatch(beef, services, queue, scheduled, deadline)
+}
+
+async function verifiedRecoveryBeef(
+  wallet: Wallet,
+  transaction: Transaction,
+  deadline: number
+): Promise<number[]> {
   const beef = new Beef()
   const services = wallet.getServices()
-  const queued = transaction.inputs.map(input => input.sourceTXID)
-  const seen = new Set<string>()
-  while (queued.length > 0) {
-    const sourceTxid = queued.shift()
-    if (sourceTxid == null) throw new Error('Missing faucet input transaction')
-    if (seen.has(sourceTxid)) continue
-    seen.add(sourceTxid)
-    if (seen.size > MAX_ANCESTORS) throw new Error('Faucet ancestry exceeds transaction bound')
-    queued.push(...(await appendAncestor(beef, services, sourceTxid)))
-  }
+  const queued: string[] = []
+  const scheduled = new Set<string>()
+  scheduleInputs(
+    transaction.inputs.map(input => input.sourceTXID),
+    queued,
+    scheduled
+  )
+  await readAncestryBatch(beef, services, queued, scheduled, deadline)
   beef.mergeRawTx(transaction.toBinary())
   const bytes = beef.toBinaryAtomic(transaction.id('hex'))
-  const tracker = await services.getChainTracker()
+  const provider = await services.getChainTracker()
+  const tracker = {
+    currentHeight: async () => {
+      checkBudget(deadline)
+      const height = await provider.currentHeight()
+      checkBudget(deadline)
+      return height
+    },
+    isValidRootForHeight: async (root: string, height: number) => {
+      checkBudget(deadline)
+      const accepted = await provider.isValidRootForHeight(root, height)
+      checkBudget(deadline)
+      return accepted
+    }
+  }
   if (
     bytes.length > MAX_EVIDENCE_BYTES ||
     (await beef.verify(tracker)) !== true ||
@@ -161,10 +228,12 @@ async function verifiedRecoveryBeef(wallet: Wallet, transaction: Transaction): P
 
 /** Read authenticated history, reprocess only its existing txid, and replay the same grant. */
 export async function recoverFaucetPayment(payment: PaymentEntity, wallet: Wallet): Promise<void> {
+  const deadline = Date.now() + RECOVERY_BUDGET_MS
   const script = faucetPaymentScript(payment.k)
-  const txid = await findRetainedAction(wallet, payment, script)
-  const transaction = await retainedTransaction(wallet, payment, txid, script)
-  const bytes = await verifiedRecoveryBeef(wallet, transaction)
+  const txid = await findRetainedAction(wallet, payment, script, deadline)
+  const transaction = await retainedTransaction(wallet, payment, txid, script, deadline)
+  const bytes = await verifiedRecoveryBeef(wallet, transaction, deadline)
+  checkBudget(deadline)
   // No outputs: sendWith reuses the signed transaction, never allocates a fresh grant.
   const result = await wallet.createAction({
     description: 'Resume existing faucet payment',
