@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Serialize recovery ancestor reads to preserve healthy provider fallback; recover accepted callback/unconfirmed requests with unchanged proof and script checks.
+
 - WAB 1.8.14 also labels funding actions from durable reservation state and
   automatically reconciles retained signed payments after an ambiguous response
   or process replacement. It verifies ancestry and scripts before resubmitting

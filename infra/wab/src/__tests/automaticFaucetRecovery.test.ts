@@ -1,5 +1,7 @@
-import { MerklePath, Script, Transaction } from '@bsv/sdk'
-import { Setup, type Wallet } from '@bsv/wallet-toolbox'
+import { CachedKeyDeriver, MerklePath, PrivateKey, Script, Telemetry, Transaction } from '@bsv/sdk'
+import { Services, Setup, StorageProvider, Wallet } from '@bsv/wallet-toolbox'
+import { ServiceCollection } from '@bsv/wallet-toolbox/out/src/services/ServiceCollection'
+import { processAction } from '@bsv/wallet-toolbox/out/src/storage/methods/processAction'
 import { db } from '../db/knex'
 import { FaucetPaymentPendingError, UserService } from '../services/UserService'
 import { faucetActionLabel } from '../services/AutomaticFaucetRecovery'
@@ -171,6 +173,111 @@ describe('automatic recovery of an ambiguous faucet grant', () => {
     })
     expect(f.api.listActions).toHaveBeenCalledTimes(2)
   })
+  it.each(['callback', 'unconfirmed'])(
+    'replays %s through real Wallet and Storage submission logic',
+    async status => {
+      const f = fixture()
+      const keyDeriver = new CachedKeyDeriver(PrivateKey.fromHex('1'.padStart(64, '0')))
+      const req = { txid: f.subject().id('hex'), status, rawTx: f.subject().toBinary() }
+      f.api.storage.findProvenTxReqs.mockResolvedValue([req])
+      const post = jest.fn(async () => {
+        throw new Error('Already submitted payment must not broadcast again')
+      })
+      const provider = {
+        telemetry: new Telemetry(),
+        findProvenTxs: async () => [],
+        findProvenTxReqs: async () => [req],
+        getReqsAndBeefToShareWithWorld: async function (...args: unknown[]) {
+          return await StorageProvider.prototype.getReqsAndBeefToShareWithWorld.apply(
+            this as any,
+            args as any
+          )
+        },
+        attemptToPostReqsToNetwork: post
+      }
+      const process = jest.fn(async args => {
+        expect(args.isNewTx).toBe(false)
+        expect(args.isSendWith).toBe(true)
+        return await processAction(
+          provider as any,
+          { userId: 1, identityKey: keyDeriver.identityKey },
+          args
+        )
+      })
+      const real = new Wallet({
+        chain: 'test',
+        keyDeriver: keyDeriver as any,
+        storage: {
+          _authId: { identityKey: keyDeriver.identityKey, userId: 1 },
+          getSettings: () => ({
+            storageIdentityKey: keyDeriver.identityKey,
+            storageName: 'synthetic'
+          }),
+          processAction: process
+        } as any,
+        actionBatchMode: 'legacy'
+      })
+      f.api.createAction.mockImplementation(
+        async args => (await real.createAction(args as any)) as any
+      )
+      install(f)
+      const ready = await UserService.getOrCreateFaucetPayment(userId, 6000, false)
+      expect(ready).toMatchObject({ id: paymentId, status: 'ready', txid: req.txid })
+      expect(process).toHaveBeenCalledTimes(1)
+      expect(post).not.toHaveBeenCalled()
+      expect(await db('payments').where({ userId })).toHaveLength(1)
+    }
+  )
+  it('uses the healthy fallback for every ancestor with real Toolbox provider rotation', async () => {
+    const f = fixture()
+    const second = new Transaction()
+    second.version = 2
+    second.addOutput({ satoshis: 10000, lockingScript: Script.fromHex('51') })
+    const subject = f.subject()
+    subject.addInput({
+      sourceTransaction: second,
+      sourceOutputIndex: 0,
+      unlockingScript: Script.fromHex(''),
+      sequence: 0xffffffff
+    })
+    f.setSubject(subject)
+    const proof = new MerklePath(100, [
+      [
+        { offset: 2, hash: f.parent.id('hex'), txid: true },
+        { offset: 3, hash: second.id('hex'), txid: true }
+      ],
+      [{ offset: 0, hash: 'ab'.repeat(32) }]
+    ])
+    const raw = new Map([f.parent, second].map(tx => [tx.id('hex'), tx.toBinary()]))
+    const unavailable = jest.fn(async () => {
+      throw new Error('Synthetic provider outage')
+    })
+    const healthy = jest.fn(async (txid: string) => ({ txid, rawTx: raw.get(txid)! }))
+    const services = new Services('test')
+    services.getRawTxServices = new ServiceCollection<
+      (txid: string) => Promise<{ txid: string; rawTx: number[] }>
+    >('getRawTx', [
+      { name: 'unavailable', service: unavailable },
+      { name: 'healthy', service: healthy }
+    ])
+    f.getRawTx.mockImplementation(async (txid?: string) => {
+      const result = await services.getRawTx(txid!)
+      if (result.rawTx == null) throw new Error('Ancestor provider fallback failed')
+      return { txid: result.txid, rawTx: result.rawTx }
+    })
+    f.getMerklePath.mockResolvedValue({ merklePath: proof })
+    f.tracker.isValidRootForHeight.mockImplementation(
+      async (root, height) => height === 100 && root === proof.computeRoot(f.parent.id('hex'))
+    )
+    install(f)
+    await expect(UserService.getOrCreateFaucetPayment(userId, 6000, false)).resolves.toMatchObject({
+      id: paymentId,
+      status: 'ready'
+    })
+    expect(healthy.mock.calls.map(([txid]) => txid)).toEqual([f.parent.id('hex'), second.id('hex')])
+    expect(f.api.createAction).toHaveBeenCalledTimes(1)
+    expect(f.api.createAction.mock.calls[0][0].outputs).toBeUndefined()
+  })
   it('rejects invalid unlocking scripts even when ancestry roots are valid', async () => {
     const f = fixture()
     install(f)
@@ -278,7 +385,7 @@ describe('automatic recovery of an ambiguous faucet grant', () => {
     expect(f.api.storage.findProvenTxReqs).not.toHaveBeenCalled()
     expect(f.api.createAction).not.toHaveBeenCalled()
   })
-  it('reconstructs several confirmed funding inputs in one bounded frontier', async () => {
+  it('reconstructs several confirmed funding inputs within the ancestry bound', async () => {
     const f = fixture()
     install(f)
     const second = new Transaction()

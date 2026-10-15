@@ -94,9 +94,16 @@ async function retainedTransaction(
   if (
     reqs.length !== 1 ||
     reqs[0].txid !== txid ||
-    !['unprocessed', 'unsent', 'sending', 'unmined', 'completed', 'notifying'].includes(
-      reqs[0].status
-    )
+    ![
+      'unprocessed',
+      'unsent',
+      'sending',
+      'unmined',
+      'callback',
+      'unconfirmed',
+      'completed',
+      'notifying'
+    ].includes(reqs[0].status)
   ) {
     throw new Error('Retained faucet proof request is unavailable')
   }
@@ -156,7 +163,7 @@ function scheduleInputs(
   }
 }
 
-async function readAncestryBatch(
+async function readAncestry(
   beef: Beef,
   services: ReturnType<Wallet['getServices']>,
   queue: string[],
@@ -164,24 +171,22 @@ async function readAncestryBatch(
   deadline: number
 ): Promise<void> {
   checkBudget(deadline)
-  // Each bounded frontier is independent; merge only after all its reads complete.
-  const batch = queue.splice(0, 4)
-  const evidence = await Promise.all(
-    batch.map(async txid => await readAncestor(services, txid, deadline))
-  )
-  for (const { parent, proof } of evidence) {
-    beef.mergeRawTx(parent.toBinary())
-    if (proof != null) beef.mergeBump(MerklePath.fromBinary(proof))
-    else
-      scheduleInputs(
-        parent.inputs.map(input => input.sourceTXID),
-        queue,
-        scheduled
-      )
-    if (beef.toBinary().length > MAX_EVIDENCE_BYTES)
-      throw new Error('Faucet ancestry exceeds evidence bound')
-  }
-  if (queue.length > 0) await readAncestryBatch(beef, services, queue, scheduled, deadline)
+  // Toolbox Services rotates shared fallback providers. Keep ancestor reads
+  // sequential so one failed lookup cannot advance another lookup's cursor.
+  const txid = queue.shift()
+  if (txid == null) return
+  const { parent, proof } = await readAncestor(services, txid, deadline)
+  beef.mergeRawTx(parent.toBinary())
+  if (proof != null) beef.mergeBump(MerklePath.fromBinary(proof))
+  else
+    scheduleInputs(
+      parent.inputs.map(input => input.sourceTXID),
+      queue,
+      scheduled
+    )
+  if (beef.toBinary().length > MAX_EVIDENCE_BYTES)
+    throw new Error('Faucet ancestry exceeds evidence bound')
+  if (queue.length > 0) await readAncestry(beef, services, queue, scheduled, deadline)
 }
 
 async function verifiedRecoveryBeef(
@@ -198,7 +203,7 @@ async function verifiedRecoveryBeef(
     queued,
     scheduled
   )
-  await readAncestryBatch(beef, services, queued, scheduled, deadline)
+  await readAncestry(beef, services, queued, scheduled, deadline)
   beef.mergeRawTx(transaction.toBinary())
   const bytes = beef.toBinaryAtomic(transaction.id('hex'))
   const provider = await services.getChainTracker()
