@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- WAB 1.8.14 adds admin-authenticated reconciliation of an ambiguous faucet
+  reservation against a confirmed transaction and Chaintracks-validated proof.
+  Recovery requires the saved puzzle, amount and output index, preserves
+  eligibility markers, and returns the original payment on registration retry.
+  It does not issue another grant. No schema migration is required; see the
+  README for recovery and rollback instructions.
+
 - WAB 1.7.0 accepts explicit `expiresAtEpochMs: null` for store-mandated
   non-expiring demo credentials. Omitted expiry remains invalid; revocation,
   admin rotation, namespace isolation and persistent guess limits still apply.
