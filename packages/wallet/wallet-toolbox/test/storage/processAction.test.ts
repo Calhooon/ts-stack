@@ -207,14 +207,20 @@ describe('processAction shareReqsWithWorld', () => {
       toLogString: () => 'invalid beef'
     } as unknown as Beef
     const storage = makeStorageFake()
+    const logger = new WalletLogger()
 
     await expect(
-      shareReqsWithWorld(storage as any, 1, [req.txid], false, {
-        beef,
-        details: [{ txid: req.txid, status: 'readyToSend', req }]
-      })
+      shareReqsWithWorld(
+        storage as any,
+        1,
+        [req.txid],
+        false,
+        { beef, details: [{ txid: req.txid, status: 'readyToSend', req }] },
+        logger
+      )
     ).rejects.toThrow('merged Beef failed validation')
 
+    expect(logger.toLogString()).toContain('BEEF verification declined: {"stage":"structure"}')
     expect(beef.verify).toHaveBeenCalled()
     expect(storage.attemptToPostReqsToNetwork).not.toHaveBeenCalled()
   })
@@ -275,6 +281,41 @@ describe('processAction shareReqsWithWorld', () => {
     expect(logger.toLogString()).toContain('"height":100')
     expect(logger.toLogString()).toContain(path.computeRoot(tx.id('hex')))
     expect(logger.toLogString()).toContain('"result":"declined"')
+    expect(storage.attemptToPostReqsToNetwork).not.toHaveBeenCalled()
+  })
+  test('preserves tracker binding and errors before the first root lookup', async () => {
+    const error = new Error('Chain height unavailable')
+    const req = makeReadyReq()
+    const tracker = {
+      currentHeight: jest.fn(async function (this: unknown) {
+        expect(this).toBe(tracker)
+        throw error
+      }),
+      isValidRootForHeight: jest.fn(async () => true)
+    }
+    const beef = {
+      verify: async (provider: { currentHeight: () => Promise<number> }) => {
+        await provider.currentHeight()
+        return true
+      }
+    } as unknown as Beef
+    const storage = makeStorageFake()
+    storage.getServices.mockReturnValue({ getChainTracker: jest.fn(async () => tracker) })
+    const logger = new WalletLogger()
+
+    await expect(
+      shareReqsWithWorld(
+        storage as any,
+        1,
+        [req.txid],
+        false,
+        { beef, details: [{ txid: req.txid, status: 'readyToSend', req }] },
+        logger
+      )
+    ).rejects.toBe(error)
+    expect(tracker.currentHeight).toHaveBeenCalledTimes(1)
+    expect(tracker.isValidRootForHeight).not.toHaveBeenCalled()
+    expect(logger.toLogString()).toContain('BEEF verification provider error: {"stage":"structure"}')
     expect(storage.attemptToPostReqsToNetwork).not.toHaveBeenCalled()
   })
   test('records provider lookup errors without converting them into an invalid-proof verdict', async () => {
