@@ -70,7 +70,7 @@ import { randomBytesBase64, verifyId, verifyOne, verifyOneOrNone } from '../util
 import { canonicalizeAtomicBeef } from '../utility/canonicalizeAtomicBeef'
 import { internalizeAction } from './methods/internalizeAction'
 import type { InternalizeReceiptClaim } from './methods/InternalizeReceiptClaim'
-import { internalizeBrc197Action } from './methods/internalizeBrc197Action'
+import { authorizeBrc197StorageUser, internalizeBrc197Action } from './methods/internalizeBrc197Action'
 import { ownBrc197InternalizeActionArgs, type Brc197InternalizeActionArgs } from '../sdk/Brc197Internalization'
 
 import { EntityTimeStamp, TransactionStatus } from '../sdk/types'
@@ -259,7 +259,8 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     args: Brc197InternalizeActionArgs
   ): Promise<StorageInternalizeActionResult> {
     const owned = ownBrc197InternalizeActionArgs(args)
-    return await this.withInternalizeReceipt(auth, owned, claim => internalizeBrc197Action(this, auth, owned, claim))
+    const owner = await authorizeBrc197StorageUser(this, auth)
+    return await this.withInternalizeReceipt(owner, owned, claim => internalizeBrc197Action(this, owner, owned, claim))
   }
 
   /** Coordinate an explicitly installed same-database ownership writer. Callers

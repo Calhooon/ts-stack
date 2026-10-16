@@ -30,8 +30,10 @@ import {
 } from './OutputProtocolJSON.js'
 import { outputAssert } from './OutputProtocolError.js'
 
-const prepare = s.fixedObject({
-  version: s.literal(1),
+// These fixed grammar factories only allocate local closures. An unused browser
+// companion may drop them; every retained parser still runs its complete checks.
+const prepare = /* @__PURE__ */ s.fixedObject({
+  version: /* @__PURE__ */ s.literal(1),
   requestId: s.requestId,
   topic: s.text,
   listing: s.outpoint,
@@ -40,8 +42,8 @@ const prepare = s.fixedObject({
   recipient: s.identity,
   request: s.bytes
 })
-const terms = s.fixedObject({
-  version: s.literal(1),
+const terms = /* @__PURE__ */ s.fixedObject({
+  version: /* @__PURE__ */ s.literal(1),
   acquisitionId: s.hex,
   requestDigest: s.hex,
   seller: s.identity,
@@ -51,28 +53,31 @@ const terms = s.fixedObject({
   assetId: s.hex,
   termsDigest: s.hex,
   domainProfile: s.iri,
-  domainEvidence: s.fixedObject({ schema: s.iri, bytes: s.bytes }),
+  domainEvidence: /* @__PURE__ */ s.fixedObject({ schema: s.iri, bytes: s.bytes }),
   releasePolicy: parseOutputReleasePolicy,
   purchaseUntil: s.u64,
   recoveryUntil: s.u64
 })
-const signedTerms = s.fixedObject({ body: terms, signature: s.bytes })
-const submit = s.fixedObject({
-  version: s.literal(1),
+const signedTerms = /* @__PURE__ */ s.fixedObject({ body: terms, signature: s.bytes })
+const submit = /* @__PURE__ */ s.fixedObject({
+  version: /* @__PURE__ */ s.literal(1),
   acquisitionId: s.hex,
   txid: s.hex,
   beef: s.bytes
 })
-const recover = s.fixedObject({ version: s.literal(1), acquisitionId: s.hex })
-const commitmentBinding = s.fixedObject({
-  profile: s.literal('full-purchase-commitment-v1'),
+const recover = /* @__PURE__ */ s.fixedObject({
+  version: /* @__PURE__ */ s.literal(1),
+  acquisitionId: s.hex
+})
+const commitmentBinding = /* @__PURE__ */ s.fixedObject({
+  profile: /* @__PURE__ */ s.literal('full-purchase-commitment-v1'),
   domainProfile: s.iri,
   purchaseCommitment: s.hex
 })
-const potatoes = s.fixedObject({
-  body: s.fixedObject(
+const potatoes = /* @__PURE__ */ s.fixedObject({
+  body: /* @__PURE__ */ s.fixedObject(
     {
-      version: s.literal(1),
+      version: /* @__PURE__ */ s.literal(1),
       acquisitionId: s.hex,
       requestDigest: s.hex,
       seller: s.identity,
@@ -92,16 +97,16 @@ const potatoes = s.fixedObject({
   ),
   signature: s.bytes
 })
-const common = { version: s.literal(1), acquisitionId: s.hex, recoveryUntil: s.u64 }
+const common = { version: /* @__PURE__ */ s.literal(1), acquisitionId: s.hex, recoveryUntil: s.u64 }
 const reserved = { ...common, txid: s.hex }
 const candidateIdentity = { purchaseCommitment: s.hex }
 const admitted = { ...reserved, steak: parseOutputSTEAK }
-const decision = s.fixedObject({
+const decision = /* @__PURE__ */ s.fixedObject({
   reason: s.text,
   policy: parseOutputReleasePolicy,
   evidence: s.bytes,
   decidedAt: s.u64,
-  globalOutcome: s.literal('unknown')
+  globalOutcome: /* @__PURE__ */ s.literal('unknown')
 })
 type Shape = Record<string, s.Schema<unknown>>
 function purchaseState<
@@ -110,33 +115,46 @@ function purchaseState<
   E extends Shape = Record<never, never>,
   O extends Shape = Record<never, never>
 >(status: T, base: R, extra = {} as E, optional?: O) {
-  return s.fixedObject({ ...base, status: s.literal(status), ...extra }, optional)
+  return /* @__PURE__ */ s.fixedObject(
+    { ...base, status: /* @__PURE__ */ s.literal(status), ...extra },
+    optional
+  )
 }
-const result = s.tagged('status', {
-  prepared: purchaseState('prepared', common),
-  expired: purchaseState('expired', common),
-  'admission-pending': purchaseState('admission-pending', reserved, {}, candidateIdentity),
-  'admission-rejected': purchaseState(
+const result = /* @__PURE__ */ s.tagged('status', {
+  prepared: /* @__PURE__ */ purchaseState('prepared', common),
+  expired: /* @__PURE__ */ purchaseState('expired', common),
+  'admission-pending': /* @__PURE__ */ purchaseState(
+    'admission-pending',
+    reserved,
+    {},
+    candidateIdentity
+  ),
+  'admission-rejected': /* @__PURE__ */ purchaseState(
     'admission-rejected',
     reserved,
     { decision },
     candidateIdentity
   ),
-  'admitted-delivery-pending': purchaseState(
+  'admitted-delivery-pending': /* @__PURE__ */ purchaseState(
     'admitted-delivery-pending',
     admitted,
     {},
     candidateIdentity
   ),
-  'delivery-failed': purchaseState('delivery-failed', admitted, { decision }, candidateIdentity),
-  delivered: purchaseState('delivered', admitted, { potatoes }, candidateIdentity)
+  'delivery-failed': /* @__PURE__ */ purchaseState(
+    'delivery-failed',
+    admitted,
+    { decision },
+    candidateIdentity
+  ),
+  delivered: /* @__PURE__ */ purchaseState('delivered', admitted, { potatoes }, candidateIdentity)
 })
 
-const envelope = s.fixedObject(
+const envelope = /* @__PURE__ */ s.fixedObject(
   { result },
   {
     releaseEvidence: parseOutputReleaseEvidence,
-    currentAlias: s.fixedObject({ txid: s.hex, beef: s.bytes })
+    currentAlias: /* @__PURE__ */ s.fixedObject({ txid: s.hex, beef: s.bytes })
   }
 )
 

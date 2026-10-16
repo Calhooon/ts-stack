@@ -67,6 +67,23 @@ methods retain compatibility with SDK 2.8.11. The local hook's declaration is
 separate from the new funding-operation types so disabling this feature does not
 pull an SDK 3.3.0-only type into an existing consumer.
 
+## Shared backend receipt coordination
+
+`StorageKnex.withInternalizeReceipt` is a local backend coordination port used by
+ordinary internalization, the fixed-child companion and installed funding recovery.
+Its types retain the ordinary SDK peer interface. It neither verifies Script nor
+credits an output, authorizes an acquisition or proves publication.
+
+An adapter must call the supplied claim's `assertActive` in every ownership writer,
+mark provisional new receipt ownership with `markNew`, and call `complete` in the
+same transaction as its final ownership writes. Funding recovery commits its own
+retained receipt in that same writer. Preserve the original operation and recheck
+the claim after any external work; retaining a callback does not retain an expired
+lease or grant a superseded writer authority. Existing methods compose these
+checks; applications should use their higher-level interfaces. The port is not a
+BRC-100 wire method, remote-provider capability or substitute for the ownership
+and user-identity checks performed by the selected internalization profile.
+
 ## One output, one operation
 
 Supply the closed `OutputWalletFundingOperation` represented by the SDK's

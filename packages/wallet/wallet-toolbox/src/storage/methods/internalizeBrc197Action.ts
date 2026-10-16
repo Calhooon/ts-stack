@@ -17,10 +17,16 @@ export async function internalizeBrc197Action(
   receipt?: InternalizeReceiptClaim
 ): Promise<StorageInternalizeActionResult> {
   const owned = ownBrc197InternalizeActionArgs(args)
+  const owner = await authorizeBrc197StorageUser(storage, auth)
+  return await internalizeActionCore(storage, owner, owned, BRC197_INTERNALIZATION_PROFILE, undefined, receipt)
+}
+
+/** Retain the existing profile's authorization/error boundary before any SQL claim. */
+export async function authorizeBrc197StorageUser(storage: StorageProvider, auth: AuthId): Promise<AuthId> {
   const owner = { ...auth }
   if (!Number.isSafeInteger(owner.userId) || owner.userId! <= 0)
     throw new WERR_INVALID_PARAMETER('auth', 'an authenticated storage user')
   const users = await storage.findUsers({ partial: { userId: owner.userId, identityKey: owner.identityKey } })
   if (users.length !== 1) throw new WERR_INVALID_PARAMETER('auth', 'the authenticated storage user identity')
-  return await internalizeActionCore(storage, owner, owned, BRC197_INTERNALIZATION_PROFILE, undefined, receipt)
+  return owner
 }
