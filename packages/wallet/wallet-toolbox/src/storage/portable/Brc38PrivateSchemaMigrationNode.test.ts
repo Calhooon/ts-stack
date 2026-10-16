@@ -166,10 +166,16 @@ describe('private native migration configuration preserves canonical schema and 
       up: async (database: Knex) => {
         expect(await database.schema.hasTable('internalize_receipts')).toBe(true)
         expect(await database('internalize_receipts')).toEqual([])
+      },
+      down: async () => {
+        throw new Error('Independent fresh-layout fixture requires forward cleanup')
       }
     }
     source.migrations[brc38NativeLocalPackedLayoutMigration] = layout
-    source.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION] = { up: async () => {} }
+    source.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION] = {
+      ...source.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION],
+      up: async () => {}
+    }
     const originalNames = await source.getMigrations()
     expect(originalNames.indexOf(INTERNALIZE_RECEIPT_MIGRATION)).toBeGreaterThan(
       originalNames.indexOf(brc38NativeLocalPackedLayoutMigration)
