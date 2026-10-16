@@ -118,13 +118,10 @@ export function isBrc38CanonicalStructuredSourceSealDefinition(row: {
     )
   )
 }
-/** Actual per-family source-owned guards, freshly compared inside SQLite.
- * A returned count is comparison DATA for this schema operation, not a reusable
- * seal/source admission. Omitted guards are allowed only before installation. */
-export async function verifyBrc38SourceSealFieldDefinitions(
-  k: Knex,
+/** Expected fixed definition DATA only; each real view still requires fresh comparison. */
+export function brc38SourceSealFieldDefinitions(
   family: 'binary' | 'structured' | 'canonical' | 'text'
-): Promise<0 | 6> {
+): readonly Definition[] {
   const tables =
     family === 'binary'
       ? binaries
@@ -136,6 +133,18 @@ export async function verifyBrc38SourceSealFieldDefinitions(
             ? texts
             : undefined
   if (tables === undefined) invalid()
+  return tables.flatMap(table => ['INSERT', 'UPDATE', 'DELETE'].map(operation => refusal(table, operation)))
+}
+
+/** Actual per-family source-owned guards, freshly compared inside SQLite.
+ * A returned count is comparison DATA for this schema operation, not a reusable
+ * seal/source admission. Omitted guards are allowed only before installation. */
+export async function verifyBrc38SourceSealFieldDefinitions(
+  k: Knex,
+  family: 'binary' | 'structured' | 'canonical' | 'text'
+): Promise<0 | 6> {
+  const expected = brc38SourceSealFieldDefinitions(family),
+    tables = [...new Set(expected.map(value => value.table))]
   const row = (await k('sqlite_schema')
     .where({ type: 'trigger' })
     .whereIn('tbl_name', tables)
@@ -144,10 +153,7 @@ export async function verifyBrc38SourceSealFieldDefinitions(
     .first()) as { count: unknown } | undefined
   if (row?.count === 0) return 0
   if (row?.count !== 6) invalid()
-  await verifyDefinitions(
-    k,
-    tables.flatMap(table => ['INSERT', 'UPDATE', 'DELETE'].map(operation => refusal(table, operation)))
-  )
+  await verifyDefinitions(k, expected)
   return 6
 }
 export async function verifyBrc38AuthenticatedSourceSeal(k: Knex): Promise<void> {

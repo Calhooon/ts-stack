@@ -1,3 +1,4 @@
+import { readBrc38SqlFieldSchemaCounts } from './Brc38SqlFieldSchemaBatch'
 import { requireBrc38PackedRead } from './Brc38NativePackedSchemaNode'
 import {
   visitBrc38SqlStructuredChunkWindows,
@@ -55,11 +56,11 @@ function coordinate(table: Brc38StageTable, position: number, field: string): Co
  * Native definitions and all metadata are freshly read in the caller-owned
  * private transaction. This helper never owns a pool, profile or admission. */
 async function schema(k: Knex, create = false): Promise<boolean> {
-  const total = (await k('sqlite_schema')
-    .whereIn('tbl_name', [metadataTable, chunksTable])
-    .count({ count: '*' })
-    .first()) as { count: unknown } | undefined
-  if (total?.count === 0) {
+  const actual = await readBrc38SqlFieldSchemaCounts(k, 'canonical', [
+    [metadataTable, metadataSql],
+    [chunksTable, chunksSql]
+  ])
+  if (actual.total === 0) {
     if (!create) return false
     if (!(k as Knex.Transaction).isTransaction) invalid()
     await k.raw(metadataSql)
@@ -67,33 +68,20 @@ async function schema(k: Knex, create = false): Promise<boolean> {
     await installBrc38SqlStructuredPrefixGuards(k as Knex.Transaction, 'canonical')
     return await schema(k)
   }
-  const guards = await verifyBrc38SourceSealFieldDefinitions(k, 'canonical')
-  let prefixes: number
-  try {
-    prefixes = await verifyBrc38SqlStructuredPrefixGuards(k, 'canonical')
-  } catch {
+  if ((actual.sealCount !== 0 && actual.sealCount !== 6) || actual.sealMatches !== actual.sealCount) {
+    // Keep the original failure identity; the scalar result never grants admission.
+    await verifyBrc38SourceSealFieldDefinitions(k, 'canonical')
     invalid()
   }
-  if (total?.count !== 4 + guards + prefixes) invalid()
-  for (const [name, sql] of [
-    [metadataTable, metadataSql],
-    [chunksTable, chunksSql]
-  ]) {
-    const actual = (await k('sqlite_schema')
-      .where({ name, type: 'table', tbl_name: name })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
-      .count({ count: '*' })
-      .first()) as { count: unknown } | undefined
-    if (actual?.count !== 1) invalid()
+  if (actual.prefixMatches !== 6) {
+    try {
+      await verifyBrc38SqlStructuredPrefixGuards(k, 'canonical')
+    } catch {
+      invalid()
+    }
+    invalid()
   }
-  const indexes = (await k('sqlite_schema')
-    .where({ type: 'index' })
-    .whereNull('sql')
-    .whereIn('tbl_name', [metadataTable, chunksTable])
-    .whereIn('name', [`sqlite_autoindex_${metadataTable}_1`, `sqlite_autoindex_${chunksTable}_1`])
-    .count({ count: '*' })
-    .first()) as { count: unknown } | undefined
-  if (indexes?.count !== 2) invalid()
+  if (actual.total !== 10 + actual.sealCount || actual.baseMatches !== 4) invalid()
   return true
 }
 /** Fresh read-only definition check; empty tables still require exact SQL. */

@@ -1,5 +1,7 @@
 # #544 implementation map (unpublished candidate)
 
+Private binary, structured JSON, canonical JSON and text field schemas now compare their complete original tables, primary indexes, prefix guards and optional authenticated seals in one fresh bounded scalar query per family. This replaces repeated catalog dispatches without caching a verdict, changing DDL or relaxing any caller ownership, expiry, quota or tampering check. The original 10000-label import independently exhausted its 120-second owner on the previous implementation; complete performance and native qualification of this correction remain required.
+
 The complete native candidate-schema success fixtures admit 5 MiB after the ordinary 4 MiB fixture reproduced native SQLITE_FULL during trigger installation. Both ordinary and local variants retain real 4 MiB exhaustion tests, all schema/policy/generation/re-entry checks and their original 30-second case guards. Production quota defaults and native enforcement are unchanged.
 
 Post-import native recovery includes all34 retained local families after main added internalize_receipts, keeping every existing family comparison. Nested history spelling reuses the original projection scratch after its selection banks drain: the retained output plus two note-spelling banks stay inside its existing six-bank byte ceiling. The outer source keeps its original two grammar indexes; no index-count, temporary-byte, owner, deadline or production default is enlarged. Complete original occupied-customer, cleanup/retry and history oracles remain required.

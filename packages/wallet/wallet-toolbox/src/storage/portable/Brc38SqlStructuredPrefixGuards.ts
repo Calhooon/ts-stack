@@ -22,7 +22,7 @@ export async function readBrc38SqlPrefixSchemaVersion(k: Knex): Promise<number> 
 /** Expected SQL DATA. These guards protect provisional prefixes before whole
  * envelope authentication installs the separate source seal. No returned SQL,
  * count or descriptor supplies a source, actor or completion admission. */
-function definitions(family: Brc38StructuredPrefixFamily): readonly Definition[] {
+export function brc38SqlStructuredPrefixDefinitions(family: Brc38StructuredPrefixFamily): readonly Definition[] {
   const fields =
     family === 'binary'
       ? 'private_binary_fields'
@@ -75,7 +75,7 @@ export async function installBrc38SqlStructuredPrefixGuards(
   family: Brc38StructuredPrefixFamily
 ): Promise<void> {
   if (trx.isTransaction !== true) throw new Error('Private structured prefix installation requires its writer')
-  for (const value of definitions(family)) await trx.raw(value.sql)
+  for (const value of brc38SqlStructuredPrefixDefinitions(family)) await trx.raw(value.sql)
   await verifyBrc38SqlStructuredPrefixGuards(trx, family)
 }
 /** Fresh exact definitions in this actual view, including empty families. Old
@@ -83,7 +83,7 @@ export async function installBrc38SqlStructuredPrefixGuards(
 export async function verifyBrc38SqlStructuredPrefixGuards(k: Knex, family: Brc38StructuredPrefixFamily): Promise<6> {
   // The six distinct catalog names allow one fresh bounded scalar query;
   // every match still compares its complete definition in this actual view.
-  const expected = definitions(family),
+  const expected = brc38SqlStructuredPrefixDefinitions(family),
     actual = (await k('sqlite_schema')
       .where(query => {
         for (const value of expected)
