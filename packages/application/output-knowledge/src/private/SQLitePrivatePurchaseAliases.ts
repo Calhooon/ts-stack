@@ -656,6 +656,75 @@ export class SQLitePrivatePurchaseAliases {
       checkCurrent
     }
   }
+  private restoreTerminalAdmission(
+    state: PrivatePurchaseAliasState,
+    txid: string,
+    outcome: Exclude<PrivatePurchaseAdmissionOutcome, { status: 'unresolved' }> | undefined,
+    outcomes: Map<string, PrivatePurchaseAdmissionOutcome>
+  ): PrivatePurchaseAliasState {
+    if (outcome === undefined) return state
+    const pending = advancePrivatePurchaseAliasAdmission(state, txid, 'pending')
+    const restored = advancePrivatePurchaseAliasAdmission(pending, txid, outcome.status)
+    for (const role of this.roles)
+      if (this.entry(restored, role)?.txid === txid) outcomes.set(role, outcome)
+    return restored
+  }
+
+  private retainTerminalAdmission(
+    state: PrivatePurchaseAliasState,
+    txid: string,
+    outcome: PrivatePurchaseAdmissionOutcome | undefined,
+    outcomes: Map<string, PrivatePurchaseAdmissionOutcome>
+  ): void {
+    if (outcome === undefined || outcome.status === 'unresolved') return
+    for (const role of this.roles) {
+      if (this.entry(state, role)?.txid !== txid) continue
+      const before = outcomes.get(role)
+      outputAssert(
+        before === undefined ||
+          canonicalOutputJSON(before, { bytes: OUTCOME_BYTES }) ===
+            canonicalOutputJSON(outcome, { bytes: OUTCOME_BYTES }),
+        'A retained exact admission outcome cannot change',
+        'conflict'
+      )
+      outcomes.set(role, outcome)
+    }
+  }
+
+  private prepareAdmissionJournal(
+    original: PrivatePurchaseOriginal,
+    retained: PrivatePurchaseAliasEntry,
+    outcome: PrivatePurchaseAdmissionOutcome | undefined,
+    terminal: boolean,
+    clock: () => string,
+    guard: ProtectedLedgerGuard
+  ): PrivatePurchaseAdmissionJournalPlan | undefined {
+    if (!this.admissionJournal || terminal) return undefined
+    if (retained.admission === 'retained')
+      return this.admissionJournal.prepare(
+        original,
+        { type: 'intent', txid: retained.txid, operationId: retained.operationId },
+        clock,
+        guard
+      )
+    if (outcome === undefined || outcome.status === 'unresolved') return undefined
+    return this.admissionJournal.prepare(original, { type: 'outcome', outcome }, clock, guard)
+  }
+
+  private terminalTime(
+    snapshot: Snapshot,
+    entry: PrivatePurchaseAliasEntry,
+    outcome: PrivatePurchaseAdmissionOutcome | null,
+    restored: ReadonlyMap<string, string> | undefined
+  ): string | null {
+    const role = this.roles.find(
+      r => this.entry(snapshot.state, r)?.txid === entry.txid && snapshot.completedAt.has(r)
+    )
+    if (outcome === null) return null
+    if (role === undefined) return restored?.get(entry.txid) ?? null
+    return snapshot.completedAt.get(role)!
+  }
+
   /** Complete verification supplies the full identity and synchronous guard.
    * Incoming/cumulative evidence must be independently checked by the caller.
    * This planner never accepts a wire digest or claims Script validity itself. */
@@ -771,13 +840,12 @@ export class SQLitePrivatePurchaseAliases {
     const { candidates, outcomes } = remapCandidates()
     candidates.set(proposal.role, combined)
     if (place) candidates.set('selected', combined)
-    let state = proposal.state
-    if (oldOutcome) {
-      state = advancePrivatePurchaseAliasAdmission(state, candidate.txid, 'pending')
-      state = advancePrivatePurchaseAliasAdmission(state, candidate.txid, oldOutcome.status)
-      for (const role of this.roles)
-        if (this.entry(state, role)?.txid === candidate.txid) outcomes.set(role, oldOutcome)
-    }
+    const state = this.restoreTerminalAdmission(
+      proposal.state,
+      candidate.txid,
+      oldOutcome,
+      outcomes
+    )
     return this.plan({
       original,
       snapshot,
@@ -831,37 +899,8 @@ export class SQLitePrivatePurchaseAliases {
           ? snapshot.state
           : advancePrivatePurchaseAliasAdmission(snapshot.state, id, status),
       outcomes = new Map(snapshot.outcomes)
-    if (owned && owned.status !== 'unresolved')
-      for (const role of this.roles) {
-        if (this.entry(state, role)?.txid !== id) continue
-        const before = outcomes.get(role)
-        outputAssert(
-          before === undefined ||
-            canonicalOutputJSON(before, { bytes: OUTCOME_BYTES }) ===
-              canonicalOutputJSON(owned, { bytes: OUTCOME_BYTES }),
-          'A retained exact admission outcome cannot change',
-          'conflict'
-        )
-        outcomes.set(role, owned)
-      }
-    const journal =
-      this.admissionJournal && !terminal
-        ? retained.admission === 'retained'
-          ? this.admissionJournal.prepare(
-              original,
-              { type: 'intent', txid: id, operationId: retained.operationId },
-              clock,
-              guard
-            )
-          : owned && owned.status !== 'unresolved'
-            ? this.admissionJournal.prepare(
-                original,
-                { type: 'outcome', outcome: owned },
-                clock,
-                guard
-              )
-            : undefined
-        : undefined
+    this.retainTerminalAdmission(state, id, owned, outcomes)
+    const journal = this.prepareAdmissionJournal(original, retained, owned, terminal, clock, guard)
     return this.plan({
       original,
       snapshot,
@@ -1086,15 +1125,7 @@ export class SQLitePrivatePurchaseAliases {
           candidate.acquisitionId === original.terms.body.acquisitionId,
         'Alias candidate slot is incomplete'
       )
-      const existingTimeRole = this.roles.find(
-          r => this.entry(snapshot.state, r)?.txid === entry.txid && snapshot.completedAt.has(r)
-        ),
-        completedAt =
-          outcome === null
-            ? null
-            : existingTimeRole === undefined
-              ? (restoredTerminalTime?.get(entry.txid) ?? null)
-              : snapshot.completedAt.get(existingTimeRole)!,
+      const completedAt = this.terminalTime(snapshot, entry, outcome, restoredTerminalTime),
         header = this.header(snapshot.binding, role, entry, candidate, outcome, completedAt),
         oldHeader = snapshot.records[offset]
       if (

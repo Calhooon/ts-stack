@@ -322,3 +322,79 @@ test('source closure covers every tracked file and refuses uncommitted tracked c
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('source hashing reads the checked descriptor instead of reopening a swappable pathname', t => {
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'local-source-descriptor-'))
+  const root = path.join(directory, 'source')
+  fs.mkdirSync(root)
+  const filename = path.join(root, 'source.ts')
+  const outside = path.join(directory, 'outside.txt')
+  const git = (...args) => execFileSync('/usr/bin/git', args, { cwd: root })
+  try {
+    fs.writeFileSync(filename, 'export const owned = true\n')
+    fs.writeFileSync(outside, 'unrelated fixture bytes\n')
+    git('init', '--quiet')
+    git('add', '.')
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'Fixture'
+    )
+    const expected = trackedSourceDigest(root)
+    const read = fs.readFileSync
+    t.mock.method(fs, 'readFileSync', (file, ...args) => {
+      if (file === filename) {
+        fs.unlinkSync(filename)
+        fs.symlinkSync(outside, filename)
+      }
+      return read(file, ...args)
+    })
+    assert.deepEqual(trackedSourceDigest(root), expected)
+    assert.equal(fs.lstatSync(filename).isSymbolicLink(), false)
+  } finally {
+    t.mock.restoreAll()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('source closure rejects tracked symlinks and preserves locale-independent Unicode ordering', () => {
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'local-source-kinds-'))
+  const git = (...args) => execFileSync('/usr/bin/git', args, { cwd: directory })
+  const commit = () => {
+    git('add', '.')
+    git(
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'Fixture'
+    )
+  }
+  try {
+    const names = ['a.txt', 'A.txt', '\ue000.txt', '\u{10000}.txt']
+    for (const name of names) fs.writeFileSync(path.join(directory, name), name)
+    git('init', '--quiet')
+    commit()
+    const legacyOrder = ['A.txt', 'a.txt', '\u{10000}.txt', '\ue000.txt']
+    assert.equal(
+      trackedSourceDigest(directory).sourceDigest,
+      digest(JSON.stringify(legacyOrder.map(name => [name, digest(name)])))
+    )
+    fs.symlinkSync('a.txt', path.join(directory, 'link.txt'))
+    commit()
+    assert.throws(
+      () => trackedSourceDigest(directory),
+      error => error.code === 'ELOOP'
+    )
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})

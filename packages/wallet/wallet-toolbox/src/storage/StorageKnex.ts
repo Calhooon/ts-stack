@@ -68,7 +68,10 @@ import {
 import { WERR_INTERNAL, WERR_INVALID_PARAMETER, WERR_NOT_IMPLEMENTED, WERR_UNAUTHORIZED } from '../sdk/WERR_errors'
 import { randomBytesBase64, verifyId, verifyOne, verifyOneOrNone } from '../utility/utilityHelpers'
 import { canonicalizeAtomicBeef } from '../utility/canonicalizeAtomicBeef'
-import { internalizeAction, InternalizeReceiptClaim } from './methods/internalizeAction'
+import { internalizeAction } from './methods/internalizeAction'
+import type { InternalizeReceiptClaim } from './methods/InternalizeReceiptClaim'
+import { internalizeBrc197Action } from './methods/internalizeBrc197Action'
+import { ownBrc197InternalizeActionArgs, type Brc197InternalizeActionArgs } from '../sdk/Brc197Internalization'
 
 import { EntityTimeStamp, TransactionStatus } from '../sdk/types'
 import { managedChangeOutputFields } from './methods/managedChange'
@@ -248,13 +251,32 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
 
   override async internalizeAction(auth: AuthId, args: InternalizeActionArgs): Promise<StorageInternalizeActionResult> {
     validateInternalizeActionArgs(args)
+    return await this.withInternalizeReceipt(auth, args, claim => internalizeAction(this, auth, args, undefined, claim))
+  }
+
+  override async internalizeBrc197Action(
+    auth: AuthId,
+    args: Brc197InternalizeActionArgs
+  ): Promise<StorageInternalizeActionResult> {
+    const owned = ownBrc197InternalizeActionArgs(args)
+    return await this.withInternalizeReceipt(auth, owned, claim => internalizeBrc197Action(this, auth, owned, claim))
+  }
+
+  /** Coordinate an explicitly installed same-database ownership writer. Callers
+   * must use the supplied fence in each writer and complete it atomically with
+   * ownership. This backend port carries no acquisition, Script or SDK3 types. */
+  async withInternalizeReceipt(
+    auth: AuthId,
+    args: InternalizeActionArgs,
+    write: (claim: InternalizeReceiptClaim) => Promise<StorageInternalizeActionResult>
+  ): Promise<StorageInternalizeActionResult> {
     const userId = auth.userId
     if (userId == null) throw new WERR_UNAUTHORIZED()
     const txid = canonicalizeAtomicBeef(args.tx).atomicTxid
     if (txid == null) throw new WERR_INVALID_PARAMETER('tx', 'an AtomicBEEF transaction')
     const { ownerToken, claim, preserveComplete } = await this.acquireInternalizeReceipt(userId, txid)
     try {
-      return await internalizeAction(this, auth, args, undefined, claim)
+      return await write(claim)
     } finally {
       // A successful writer marked its claim complete in the same transaction
       // as the output records. Preserve that durable key across later merges;

@@ -21,6 +21,80 @@ describe('durable local acquisition funding', () => {
     return { ...fixture, store, controller }
   }
 
+  test('recovery takes over an expired ordinary receipt without double accounting or a stale writer', async () => {
+    const { operation, controller } = await setup()
+    const input = operation()
+    let entered!: () => void
+    let release!: () => void
+    const broadcasting = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    jest.spyOn(context.services, 'postBeef').mockImplementation(async (beef, txids) => {
+      expect(txids).toEqual([input.funding.txid])
+      expect(beef.findTxid(input.funding.txid)?.tx?.toHex()).toBe(
+        Transaction.fromAtomicBEEF(Utils.toArray(input.beef, 'base64')).toHex()
+      )
+      entered()
+      await held
+      return [
+        {
+          name: 'owned-synthetic-no-network',
+          status: 'success',
+          txidResults: [{ txid: input.funding.txid, status: 'success' }]
+        }
+      ]
+    })
+    const auth = await context.wallet.storage.getAuth(true)
+    const ordinary = context.activeStorage
+      .internalizeAction(auth, {
+        tx: Utils.toArray(input.beef, 'base64'),
+        outputs: [
+          {
+            outputIndex: input.funding.outputIndex,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              derivationPrefix: input.derivationPrefix,
+              derivationSuffix: input.derivationSuffix,
+              senderIdentityKey: input.buyer
+            }
+          }
+        ],
+        description: 'Owned interrupted receipt fixture'
+      })
+      .then(
+        value => ({ status: 'fulfilled' as const, value }),
+        error => ({ status: 'rejected' as const, error })
+      )
+    try {
+      await broadcasting
+      const claims = context.activeStorage
+        .knex('internalize_receipts')
+        .where({ userId: context.userId, txid: input.funding.txid })
+      expect(await claims.clone().first()).toMatchObject({ state: 'pending', needsNewReceipt: 1 })
+      await claims.clone().update({ leaseUntil: 0 })
+      const accepted = await controller.internalizeOnce(input)
+      expect(accepted).toMatchObject({ state: 'accepted', receipt: { operationId: input.id, satoshis: '100' } })
+      release()
+      const obsolete = await ordinary
+      expect(obsolete.status).toBe('rejected')
+      if (obsolete.status === 'rejected') expect(obsolete.error.message).toContain('claim expired or was superseded')
+      expect(
+        await context.activeStorage.findTransactions({ partial: { userId: context.userId, txid: input.funding.txid } })
+      ).toEqual([expect.objectContaining({ satoshis: 100 })])
+      expect(
+        await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })
+      ).toEqual([expect.objectContaining({ satoshis: 100, spendable: true })])
+      expect(await claims.clone().first()).toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+      expect(await controller.internalizeOnce(input)).toEqual(accepted)
+    } finally {
+      release()
+      await ordinary
+    }
+  })
+
   test('credits once, retains exact receipt and queues broadcast atomically without network submission', async () => {
     const { operation, controller, chain, store } = await setup()
     const input = operation()

@@ -578,8 +578,9 @@ export function applicationDiagnosticSelection(kind = 'property') {
       profile: 'native-http.cpuprofile',
       outputPrefix: 'performance-diagnostic-native-http',
       deadlineSeconds: 600,
-      testCaseMilliseconds: 120000,
-      nativeCases: 4,
+      testCaseMilliseconds: 180000,
+      nativeCaseTimeoutsMilliseconds: Object.freeze([180000, 120000, 120000, 120000, 120000]),
+      nativeCases: 5,
       requiresMongo: true
     })
   const coordinator = kind === 'coordinator-property'
@@ -598,8 +599,16 @@ export function applicationDiagnosticSelection(kind = 'property') {
     deadlineSeconds: 390,
     testCaseMilliseconds: 360000,
     nativeCases: null,
+    nativeCaseTimeoutsMilliseconds: null,
     requiresMongo: false
   })
+}
+
+export function validateNativeDiagnosticCases(source, selection) {
+  assert.equal(source.match(/^it\(/gm)?.length, selection.nativeCases)
+  const limits = [...source.matchAll(/^}, (\d+)\)$/gm)].map(match => Number(match[1]))
+  assert.deepEqual(limits, selection.nativeCaseTimeoutsMilliseconds)
+  assert.equal(Math.max(...limits), selection.testCaseMilliseconds)
 }
 
 function validateDiagnosticSource(root, cwd, selection) {
@@ -612,7 +621,7 @@ function validateDiagnosticSource(root, cwd, selection) {
     assert.match(testSource, /}, 360000\)/)
     return
   }
-  assert.equal(testSource.match(/}, 120000\)/g)?.length, selection.nativeCases)
+  validateNativeDiagnosticCases(testSource, selection)
   assert.match(
     fs.readFileSync(
       path.join(cwd, 'src/__tests__/PrivatePurchaseProfileAliasNative.fixture.ts'),
@@ -1015,6 +1024,7 @@ async function main() {
     interruptAsFailureMilliseconds: selection.interruptAsFailureMilliseconds,
     testCaseMilliseconds: selection.testCaseMilliseconds,
     nativeCases: selection.nativeCases,
+    nativeCaseTimeoutsMilliseconds: selection.nativeCaseTimeoutsMilliseconds,
     mongo: mongoBinary
       ? { version: '8.2.6', binary: path.basename(mongoBinary), sha256: frozen.get(mongoBinary) }
       : null,

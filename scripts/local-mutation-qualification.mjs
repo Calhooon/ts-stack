@@ -21,7 +21,13 @@ import {
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const digest = value => createHash('sha256').update(value).digest('hex')
 const jsonDigest = value => digest(JSON.stringify(value))
-const sorted = values => [...values].sort()
+// Receipt identities retain the original code-unit order, independent of locale.
+function compareStrings(left, right) {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+const sorted = values => [...values].sort(compareStrings)
 const sha256 = /^[a-f0-9]{64}$/
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 const git = (root, ...args) => execFileSync('/usr/bin/git', args, { cwd: root }).toString()
@@ -32,13 +38,29 @@ export function trackedSourceDigest(root) {
     '',
     'Local qualification requires committed, unchanged tracked source'
   )
-  const names = git(root, 'ls-files', '-z').split('\0').filter(Boolean).sort()
+  const names = sorted(git(root, 'ls-files', '-z').split('\0').filter(Boolean))
   assert.ok(names.length > 0, 'Local qualification requires complete tracked source')
   const files = names.map(name => {
     const file = path.join(root, name)
-    assert.ok(fs.lstatSync(file).isFile(), 'Tracked qualification source must be a regular file')
-    return [name, digest(fs.readFileSync(file))]
+    const descriptor = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
+    )
+    try {
+      assert.ok(
+        fs.fstatSync(descriptor).isFile(),
+        'Tracked qualification source must be a regular file'
+      )
+      return [name, digest(fs.readFileSync(descriptor))]
+    } finally {
+      fs.closeSync(descriptor)
+    }
   })
+  assert.equal(
+    git(root, 'status', '--porcelain', '--untracked-files=no').trim(),
+    '',
+    'Local qualification requires committed, unchanged tracked source'
+  )
   return { trackedCount: files.length, sourceDigest: jsonDigest(files) }
 }
 
@@ -199,7 +221,7 @@ export function readLocalPackets(directory, matrix) {
       return [path.join(row.target, ...(row.partition === 'whole' ? [] : [row.partition])), row]
     })
   )
-  const files = ['mutation.json', 'execution.json', 'local-execution.json']
+  const files = new Set(['mutation.json', 'execution.json', 'local-execution.json'])
   const inventory = new Set()
   function walk(relative = '') {
     for (const entry of fs.readdirSync(path.join(base, relative), { withFileTypes: true })) {
@@ -215,7 +237,7 @@ export function readLocalPackets(directory, matrix) {
         walk(name)
       } else {
         assert.ok(
-          entry.isFile() && expected.has(relative) && files.includes(entry.name),
+          entry.isFile() && expected.has(relative) && files.has(entry.name),
           'Unknown local evidence file or row'
         )
         inventory.add(name)
@@ -230,9 +252,10 @@ export function readLocalPackets(directory, matrix) {
       assert.ok(inventory.has(member), 'Missing local evidence file')
       const descriptor = fs.openSync(
         path.join(base, member),
-        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
       )
       try {
+        assert.ok(fs.fstatSync(descriptor).isFile(), 'Local evidence must be a regular file')
         return fs.readFileSync(descriptor, 'utf8')
       } finally {
         fs.closeSync(descriptor)
@@ -273,7 +296,7 @@ export async function verifyLocalCampaign(root, manifest, directory, runtimeDige
   verifyLocalRows(identity, matrix, packets, () => {})
   const complete = []
   const canonicalByTarget = new Map()
-  for (const targetId of identity.targetIds) {
+  await inSeries(identity.targetIds, async targetId => {
     const target = targets[targetId]
     const canonical = await targetEvidence(root, target, targetId)
     canonicalByTarget.set(targetId, canonical)
@@ -296,11 +319,12 @@ export async function verifyLocalCampaign(root, manifest, directory, runtimeDige
       })
     } else {
       const checkedParts = []
-      for (const part of parts)
+      await inSeries(parts, async part => {
         checkedParts.push({
           ...part,
           evidence: await targetEvidence(root, part.target, targetId, part.id)
         })
+      })
       const checkedPackets = selected.map(packet => ({
         ...packet,
         receipt: partitionReceipt(
@@ -330,7 +354,7 @@ export async function verifyLocalCampaign(root, manifest, directory, runtimeDige
         )
       )
     }
-  }
+  })
   const checked = verifyFullCampaign(identity, complete, policy, target =>
     canonicalByTarget.get(target)
   )
@@ -350,6 +374,27 @@ export async function verifyLocalCampaign(root, manifest, directory, runtimeDige
       observationDigest: jsonDigest(packet.observation)
     }))
   }
+}
+
+/** Canonical instrumentation must remain exclusive and stop at the first failure. */
+async function inSeries(values, visit) {
+  const iterator = values[Symbol.iterator]()
+  async function next() {
+    const item = iterator.next()
+    if (item.done) return
+    try {
+      await visit(item.value)
+    } catch (error) {
+      try {
+        iterator.return?.()
+      } catch {
+        // Preserve the original body error, as a failing for-of body does.
+      }
+      throw error
+    }
+    await next()
+  }
+  await next()
 }
 
 function outputOutsideSource(root, file, evidence) {
@@ -374,7 +419,7 @@ async function main(argv) {
   }
   assert.ok(options['--manifest'])
   if (command === 'init') {
-    assert.deepEqual(Object.keys(options).sort(), ['--manifest', '--runtime-digest'])
+    assert.deepEqual(sorted(Object.keys(options)), ['--manifest', '--runtime-digest'])
     const targets = buildMutationTargets(ROOT)
     const identity = createLocalIdentity(ROOT, targets, options['--runtime-digest'])
     const manifest = {
@@ -392,7 +437,7 @@ async function main(argv) {
     )
   } else {
     assert.equal(command, 'verify')
-    assert.deepEqual(Object.keys(options).sort(), [
+    assert.deepEqual(sorted(Object.keys(options)), [
       '--directory',
       '--manifest',
       '--output',

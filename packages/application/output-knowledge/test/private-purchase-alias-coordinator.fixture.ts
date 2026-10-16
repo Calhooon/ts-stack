@@ -1,4 +1,5 @@
 import { outputAssert } from '@bsv/sdk'
+import { fixturePromise } from './fixture-promise.js'
 import {
   PrivatePurchaseAliasCoordinator,
   type PrivatePurchaseAliasCoordinatorOptions
@@ -92,25 +93,27 @@ export function purchaseAliasCoordinatorFixture(
                 evidence: 'AA=='
               }
             },
-            async assessRecovery(_job, _rejection, _signal, context) {
-              context.checkCurrent()
-              const eligibilityId = eligibility
-              return eligibilityId === undefined
-                ? undefined
-                : {
-                    eligibilityId,
-                    purchaseCommitment: identity,
-                    checkCurrent() {
-                      // Match the real admission bridge: its retained guard
-                      // delegates to the original context inside native writes.
-                      context.checkCurrent()
-                      outputAssert(
-                        eligibility === eligibilityId,
-                        'Eligibility context changed',
-                        'context-changed'
-                      )
+            assessRecovery(_job, _rejection, _signal, context) {
+              return fixturePromise(() => {
+                context.checkCurrent()
+                const eligibilityId = eligibility
+                return eligibilityId === undefined
+                  ? undefined
+                  : {
+                      eligibilityId,
+                      purchaseCommitment: identity,
+                      checkCurrent() {
+                        // Match the real admission bridge: its retained guard
+                        // delegates to the original context inside native writes.
+                        context.checkCurrent()
+                        outputAssert(
+                          eligibility === eligibilityId,
+                          'Eligibility context changed',
+                          'context-changed'
+                        )
+                      }
                     }
-                  }
+              })
             }
           }
         }

@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   applicationDiagnosticSelection,
+  validateNativeDiagnosticCases,
   nativePreparationMayContinue,
   diagnosticMayContinueValidation,
   functionEntryRefusal,
@@ -428,8 +429,8 @@ test('fixed property and native HTTP diagnostics retain their original complete 
   )
   assert.equal(native.packageDirectory, 'packages/overlays/overlay-express')
   assert.equal(native.deadlineSeconds, 600)
-  assert.equal(native.testCaseMilliseconds, 120000)
-  assert.equal(native.nativeCases, 4)
+  assert.equal(native.testCaseMilliseconds, 180000)
+  assert.equal(native.nativeCases, 5)
   assert.equal(native.requiresMongo, true)
   assert.notEqual(native.outputPrefix, property.outputPrefix)
   assert.ok(Object.isFrozen(property) && Object.isFrozen(native))
@@ -438,6 +439,13 @@ test('fixed property and native HTTP diagnostics retain their original complete 
     'utf8'
   )
   assert.equal(source.match(/}, 120000\)/g).length, 4)
+  assert.deepEqual(native.nativeCaseTimeoutsMilliseconds, [180000, 120000, 120000, 120000, 120000])
+  assert.ok(Object.isFrozen(native.nativeCaseTimeoutsMilliseconds))
+  validateNativeDiagnosticCases(source, native)
+  assert.throws(() => validateNativeDiagnosticCases(source, { ...native, nativeCases: 4 }))
+  assert.throws(() =>
+    validateNativeDiagnosticCases(source.replace('}, 180000)', '}, 120000)'), native)
+  )
   for (const kind of ['unknown', '../test', null, false])
     assert.throws(
       () => applicationDiagnosticSelection(kind),
@@ -786,7 +794,7 @@ test('diagnostic assertions distinguish a passing suite from a nonzero coverage 
   )
 })
 
-test('native diagnostic assertion metadata requires all four fixed cases', async () => {
+test('native diagnostic assertion metadata requires all five fixed cases', async () => {
   const { summarizeDiagnosticAssertions } =
     await import('./output-knowledge-performance-diagnostic.mjs')
   const selection = applicationDiagnosticSelection('native-http')
@@ -795,22 +803,22 @@ test('native diagnostic assertion metadata requires all four fixed cases', async
     numTotalTestSuites: 1,
     numRuntimeErrorTestSuites: 0,
     numPendingTestSuites: 0,
-    numTotalTests: 4,
+    numTotalTests: 5,
     numPendingTests: 0,
     numTodoTests: 0,
-    numPassedTests: 4,
+    numPassedTests: 5,
     numFailedTests: 0,
     testResults: [
       {
         name: path.join(countRoot, selection.packageDirectory, selection.selector),
         status: 'passed',
-        assertionResults: Array.from({ length: 4 }, () => ({ status: 'passed' }))
+        assertionResults: Array.from({ length: 5 }, () => ({ status: 'passed' }))
       }
     ]
   }
   assert.equal(
     summarizeDiagnosticAssertions(fixture, selection, countRoot, measured, () => {}).passed,
-    4
+    5
   )
   const incomplete = structuredClone(fixture)
   incomplete.testResults[0].assertionResults.pop()
@@ -819,7 +827,7 @@ test('native diagnostic assertion metadata requires all four fixed cases', async
     /diagnostic-result-selector/
   )
   const failed = structuredClone(fixture)
-  failed.numPassedTests = 3
+  failed.numPassedTests = 4
   failed.numFailedTests = 1
   failed.testResults[0].status = 'failed'
   failed.testResults[0].assertionResults[3].status = 'failed'

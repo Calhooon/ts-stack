@@ -6,13 +6,15 @@ import {
   type Brc197InternalizeActionArgs
 } from '../../sdk/Brc197Internalization'
 import { internalizeActionCore } from './internalizeActionCore'
+import type { InternalizeReceiptClaim } from './InternalizeReceiptClaim'
 import { WERR_INVALID_PARAMETER } from '../../sdk/WERR_errors'
 
 /** Shares the complete existing evidence, transactional ownership and rollback pipeline. */
 export async function internalizeBrc197Action(
   storage: StorageProvider,
   auth: AuthId,
-  args: Brc197InternalizeActionArgs
+  args: Brc197InternalizeActionArgs,
+  receipt?: InternalizeReceiptClaim
 ): Promise<StorageInternalizeActionResult> {
   const owned = ownBrc197InternalizeActionArgs(args)
   const owner = { ...auth }
@@ -20,5 +22,5 @@ export async function internalizeBrc197Action(
     throw new WERR_INVALID_PARAMETER('auth', 'an authenticated storage user')
   const users = await storage.findUsers({ partial: { userId: owner.userId, identityKey: owner.identityKey } })
   if (users.length !== 1) throw new WERR_INVALID_PARAMETER('auth', 'the authenticated storage user identity')
-  return await internalizeActionCore(storage, owner, owned, BRC197_INTERNALIZATION_PROFILE)
+  return await internalizeActionCore(storage, owner, owned, BRC197_INTERNALIZATION_PROFILE, undefined, receipt)
 }

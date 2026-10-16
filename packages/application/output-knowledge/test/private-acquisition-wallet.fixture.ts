@@ -1,4 +1,5 @@
 import { afterEach, expect, jest } from '@jest/globals'
+import { fixturePromise } from './fixture-promise.js'
 import { createRequire } from 'node:module'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -128,17 +129,19 @@ export async function acquisitionNativeWalletFixture(
         raw = transaction.toHex(),
         original = services.postBeef,
         guardCalls = jest.mocked(broadcast).mock.calls.length,
-        publication = jest.fn<InstanceType<typeof Services>['postBeef']>(async (beef, txids) => {
-          expect(txids).toEqual([txid])
-          expect(beef.findTxid(txid)?.tx?.toHex()).toBe(raw)
-          return [
-            {
-              name: 'owned-synthetic-fixture-no-network',
-              status: 'success',
-              txidResults: [{ txid, status: 'success' }]
-            }
-          ]
-        })
+        publication = jest.fn<InstanceType<typeof Services>['postBeef']>((beef, txids) =>
+          fixturePromise(() => {
+            expect(txids).toEqual([txid])
+            expect(beef.findTxid(txid)?.tx?.toHex()).toBe(raw)
+            return [
+              {
+                name: 'owned-synthetic-fixture-no-network',
+                status: 'success',
+                txidResults: [{ txid, status: 'success' }]
+              }
+            ]
+          })
+        )
       expect(original).toBe(broadcast)
       services.postBeef = publication
       try {

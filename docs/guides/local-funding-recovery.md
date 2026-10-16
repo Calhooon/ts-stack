@@ -26,6 +26,14 @@ requests and remote providers keep their existing behavior. This is an installed
 wallet-side capability, not an additional field that an arbitrary BRC-100 client
 can send to acquire it.
 
+SQL storage coordinates the installed funding route with ordinary internalization
+and the fixed-child companion through the same user/TXID receipt claim. The
+funding journal and SQL claim finalize in the same ownership transaction. An
+expired ordinary receipt can be recovered without adding its provisional balance
+again; its superseded writer cannot subsequently credit or finalize. Existing
+operations still recover through their original funding ID and retained journal.
+These claims do not turn local ownership into broadcast or mining evidence.
+
 ## Installation and authority
 
 Import `SQLiteFundingRecoveryStore` from

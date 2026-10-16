@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { fixturePromise } from './fixture-promise.js'
 import { gunzipSync } from 'node:zlib'
 import { createHash } from 'node:crypto'
 import {
@@ -157,23 +158,28 @@ export function includeAt102(packet: RevenueListingProfileLineagePackage) {
       .sort((a, b) => a - b),
     historicalMTP = String(times[5])
   const resolver: ChainViewResolver = {
-    resolve: async view => ({
-      view,
-      tracker: {
-        currentHeight: async () => 102,
-        isValidRootForHeight: async (root, height) =>
-          root === (height === 102 ? containing : headers[height])?.merkleRoot
-      },
-      header: async height => {
-        const header = height === 102 ? containing : headers[height]
-        if (!header) throw new Error('Missing fixture header')
-        return header
-      },
-      medianTimePastBefore: async height => {
-        if (height !== 102) throw new Error('Unexpected containing height')
-        return historicalMTP
-      }
-    })
+    resolve: view =>
+      fixturePromise(() => ({
+        view,
+        tracker: {
+          currentHeight: () => Promise.resolve(102),
+          isValidRootForHeight: (root, height) =>
+            fixturePromise(
+              () => root === (height === 102 ? containing : headers[height])?.merkleRoot
+            )
+        },
+        header: height =>
+          fixturePromise(() => {
+            const header = height === 102 ? containing : headers[height]
+            if (!header) throw new Error('Missing fixture header')
+            return header
+          }),
+        medianTimePastBefore: height =>
+          fixturePromise(() => {
+            if (height !== 102) throw new Error('Unexpected containing height')
+            return historicalMTP
+          })
+      }))
   }
   return { packet: owned, context: selected, chains: resolver, historicalMTP }
 }

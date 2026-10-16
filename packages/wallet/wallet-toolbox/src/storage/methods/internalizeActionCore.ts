@@ -1,3 +1,4 @@
+import type { InternalizeReceiptClaim } from './InternalizeReceiptClaim'
 import { type ValidInternalizeActionArgs, validateInternalizeActionArgs } from '@bsv/sdk/wallet/validationHelpers'
 import {
   Transaction as BsvTransaction,
@@ -224,7 +225,6 @@ export async function internalizeActionCore(
     requireFunding(recovery.protocol === 'wallet-funding-recovery-v1', 'Unsupported funding recovery protocol')
   const ctx = new InternalizeActionContext(storage, auth, args, profile, receipt)
   if (recovery !== undefined) {
-    requireFunding(receipt === undefined, 'Funding recovery owns its independent atomic receipt')
     // Verification/header I/O occurs before the short ownership transaction.
     // The caller has already retained the operation intent durably.
     await ctx.setupEvidence()
@@ -237,14 +237,6 @@ export async function internalizeActionCore(
   else await ctx.newInternalize()
 
   return ctx.r
-}
-
-/** SQL storage uses a durable claim to fence ordinary receipt writes across processes. */
-export interface InternalizeReceiptClaim {
-  retryNew: boolean
-  assertActive: (trx: TrxToken) => Promise<void>
-  markNew: (trx: TrxToken) => Promise<void>
-  complete: (trx: TrxToken) => Promise<void>
 }
 
 interface BasketInsertionX extends BasketInsertion {
@@ -560,14 +552,16 @@ class InternalizeActionContext {
    * the receipt proves ownership, not broadcast or mining. No network I/O occurs here.
    */
   async internalizeAtomically(trx: TrxToken): Promise<StorageInternalizeActionResult> {
+    await this.receipt?.assertActive(trx)
     await this.setupStorage(trx)
     const existing = this.etx
-    const total = (existing?.satoshis ?? 0) + this.satoshis
+    const total = (this.retryExistingTransaction ? 0 : (existing?.satoshis ?? 0)) + this.satoshis
     requireFunding(Number.isSafeInteger(total), 'Funding recovery transaction balance is not a safe integer')
     let proven: TableProvenTx | undefined
     if (this.recoveryProven !== undefined)
       proven = (await this.storage.findOrInsertProvenTx(this.recoveryProven, trx)).proven
     this.etx = await this.findOrInsertTargetTransaction(this.satoshis, proven, trx)
+    await this.receipt?.markNew(trx)
     const transactionId = this.etx.transactionId
     await this.markInputsSpent(transactionId, trx)
     await this.addLabels(transactionId, trx)
@@ -575,6 +569,7 @@ class InternalizeActionContext {
     await this.mergeBasketInsertions(transactionId, trx)
     if (proven !== undefined) await this.completeRecoveryProof(proven, trx)
     else await this.queueRecoveryMonitoring(existing, transactionId, trx)
+    await this.receipt?.complete(trx)
     return this.r
   }
 
