@@ -8,13 +8,16 @@ all frozen reference Script and positive vector bytes. Implemented contracts and
 remaining qualification are tracked in [specification alignment](./SPEC-ALIGNMENT.md).
 Historical integration evidence for an earlier exemplar retains its own identity.
 
-The user-selected second review checkpoint is local-first. Its handoff requires
-complete local qualification of the final source, with the applicable corpus,
-seeds, limits, thresholds, platform and packed-consumer checks preserved. The user
-will run hosted CI after that review. A local pass is never reported as hosted CI
-green; the exact-head repository merge, Sonar and CodeQL gates remain required
-before merge or publication. The implementation and documentation checkmarks
-below do not by themselves qualify either checkpoint.
+The second review checkpoint requires complete qualification of the final source,
+with the applicable corpus, seeds, limits, thresholds, platform and packed-consumer
+checks preserved. Prefer local execution where feasible; the complete mutation
+campaign may instead run on hosted Linux when serial local execution is not
+practical. Each receipt must retain its actual source, runtime, run and attempt
+identity. Partial local and hosted results cannot be combined into a complete
+campaign, and a local pass is never reported as hosted CI green. The exact-head
+repository merge, Sonar and CodeQL gates remain required before readiness, merge
+or publication. The implementation and documentation checkmarks below do not by
+themselves qualify either checkpoint.
 
 The current alias owner, coordinator, independent currentness, physical disclosure,
 buyer recovery and candidate-bound LCH layers are assembled with current-profile
