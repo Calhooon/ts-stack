@@ -11,7 +11,8 @@ import {
   browserPins,
   nativeBrowserPlan,
   needsNativeBrowserDelivery,
-  verifyBrowserFile
+  verifyBrowserFile,
+  cleanupNativeBrowserDelivery
 } from './provision-wallet-native-browser.mjs'
 
 test('native browser delivery selects the exact source-pinned ARM64 or x64 distribution', () => {
@@ -138,4 +139,8 @@ test('measured browser admission preserves all other original case and cleanup b
     assert.ok(nativeBrowserTestTimeout(id) <= 160000)
   }
   assert.equal(nativeBrowserCaseTimeout(), 30000)
+})
+
+test('browser cleanup requires its explicit delivery receipt instead of adopting an ambient Chrome executable', async () => {
+  assert.deepEqual(await cleanupNativeBrowserDelivery(), { allocated: false })
 })

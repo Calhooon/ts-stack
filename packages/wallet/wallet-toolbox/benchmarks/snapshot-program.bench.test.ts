@@ -79,11 +79,32 @@ async function fixture(shape: SnapshotMeasurementCase) {
     const manager = new WalletStorageManager(destination.identityKey, source)
     await manager.makeAvailable()
     const served = await destination.serve(),
-      client = new StorageClient(destination.wallet, served.url, { serverIdentityKey: destination.serverIdentityKey }),
+      sockets = new Set<Socket>()
+    // Capability/authentication requests can open reusable connections. Own
+    // them before the first client request so post-commit loss reaches the
+    // actual serving sockets, including those retained after cancellation.
+    served.server.server.on('connection', (socket: Socket) => {
+      sockets.add(socket)
+      socket.once('close', () => sockets.delete(socket))
+    })
+    const client = new StorageClient(destination.wallet, served.url, {
+        serverIdentityKey: destination.serverIdentityKey
+      }),
       rpc = Reflect.get(served.server, 'remoteSnapshotSync') as KnexRemoteSnapshotSyncRpc
     if (rpc === undefined || !(await client.getSnapshotSync()!.supportsDestination()))
       throw new Error('Actual authenticated snapshot destination is required')
-    return { source, destination, manager, seeded, user, client, rpc, server: served.server, close }
+    return {
+      source,
+      destination,
+      manager,
+      seeded,
+      user,
+      client,
+      rpc,
+      server: served.server,
+      sockets,
+      close
+    }
   } catch (cause) {
     try {
       await close()
@@ -287,12 +308,8 @@ describe.each(snapshotMeasurementCases)('complete snapshot destination measureme
 test('snapshot cancellation joins committed acknowledgement and actual TCP reply loss retains durable progress', async () => {
   const f = await fixture(snapshotMeasurementCases[0]),
     controller = new AbortController(),
-    sockets = new Set<Socket>()
+    sockets = f.sockets
   let abortedAt: number | undefined
-  f.server.server.on('connection', (socket: Socket) => {
-    sockets.add(socket)
-    socket.once('close', () => sockets.delete(socket))
-  })
   try {
     const cancelled = await f.manager.syncToWriterResumable(await f.manager.getAuth(), f.client, {
       signal: controller.signal,

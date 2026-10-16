@@ -689,3 +689,22 @@ test('all original privileged root-copy cases run once as installer with mandato
     /--testPathIgnorePatterns='[^']*\|src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs'/
   )
 })
+
+test('native browser jobs always release only their delivered exact-path sandbox attachment', () => {
+  const jobs = Object.fromEntries(
+    workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).map(job => [job.name, job.source])
+  )
+  for (const name of ['mutation-tests', 'coverage-wallet']) {
+    const source = jobs[name]
+    assert.ok(source, name)
+    assert.match(
+      source,
+      /if: always\(\) && (matrix\.wallet_native|startsWith\(matrix\.id, 'shard-'\))/
+    )
+    assert.match(source, /run: node scripts\/provision-wallet-native-browser\.mjs --cleanup/)
+    assert.doesNotMatch(
+      source,
+      /--no-sandbox|apparmor_restrict_unprivileged_userns=0|service apparmor/
+    )
+  }
+})

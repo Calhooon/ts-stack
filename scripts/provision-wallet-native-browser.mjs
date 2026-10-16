@@ -1,14 +1,27 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { appendFile, chmod, copyFile, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  copyFile,
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, matchesGlob, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
+import {
+  installNativeBrowserSandbox,
+  removeNativeBrowserSandbox
+} from './wallet-native-browser-sandbox.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const browserPin = Object.freeze(
@@ -79,7 +92,9 @@ export async function provisionNativeBrowser({
   const pin = nativeBrowserPlan()
   const privateRoot = await mkdtemp(join(parent, 'ts-wallet-native-browser-'))
   await chmod(privateRoot, 0o700)
-  let delivered = false
+  let sandbox,
+    executable,
+    sandboxAttempted = false
   try {
     const ownedArchive = join(privateRoot, 'chrome.zip')
     if (archive !== undefined) {
@@ -125,9 +140,11 @@ export async function provisionNativeBrowser({
       )
     )
     execute('unzip', ['-q', ownedArchive, '-d', privateRoot], 60000)
-    const executable = join(privateRoot, pin.executableRelativePath)
+    executable = join(privateRoot, pin.executableRelativePath)
     await verifyBrowserFile(executable, pin.executableBytes, pin.executableSha256)
     await chmod(executable, 0o500)
+    sandboxAttempted = true
+    sandbox = await installNativeBrowserSandbox(executable)
     await rm(ownedArchive)
     const sourceSha = execute('git', ['-C', root, 'rev-parse', 'HEAD'], 5000).trim()
     assert.match(sourceSha, /^[a-f0-9]{40}$/)
@@ -136,6 +153,7 @@ export async function provisionNativeBrowser({
       sourceSha,
       ...pin,
       executable,
+      sandbox,
       runtimeQualified: false,
       processTreeQualified: false
     }
@@ -144,16 +162,65 @@ export async function provisionNativeBrowser({
       JSON.stringify(receipt, null, 2) + '\n',
       { mode: 0o600, flag: 'wx' }
     )
-    delivered = true
     return receipt
-  } finally {
-    // Retain a delivered artifact for the enclosing job's actual browser work.
-    // A delivery receipt grants no runtime, process-tree or host qualification.
-    if (!delivered) await rm(privateRoot, { recursive: true, force: true })
+  } catch (cause) {
+    // Successful delivery retains its exact attachment and bytes for the job.
+    // On failure, remove the kernel attachment before retiring its files.
+    const failures = []
+    if (sandbox !== undefined)
+      try {
+        await removeNativeBrowserSandbox(executable, sandbox)
+        sandboxAttempted = false
+      } catch (cleanup) {
+        failures.push(cleanup)
+      }
+    // If kernel cleanup is uncertain, retain the exact executable/owner path
+    // for a concrete retry rather than leaving an attachment to a retired path.
+    if (!sandboxAttempted)
+      try {
+        await rm(privateRoot, { recursive: true, force: true })
+      } catch (cleanup) {
+        failures.push(cleanup)
+      }
+    if (failures.length)
+      throw new AggregateError(
+        [cause, ...failures],
+        'Native browser delivery retains concrete cleanup'
+      )
+    throw cause
   }
+}
+
+export async function cleanupNativeBrowserDelivery(receiptFile) {
+  if (receiptFile === undefined) return { allocated: false }
+  const pin = nativeBrowserPlan(),
+    privateRoot = dirname(receiptFile)
+  const info = await lstat(receiptFile)
+  assert.ok(info.isFile() && !info.isSymbolicLink() && info.size <= 16384)
+  const receipt = JSON.parse(await readFile(receiptFile, 'utf8'))
+  const executable = receipt.executable
+  assert.equal(receiptFile, join(privateRoot, 'component-delivery.json'))
+  assert.equal(receipt.executableSha256, pin.executableSha256)
+  assert.equal(receipt.buildId, pin.buildId)
+  assert.equal(join(privateRoot, pin.executableRelativePath), executable)
+  const result = await removeNativeBrowserSandbox(executable, receipt.sandbox)
+  await writeFile(
+    join(privateRoot, 'component-sandbox-cleanup-' + randomUUID() + '.json'),
+    JSON.stringify(result) + '\n',
+    { mode: 0o600, flag: 'wx' }
+  )
+  return result
 }
 async function main() {
   const args = process.argv.slice(2)
+  if (args.length === 1 && args[0] === '--cleanup') {
+    console.log(
+      JSON.stringify(
+        await cleanupNativeBrowserDelivery(process.env.TS_STACK_NATIVE_BROWSER_DELIVERY)
+      )
+    )
+    return
+  }
   let archive, targetId
   while (args.length) {
     const flag = args.shift(),
@@ -174,9 +241,28 @@ async function main() {
     if (!needsNativeBrowserDelivery(target)) return
   }
   const receipt = await provisionNativeBrowser({ archive })
-  if (process.env.GITHUB_ENV)
-    await appendFile(process.env.GITHUB_ENV, 'CHROME_BIN=' + receipt.executable + '\n')
-  console.log(JSON.stringify(receipt))
+  try {
+    if (process.env.GITHUB_ENV)
+      await appendFile(
+        process.env.GITHUB_ENV,
+        'CHROME_BIN=' +
+          receipt.executable +
+          '\nTS_STACK_NATIVE_BROWSER_DELIVERY=' +
+          join(dirname(dirname(receipt.executable)), 'component-delivery.json') +
+          '\n'
+      )
+    console.log(JSON.stringify(receipt))
+  } catch (cause) {
+    try {
+      await removeNativeBrowserSandbox(receipt.executable, receipt.sandbox)
+    } catch (cleanup) {
+      throw new AggregateError(
+        [cause, cleanup],
+        'Native browser environment handoff retains sandbox cleanup'
+      )
+    }
+    throw cause
+  }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch(() => {

@@ -1,5 +1,9 @@
 # #544 candidate delivery and rollback
 
+On Ubuntu with restricted user namespaces, pinned Chrome for Testing delivery installs a temporary AppArmor attachment for that exact verified executable path. Chrome retains its original sandbox flags and the global user-namespace restriction is unchanged. An always-run CI cleanup step removes and verifies absence of its own attachment, including setup and environment-handoff failure cleanup. Delivery and blank-page startup evidence do not qualify the full native browser program. The complete HTTP benchmark owns serving sockets before the first authenticated client request, preserving the real post-commit disconnect and independent durable recovery oracles.
+
+Source setup guidance: https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md .
+
 This guide describes the unpublished Toolbox 2.15.0 source candidate. It is not
 a release or qualification receipt. PR569 remains open and unmerged. The
 [implementation map](./implementation-544.md) names the source components and

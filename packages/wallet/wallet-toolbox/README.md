@@ -1,5 +1,9 @@
 # BSV Wallet Toolbox
 
+On Ubuntu with restricted user namespaces, pinned Chrome for Testing delivery installs a temporary AppArmor attachment for that exact verified executable path. Chrome retains its original sandbox flags and the global user-namespace restriction is unchanged. An always-run CI cleanup step removes and verifies absence of its own attachment, including setup and environment-handoff failure cleanup. Delivery and blank-page startup evidence do not qualify the full native browser program. The complete HTTP benchmark owns serving sockets before the first authenticated client request, preserving the real post-commit disconnect and independent durable recovery oracles.
+
+Source setup guidance: https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md .
+
 Post-import native recovery includes all34 retained local families after main added internalize_receipts, keeping every existing family comparison. Nested history spelling reuses the original projection scratch after its selection banks drain: the retained output plus two note-spelling banks stay inside its existing six-bank byte ceiling. The outer source keeps its original two grammar indexes; no index-count, temporary-byte, owner, deadline or production default is enlarged. Complete original occupied-customer, cleanup/retry and history oracles remain required.
 
 SQLite journal bootstrap now preserves the existing signed sync-state key domain, including negative and zero physical/profile keys and resumed page cursors, matching the installed observers. Other entity keys remain positive and MySQL retains unsigned keys. No DDL, ABI, wire format, production quota or default changes. Full native metadata and independent cross-page signed-key regressions remain required qualification evidence.
