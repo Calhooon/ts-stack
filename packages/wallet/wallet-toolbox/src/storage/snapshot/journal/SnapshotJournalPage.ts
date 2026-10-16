@@ -84,7 +84,7 @@ function validate(interval: SnapshotJournalInterval): void {
       compareSnapshotJournalRevisions(after.revision, high) > 0
     )
       invalid()
-    integer(after.id1, 1)
+    integer(after.id1, tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1)
     integer(after.id2, 0)
     if (typeof after.exactText !== 'string') invalid()
     textKey(after.exactText)
@@ -171,7 +171,7 @@ export async function readSnapshotJournalMetadataPage(
       invalid()
     const row: SnapshotJournalMetadata = {
       revision,
-      id1: integer(record.id1, 1),
+      id1: integer(record.id1, interval.tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1),
       id2: integer(record.id2, 0),
       exactText: textKey(record.exactText),
       present: record.present === 1 || record.present === true

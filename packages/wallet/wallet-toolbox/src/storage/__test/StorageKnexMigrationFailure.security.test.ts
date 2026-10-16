@@ -1,11 +1,26 @@
+import { knex as createKnex, type Knex } from 'knex'
 import { StorageKnex } from '../StorageKnex'
 import { KnexMigrations } from '../schema/KnexMigrations'
 
-function absentGeneration() {
-  return jest.fn(async (scope: (trx: object) => Promise<void>) => {
-    await scope({ schema: { hasTable: jest.fn().mockResolvedValue(false) } })
+const sqliteFixtures: Knex[] = []
+function emptySqlite(migrations: { currentVersion: ReturnType<typeof jest.fn>; down: ReturnType<typeof jest.fn> }) {
+  const db = createKnex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    useNullAsDefault: true,
+    pool: { min: 0, max: 1 }
   })
+  sqliteFixtures.push(db)
+  jest.spyOn(db.migrate, 'currentVersion').mockImplementation(migrations.currentVersion)
+  jest.spyOn(db.migrate, 'down').mockImplementation(migrations.down)
+  jest.spyOn(db, 'raw')
+  return db
 }
+afterEach(async () => {
+  const results = await Promise.allSettled(sqliteFixtures.splice(0).map(async db => await db.destroy()))
+  const errors = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+  if (errors.length) throw new AggregateError(errors, 'Migration fixture databases did not drain')
+})
 
 function storageWithKnex(knex: object): StorageKnex {
   return {
@@ -34,38 +49,30 @@ describe('StorageKnex migration failure boundaries', () => {
   })
 
   test('dropAllData stops only at the explicit empty-schema state', async () => {
-    const knex = {
-      client: { config: { client: 'better-sqlite3' } },
-      transaction: absentGeneration(),
-      raw: jest.fn().mockResolvedValue(undefined),
-      migrate: {
-        currentVersion: jest.fn().mockResolvedValueOnce('202609170001').mockResolvedValueOnce('none'),
-        down: jest.fn().mockResolvedValue([1, ['202609170001']])
-      }
-    }
+    const knex = emptySqlite({
+      currentVersion: jest.fn().mockResolvedValueOnce('202609170001').mockResolvedValueOnce('none'),
+      down: jest.fn().mockResolvedValue([1, ['202609170001']])
+    })
 
     await StorageKnex.prototype.dropAllData.call(storageWithKnex(knex))
 
     expect(knex.migrate.down).toHaveBeenCalledTimes(1)
-    expect(knex.raw.mock.calls.map(call => call[0])).toEqual([
-      'PRAGMA foreign_keys = OFF;',
-      'PRAGMA foreign_keys = ON;'
-    ])
+    expect(
+      jest
+        .mocked(knex.raw)
+        .mock.calls.map(call => call[0])
+        .filter(sql => String(sql).startsWith('PRAGMA foreign_keys'))
+    ).toEqual(['PRAGMA foreign_keys = OFF;', 'PRAGMA foreign_keys = ON;'])
   })
 
   test.each([
     ['throws', () => Promise.reject(new Error('rollback failed'))],
     ['returns no result', () => Promise.resolve(undefined)]
   ])('propagates when rollback %s and always restores SQLite foreign keys', async (_name, down) => {
-    const knex = {
-      client: { config: { client: 'better-sqlite3' } },
-      transaction: absentGeneration(),
-      raw: jest.fn().mockResolvedValue(undefined),
-      migrate: {
-        currentVersion: jest.fn().mockResolvedValue('202609170001'),
-        down: jest.fn(down)
-      }
-    }
+    const knex = emptySqlite({
+      currentVersion: jest.fn().mockResolvedValue('202609170001'),
+      down: jest.fn(down)
+    })
 
     await expect(StorageKnex.prototype.dropAllData.call(storageWithKnex(knex))).rejects.toThrow(
       _name === 'throws' ? 'rollback failed' : 'database migration rollback returned no result'
@@ -76,7 +83,6 @@ describe('StorageKnex migration failure boundaries', () => {
   test('migrate restores SQLite foreign keys when migration fails', async () => {
     const knex = {
       client: { config: { client: 'better-sqlite3' } },
-      transaction: absentGeneration(),
       raw: jest.fn().mockResolvedValue(undefined),
       migrate: {
         latest: jest.fn().mockRejectedValue(new Error('migration failed')),
@@ -92,15 +98,10 @@ describe('StorageKnex migration failure boundaries', () => {
 })
 
 test('dropAllData bounds a migrator that never reaches the empty schema', async () => {
-  const database = {
-    client: { config: { client: 'better-sqlite3' } },
-    transaction: absentGeneration(),
-    raw: jest.fn().mockResolvedValue(undefined),
-    migrate: {
-      currentVersion: jest.fn().mockResolvedValue('unfinished'),
-      down: jest.fn().mockResolvedValue([1, ['fixture']])
-    }
-  }
+  const database = emptySqlite({
+    currentVersion: jest.fn().mockResolvedValue('unfinished'),
+    down: jest.fn().mockResolvedValue([1, ['fixture']])
+  })
   await expect(StorageKnex.prototype.dropAllData.call(storageWithKnex(database))).rejects.toThrow(
     'database migration rollback did not reach the empty schema'
   )
@@ -111,14 +112,51 @@ test('dropAllData bounds a migrator that never reaches the empty schema', async 
 })
 
 test('MySQL full deletion does not issue SQLite generation operations', async () => {
-  const database = {
-    client: { config: { client: 'mysql2' } },
-    transaction: jest.fn(),
-    raw: jest.fn(),
-    migrate: { currentVersion: jest.fn().mockResolvedValue('none'), down: jest.fn() }
-  }
+  const catalogs: string[] = []
+  const database = Object.assign(
+    (table: string) => {
+      expect(table).toMatch(/^information_schema\./)
+      catalogs.push(table)
+      const query = {
+        whereRaw: () => query,
+        whereIn: () => query,
+        whereNotIn: () => query,
+        where: () => query,
+        select: () => query,
+        limit: async () => []
+      }
+      return query
+    },
+    {
+      client: { config: { client: 'mysql2' } },
+      transaction: jest.fn(),
+      raw: jest.fn(async (sql: string) => {
+        expect(sql).not.toMatch(/sqlite|PRAGMA/i)
+        if (sql.startsWith('SELECT @@sql_mode'))
+          return [
+            [
+              {
+                sqlMode: '',
+                charset: 'utf8mb4',
+                collation: 'utf8mb4_bin',
+                definer: 'fixture@localhost',
+                databaseCollation: 'utf8mb4_bin'
+              }
+            ],
+            []
+          ]
+        if (sql.startsWith('substr(')) return undefined
+        expect(sql).toContain('information_schema.')
+        return [[], []]
+      }),
+      migrate: { currentVersion: jest.fn().mockResolvedValue('none'), down: jest.fn() }
+    }
+  )
   await StorageKnex.prototype.dropAllData.call(storageWithKnex(database))
   expect(database.transaction).not.toHaveBeenCalled()
-  expect(database.raw).not.toHaveBeenCalled()
+  expect(database.raw.mock.calls.some(([sql]) => sql.includes('information_schema.TABLES'))).toBe(true)
+  expect(database.raw.mock.calls.some(([sql]) => sql.includes('information_schema.TRIGGERS'))).toBe(true)
+  expect(catalogs.length).toBeGreaterThan(0)
+  expect(catalogs.every(table => table.startsWith('information_schema.'))).toBe(true)
   expect(database.migrate.down).not.toHaveBeenCalled()
 })

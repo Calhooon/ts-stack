@@ -1,5 +1,7 @@
 # #544 implementation map (unpublished candidate)
 
+SQLite journal bootstrap now preserves the existing signed sync-state key domain, including negative and zero physical/profile keys and resumed page cursors, matching the installed observers. Other entity keys remain positive and MySQL retains unsigned keys. No DDL, ABI, wire format, production quota or default changes. Full native metadata and independent cross-page signed-key regressions remain required qualification evidence.
+
 The finite source inventory accounts for all 24 required behavior families,
 including #542 and #543, with integration, consumer entry points, qualification
 selectors and delivery/rollback documentation present. Runtime qualification
@@ -2781,3 +2783,5 @@ current enrollment; retain the original profile and artifact for rollback.
 This internal candidate transition does not replace main's standard SQL receipt
 migration or change ordinary released-wallet rows. Current 48-family native
 qualification is required; historical 47-family results cannot establish it.
+
+Signed sync-state provenance now follows the same admitted key domain through fresh bootstrap, bounded metadata/cursor/frame reads and durable source-provenance storage. The provenance reader starts at the first actual key when no cursor is supplied; an explicit zero cursor still means keys greater than zero. Other entity identifiers stay positive, MySQL source bootstrap stays unsigned, and provenance never writes destination sync-state rows or primary selection. Schema, field encodings, quotas and native ABI are unchanged.

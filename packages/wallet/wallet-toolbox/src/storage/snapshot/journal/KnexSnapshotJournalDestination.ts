@@ -450,7 +450,7 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
 
   async provenance(
     expected: SnapshotJournalDestinationCheckpoint,
-    after = 0,
+    after?: number,
     maximumRows = 32,
     maximumBytes = 1048576
   ): Promise<SnapshotJournalProvenancePage> {

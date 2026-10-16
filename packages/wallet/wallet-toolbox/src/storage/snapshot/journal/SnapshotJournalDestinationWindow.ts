@@ -148,7 +148,11 @@ function ownBinding(input: SnapshotJournalDestinationBinding): {
   }
 }
 
-function position(value: SnapshotJournalPosition, binding: SnapshotJournalDestinationBinding): SnapshotJournalPosition {
+function position(
+  value: SnapshotJournalPosition,
+  binding: SnapshotJournalDestinationBinding,
+  streamIndex: number
+): SnapshotJournalPosition {
   const revision = snapshotJournalRevision(value.revision)
   if (
     compareSnapshotJournalRevisions(revision, binding.low) <= 0 ||
@@ -164,7 +168,10 @@ function position(value: SnapshotJournalPosition, binding: SnapshotJournalDestin
     return invalid()
   return {
     revision,
-    id1: integer(value.id1, 1),
+    id1: integer(
+      value.id1,
+      snapshotJournalDestinationStreams[streamIndex]?.tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1
+    ),
     id2: integer(value.id2),
     exactText
   }
@@ -198,7 +205,7 @@ function ownState(
     phase: input.phase,
     streamIndex: integer(input.streamIndex, 0, snapshotJournalDestinationStreams.length),
     tableIndex: integer(input.tableIndex, 0, snapshotSyncTables.length),
-    ...(input.after === undefined ? {} : { after: position(input.after, binding.value) }),
+    ...(input.after === undefined ? {} : { after: position(input.after, binding.value, input.streamIndex) }),
     promotionSequence: integer(input.promotionSequence)
   }
   if (result.phase === 'intake') {
@@ -663,7 +670,7 @@ export async function advanceSnapshotJournalDestinationWindow<T>(
     sequence: prior.sequence + 1
   }
   if (step.phase === 'intake') {
-    const after = step.after === undefined ? undefined : position(step.after, binding.value)
+    const after = step.after === undefined ? undefined : position(step.after, binding.value, prior.streamIndex)
     if (
       examined === 0
         ? !step.complete || JSON.stringify(after) !== JSON.stringify(prior.after)

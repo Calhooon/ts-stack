@@ -161,7 +161,9 @@ describe('actual durable import mapping charge', () => {
     expect((await receipt()).mappedIds).toBe(5)
     const counts = queries.filter(sql => /count\s*\(/i.test(sql))
     expect(
-      counts.every(sql => /\bfrom\s+(?:[`"]?main[`"]?\.)?[`"]?sqlite_(?:schema|master)(?:[`"]|\b)/i.test(sql))
+      counts.every(sql =>
+        /\bfrom\s+(?:[`"]?main[`"]?\.)?[`"]?sqlite_(?:schema|master|temp_schema)(?:[`"]|\b)/i.test(sql)
+      )
     ).toBe(true)
     const loads = queries.filter(sql => /^select/i.test(sql) && sql.includes('brc38_import_ids'))
     expect(loads).toHaveLength(2)

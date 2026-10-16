@@ -1,3 +1,4 @@
+import { readSnapshotJournalMetadataPage } from './SnapshotJournalPage'
 import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
 import { copySnapshotJournalBootstrapPage, SNAPSHOT_JOURNAL_BOOTSTRAP_DDL } from './SnapshotJournalBootstrap'
 import {
@@ -525,6 +526,82 @@ test('SQLite bootstrap rejects caller transactions before any journal access', a
       }
     })
     expect(await k('snapshot_journal_bootstrap').first()).toEqual(before)
+  } finally {
+    await k.destroy()
+  }
+})
+
+test('SQLite bootstrap resumes signed sync-state keys across physical and profile page boundaries', async () => {
+  const k = await emptyFixture()
+  try {
+    const ids = [-Number.MAX_SAFE_INTEGER, ...Array.from({ length: 257 }, (_, index) => index - 256)]
+    for (let start = 0; start < ids.length; start += 64)
+      await k('sync_states').insert(ids.slice(start, start + 64).map(id => value('sync_states', id, id, 1)))
+    await beginBootstrap(k)
+    let complete = false
+    const selected: number[] = []
+    for (let page = 0; page < 50 && !complete; page++) {
+      const result = await copySnapshotJournalBootstrapPage(k, 1000000)
+      expect(result.invalidated).toBe(false)
+      expect(result.selected).toBeLessThanOrEqual(256)
+      selected.push(result.selected)
+      complete = result.complete
+    }
+    expect(complete).toBe(true)
+    expect(selected.filter(count => count === 256)).toHaveLength(2)
+    expect(await k('snapshot_journal_physical').where({ tableId: 7 }).orderBy('id1').pluck('id1')).toEqual(ids)
+    expect(await k('snapshot_journal_scope').where({ tableId: 7, userId: 1 }).orderBy('id1').pluck('id1')).toEqual(ids)
+    expect(await k('snapshot_journal_bootstrap').first()).toEqual({
+      id: 1,
+      stream: 17,
+      cursor: null,
+      rowLimit: 1000000,
+      rowsUsed: ids.length * 2
+    })
+    expect(await k('snapshot_journal_clock').first('enabled', 'reason')).toEqual({ enabled: 1, reason: null })
+    const clock = await k('snapshot_journal_clock').where('id', 1).first('revision')
+    const interval = {
+      bootstrap: true as const,
+      stream: 'scope' as const,
+      tableId: 7,
+      userId: 1,
+      floor: snapshotJournalRevision('0'),
+      low: snapshotJournalRevision('0'),
+      high: snapshotJournalRevision(String(clock.revision)),
+      limit: 256
+    }
+    const first = await readSnapshotJournalMetadataPage(k, interval)
+    expect(first.complete).toBe(false)
+    const second = await readSnapshotJournalMetadataPage(k, { ...interval, after: first.after })
+    expect(second.complete).toBe(true)
+    expect([...first.rows, ...second.rows].map(row => row.id1)).toEqual(ids)
+    await exact(k)
+  } finally {
+    await k.destroy()
+  }
+})
+
+test('SQLite bootstrap still refuses a negative ordinary transaction key before progress', async () => {
+  const k = await emptyFixture()
+  try {
+    await k('transactions').insert(value('transactions', -1, 1, 1))
+    await beginBootstrap(k)
+    expect(await copySnapshotJournalBootstrapPage(k, 1000000)).toEqual({
+      complete: false,
+      selected: 1,
+      stream: 0,
+      invalidated: true
+    })
+    expect(await k('snapshot_journal_physical')).toEqual([])
+    expect(await k('snapshot_journal_bootstrap').first('stream', 'cursor', 'rowsUsed')).toEqual({
+      stream: 0,
+      cursor: null,
+      rowsUsed: 0
+    })
+    expect(await k('snapshot_journal_clock').first('enabled', 'reason')).toEqual({
+      enabled: 0,
+      reason: 'key-out-of-range'
+    })
   } finally {
     await k.destroy()
   }

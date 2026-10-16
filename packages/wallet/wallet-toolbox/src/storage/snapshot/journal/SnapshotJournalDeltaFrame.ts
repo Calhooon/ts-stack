@@ -99,7 +99,7 @@ function position(value: unknown, tableId: number): SnapshotJournalPosition {
   const row = record(value, ['revision', 'id1', 'id2', 'exactText'])
   const revision = snapshotJournalRevision(row.revision)
   if (revision === '0') invalid()
-  const id1 = integer(row.id1, 1),
+  const id1 = integer(row.id1, tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1),
     id2 = integer(row.id2, 0)
   const exactText = text(row.exactText, 400)
   if (tableId === 12 ? id2 !== 0 : exactText !== '' || (tableId >= 10 ? id2 < 1 : id2 !== 0)) invalid()

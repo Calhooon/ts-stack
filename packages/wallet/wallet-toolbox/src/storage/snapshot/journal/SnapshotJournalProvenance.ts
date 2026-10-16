@@ -31,6 +31,19 @@ function number(value: unknown, maximum = Number.MAX_SAFE_INTEGER): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > maximum) invalid()
   return value
 }
+function sourceId(value: unknown): number {
+  if (typeof value === 'string' && /^-?(?:0|[1-9]\d{0,15})$/.test(value)) value = Number(value)
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) invalid()
+  return value
+}
+function sourceIdProjection(k: Knex, mysql: boolean): Knex.Raw {
+  return k.raw(
+    mysql
+      ? 'CASE WHEN octet_length(cast(incomingId as char)) BETWEEN 1 AND 17 AND incomingId BETWEEN ? AND ? THEN incomingId ELSE NULL END AS incomingId'
+      : "CASE WHEN typeof(incomingId)='integer' AND incomingId BETWEEN ? AND ? THEN incomingId ELSE NULL END AS incomingId",
+    [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]
+  )
+}
 function bounded(k: Knex, field: string, maximum: number, mysql: boolean): Knex.Raw {
   return k.raw(
     mysql
@@ -240,7 +253,7 @@ export async function cleanupUnseenSnapshotJournalProvenance(
       .where(scope)
       .whereNot('seenSession', expected.sessionId)
       .select(
-        bounded(trx, 'incomingId', Number.MAX_SAFE_INTEGER, mysql),
+        sourceIdProjection(trx, mysql),
         bounded(trx, 'bytes', 1048576, mysql),
         trx.raw('substr(seenSession,1,65) AS seenSession')
       )
@@ -257,10 +270,9 @@ export async function cleanupUnseenSnapshotJournalProvenance(
       const previous = { rows: number(countRows[0].rows), bytes: number(countRows[0].bytes) }
       let removedBytes = 0
       for (const row of rows) {
-        const incomingId = number(row.incomingId),
+        const incomingId = sourceId(row.incomingId),
           bytes = number(row.bytes, 1048576)
         if (
-          incomingId < 1 ||
           typeof row.seenSession !== 'string' ||
           !/^[0-9a-f]{64}$/.test(row.seenSession) ||
           row.seenSession === expected.sessionId ||
@@ -301,11 +313,11 @@ export async function readSnapshotJournalProvenancePage(
   k: Knex,
   binding: SnapshotJournalDestinationBinding,
   expected: SnapshotJournalDestinationCheckpoint,
-  after = 0,
+  after?: number,
   maximumRows = 32,
   maximumBytes = 1048576
 ): Promise<SnapshotJournalProvenancePage> {
-  number(after)
+  if (after !== undefined) sourceId(after)
   if (
     !Number.isSafeInteger(maximumRows) ||
     maximumRows < 1 ||
@@ -318,11 +330,10 @@ export async function readSnapshotJournalProvenancePage(
   const mysql = ['mysql', 'mysql2'].includes(String(k.client.config.client))
   return await withSnapshotJournalAcknowledgedWindowFence(k, binding, expected, async trx => {
     const scope = { userId: binding.destinationUserId, lineage: snapshotJournalIdentityLineage(binding) }
-    const metadata: Array<Record<string, unknown>> = await trx(table)
+    const query = trx(table)
       .where(scope)
-      .where('incomingId', '>', after)
       .select(
-        bounded(trx, 'incomingId', Number.MAX_SAFE_INTEGER, mysql),
+        sourceIdProjection(trx, mysql),
         bounded(trx, 'bytes', 1048576, mysql),
         trx.raw('substr(digest,1,65) AS digest'),
         trx.raw('substr(revision,1,20) AS revision'),
@@ -330,15 +341,17 @@ export async function readSnapshotJournalProvenancePage(
       )
       .orderBy('incomingId')
       .limit(maximumRows)
+    if (after !== undefined) query.where('incomingId', '>', after)
+    const metadata: Array<Record<string, unknown>> = await query
     let payloadBytes = 0,
       previousId = after
     const rows: Array<{ incomingId: number; revision: string; raw: Readonly<Record<string, unknown>> }> = []
     for (const record of metadata) {
-      const incomingId = number(record.incomingId),
+      const incomingId = sourceId(record.incomingId),
         bytes = number(record.bytes, 1048576),
         revision = snapshotJournalRevision(record.revision)
       if (
-        incomingId <= previousId ||
+        (previousId !== undefined && incomingId <= previousId) ||
         bytes < 1 ||
         typeof record.digest !== 'string' ||
         !/^[0-9a-f]{64}$/.test(record.digest) ||
@@ -379,7 +392,9 @@ export async function readSnapshotJournalProvenancePage(
       payloadBytes += bytes
       previousId = incomingId
     }
-    const more = await trx(table).where(scope).where('incomingId', '>', previousId).select('incomingId').limit(1)
+    const remaining = trx(table).where(scope)
+    if (previousId !== undefined) remaining.where('incomingId', '>', previousId)
+    const more = await remaining.select('incomingId').limit(1)
     return { rows, ...(rows.length ? { after: previousId } : {}), complete: more.length === 0, payloadBytes }
   })
 }

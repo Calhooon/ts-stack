@@ -331,3 +331,36 @@ test('reserved property names and binary marker text remain plain raw SQL values
   expect(result.row.__proto__).toBeNull()
   expect(result.row.constructor).toBe('$bsvBinary')
 })
+
+test.each([-Number.MAX_SAFE_INTEGER, -1, 0, Number.MAX_SAFE_INTEGER])(
+  'signed sync-state provenance key %i round trips without changing ordinary key refusal',
+  id => {
+    const metadata = { revision: snapshotJournalRevision('3'), id1: id, id2: 0, exactText: '', present: true }
+    const input: SnapshotJournalDeltaPage = {
+      table: 'syncStates',
+      changes: [{ metadata, present: true, row: { syncStateId: id, userId: 3, syncMap: 'original\u0000雪' } }],
+      examined: 1,
+      payloadBytes: 0,
+      complete: false,
+      after: { revision: metadata.revision, id1: id, id2: 0, exactText: '' }
+    }
+    const signedBound: SnapshotJournalDeltaFrameContext = { stream: 'scope', tableId: 7 }
+    const decoded = decodeSnapshotJournalDeltaFrame(encodeSnapshotJournalDeltaFrame(input, signedBound), signedBound)
+    expect(decoded).toMatchObject({
+      table: input.table,
+      changes: input.changes,
+      examined: 1,
+      complete: false,
+      after: input.after
+    })
+    expect(decoded.payloadBytes).toBeGreaterThan(0)
+    if (id < 1) {
+      const ordinary: SnapshotJournalDeltaPage = {
+        ...input,
+        table: 'txLabels',
+        changes: [{ metadata, present: true, row: { txLabelId: id } }]
+      }
+      expect(() => encodeSnapshotJournalDeltaFrame(ordinary, bound)).toThrow('Invalid raw')
+    }
+  }
+)

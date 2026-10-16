@@ -140,13 +140,13 @@ function streams(local: boolean): Stream[] {
     }
   ]
 }
-function validKey(record: Record<string, unknown>): boolean {
+function validKey(record: Record<string, unknown>, local: boolean): boolean {
   const integer = (value: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
     typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max
   const text = record.exactText
   return (
     integer(record.tableId, 0, 12) &&
-    integer(record.id1, 1) &&
+    integer(record.id1, local && record.tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1) &&
     integer(record.id2, 0) &&
     (record.userId === undefined || integer(record.userId, 1)) &&
     typeof text === 'string' &&
@@ -275,7 +275,7 @@ async function queryPage(
   return rows
 }
 
-function bootstrapCursor(stream: Stream, value: string | null): Array<number | string> | undefined {
+function bootstrapCursor(stream: Stream, value: string | null, local: boolean): Array<number | string> | undefined {
   if (value === null) return undefined
   if (Buffer.byteLength(value) > 2048) return invalid()
   let parsed: unknown
@@ -289,7 +289,14 @@ function bootstrapCursor(stream: Stream, value: string | null): Array<number | s
     if (
       stream.keys[i] === stream.text
         ? typeof value !== 'string' || Buffer.byteLength(value) > 400
-        : typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0
+        : typeof value !== 'number' ||
+          !Number.isSafeInteger(value) ||
+          value <
+            (local &&
+            ((stream.table === 'sync_states' && stream.keys[i] === 'syncStateId') ||
+              (stream.table === names.profile && stream.keys[i] === 'snapshotRowId' && parsed[0] === 7))
+              ? -Number.MAX_SAFE_INTEGER
+              : 0)
     )
       return invalid()
   return parsed as Array<number | string>
@@ -390,10 +397,10 @@ export async function copySnapshotJournalBootstrapPage(
       return { complete: true, selected: 0, stream: state.stream, invalidated: false }
     }
     const stream = all[state.stream]
-    const cursor = bootstrapCursor(stream, state.cursor)
+    const cursor = bootstrapCursor(stream, state.cursor, local)
     const rows = await queryPage(t, stream, cursor, local),
       records = rows.map(row => stream.record(row))
-    if (records.some(record => !validKey(record))) {
+    if (records.some(record => !validKey(record, local))) {
       await invalidate(t, 'key-out-of-range')
       return { complete: false, selected: rows.length, stream: state.stream, invalidated: true }
     }

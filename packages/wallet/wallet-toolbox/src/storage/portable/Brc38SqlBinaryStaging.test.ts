@@ -191,7 +191,7 @@ test('the real bounded JSON parser binds private fields to the same physical res
       },
       { maximumArchiveBytes: 1048576, maximumRowAllocationBytes: 32768, streamedFields: policy }
     )
-  ).rejects.toThrow('field-aware semantic and native import activation')
+  ).rejects.toThrow('Private source field family, immutable generation or current counts differs')
   expect(staged).toHaveLength(13)
   expect(verified).toBe(true)
 })
