@@ -311,10 +311,9 @@ static int localBaselineEventSource(sqlite3 *db, const char *trigger) {
     "snapshot_reconciliation_identity_retirement_budgets", "snapshot_reconciliation_identity_retirements",
     "snapshot_reconciliation_membership_budgets", "snapshot_reconciliation_memberships",
     "snapshot_reconciliation_membership_retirements", "snapshot_reconciliation_provenance_budgets",
-    "snapshot_reconciliation_provenance", "snapshot_reconciliation_window_progress",
-    "internalize_receipts"
+    "snapshot_reconciliation_provenance", "snapshot_reconciliation_window_progress"
   };
-  _Static_assert(sizeof(tables) / sizeof(tables[0]) == 48, "original local inventory plus durable receipt claims");
+  _Static_assert(sizeof(tables) / sizeof(tables[0]) == 47, "original local table inventory");
   const char *events[] = {"INSERT", "DELETE", "UPDATE"};
   const char *suffixes[] = {"insert", "delete", "update"};
   char name[192], sql[1536], projected[1536] = "";

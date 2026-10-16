@@ -30,7 +30,7 @@ function comparable(value: unknown): string {
   return JSON.stringify(normalized(value))
 }
 /** UNRUN actual-source case. The controller supplies independently populated
- * all47-table native fixtures, including exact signed INTEGER metadata and
+ * all48-table native fixtures, including exact signed INTEGER metadata and
  * separate large-field bytes. No expected row is derived from the source under
  * test. This qualifies the reader only, not baseline copy/primary activation. */
 export async function verifyBrc38NativeLocalBaselineSource(
@@ -46,7 +46,7 @@ export async function verifyBrc38NativeLocalBaselineSource(
     owned = policy.workingAllocation.used
   for (const table of brc38NativeLocalBaselineTables) {
     const rows = fixtures[table]
-    if (!Array.isArray(rows) || rows.length > 128) throw new Error('Independent all47 local row fixture required')
+    if (!Array.isArray(rows) || rows.length > 128) throw new Error('Independent all48 local row fixture required')
     for (const row of rows) {
       if (!Number.isSafeInteger(row.rowId)) throw new Error('Independent signed physical rowid required')
       for (const bytes of Object.values(row.fields)) {
@@ -158,7 +158,7 @@ export async function verifyBrc38NativeLocalCurrentSource(
       BigInt(actual.generation.revision) <= BigInt(original.generation.revision)
     )
       throw new Error(
-        'Fresh actual source writer reused the retained old snapshot or missed a committed all47 mutation'
+        'Fresh actual source writer reused the retained old snapshot or missed a committed all48 mutation'
       )
     let committed = false
     const refused = await Brc38NativeLocalBaselineSource.withCurrentDataFence(source, async () => {

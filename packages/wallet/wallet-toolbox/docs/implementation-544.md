@@ -2760,7 +2760,9 @@ state and participate in coherent baseline capture, mutation observation,
 candidate copying and post-merge preservation. They are not added to the
 standard BRC-38 v1 archive closure. Independent SQL fixtures seed actual
 completed claims and compare their full metadata; native observer tests add all
-three mutations, physical coordinates and rollback for the new family.
+three mutations, physical coordinates and rollback for the new family. The new
+family uses the existing guarded direct SQL observer, retaining the original
+native event-dispatch coordinates, ABI and executable pins.
 
 This changes the exact fingerprint of the unpublished private native journal.
 Old candidate journal families are refused by exact schema comparison before

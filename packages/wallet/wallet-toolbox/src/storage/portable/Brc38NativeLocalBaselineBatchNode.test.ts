@@ -116,3 +116,73 @@ test('genuine ordinary SQLite cannot claim a native baseline actor from matching
     await k.destroy()
   }
 })
+
+test('native durable receipt mutations retain physical generations and rollback on the existing kernel', async () => {
+  const stop = new Error('independent receipt observer fixture stop')
+  await expect(
+    withBrc38NativePrivateContractFixture(async fixture => {
+      await fixture.withWriter(async trx => {
+        await trx('users').insert({
+          userId: 76,
+          identityKey: 'independent-receipt-owner',
+          activeStorage: 'independent-receipt-storage',
+          created_at: 0,
+          updated_at: 0
+        })
+        await installBrc38NativeLocalBaselineGeneration(trx, {
+          maximumRows: 1024,
+          ceiling: snapshotJournalRevision('100000')
+        })
+        const key = { userId: 76, txid: 'f'.repeat(64) }
+        const receipt = {
+          ...key,
+          ownerToken: 'independent-original-owner',
+          state: 'pending',
+          leaseUntil: 123456,
+          needsNewReceipt: 1
+        }
+        const clock = async () => await trx('brc38_local_baseline_clock').where({ slot: 1 }).first()
+        const point = async () => await trx('brc38_local_baseline_rows').where({ tableId: 47, rowId: 1 }).first()
+        await trx('internalize_receipts').insert(receipt)
+        expect(await trx('internalize_receipts').where(key).select(trx.raw('rowid AS physical')).first()).toEqual({
+          physical: 1
+        })
+        expect(await point()).toMatchObject({ present: 1, revision: 1, generation: 1 })
+        expect((await clock()).revision).toBe(1)
+        await trx('internalize_receipts')
+          .where({ ...key, ownerToken: receipt.ownerToken })
+          .update({
+            state: 'complete',
+            leaseUntil: 0,
+            needsNewReceipt: 0
+          })
+        expect(await point()).toMatchObject({ present: 1, revision: 2, generation: 1 })
+        const completed = await trx('internalize_receipts').where(key).first()
+        const originalClock = await clock()
+        const originalPoint = await point()
+        await trx.raw('SAVEPOINT independent_receipt_rollback')
+        await trx('internalize_receipts').where(key).update({ ownerToken: 'rolled-back-owner', state: 'retryable' })
+        expect((await point()).revision).toBe(3)
+        await trx.raw('ROLLBACK TO independent_receipt_rollback')
+        await trx.raw('RELEASE independent_receipt_rollback')
+        expect(await clock()).toEqual(originalClock)
+        expect(await point()).toEqual(originalPoint)
+        expect(await trx('internalize_receipts').where(key).first()).toEqual(completed)
+        expect(
+          await trx('internalize_receipts')
+            .where({ ...key, ownerToken: 'other-owner' })
+            .update({ state: 'retryable' })
+        ).toBe(0)
+        expect(await clock()).toEqual(originalClock)
+        await trx('internalize_receipts').where(key).delete()
+        expect(await point()).toMatchObject({ present: 0, revision: 3, generation: 1 })
+        await trx('internalize_receipts').insert(completed)
+        expect(await point()).toMatchObject({ present: 1, revision: 4, generation: 4 })
+        expect(await trx('internalize_receipts').where(key).first()).toEqual(completed)
+        expect((await clock()).revision).toBe(4)
+        fixture.check()
+      })
+      throw stop
+    })
+  ).rejects.toBe(stop)
+}, 120000)

@@ -64,13 +64,15 @@ function observe(
     `INSERT INTO ${rows}(tableId,rowId,revision,generation,present) SELECT ${tableId},${rowId},${revision},${revision},${present} WHERE ${enabled} AND (${condition}) AND NOT EXISTS(SELECT 1 FROM ${rows} WHERE ${point}); `
   )
 }
-for (const [tableId, table] of brc38NativeLocalBaselineTables.entries()) {
-  definitions.push(
+function directSourceObservers(tableId: number, table: Brc38NativeLocalBaselineTable): readonly string[] {
+  return [
     `CREATE TRIGGER brc38_local_baseline_${table}_insert AFTER INSERT ON ${table} BEGIN ${advance}${observe(tableId, 'NEW', 1)}END`,
     `CREATE TRIGGER brc38_local_baseline_${table}_delete AFTER DELETE ON ${table} BEGIN ${advance}${observe(tableId, 'OLD', 0)}END`,
     `CREATE TRIGGER brc38_local_baseline_${table}_update AFTER UPDATE ON ${table} BEGIN ${advance}${observe(tableId, 'OLD', 0, 'OLD.rowid IS NOT NEW.rowid')}${observe(tableId, 'NEW', 1)}END`
-  )
+  ]
 }
+for (const [tableId, table] of brc38NativeLocalBaselineTables.entries())
+  definitions.push(...directSourceObservers(tableId, table))
 const eventView = 'brc38_local_baseline_event'
 function emitEvent(tableId: number, oldRowId: string, newRowId: string, present: 0 | 1): string {
   return `INSERT INTO ${eventView}(tableId,oldRowId,newRowId,present) VALUES(${tableId},${oldRowId},${newRowId},${present}); `
@@ -85,12 +87,20 @@ const sharedDefinitions = [
   `CREATE VIEW ${eventView}(tableId,oldRowId,newRowId,present) AS SELECT NULL,NULL,NULL,NULL WHERE 0`,
   `CREATE TRIGGER brc38_local_baseline_event_dispatch INSTEAD OF INSERT ON ${eventView} BEGIN SELECT CASE WHEN typeof(NEW.tableId)!='integer' OR NEW.tableId NOT BETWEEN 0 AND ${tableCount - 1} OR typeof(NEW.present)!='integer' OR NEW.present NOT IN (0,1) OR NOT ((NEW.present=0 AND typeof(NEW.oldRowId)='integer' AND NEW.newRowId IS NULL) OR (NEW.present=1 AND typeof(NEW.newRowId)='integer' AND (NEW.oldRowId IS NULL OR typeof(NEW.oldRowId)='integer'))) THEN RAISE(ABORT,'Local baseline source event differs') END; ${advance}${observe('NEW.tableId', 'OLD', 0, 'NEW.oldRowId IS NOT NULL AND (NEW.present=0 OR NEW.oldRowId IS NOT NEW.newRowId)', 'NEW.oldRowId')}${observe('NEW.tableId', 'NEW', 1, 'NEW.present=1', 'NEW.newRowId')}END`
 ]
-for (const [tableId, table] of brc38NativeLocalBaselineTables.entries())
+for (const [tableId, table] of brc38NativeLocalBaselineTables.entries()) {
+  // New receipt rows use the original direct SQL observer and its exact quota,
+  // generation and rollback guards. Existing kernel dispatch coordinates stay
+  // unchanged; no new executable pin or event-emission authority is required.
+  if (table === 'internalize_receipts') {
+    sharedDefinitions.push(...directSourceObservers(tableId, table))
+    continue
+  }
   sharedDefinitions.push(
     `CREATE TRIGGER brc38_local_baseline_${table}_insert AFTER INSERT ON ${table} BEGIN ${emitEvent(tableId, 'NULL', 'NEW.rowid', 1)}END`,
     `CREATE TRIGGER brc38_local_baseline_${table}_delete AFTER DELETE ON ${table} BEGIN ${emitEvent(tableId, 'OLD.rowid', 'NULL', 0)}END`,
     `CREATE TRIGGER brc38_local_baseline_${table}_update AFTER UPDATE ON ${table} BEGIN ${emitEvent(tableId, 'OLD.rowid', 'NEW.rowid', 1)}END`
   )
+}
 // Only derived coordinates use this clustered primary tree. All original
 // operational source tables retain their physical rowids. Keep the historical
 // v3 family intact for occupied roots; mixed families fail exact comparison.
