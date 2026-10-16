@@ -164,6 +164,10 @@ require their operational authorization after complete artifact validation.
   the old profile for rollback and verify a fresh current enrollment. Ordinary
   released SQL wallets retain main's standard receipt migration and rows.
 
+- Order the original durable receipt migration before fresh private local-layout
+  checks. Preserve its migration name, callback and config; ordinary wallet
+  migration chronology and occupied databases are unchanged.
+
 ### Additional public-main 2.15.0 changes
 
 - Adds a `regtest` `Chain` for Teranode regression-network deployments

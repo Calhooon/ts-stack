@@ -1,3 +1,5 @@
+export const brc38NativeLocalPackedLayoutMigration = '2026-10-07-005 empty private local packed receiver'
+
 /** Optional empty-candidate layout DATA. Auxiliary operational payloads are
  * private local state, never additions to the BRC-38 archive vocabulary. */
 export const brc38NativeLocalPackedSources = Object.freeze([

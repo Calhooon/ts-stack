@@ -22,11 +22,13 @@ families, with the original 47 coordinates unchanged. The source observer,
 baseline/candidate copy, post-merge comparison and independent fixtures include
 the new receipt keys, owner, state and lease values. The added family uses the
 existing guarded direct SQL observer; native ABI and executable pins are unchanged.
+Fresh private layouts apply the original named receipt migration before their
+empty-table check; ordinary wallet migration order is unchanged.
 Qualification of this extension remains pending; earlier 47-family evidence does not qualify it.
 All eleven whole-program acceptance rows remain open. The complete
-native foreground-refold contract passes; the committed-ACK-loss/reopen/refold
-contract now also passes with both complete 47-family comparisons and consumed-ID
-preservation after correcting numeric-key ordering in its independent expected
+native foreground-refold contract passed at an earlier checkpoint; its
+committed-ACK-loss/reopen/refold run also passed both complete 47-family comparisons
+and consumed-ID preservation after correcting numeric-key ordering in its independent expected
 JSON helper. All six native merge contracts have separate mandatory CI coverage
 lanes and complete original-report verification. The six authenticated public-entry
 merge cases also have dedicated lanes and mandatory complete-report union checks.
@@ -36,21 +38,16 @@ envelope requires later hosted measurement and review. Their combined runtime
 cannot fit one ordinary 40-minute shard. This checkpoint does not establish merge
 or production readiness.
 
-Core, client and mobile source compiler checks pass. The original core composite
-build, fixed C/CJS source-asset copier and strict declaration consumer also pass,
-as do source lint with warnings denied and the client, dedicated worker and mobile
-builds. The complete current qualification selectors are wired. Selected cleanup,
-streaming, coordinator and packed-IDB cohorts pass 266 tests across 21 suites in
-one current-source run. The separate authenticated point-index case passes on
-synthetic private temporary files. Both package-documentation and repository-health checks pass. Full functional
-qualification remains pending. The operator authorized a 30 percent increase in
-the six browser artifact ceilings, to be reviewed after full goal completion.
-The pinned fake-IDB development fixture now models the readonly database
-name getter; it does not establish native-browser behavior. Package, native browser, native-host and production
-qualification remain pending. See the [current implementation map](./docs/implementation-544.md) and
-[delivery guide](./docs/delivery-544.md). The implementation notes later in this
-README retain historical checkpoints; their earlier “uncompiled” status does not
-supersede this current result. PR569 remains open and unmerged.
+Node, client, mobile and dedicated-worker builds and root source checks have
+passing component receipts. Reports retain their exact source identities;
+earlier selected passes do not qualify a later head or the complete system.
+Current 48-family, full workflow and platform qualification remains pending.
+The operator authorized a 30 percent increase in the six browser artifact
+ceilings, to be reviewed after full goal completion. The pinned fake-IDB
+development fixture models the readonly database name getter; it does not
+establish native-browser behavior. See the [implementation map](./docs/implementation-544.md)
+and [delivery guide](./docs/delivery-544.md). Later historical notes retain their
+original identities. PR569 remains open and unmerged.
 
 Reopened composed-image recovery explicitly enters the comparison phase through
 its actual idle native owner after checking the durable import is complete. A

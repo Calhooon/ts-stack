@@ -19,7 +19,7 @@ import { hasBrc38NativePreparedFieldsSchema, nativePreparedFieldsTable } from '.
 import { isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
 import { brc38NativeLocalBaselineTables } from './Brc38NativeLocalBaselineTables'
 
-export const brc38NativeLocalPackedLayoutMigration = '2026-10-07-005 empty private local packed receiver'
+export { brc38NativeLocalPackedLayoutMigration } from './Brc38NativeLocalPackedLayout'
 function invalid(): never {
   throw new Error('Local packed layout requires its exact empty private candidate')
 }

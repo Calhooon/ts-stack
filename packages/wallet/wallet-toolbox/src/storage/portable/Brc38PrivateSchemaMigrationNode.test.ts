@@ -1,3 +1,4 @@
+import { brc38NativeLocalPackedLayoutMigration } from './Brc38NativeLocalPackedLayout'
 import type { Knex } from 'knex'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { createBrc38PrivateSchemaMigrationSource } from './Brc38PrivateSchemaMigrationNode'
@@ -10,7 +11,8 @@ import {
   SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
   SNAPSHOT_GLOBAL_INDEX_MIGRATION,
   SNAPSHOT_SQLITE_INDEX_MIGRATION,
-  SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
+  INTERNALIZE_RECEIPT_MIGRATION
 } from '../schema/KnexMigrations'
 
 const selectedMigrations = [
@@ -154,6 +156,57 @@ describe('private native migration configuration preserves canonical schema and 
     await store.close()
     await expect(adapted.up(store.knex)).rejects.toThrow('Private import ownership is unavailable or expired')
     expect(observed).toHaveLength(1)
+  })
+  test('fresh local layout receives the original named receipt migration before its table check', async () => {
+    const staged = await fixture()
+    const store = staged.value.reservation.store
+    const source = originalSource(store)
+    const receipt = source.migrations[INTERNALIZE_RECEIPT_MIGRATION]
+    const layout = {
+      up: async (database: Knex) => {
+        expect(await database.schema.hasTable('internalize_receipts')).toBe(true)
+        expect(await database('internalize_receipts')).toEqual([])
+      }
+    }
+    source.migrations[brc38NativeLocalPackedLayoutMigration] = layout
+    source.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION] = { up: async () => {} }
+    const originalNames = await source.getMigrations()
+    expect(originalNames.indexOf(INTERNALIZE_RECEIPT_MIGRATION)).toBeGreaterThan(
+      originalNames.indexOf(brc38NativeLocalPackedLayoutMigration)
+    )
+    const ordinary = createBrc38PrivateSchemaMigrationSource(store, source)
+    expect(await ordinary.getMigrations([])).toEqual(originalNames)
+    const adapted = createBrc38PrivateSchemaMigrationSource(store, source, true)
+    const names = await adapted.getMigrations([])
+    expect(names.indexOf(INTERNALIZE_RECEIPT_MIGRATION)).toBe(names.indexOf(brc38NativeLocalPackedLayoutMigration) - 1)
+    expect(names.filter(name => name === INTERNALIZE_RECEIPT_MIGRATION)).toHaveLength(1)
+    expect(names.at(-1)).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    expect(await adapted.getMigration(INTERNALIZE_RECEIPT_MIGRATION)).toBe(receipt)
+    expect(await adapted.getMigration(brc38NativeLocalPackedLayoutMigration)).toBe(layout)
+    expect(await source.getMigrations()).toEqual(originalNames)
+    await store.withAuthenticatedPrivateDestination(async () => {
+      await store.knex.raw('PRAGMA foreign_keys=OFF')
+      try {
+        await store.knex.migrate.latest({ migrationSource: adapted, disableTransactions: false })
+      } finally {
+        await store.knex.raw('PRAGMA foreign_keys=ON')
+      }
+    })
+    expect((await store.knex('knex_migrations').select('name').orderBy('id')).map(row => row.name)).toEqual(names)
+  })
+  test('missing receipt dependency refuses before a fresh layout migration can run', async () => {
+    const staged = await fixture()
+    const store = staged.value.reservation.store
+    const source = originalSource(store)
+    const layout = jest.fn(async () => {})
+    source.migrations[brc38NativeLocalPackedLayoutMigration] = { up: layout }
+    delete source.migrations[INTERNALIZE_RECEIPT_MIGRATION]
+    const before = await definitions(store.knex)
+    await expect(createBrc38PrivateSchemaMigrationSource(store, source, true).getMigrations([])).rejects.toThrow(
+      'Fresh private local layout requires the durable receipt migration'
+    )
+    expect(layout).not.toHaveBeenCalled()
+    expect(await definitions(store.knex)).toEqual(before)
   })
   test.each(selectedMigrations)(
     '%s rolls back its own DDL and progress, then native replacement retries the original journal',

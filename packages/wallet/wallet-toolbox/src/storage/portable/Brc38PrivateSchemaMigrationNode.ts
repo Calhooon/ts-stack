@@ -1,3 +1,4 @@
+import { brc38NativeLocalPackedLayoutMigration } from './Brc38NativeLocalPackedLayout'
 import { isOwnedPrivateNativeSqlite } from '../schema/privateNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -7,7 +8,8 @@ import {
   SNAPSHOT_RELATION_INDEX_MIGRATION,
   SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
   SNAPSHOT_GLOBAL_INDEX_MIGRATION,
-  SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
+  INTERNALIZE_RECEIPT_MIGRATION
 } from '../schema/KnexMigrations'
 
 type PrivateMigrationSource = Omit<Knex.MigrationSource<string>, 'getMigration'> & {
@@ -48,12 +50,21 @@ export function createBrc38PrivateSchemaMigrationSource(
       // A fresh private candidate installs every optional layout BEFORE the
       // registered source seal. Keep the original migration name/ledger; this
       // ordering is explicit and never changes ordinary live migrations.
-      return nativeJournalLast
-        ? [
-            ...names.filter(name => name !== SNAPSHOT_JOURNAL_SOURCE_MIGRATION),
-            ...names.filter(name => name === SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
-          ]
-        : names
+      if (!nativeJournalLast) return names
+      const ordered = names.filter(name => name !== SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+      const layout = ordered.indexOf(brc38NativeLocalPackedLayoutMigration)
+      if (layout >= 0) {
+        const receipt = ordered.indexOf(INTERNALIZE_RECEIPT_MIGRATION)
+        if (receipt < 0) throw new Error('Fresh private local layout requires the durable receipt migration')
+        if (receipt > layout) {
+          // Only this fresh private layout requires the later public table
+          // before its empty-table check. Keep the original migration name,
+          // callback and config; ordinary migration sources retain chronology.
+          ordered.splice(receipt, 1)
+          ordered.splice(layout, 0, INTERNALIZE_RECEIPT_MIGRATION)
+        }
+      }
+      return [...ordered, ...names.filter(name => name === SNAPSHOT_JOURNAL_SOURCE_MIGRATION)]
     },
     getMigrationName: migration => source.getMigrationName(migration),
     getMigration: async migration => {
