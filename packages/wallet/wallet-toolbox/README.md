@@ -14,10 +14,13 @@ those no-op entries must not be rewritten as deployed schema changes.
 
 ## Current unpublished candidate status
 
-The finite implementation inventory covers all 24 required behavior families,
-including #542 and #543, with no known missing production components or wiring.
-Integration, consumer entry points and delivery/rollback documentation are
-present. All eleven whole-program acceptance rows remain open. The complete
+The finite implementation inventory covers the original 24 required behavior
+families, including #542 and #543. Integration, consumer entry points and
+delivery/rollback documentation are present. After reconciling newer main,
+native whole-profile recovery still needs integration of the new durable
+`internalize_receipts` table with its fixed local inventory. The existing
+47-family evidence does not establish preservation of that new family.
+All eleven whole-program acceptance rows remain open. The complete
 native foreground-refold contract passes; the committed-ACK-loss/reopen/refold
 contract now also passes with both complete 47-family comparisons and consumed-ID
 preservation after correcting numeric-key ordering in its independent expected
@@ -45,6 +48,12 @@ qualification remain pending. See the [current implementation map](./docs/implem
 [delivery guide](./docs/delivery-544.md). The implementation notes later in this
 README retain historical checkpoints; their earlier “uncompiled” status does not
 supersede this current result. PR569 remains open and unmerged.
+
+Reopened composed-image recovery explicitly enters the comparison phase through
+its actual idle native owner after checking the durable import is complete. A
+copied receipt never proves a fresh process is frozen. Source, full image and
+complete row comparisons still precede target admission or selection. This
+transition correction requires the original recovery cases to qualify.
 
 Native field-window qualification keeps positive binary and UTF-8 windows in
 one coherent retained view. Incorrect physical-length probes use separate views

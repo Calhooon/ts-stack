@@ -149,6 +149,10 @@ require their operational authorization after complete artifact validation.
   backup profiles and reconciliation journal receipts/windows. Cross-network
   requests still reject; BRC-38 v1 archives retain their main/test restriction.
 
+- Re-enter the irreversible native comparison phase after reopening a completed
+  private composition, through the actual idle owner. Persisted receipts do not
+  replace current kernel state; full source, image and row checks still run.
+
 ### Additional public-main 2.15.0 changes
 
 - Adds a `regtest` `Chain` for Teranode regression-network deployments

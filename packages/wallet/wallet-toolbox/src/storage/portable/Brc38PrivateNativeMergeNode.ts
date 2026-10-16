@@ -824,6 +824,18 @@ export class Brc38PrivateNativeMergeNode {
           return JSON.stringify({ origin, current: await this.#comparisonSource() })
         }
         const sourceBefore = await checkSource()
+        const status = await this.#status()
+        if (
+          status.phase !== 'IMPORT' ||
+          status.sourceChanged ||
+          status.receipt?.state !== 'COMPLETE' ||
+          status.admission === undefined
+        )
+          invalid()
+        // Reopening the original reservation creates a fresh native process.
+        // Its irreversible comparison phase must be entered again through the
+        // actual idle owner; a persisted receipt cannot establish kernel state.
+        await this.#store.beginPrivateNativeComparison()
         await this.#store.requirePrivateNativeComparison()
         const image = await this.#store.withAuthenticatedPrivateStructuredDestination(
           async () =>
