@@ -149,6 +149,7 @@ const batchSelected = [
   'test/a.test.ts',
   'test/private-purchase-alias-coordinator.property.test.ts',
   'test/private-purchase-alias-disclosure.property.test.ts',
+  'test/private-purchase-buyer-alias.property.test.ts',
   'test/z.test.ts'
 ]
 function batchEvidence() {
@@ -182,7 +183,12 @@ test('fresh serial placement preserves the exact discovered shard without mutati
       selectedTests: [batchSelected[2]],
       runInBand: true
     },
-    { id: 'ordinary', selectedTests: [batchSelected[0], batchSelected[3]], runInBand: false }
+    {
+      id: 'private-purchase-buyer-alias.property',
+      selectedTests: [batchSelected[3]],
+      runInBand: true
+    },
+    { id: 'ordinary', selectedTests: [batchSelected[0], batchSelected[4]], runInBand: false }
   ])
   assert.deepEqual(batchSelected, before)
   assert.deepEqual(applicationCoverageBatches(['test/a.test.ts']), [
@@ -207,11 +213,11 @@ test('complete raw same-run batch receipts reconcile to the original successful 
   const rows = batchEvidence(),
     original = structuredClone(rows)
   const merged = mergeCoverageBatchResults(rows.reverse(), identity, batchSelected)
-  assert.equal(merged.numTotalTests, 4)
-  assert.equal(merged.numPassedTestSuites, 4)
+  assert.equal(merged.numTotalTests, 5)
+  assert.equal(merged.numPassedTestSuites, 5)
   assert.deepEqual(
     merged.testResults.map(suite => path.relative(directory, suite.name)),
-    [batchSelected[1], batchSelected[2], batchSelected[0], batchSelected[3]]
+    [batchSelected[1], batchSelected[2], batchSelected[3], batchSelected[0], batchSelected[4]]
   )
   assert.deepEqual(rows.reverse(), original)
   assert.doesNotThrow(() => validateShardUnion(evidence(), identity, expected))

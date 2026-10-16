@@ -103,11 +103,12 @@ export function enforceGlobalCoverage(map, thresholds) {
   return summary
 }
 
-// The two independently observed native histories run in fresh serial Jest
+// The independently observed native histories run in fresh serial Jest
 // processes. This list changes execution placement only, never discovery.
 const isolatedCoverageTests = Object.freeze([
   'test/private-purchase-alias-coordinator.property.test.ts',
-  'test/private-purchase-alias-disclosure.property.test.ts'
+  'test/private-purchase-alias-disclosure.property.test.ts',
+  'test/private-purchase-buyer-alias.property.test.ts'
 ])
 
 export function applicationCoverageBatches(selected) {
