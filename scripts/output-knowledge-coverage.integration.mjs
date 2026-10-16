@@ -4,7 +4,8 @@ import coverageLibrary from 'istanbul-lib-coverage'
 import {
   assertCoverageArtifact,
   enforceGlobalCoverage,
-  mergeCoverage
+  mergeCoverage,
+  serializeCoverageArtifact
 } from './output-knowledge-coverage.mjs'
 
 const { createCoverageMap } = coverageLibrary
@@ -81,7 +82,9 @@ test('artifact comparison preserves every serialized field across Istanbul class
   for (const value of [first, second, expected]) value['/fixture.ts'].inputSourceMap = sourceMap
   const recomputed = mergeCoverage([{ coverage: first }, { coverage: second }]).toJSON()
   assert.notDeepEqual(expected, recomputed)
+  assert.deepEqual(JSON.parse(serializeCoverageArtifact(recomputed)), expected)
   assert.doesNotThrow(() => assertCoverageArtifact(expected, recomputed))
+  assert.notDeepEqual(expected, recomputed)
   for (const mutate of [
     value => {
       value['/fixture.ts'].s[0]++

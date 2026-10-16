@@ -46,10 +46,14 @@ export function mergeCoverage(shards) {
   return map
 }
 
+export function serializeCoverageArtifact(coverage) {
+  return JSON.stringify(coverage)
+}
+
 export function assertCoverageArtifact(actual, recomputed) {
   // Istanbul's toJSON() still contains FileCoverage instances. Compare the
   // complete JSON representation written by collect(), including source maps.
-  const expected = JSON.parse(JSON.stringify(recomputed))
+  const expected = JSON.parse(serializeCoverageArtifact(recomputed))
   assert.ok(isDeepStrictEqual(actual, expected), 'merged coverage differs from raw batches')
 }
 
@@ -149,7 +153,7 @@ function collect(shard, output) {
   const results = mergeCoverageBatchResults(batches, manifest.identity, manifest.selectedTests)
   const coverage = mergeCoverage(batches).toJSON()
   writeFileSync(path.join(output, 'results.json'), JSON.stringify(results))
-  writeFileSync(path.join(output, 'coverage-final.json'), JSON.stringify(coverage))
+  writeFileSync(path.join(output, 'coverage-final.json'), serializeCoverageArtifact(coverage))
   console.log(
     `Complete application coverage shard ${shard}/${APPLICATION_COVERAGE_SHARDS}: ${manifest.selectedTests.length} suites`
   )
