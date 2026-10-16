@@ -72,6 +72,8 @@ invocation. The all-table allocation refusal matrix uses the fixture's existing
 allocation limit, all transfer widths and the exact exhaustion assertions. This
 qualification allowance does not renew ownership or change production limits.
 
+Qualification test guards preserve the existing inner budgets: the three private Knex staging properties retain fast-check's 150-second failure limit, all 300 schedules and their fixed seed, with a 180-second Jest guard for completion and cleanup. The native legacy-spelling case uses the same 180-second outer guard as checkpoint-delta, while its original 120-second native and 180-second staging lifetimes, both complete passes and two-index drainage remain unchanged. Occupied packed-journal wrappers explicitly assert successful completion of their full independent oracles. These changes do not alter production limits or establish whole-system qualification.
+
 ## Receiving already-broadcast payments
 
 The 2.14.9 source candidate completes broadcast results even when storage

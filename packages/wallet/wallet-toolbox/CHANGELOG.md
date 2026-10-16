@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Qualification test guards preserve the existing inner budgets: the three private Knex staging properties retain fast-check's 150-second failure limit, all 300 schedules and their fixed seed, with a 180-second Jest guard for completion and cleanup. The native legacy-spelling case uses the same 180-second outer guard as checkpoint-delta, while its original 120-second native and 180-second staging lifetimes, both complete passes and two-index drainage remain unchanged. Occupied packed-journal wrappers explicitly assert successful completion of their full independent oracles. These changes do not alter production limits or establish whole-system qualification.
+
 - Route original authenticated native structured-source completion through its verified read mode, preserving every owner/seal/archive/slot/expiry check. Cover original structured bytes and closed-owner refusal, and observe the allocation-regression source refusal at its original boundary.
 
 - Select finite per-scenario native candidate test fixture lifetimes with measured setup/copy headroom and separate cleanup allowance. Preserve all original cases, real expiry checks, read choices, operation counts and production defaults; complete system qualification remains required.

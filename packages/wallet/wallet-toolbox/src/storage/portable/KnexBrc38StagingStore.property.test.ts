@@ -28,6 +28,8 @@ fc.configureGlobal({
   ),
   seed: Number(process.env.FAST_CHECK_SEED ?? process.env.FC_SEED ?? 3242026)
 })
+// The outer Jest guard retains this 150-second property failure limit plus
+// 30 seconds for completion and physical cleanup; it does not renew owners.
 const controls = {
   interruptAfterTimeLimit: 150000,
   markInterruptAsFailure: true,
@@ -219,7 +221,7 @@ describe('real private Knex staging store generated accounting and ownership', (
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  }, 30000)
+  }, 180000)
 
   test('generated quota, allocation and coordinate refusals preserve every original counter and indexed row', async () => {
     const directory = await parent()
@@ -278,7 +280,7 @@ describe('real private Knex staging store generated accounting and ownership', (
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  }, 30000)
+  }, 180000)
 
   test('real independent authentication binds preview charges and drains reads before physical owner handoff', async () => {
     const directory = await parent(),
@@ -372,5 +374,5 @@ describe('real private Knex staging store generated accounting and ownership', (
       await root.close()
       await rm(directory, { recursive: true, force: true })
     }
-  }, 30000)
+  }, 180000)
 })

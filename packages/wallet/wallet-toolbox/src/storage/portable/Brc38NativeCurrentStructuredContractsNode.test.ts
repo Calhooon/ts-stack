@@ -167,4 +167,4 @@ test('private legacy spelling drains two real indexes between complete passes', 
     )
     expect(working.used).toBe(0)
   })
-}, 30000)
+}, 180000)
