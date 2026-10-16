@@ -7,6 +7,7 @@ import { IdbSnapshotSyncJournal, type IdbSnapshotSyncRead } from './IdbSnapshotS
 import type { SnapshotSyncSource } from './SnapshotSync'
 import type { SyncChunk } from '../../sdk/WalletStorage.interfaces'
 import { createSyncMap } from '../schema/entities/EntityBase'
+import type { Chain } from '../../sdk/types'
 
 function same(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('Independent packed journal oracle differs')
@@ -23,7 +24,7 @@ async function refused(action: () => Promise<unknown>): Promise<void> {
 /** Authored UNRUN contract case over actual browser transactions. Synthetic
  * prepared effects deliberately test atomicity/custody, not source/archive
  * authentication, entity semantics, primary promotion or production readiness. */
-export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number): Promise<void> {
+export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number, chain: Chain = 'test'): Promise<void> {
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 120000)
     throw new Error('Original finite journal case deadline is required')
   const deadline = performance.now() + expiresAt - Date.now(),
@@ -32,7 +33,7 @@ export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number):
         throw new Error('Original journal case deadline ended')
     },
     storage = new StorageIdb({
-      ...StorageProvider.createStorageBaseOptions('test'),
+      ...StorageProvider.createStorageBaseOptions(chain),
       packed: {
         maximumLogicalBytes: 16777216,
         maximumRecords: 10000

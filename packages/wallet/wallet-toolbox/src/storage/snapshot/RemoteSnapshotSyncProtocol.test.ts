@@ -12,11 +12,24 @@ import {
   validateRemoteSnapshotSyncCapabilities
 } from './RemoteSnapshotSyncProtocol'
 import type { SnapshotSyncCheckpoint } from './SnapshotSync'
+import type { Chain } from '../../sdk/types'
 
 // Synthetic wire DATA for parser boundaries, never an authenticated transport,
 // retained source issuer or platform qualification result.
 const identity = '02' + '11'.repeat(32)
 const time = '2026-10-06T00:00:00.000Z'
+
+test.each<Chain>(['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock'])(
+  'operational destination source admission binds the declared %s chain',
+  chain => {
+    const input = source()
+    input.sourceStorage.chain = chain
+    expect(parseRemoteSnapshotSyncSource(input, identity, chain).sourceStorage.chain).toBe(chain)
+    expect(() => parseRemoteSnapshotSyncSource(input, identity, chain === 'main' ? 'test' : 'main')).toThrow()
+    input.sourceStorage.chain = 'unknown'
+    expect(() => parseRemoteSnapshotSyncSource(input, identity, 'unknown' as Chain)).toThrow()
+  }
+)
 function source() {
   return {
     version: 1,

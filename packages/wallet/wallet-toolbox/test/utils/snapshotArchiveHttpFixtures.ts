@@ -14,8 +14,9 @@ import { StorageProvider } from '../../src/storage/StorageProvider'
 import { StorageServer, type WalletStorageServerOptions } from '../../src/storage/remoting/StorageServer'
 import { seedArchiveClosure } from './snapshotArchiveFixtures'
 import { runInSeries } from '../../src/utility/runInSeries'
+import type { Chain } from '../../src/sdk/types'
 
-export function snapshotAuthenticationWallet(privateKey: PrivateKey, chain: 'main' | 'test' = 'test'): Wallet {
+export function snapshotAuthenticationWallet(privateKey: PrivateKey, chain: Chain = 'test'): Wallet {
   return new Wallet({
     chain,
     keyDeriver: new KeyDeriver(privateKey),
@@ -50,21 +51,21 @@ async function closeFixtureListener(server: StorageServer): Promise<void> {
   })
 }
 
-export async function snapshotHttpFixture(snapshotSync = true, seedClosure = true) {
+export async function snapshotHttpFixture(snapshotSync = true, seedClosure = true, chain: Chain = 'test') {
   const directory = await mkdtemp(join(tmpdir(), 'snapshot-http-'))
   const key = PrivateKey.fromRandom()
   const identityKey = key.toPublicKey().toString()
-  const wallet = snapshotAuthenticationWallet(key)
+  const wallet = snapshotAuthenticationWallet(key, chain)
   const serverKey = PrivateKey.fromRandom()
-  const serverWallet = snapshotAuthenticationWallet(serverKey)
+  const serverWallet = snapshotAuthenticationWallet(serverKey, chain)
   const fixtureWallets = [wallet, serverWallet]
   const createWallet = (privateKey: PrivateKey): Wallet => {
-    const created = snapshotAuthenticationWallet(privateKey)
+    const created = snapshotAuthenticationWallet(privateKey, chain)
     fixtureWallets.push(created)
     return created
   }
   const storage = new StorageKnex({
-    ...StorageProvider.createStorageBaseOptions('test'),
+    ...StorageProvider.createStorageBaseOptions(chain),
     snapshotSync,
     knex: knex({
       client: 'better-sqlite3',

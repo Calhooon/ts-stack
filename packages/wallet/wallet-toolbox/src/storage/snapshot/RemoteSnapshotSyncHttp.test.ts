@@ -11,6 +11,7 @@ import { StorageClient as StorageMobile } from '../remoting/StorageMobile'
 import { gate, snapshotHttpFixture } from '../../../test/utils/snapshotArchiveHttpFixtures'
 import { KnexRemoteSnapshotSyncRpc } from './KnexRemoteSnapshotSyncRpc'
 import type { SnapshotSyncCheckpoint } from './SnapshotSync'
+import type { Chain } from '../../sdk/types'
 
 const when = new Date('2026-10-06T00:00:00.000Z')
 
@@ -26,11 +27,12 @@ async function sourceFixture(
   identityKey: string,
   storageIdentityKey = 'local-source',
   primaryStorage = storageIdentityKey,
-  seed = true
+  seed = true,
+  chain: Chain = 'test'
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'remote-snapshot-destination-'))
   const storage = new StorageKnex({
-    ...StorageProvider.createStorageBaseOptions('test'),
+    ...StorageProvider.createStorageBaseOptions(chain),
     snapshotJournalRetention: false,
     knex: knex({
       client: 'better-sqlite3',
@@ -112,6 +114,40 @@ async function beforeDeadline<T>(operation: Promise<T>): Promise<T> {
 }
 
 afterEach(() => jest.restoreAllMocks())
+
+test.each([StorageClient, StorageMobile])(
+  'actual %p regtest destination commits paged sync and a replacement server retains its checkpoint',
+  async Client => {
+    const destination = await snapshotHttpFixture(true, false, 'regtest')
+    let source: Awaited<ReturnType<typeof sourceFixture>> | undefined
+    try {
+      source = await sourceFixture(destination.identityKey, 'local-source', 'local-source', true, 'regtest')
+      const { server, url } = await destination.serve()
+      const client = new Client(destination.wallet, url, { serverIdentityKey: destination.serverIdentityKey })
+      expect(await client.getSnapshotSync()!.supportsDestination()).toBe(true)
+      const legacy = jest.spyOn(destination.storage, 'processSyncChunk')
+      const result = await source.manager.syncToWriterResumable(await source.manager.getAuth(), client, {
+        maxItems: 128,
+        maxRoughSize: 262144
+      })
+      expect(result).toMatchObject({ status: 'completed', mode: 'paged', snapshotCheckpoint: { done: true } })
+      expect(legacy).not.toHaveBeenCalled()
+      expect(await destination.storage.knex('tx_labels').select('label', 'isDeleted').orderBy('label')).toEqual(
+        await source.storage.knex('tx_labels').select('label', 'isDeleted').orderBy('label')
+      )
+      await server.close()
+      const replacement = await destination.serve()
+      const fresh = new Client(destination.wallet, replacement.url, {
+        serverIdentityKey: destination.serverIdentityKey
+      })
+      expect(await fresh.getSnapshotSync()!.checkpoint(destination.identityKey, 'local-source')).toEqual(
+        result.snapshotCheckpoint
+      )
+    } finally {
+      await closeFixtures(source, destination)
+    }
+  }
+)
 
 // Authored UNRUN. Real HTTP mutual authentication, compact frames, ordinary
 // SQL writer/primary triggers and manager admission; no fabricated capability

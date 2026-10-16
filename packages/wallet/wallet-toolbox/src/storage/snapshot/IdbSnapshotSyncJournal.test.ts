@@ -6,3 +6,7 @@ import { verifyOccupiedPackedIdbSnapshotJournal } from './IdbSnapshotSyncJournal
 test('occupied packed journal retains atomic rows/maps/checkpoint and rejects stale primary', async () => {
   await verifyOccupiedPackedIdbSnapshotJournal(Date.now() + 30000)
 }, 30000)
+
+test('occupied packed regtest journal retains the same commit, reopen, rollback and isolation contracts', async () => {
+  await verifyOccupiedPackedIdbSnapshotJournal(Date.now() + 30000, 'regtest')
+}, 30000)

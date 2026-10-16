@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { StorageKnex } from '../../StorageKnex'
 import { StorageProvider } from '../../StorageProvider'
 import { migrateBeforeSnapshotJournal } from '../../../../test/utils/snapshotJournalHistoricalFixture'
-import { SNAPSHOT_SQLITE_INDEX_MIGRATION } from '../../schema/KnexMigrations'
+import { KnexMigrations, SNAPSHOT_SQLITE_INDEX_MIGRATION } from '../../schema/KnexMigrations'
 import {
   installSnapshotJournalSqliteGeneration,
   completeSnapshotJournalSqliteGeneration,
@@ -45,7 +45,7 @@ afterEach(async () => {
 
 test('registered source installation completes all native bootstrap streams and freshly admits the current policy', async () => {
   await expect(storage.migrate('registered source', 'registered-source')).resolves.toBe(
-    SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+    await KnexMigrations.latestMigration()
   )
   await storage.makeAvailable()
   await storage.findOrInsertUser(identity)
@@ -59,7 +59,7 @@ test('registered source installation completes all native bootstrap streams and 
   expect(config).toEqual({ ceiling: MAX_SNAPSHOT_JOURNAL_REVISION, receiptPolicy: SNAPSHOT_JOURNAL_DEFAULT_POLICY })
   const source = await storage.openCurrentSnapshotJournalSource(identity)
   try {
-    expect(source.sourceSchema).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    expect(source.sourceSchema).toBe(await KnexMigrations.latestMigration())
     await source.validateClosure()
   } finally {
     await closeSnapshotJournalSource(source)
@@ -112,7 +112,7 @@ test('an explicit historical owned capture retains custom policy and advances th
       .update({ expiresAt: 1 })
   ).toBe(1)
   await expect(storage.migrate('historical source', 'historical-source')).resolves.toBe(
-    SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+    await KnexMigrations.latestMigration()
   )
   const migrated = await readSnapshotJournalSqliteGeneration(storage.knex, receiptPolicy)
   expect(migrated.epoch).not.toBe(generation.epoch)
@@ -123,7 +123,7 @@ test('an explicit historical owned capture retains custom policy and advances th
   expect(await readSnapshotJournalCaptureConfiguration(storage.knex)).toEqual({ ceiling, receiptPolicy })
   const current = await storage.openCurrentSnapshotJournalSource(identity)
   try {
-    expect(current.sourceSchema).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    expect(current.sourceSchema).toBe(await KnexMigrations.latestMigration())
     expect(current.receiptBinding.epoch).toBe(migrated.epoch)
   } finally {
     await closeSnapshotJournalSource(current)

@@ -32,7 +32,7 @@ const {
 const { addSnapshotArchiveTables } = require('../../out/src/storage/schema/snapshotArchiveMigration.js')
 const { StorageKnex } = require('../../out/src/storage/StorageKnex.js')
 const { StorageProvider } = require('../../out/src/storage/StorageProvider.js')
-const { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } = require('../../out/src/storage/schema/KnexMigrations.js')
+const { KnexMigrations, SNAPSHOT_JOURNAL_SOURCE_MIGRATION } = require('../../out/src/storage/schema/KnexMigrations.js')
 const {
   verifySnapshotJournalDestinationSchema
 } = require('../../out/src/storage/snapshot/journal/SnapshotJournalDestinationSchema.js')
@@ -177,7 +177,7 @@ async function captureFixture() {
     assert.equal(manifest.pages, 14)
     assert.equal(manifest.binding.sourceStorage.storageIdentityKey, 'native-source')
     assert.equal(manifest.binding.user.activeStorage, 'historical selection')
-    assert.equal(manifest.binding.sourceSchema, SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    assert.equal(manifest.binding.sourceSchema, await KnexMigrations.latestMigration())
     assert.equal((await writer.knex('knex_migrations').where('name', SNAPSHOT_JOURNAL_SOURCE_MIGRATION)).length, 1)
     const store = new KnexSnapshotArchiveStore(writer.knex)
     const first = decodeSyncTransfer((await store.read(identity, manifest.archiveId, 8)).bytes)
@@ -467,7 +467,7 @@ async function requestFixture(writer, reader) {
       sourceStorageIdentityKey: 'native-source',
       digest: ready.digest
     })
-    assert.equal(verified.manifest.binding.sourceSchema, SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+    assert.equal(verified.manifest.binding.sourceSchema, await KnexMigrations.latestMigration())
     const page = await replacement.read(identity, ready.archiveId, 8)
     const decoded = decodeSyncTransfer(verifySnapshotArchivePage(page, verified.receipts[8]))
     assert.equal(decoded.rows[0].label, 'replacement')

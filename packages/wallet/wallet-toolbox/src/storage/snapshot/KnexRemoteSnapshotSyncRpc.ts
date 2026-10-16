@@ -24,6 +24,7 @@ import {
   type RemoteSnapshotSyncMethod
 } from './RemoteSnapshotSyncProtocol'
 import type { SnapshotSyncStorage } from './SnapshotSync'
+import { isSyncChain } from '../sync/syncFailure'
 
 /** Stateless authenticated destination controller. Sessions, mappings, primary
  * fencing and page ACKs belong to the existing SQL transaction/schema, so any
@@ -105,8 +106,7 @@ export class KnexRemoteSnapshotSyncRpc {
     if (!Array.isArray(params) || params.length !== 2)
       throw new TypeError('Invalid remote snapshot destination arguments')
     const chain = this.storage.chain
-    if (chain !== 'main' && chain !== 'test')
-      throw new WERR_INVALID_OPERATION('Remote snapshot destination network is unavailable')
+    if (!isSyncChain(chain)) throw new WERR_INVALID_OPERATION('Remote snapshot destination network is unavailable')
     // Detach identity/source admission before the first asynchronous boundary.
     const source =
       method === 'beginSnapshotSync'

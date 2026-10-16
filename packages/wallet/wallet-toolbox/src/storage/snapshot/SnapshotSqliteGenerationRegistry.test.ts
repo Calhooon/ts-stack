@@ -1,4 +1,3 @@
-import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from './journal/SnapshotJournalLifecycle'
 import { knex, type Knex } from 'knex'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
@@ -73,13 +72,17 @@ test.each(['knex_migrations', 'custom_snapshot_journal'])(
       expect(await k(tableName).where('name', SNAPSHOT_SQLITE_INDEX_MIGRATION)).toEqual([])
       expect(await readGenerationIndexState(k, { tableName })).toBe(false)
       expect((await k.raw('PRAGMA foreign_keys'))[0].foreign_keys).toBe(1)
-      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(
+        await KnexMigrations.latestMigration()
+      )
       expect(await readGenerationIndexState(k, { tableName })).toBe('v2')
       expect(await k('tx_labels').orderBy('txLabelId')).toEqual(before)
       expect(await k(names.profile).where('snapshotTableId', 3)).toHaveLength(600)
       for (const table of retiredTables) expect(await k.schema.hasTable(table)).toBe(false)
       expect(await k(tableName).where('name', SNAPSHOT_SQLITE_INDEX_MIGRATION)).toHaveLength(1)
-      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+      await expect(source.migrate('registry', 'synthetic-registry')).resolves.toBe(
+        await KnexMigrations.latestMigration()
+      )
       const migrationSource = new KnexMigrations('test', 'registry', 'synthetic-registry', 1024)
       expect(migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION].config).toEqual({ transaction: false })
       await expect(k.migrate.down({ migrationSource, name: SNAPSHOT_SQLITE_INDEX_MIGRATION })).rejects.toThrow(

@@ -7,8 +7,9 @@ const {
 } = require('../../out/src/storage/schema/KnexMigrations.js')
 async function migrateBeforeSqliteGeneration(source, name, identity) {
   const migrationSource = new KnexMigrations(source.chain, name, identity, 1024)
-  delete migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION]
-  delete migrationSource.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION]
+  migrationSource.migrations = Object.fromEntries(
+    Object.entries(migrationSource.migrations).filter(([name]) => name < SNAPSHOT_SQLITE_INDEX_MIGRATION)
+  )
   const config = { migrationSource, disableTransactions: false }
   const sqlite = String(source.knex.client.config.client).includes('sqlite')
   if (sqlite) await source.knex.raw('PRAGMA foreign_keys=OFF')
@@ -21,7 +22,9 @@ async function migrateBeforeSqliteGeneration(source, name, identity) {
 }
 async function migrateBeforeJournalGeneration(source, name, identity) {
   const migrationSource = new KnexMigrations(source.chain, name, identity, 1024)
-  delete migrationSource.migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION]
+  migrationSource.migrations = Object.fromEntries(
+    Object.entries(migrationSource.migrations).filter(([name]) => name < SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+  )
   const config = { migrationSource, disableTransactions: false }
   const sqlite = String(source.knex.client.config.client).includes('sqlite')
   if (sqlite) await source.knex.raw('PRAGMA foreign_keys=OFF')

@@ -12,6 +12,7 @@ import type { WalletSnapshotCursor, WalletSnapshotPage } from './WalletReadSnaps
 import { copySnapshotArchivePosition } from './SnapshotCursor'
 import { remoteSnapshotKeys, validateRemoteSnapshotRows } from './archive/RemoteSnapshotRows'
 import { detachSnapshotSyncPage } from './SnapshotSyncRows'
+import { isSyncChain } from '../sync/syncFailure'
 
 export const remoteSnapshotSyncRequestBytes = 1048576
 export const remoteSnapshotSyncResponseBytes = 16384
@@ -106,7 +107,7 @@ export function validateRemoteSnapshotSyncCapabilities(input: unknown): RemoteSn
 export function parseRemoteSnapshotSyncSource(
   input: unknown,
   authenticatedIdentity: string,
-  chain: 'main' | 'test'
+  chain: TableSettings['chain']
 ): SnapshotSyncSource {
   const value = object(input, ['version', 'snapshotId', 'sourceStorage', 'user', 'expiresAt'])
   const user = object(value.user, ['userId', 'identityKey', 'created_at', 'updated_at'], ['activeStorage'])
@@ -121,6 +122,7 @@ export function parseRemoteSnapshotSyncSource(
   ])
   if (
     value.version !== 1 ||
+    !isSyncChain(chain) ||
     identity(user.identityKey) !== authenticatedIdentity ||
     settings.chain !== chain ||
     typeof settings.storageName !== 'string' ||

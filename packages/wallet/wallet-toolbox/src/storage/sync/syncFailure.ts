@@ -5,9 +5,14 @@ import type { TableSettings } from '../schema/tables'
 
 const supportedChains = new Set(['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock'])
 
+/** Operational wallet sync networks; portable archive formats have separate contracts. */
+export function isSyncChain(chain: unknown): chain is TableSettings['chain'] {
+  return typeof chain === 'string' && supportedChains.has(chain)
+}
+
 /** Read-only preflight, before user registration or a destination checkpoint is created. */
 export function assertSyncNetwork(reader: TableSettings, writer: TableSettings): void {
-  if (!supportedChains.has(reader.chain) || !supportedChains.has(writer.chain) || reader.chain !== writer.chain) {
+  if (!isSyncChain(reader.chain) || !isSyncChain(writer.chain) || reader.chain !== writer.chain) {
     throw new WERR_NETWORK_CHAIN('Live sync requires matching declared network chains on both storage providers.')
   }
 }

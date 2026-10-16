@@ -33,7 +33,7 @@ import {
   type SnapshotSyncSource,
   type SnapshotSyncTable
 } from './SnapshotSync'
-import type { TableUser } from '../schema/tables'
+import type { TableSettings, TableUser } from '../schema/tables'
 import type { WalletSnapshotCursor } from './WalletReadSnapshot'
 import { Brc38OwnedImportReads } from '../portable/Brc38OwnedImportReads'
 import {
@@ -46,6 +46,7 @@ import { requirePackedIdbSnapshotInTransaction } from '../idbPackedSnapshot'
 import { PackedIdbCurrentStructuredRead, type PackedIdbCurrentStructuredLimits } from './PackedIdbCurrentStructuredRead'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation } from '../portable/Brc38WorkingAllocation'
 import { packedIdbQuarantineReclaim, packedIdbUnresolvedReclaim } from '../idbPackedReclaimMetadata'
+import { isSyncChain } from '../sync/syncFailure'
 
 interface Session {
   format: 'wallet-packed-sync/v1'
@@ -59,7 +60,7 @@ interface Session {
   sourceUserCreatedAt: string
   sourceUserUpdatedAt: string
   sourceActiveStorage: string | null
-  chain: 'main' | 'test'
+  chain: TableSettings['chain']
   epoch: string
   userRevision: number
   activeStorage: string | null
@@ -345,7 +346,7 @@ function stored(value: unknown): Session {
   packedIdbMetadataCharge(row as unknown as Record<string, unknown>)
   if (
     row.format !== 'wallet-packed-sync/v1' ||
-    !['main', 'test'].includes(row.chain) ||
+    !isSyncChain(row.chain) ||
     !/^[0-9a-f]{64}$/.test(row.snapshotId) ||
     !/^[0-9a-f]{64}$/.test(row.sessionId) ||
     !/^[0-9a-f]{32}$/.test(row.epoch) ||
@@ -528,6 +529,7 @@ export class IdbSnapshotSyncJournal {
   async begin(input: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
     if (
       input.version !== 1 ||
+      !isSyncChain(input.sourceStorage.chain) ||
       !/^[0-9a-f]{64}$/.test(input.snapshotId) ||
       !/^(02|03)[0-9a-f]{64}$/i.test(input.user.identityKey) ||
       input.expiresAt > Date.now() + 3600000
@@ -580,7 +582,7 @@ export class IdbSnapshotSyncJournal {
         }
       } else await chargePackedIdb(raw, 32768, 1)
       const chain = this.#storage.chain
-      if (chain !== 'main' && chain !== 'test') invalid()
+      if (!isSyncChain(chain)) invalid()
       const row: Session = {
         ...source,
         format: 'wallet-packed-sync/v1',

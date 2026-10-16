@@ -1,4 +1,4 @@
-import { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from '../journal/SnapshotJournalLifecycle'
+import { KnexMigrations } from '../../schema/KnexMigrations'
 import { PrivateKey } from '@bsv/sdk'
 import { StorageClient } from '../../remoting/StorageClient'
 import { StorageClient as StorageMobile } from '../../remoting/StorageMobile'
@@ -38,7 +38,7 @@ test.each([StorageClient, StorageMobile])(
       expect(storage.getSettings()).not.toHaveProperty('snapshotArchive')
       let transport = (await client.getSnapshotArchiveTransport(identityKey))!
       const offer = await transport.offer()
-      expect(offer.sourceSchema).toBe(SNAPSHOT_JOURNAL_SOURCE_MIGRATION)
+      expect(offer.sourceSchema).toBe(await KnexMigrations.latestMigration())
       expect(Math.abs(offer.serverTime - Date.now())).toBeLessThan(5000)
       const fields = {
         version: 1 as const,
