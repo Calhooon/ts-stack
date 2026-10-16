@@ -341,6 +341,8 @@ function walletFundingTarget(repositoryRoot, source, property) {
     'src/storage/methods/internalizeActionCore.ts',
     'src/signer/methods/internalizeActionCore.ts',
     'src/storage/methods/internalizeBrc197Action.ts',
+    'src/storage/methods/InternalizeReceiptClaim.ts',
+    'src/storage/StorageKnex.ts',
     'src/signer/methods/internalizeBrc197Action.ts',
     'src/sdk/Brc197Internalization.ts',
     'src/storage/__test/StorageIdb.internalizeConfirmed.test.ts',
@@ -453,6 +455,13 @@ export function buildMutationTargets(repositoryRoot) {
         'src/storage/methods/internalizeBrc197Action.ts',
         'src/signer/methods/internalizeBrc197Action.ts',
         'src/sdk/Brc197Internalization.ts',
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/StorageKnex.ts',
+          '  override async internalizeAction(',
+          '  private databaseSystem('
+        ),
         sourceLineRange(
           repositoryRoot,
           'packages/wallet/wallet-toolbox',

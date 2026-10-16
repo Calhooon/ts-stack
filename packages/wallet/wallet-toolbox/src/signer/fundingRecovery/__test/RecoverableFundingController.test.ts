@@ -21,6 +21,35 @@ describe('durable local acquisition funding', () => {
     return { ...fixture, store, controller }
   }
 
+  test('the backend receipt port rejects absent authorization and incomplete transaction evidence before invoking a writer', async () => {
+    const { operation } = await setup()
+    const input = operation()
+    const write = jest.fn()
+    const args = { tx: Utils.toArray(input.beef, 'base64'), outputs: [], description: 'Owned backend claim fixture' }
+    await expect(context.activeStorage.withInternalizeReceipt({}, args, write)).rejects.toMatchObject({ code: 'WERR_UNAUTHORIZED' })
+    const auth = await context.wallet.storage.getAuth(true)
+    await expect(context.activeStorage.withInternalizeReceipt(auth, { ...args, tx: new Beef().toBinary() }, write)).rejects.toThrow('AtomicBEEF')
+    expect(write).not.toHaveBeenCalled()
+    expect(await context.activeStorage.knex('internalize_receipts').select()).toEqual([])
+  })
+
+  test.each([false, true])('a failed backend ownership writer retains completed history=%s and rolls back its new claim changes', async completed => {
+    const { operation } = await setup()
+    const input = operation()
+    const auth = await context.wallet.storage.getAuth(true)
+    const rows = context.activeStorage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid })
+    if (completed) await context.activeStorage.knex('internalize_receipts').insert({ userId: context.userId, txid: input.funding.txid, ownerToken: 'owned-prior-fixture', state: 'complete', leaseUntil: 0, needsNewReceipt: false })
+    await expect(context.activeStorage.withInternalizeReceipt(auth, { tx: Utils.toArray(input.beef, 'base64'), outputs: [], description: 'Owned backend rollback fixture' }, claim => context.activeStorage.transaction(async trx => {
+      await claim.assertActive(trx)
+      await claim.markNew(trx)
+      throw new Error('Controlled ownership rollback')
+    }))).rejects.toThrow('Controlled ownership rollback')
+    if (completed) expect(await rows.clone().first()).toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+    else expect(await rows.clone().select()).toEqual([])
+    expect(await context.activeStorage.findTransactions({ partial: { txid: input.funding.txid } })).toEqual([])
+    expect(await context.activeStorage.findOutputs({ partial: { txid: input.funding.txid } })).toEqual([])
+  })
+
   test('recovery takes over an expired ordinary receipt without double accounting or a stale writer', async () => {
     const { operation, controller } = await setup()
     const input = operation()
