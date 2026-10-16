@@ -30,6 +30,7 @@ export interface Brc38StreamOptions {
   maximumRowBytes: number
   /** Metadata alone may be materialized within this fixed bound, <=65,536. */
   maximumMetadataBytes?: number
+  /** Emitted chunk/table-buffer ceiling (default 65,536 bytes); header output precedes row reads. */
   maximumChunkBytes?: number
   /** Additive binary/structured/scalar-TEXT extent path. Legacy row allocation and wire
    * spelling stay unchanged; large JSON uses a host-owned temporary key index. */
@@ -56,6 +57,39 @@ const tables = Object.freeze([
   'txLabelMaps',
   'txLabels'
 ] as const satisfies readonly Table[])
+
+/** One bounded table-output buffer; no emitted chunk is ever reused or erased. */
+class TableChunkBuffer {
+  #buffer: Uint8Array | undefined
+  #used = 0
+  constructor(private readonly maximum: number) {}
+  *append(bytes: Uint8Array): Generator<Uint8Array> {
+    let offset = 0
+    while (offset < bytes.byteLength) {
+      const buffer = (this.#buffer ??= new Uint8Array(this.maximum))
+      const length = Math.min(bytes.byteLength - offset, this.maximum - this.#used)
+      buffer.set(bytes.subarray(offset, offset + length), this.#used)
+      this.#used += length
+      offset += length
+      if (this.#used === this.maximum) {
+        this.#buffer = undefined
+        this.#used = 0
+        yield buffer
+      }
+    }
+  }
+  flush(): Uint8Array | undefined {
+    if (this.#used === 0) return undefined
+    const result = this.#buffer!.slice(0, this.#used)
+    this.clear()
+    return result
+  }
+  clear(): void {
+    this.#buffer?.fill(0)
+    this.#buffer = undefined
+    this.#used = 0
+  }
+}
 
 function boundedInteger(value: number, maximum: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
@@ -148,7 +182,8 @@ export async function createBrc38Stream(source: Brc38StreamSource, selected: Brc
     const encoder = new TextEncoder()
     const rowPolicy = { maximumValueBytes: maximumRowBytes, maximumChunkBytes, signal }
     const headerPolicy = { ...rowPolicy, maximumValueBytes: options.maximumMetadataBytes ?? 65536 }
-    let completed = false
+    let completed = false,
+      packingTables = false
     function* literal(text: string) {
       const bytes = encoder.encode(text)
       for (let offset = 0; offset < bytes.length; offset += maximumChunkBytes) {
@@ -184,7 +219,9 @@ export async function createBrc38Stream(source: Brc38StreamSource, selected: Brc
         yield* literal(`{"brc":38,"exportedAt":${JSON.stringify(header.exportedAt)},"formatVersion":1,"sourceStorage":`)
         yield* canonicalPortableChunks(header.sourceStorage, headerPolicy)
         yield* literal(',"tables":{')
+        packingTables = true
         for (const [index, table] of tables.entries()) yield* tableChunks(index, table)
+        packingTables = false
         yield* literal('},"title":"User Wallet Data Format","user":')
         yield* canonicalPortableChunks(header.user, headerPolicy)
         yield* literal('}')
@@ -211,14 +248,28 @@ export async function createBrc38Stream(source: Brc38StreamSource, selected: Brc
     }
     async function* chunks() {
       let used = 0
-      for await (const bytes of body()) {
+      const packed = new TableChunkBuffer(maximumChunkBytes)
+      try {
+        for await (const bytes of body()) {
+          signal?.throwIfAborted()
+          if (bytes.length > maximumArchiveBytes - used)
+            throw new SnapshotResourceLimitError('BRC-38 archive exceeds the selected byte policy')
+          used += bytes.length
+          if (packingTables) yield* packed.append(bytes)
+          else {
+            const tail = packed.flush()
+            if (tail !== undefined) yield tail
+            signal?.throwIfAborted()
+            yield bytes
+          }
+        }
+        const tail = packed.flush()
+        if (tail !== undefined) yield tail
         signal?.throwIfAborted()
-        if (bytes.length > maximumArchiveBytes - used)
-          throw new SnapshotResourceLimitError('BRC-38 archive exceeds the selected byte policy')
-        used += bytes.length
-        yield bytes
+        completed = true
+      } finally {
+        packed.clear()
       }
-      completed = true
     }
     const iterator = chunks()
     return Object.freeze({

@@ -676,3 +676,11 @@ insufficient evidence. The repository-health CI job installs locked root and
 wallet compiler dependencies and rebuilds the audited esbuild binary before
 running its unchanged complete control suite, including real ts-jest/esbuild
 configuration regressions. No check is skipped or suppressed.
+
+## Measured positive benchmark admissions
+
+Archive table fragments are packed into the existing configured chunk ceiling, with header output still preceding row access. Emitted buffers stay detached from later writes and early-close erasure; every raw fragment is charged to the original archive quota before buffering. Archive bytes, native ABI, schema and production limits are unchanged. Hosts must accept the configured chunk maximum or choose a matching downstream ceiling; chunk boundaries are not a fixed wire contract.
+
+The complete portable import containing 10,000 labels measured about 160 seconds with diagnostic counters (three staging and eight row-reading passes). Its positive benchmark fixture now uses a fixed 240-second import allowance and a correspondingly bounded sample count. Export stays at 120 seconds; the 300-second case guard, 512 MiB RSS-growth ceiling and 1,500 ms foreground/event-loop limits remain. The returned reservation is retained before measurement assertions so a failed measurement still closes its actual owner. The native programme fixture separately admits 540 seconds for measured cold setup (up to 231 seconds), both original 120-second phases and independent oracles, with a 570-second case guard; other fixture defaults and negative expiry/quota controls remain. Earlier failures remain evidence, and full current qualification is pending.
+
+The factored SQL comparison and six genuine schema/query/tampering regressions are included in the existing Knex-staging mutation target. All 97 target identities and original source paths/ranges, tests, properties, seeds, scores and zero-uncovered/invalid/unexecuted gates remain.

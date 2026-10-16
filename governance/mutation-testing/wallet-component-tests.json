@@ -566,6 +566,7 @@
     "src/storage/portable/Brc38SemanticStage.test.ts",
     "src/storage/portable/Brc38SqlBinaryCompletion.test.ts",
     "src/storage/portable/Brc38SqlBinaryStaging.test.ts",
+    "src/storage/portable/Brc38SqlFieldSchemaBatch.test.ts",
     "src/storage/portable/Brc38SqlProjectedStructuredStaging.test.ts",
     "src/storage/portable/Brc38SqlRowFieldRead.test.ts",
     "src/storage/portable/Brc38SqlSourceFieldRead.test.ts",

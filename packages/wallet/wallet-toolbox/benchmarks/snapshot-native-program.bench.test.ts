@@ -42,6 +42,12 @@ const { observeNativeProfileMeasurement } = require('../test/utils/nativeProfile
 const percentile = (values: readonly number[], fraction: number): number =>
   [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * fraction) - 1)] ?? 0
 
+// Measured cold native preparation reached231s. Admit that setup and both
+// original120s phases plus independent oracles in a finite positive fixture.
+// Production/native quotas and the fixture default for other callers stay.
+const nativeProgrammeFixtureLifetimeMilliseconds = 540000
+const nativeProgrammeCaseMilliseconds = nativeProgrammeFixtureLifetimeMilliseconds + 30000
+
 /** UNRUN. Native full47 occupied composition/publication/actual cutover and
  * full13 streamed native export. Fixture setup and independent materialized
  * decode are outside measurement. An outer admitted supervisor must measure
@@ -54,7 +60,12 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
       const native = observeNativeProfileMeasurement()
       let fixture: Awaited<ReturnType<typeof composedNativeFixture>>
       try {
-        fixture = await composedNativeFixture(nativeTestExecutable(), () => {}, 180000, shape)
+        fixture = await composedNativeFixture(
+          nativeTestExecutable(),
+          () => {},
+          nativeProgrammeFixtureLifetimeMilliseconds,
+          shape
+        )
       } catch (cause) {
         try {
           native.close()
@@ -327,6 +338,6 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
         )
       if (failed) throw failure
     },
-    300000
+    nativeProgrammeCaseMilliseconds
   )
 })

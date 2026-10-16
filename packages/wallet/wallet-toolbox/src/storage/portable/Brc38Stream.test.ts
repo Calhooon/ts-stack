@@ -506,3 +506,49 @@ test.each(['中'.repeat(23000), '\u0001'.repeat(11500)])(
     expect(owner.released).toBe(1)
   }
 )
+
+test('bounded table packets avoid per-row transport fragments and retain every independent portable value', async () => {
+  const data = document(),
+    template = data.tables.txLabels[0]
+  for (let index = 0; index < 64; index++)
+    data.tables.txLabels.push({ ...template, txLabelId: 100 + index, label: 'packet-' + index })
+  const owner = source(data),
+    maximumChunkBytes = 256
+  const stream = await createBrc38Stream(owner, { ...options, maximumChunkBytes })
+  const parts: Uint8Array[] = []
+  for await (const bytes of stream.chunks) {
+    expect(bytes.byteLength).toBeGreaterThan(0)
+    expect(bytes.byteLength).toBeLessThanOrEqual(maximumChunkBytes)
+    parts.push(bytes)
+  }
+  await stream.validateCompleted()
+  await stream.close()
+  const bytes = Buffer.concat(parts)
+  expect(parseBRC38Json(bytes.toString())).toEqual(data)
+  expect(parts.length).toBeLessThanOrEqual(Math.ceil(bytes.byteLength / maximumChunkBytes) + 16)
+  expect(owner.released).toBe(1)
+  expect(owner.validated).toBe(1)
+})
+
+test('early close preserves already emitted full packets and never validates a partial archive', async () => {
+  const data = document()
+  data.tables.outputTags[0].tag = 'A'.repeat(1024)
+  const owner = source(data),
+    maximumChunkBytes = 256
+  const stream = await createBrc38Stream(owner, { ...options, maximumChunkBytes })
+  let retained: Uint8Array | undefined, expected: Buffer | undefined
+  for await (const bytes of stream.chunks) {
+    if (bytes.byteLength === maximumChunkBytes) {
+      retained = bytes
+      expected = Buffer.from(bytes)
+      break
+    }
+  }
+  expect(retained).toBeDefined()
+  await stream.close()
+  await stream.close()
+  expect(Buffer.from(retained!)).toEqual(expected)
+  expect(owner.released).toBe(1)
+  expect(owner.validated).toBe(0)
+  await expect(stream.validateCompleted()).rejects.toThrow('did not complete')
+})
