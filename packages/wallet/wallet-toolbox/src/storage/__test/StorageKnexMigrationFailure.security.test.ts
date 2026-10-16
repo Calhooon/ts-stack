@@ -8,7 +8,12 @@ function absentGeneration() {
 }
 
 function storageWithKnex(knex: object): StorageKnex {
-  return { knex, chain: 'test' } as unknown as StorageKnex
+  return {
+    knex,
+    chain: 'test',
+    stopRetainedReadSnapshots: jest.fn(async () => undefined),
+    stopPreparedBeefTasks: jest.fn(async () => undefined)
+  } as unknown as StorageKnex
 }
 
 describe('StorageKnex migration failure boundaries', () => {

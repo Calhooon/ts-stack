@@ -157,7 +157,7 @@ test.each([
 )
 
 test.each([6, 64])(
-  'MySQL metadata resolves DATABASE() without a configured connection database and caches %s columns',
+  'MySQL metadata resolves DATABASE() without a configured connection database and freshly validates %s columns',
   async count => {
     const { source, db, queries } = fixture(count)
     try {
@@ -173,7 +173,9 @@ test.each([6, 64])(
       expect(first.payloadBytes).toBe(524)
       expect(first.done).toBe(true)
       expect(await view.readPage('txLabels')).toEqual(first)
-      expect(queries.filter(query => query.sql.startsWith('SELECT COLUMN_NAME'))).toHaveLength(1)
+      const metadataQueries = queries.filter(query => query.sql.startsWith('SELECT COLUMN_NAME'))
+      expect(metadataQueries).toHaveLength(2)
+      expect(metadataQueries.every(query => JSON.stringify(query.bindings) === '["tx_labels"]')).toBe(true)
       await view.close()
     } finally {
       await source.destroy()
@@ -247,7 +249,9 @@ test.each([
         'from `snapshot_global_keys` FORCE INDEX (`snapshot_global_page`) cross join `' + name + '`'
       )
       expect(query.sql).toContain('`rowId` = `' + name + '`.`' + key + '`')
-      expect(query.sql).toContain('`tableId` = ? and `userId` = ? and `present` = ? and `refs` > ? and `rowId` > ?')
+      expect(query.sql).toContain(
+        '`snapshot_global_keys`.`tableId` = ? and `snapshot_global_keys`.`userId` = ? and `snapshot_global_keys`.`present` = ? and `snapshot_global_keys`.`refs` > ? and `rowId` > ?'
+      )
       expect(query.sql).toContain('order by `rowId` asc limit ?')
       expect(query.bindings).toEqual([tableId, 41, 1, 0, 700, 32])
       const legacy = walletSnapshotSourceQuery(k, table, 41).toSQL()

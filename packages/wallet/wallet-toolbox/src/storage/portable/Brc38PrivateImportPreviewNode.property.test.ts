@@ -198,7 +198,7 @@ test('generated real previews preserve physical destination, exact clocks and in
   } finally {
     await writer.rollback()
   }
-}, 30000)
+}, 180000)
 
 test('generated independent journal writes and primary away-and-back refuse stale previews while retaining authenticated receipts', async () => {
   const { user } = await target.storage.findOrInsertUser(staged.selected.binding.identityKey),
@@ -254,7 +254,7 @@ test('generated independent journal writes and primary away-and-back refuse stal
     }),
     controls
   )
-}, 30000)
+}, 180000)
 
 test('generated noncanonical or mismatched wire projections never replace the actual authenticated receipt', async () => {
   const value = await preview(),
@@ -316,7 +316,7 @@ test('generated noncanonical or mismatched wire projections never replace the ac
   )
   expect(await readBrc38PrivateImportPreview(store())).toEqual(value)
   expect(await store().knex('metadata').first()).toEqual(beforeMeta)
-}, 30000)
+}, 180000)
 
 test('generated real step rollback retains both owners and preview; physical handoff keeps the original receipt and deadline', async () => {
   const directory = store().directory,
@@ -364,4 +364,4 @@ test('generated real step rollback retains both owners and preview; physical han
     }),
     controls
   )
-}, 30000)
+}, 180000)

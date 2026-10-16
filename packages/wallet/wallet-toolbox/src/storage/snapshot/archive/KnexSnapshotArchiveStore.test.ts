@@ -720,7 +720,8 @@ test('the auxiliary migration is registered after the durable sync schema', asyn
   expect(sync).toBeGreaterThanOrEqual(0)
   expect(archive).toBeGreaterThan(sync)
   expect(journal).toBeGreaterThan(archive)
-  expect(await migrations.getLatestMigration()).toBe('2026-10-06-002 add native snapshot journal')
+  expect(registered.indexOf('2026-10-13-001 coordinate wallet receipt ownership')).toBeGreaterThan(journal)
+  expect(await migrations.getLatestMigration()).toBe('2026-10-13-001 coordinate wallet receipt ownership')
 })
 
 test('MySQL DDL accommodates the declared metadata and page byte ceilings', async () => {

@@ -2,8 +2,9 @@
 
 The finite source inventory accounts for all 24 required behavior families,
 including #542 and #543, with integration, consumer entry points, qualification
-selectors and delivery/rollback documentation present. No missing production
-component or wiring is currently known. This is an implementation checkpoint;
+selectors and delivery/rollback documentation present. Runtime qualification
+continues to expose corrections; source inventory alone cannot prove feature completeness.
+This is an implementation checkpoint;
 all eleven whole-program acceptance rows remain open. Complete system, platform,
 resource, compatibility, mutation, exact-head CI and review evidence is still
 required before readiness can be claimed.
@@ -68,6 +69,14 @@ The existing intended synthetic chain tracker is now established before signing
 in those two cases, and the owned test wallet and service spies use `finally`
 cleanup. All original cases, operations and assertions remain. Fresh runtime
 qualification of that correction is still required; the failed run is retained.
+
+## Current initialization and qualification boundaries
+
+Populated private-native journal initialization now completes the existing 1,000-record allowance across all seventeen streams: each nonempty page consumes admitted records and each stream needs a terminal empty page. The finite progress guard preserves the original record quota, native expiry and generation checks, and rejects invalidated bootstrap state. Fresh packed-schema comparisons group at most 32 definitions within 32 KiB of source bindings; an existing longer definition retains its individual query. Exact SQL bytes, family/layout checks and original native frame limits remain, with no cached verdict. Whole-system performance and supported-platform qualification remain open.
+
+The portable measurement uses the low-level exporter as documented: one dedicated retained reader beside the original one-connection serving pool. Both pools are counted and drained before private import. HTTP request-byte observation delegates native parser pushes without starting flowing reads before authentication/body parsing owns the request. Neither correction changes the public exporter or authentication contract. Original datasets, latency cohorts, percentile limits, cancellation, real TCP-loss and complete-byte oracles remain required. Root-copy fixtures are a mandatory eight-case installer partition; they are not ordinary-user or Darwin platform qualification.
+
+Historical feedback in this file retains its original checkpoint identity and failed samples. It does not automatically qualify the current source.
 
 ## Coordinator and storage
 
@@ -178,7 +187,7 @@ the complete graph again. User-header cases cover older/equal/newer timestamps,
 another local user, changed identity/primary/date metadata and source refolding.
 Current SQLite user identity and primary columns are NOT NULL; the NULL negative
 case checks the actual SQL constraint instead of fabricating an impossible row.
-These authored cases remain unrun.
+Whole-system qualification of these authored cases remains open.
 
 The current native browser catalogue explicitly selects all 60 exported cases
 from 19 source modules. `client/test/portable-program-browser.cjs` bundles that

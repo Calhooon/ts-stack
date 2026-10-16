@@ -38,8 +38,8 @@ const percentile = (values: readonly number[], fraction: number): number =>
  * it may materialize a bounded individual structured row. Import here measures
  * authenticated full13 private staging, not native operational activation.
  * Separate native composition/browser destination cases retain that obligation.
- * Export owns one SQL pool; it is drained before the two private staging pools
- * are opened. The caller must separately admit actual KDF/file/process resources. */
+ * Export owns one dedicated reader alongside the original serving pool, each
+ * limited to one connection. Both drain before the two private staging pools open. The caller must separately admit actual KDF/file/process resources. */
 describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', shape => {
   test.each([0, 5])(
     'encrypted export/import with %i ms per-chunk source latency',
@@ -57,6 +57,18 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
             acquireConnectionTimeout: 1000
           })
         }),
+        reader = new StorageKnex({
+          ...StorageProvider.createStorageBaseOptions('test'),
+          snapshotSync: false,
+          snapshotJournalRetention: false,
+          knex: knex({
+            client: 'better-sqlite3',
+            connection: { filename: join(directory, 'source.sqlite') },
+            useNullAsDefault: true,
+            pool: { min: 0, max: 1 },
+            acquireConnectionTimeout: 1000
+          })
+        }),
         identity = '02' + '11'.repeat(32),
         password = 'portable-measurement CAFE\u0301',
         policy = {
@@ -71,6 +83,7 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
         admission: Admission | undefined,
         reservation: Brc38StagingReservation | undefined,
         drained = false,
+        readerDrained = false,
         failed = false,
         failure: unknown,
         archiveSha256 = '',
@@ -220,6 +233,7 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
         const manager = new WalletStorageManager(identity, storage)
         await manager.makeAvailable()
         storage.knex.on('query', query)
+        reader.knex.on('query', query)
         cipher = await createBrc39NodeFileQuarantine(
           directory,
           async bytes => {
@@ -237,7 +251,7 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
         const exported = await measure(
           'encrypted-export',
           async signal => {
-            const source = await openBrc38KnexSource(storage, identity, {
+            const source = await openBrc38KnexSource(reader, identity, {
               maximumPageRows: 128,
               maximumPageBytes: 8388608,
               maximumRowAllocationBytes: 8388608,
@@ -303,6 +317,9 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
         if (stream === undefined) throw new Error('Measured export did not retain its actual stream')
         await stream.close()
         stream = undefined
+        reader.knex.off('query', query)
+        await reader.destroy()
+        readerDrained = true
         storage.knex.off('query', query)
         await storage.destroy()
         drained = true
@@ -377,7 +394,10 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
           JSON.stringify({
             portableSnapshotMeasurement: reports,
             ciphertextBytes,
-            importRole: 'authenticated full13 private staging; operational activation is separately qualified'
+            importRole: 'authenticated full13 private staging; operational activation is separately qualified',
+            maximumSimultaneousPools: 2,
+            servingPoolMaximumConnections: 1,
+            exportReaderPoolMaximumConnections: 1
           }) + '\n'
         )
       } catch (cause) {
@@ -387,6 +407,13 @@ describe.each(snapshotMeasurementCases)('full13 portable measurement: $name', sh
       const cleanup: unknown[] = []
       for (const close of [
         async () => await stream?.close(),
+        async () => {
+          reader.knex.off('query', query)
+          if (!readerDrained) {
+            await reader.destroy()
+            readerDrained = true
+          }
+        },
         async () => await cipher?.discard(),
         async () => {
           if (reservation !== undefined) await admission!.discard(reservation, new Error('Finite measurement cleanup'))

@@ -113,13 +113,17 @@ describe.each(snapshotMeasurementCases)('complete snapshot destination measureme
       f.source.knex.on('query', observeQuery)
       f.destination.storage.knex.on('query', observeQuery)
       f.server.server.prependListener('request', (request: IncomingMessage, response: ServerResponse) => {
-        request.on('data', (chunk: Buffer) => {
-          requestBodyBytes += chunk.byteLength
-        })
         const write = response.write.bind(response),
           end = response.end.bind(response),
           size = (value: unknown): number =>
             typeof value === 'string' ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 0
+        // Observe parser pushes without putting the request into flowing mode
+        // before the genuine asynchronous authentication/body parser owns it.
+        const push = request.push.bind(request)
+        request.push = ((...args: Parameters<typeof request.push>) => {
+          requestBodyBytes += size(args[0])
+          return Reflect.apply(push, request, args)
+        }) as typeof request.push
         response.write = ((...args: Parameters<typeof response.write>) => {
           responseBodyBytes += size(args[0])
           return Reflect.apply(write, response, args)
@@ -321,7 +325,19 @@ test('snapshot cancellation joins committed acknowledgement and actual TCP reply
       }
       return result
     })
-    await expect(f.manager.syncToWriterResumable(await f.manager.getAuth(), f.client)).rejects.toThrow()
+    let rejectedBeforeDisconnect = false,
+      prematureFailure: unknown
+    await expect(
+      f.manager.syncToWriterResumable(await f.manager.getAuth(), f.client).catch(cause => {
+        if (!disconnected) {
+          rejectedBeforeDisconnect = true
+          prematureFailure = cause
+        }
+        throw cause
+      })
+    ).rejects.toThrow()
+    if (rejectedBeforeDisconnect)
+      throw new AggregateError([prematureFailure], 'The actual post-commit TCP-loss boundary was not reached')
     expect(disconnected).toBe(true)
     const observer = new StorageClient(f.destination.wallet, f.client.endpointUrl, {
       serverIdentityKey: f.destination.serverIdentityKey

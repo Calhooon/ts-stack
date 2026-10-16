@@ -74,6 +74,10 @@ qualification allowance does not renew ownership or change production limits.
 
 Qualification test guards preserve the existing inner budgets: the three private Knex staging properties retain fast-check's 150-second failure limit, all 300 schedules and their fixed seed, with a 180-second Jest guard for completion and cleanup. The native legacy-spelling case uses the same 180-second outer guard as checkpoint-delta, while its original 120-second native and 180-second staging lifetimes, both complete passes and two-index drainage remain unchanged. Occupied packed-journal wrappers explicitly assert successful completion of their full independent oracles. These changes do not alter production limits or establish whole-system qualification.
 
+Populated private-native journal initialization now completes the existing 1,000-record allowance across all seventeen streams: each nonempty page consumes admitted records and each stream needs a terminal empty page. The finite progress guard preserves the original record quota, native expiry and generation checks, and rejects invalidated bootstrap state. Fresh packed-schema comparisons group at most 32 definitions within 32 KiB of source bindings; an existing longer definition retains its individual query. Exact SQL bytes, family/layout checks and original native frame limits remain, with no cached verdict. Whole-system performance and supported-platform qualification remain open.
+
+The original eight Linux root-copy fixtures run separately under the installer identity. CI requires their complete report and includes their coverage; ordinary wallet fixtures retain their normal actor. The inventory and authentication restore fixtures explicitly reserve 8 MiB and an 11 MiB profile catalogue total (the unchanged 3 MiB catalogue reservation plus one 8 MiB profile). Smaller-budget refusal controls and production defaults remain unchanged.
+
 ## Receiving already-broadcast payments
 
 The 2.14.9 source candidate completes broadcast results even when storage
@@ -1591,6 +1595,10 @@ for the full stack-wide policy.
 This package is released under the [Open BSV License Version 6](./LICENSE.txt).
 The accompanying [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and
 [LICENSES/](./LICENSES/) preserve the package's earlier Open BSV grant.
+
+## Historical #544 implementation checkpoints
+
+The component notes in this section preserve earlier candidate states, including original failures and descriptions such as “unrun” or “unfinished.” Use the current candidate status and [implementation map](./docs/implementation-544.md) for the integrated source inventory. Historical passes qualify only their exact relevant inputs; they do not establish current branch or production readiness.
 
 ### Local packed snapshot pages (2.15 candidate)
 
@@ -5113,6 +5121,10 @@ The authored Windows image launcher holds actual image and ancestor HANDLEs thro
 Windows driver/addon candidate preparation is now authored in `tools/Brc38WindowsCandidateBuild.cjs`, with a separate source-owned compiler Job Object supervisor in `native/windows_build_supervisor.c`. The supervisor starts the fixed reviewed MSVC compiler suspended, restricts inherited handles, installs and rereads actual job membership/flags before resume, limits the compiler tree to4 processes/512 MiB private commit/180 seconds CPU and wall time, bounds merged output to64 KiB, and refuses a successful receipt until the actual job is empty and original objects physically close. Its explicit environment excludes injected CL/LINK flags; compiled bootstrap policy fixes the actual compiler/SDK paths. Addon `/MD` uses the exact Node UCRT/headers/import library; driver and supervisor `/MT` have their separate CRT ownership. These are new compiler-worker bounds requiring fresh complete-source/controller/resource agreement, not reuse of historical wallet/native fault grants.
 
 Bootstrap policy generation returns source DATA and fixed compiler argument plans only. Exact Node architecture/version/ABI/header/import-library and independently qualified supervisor/addon entries remain internally empty until fresh controlled Windows bootstrap qualification. The normal candidate recipe creates protected private source storage, copies/hashes bounded exact inputs, builds driver and addon separately through the actual pinned supervisor, rereads every source after both builds and records unexecuted/unqualified candidates. A failed supervisor, output/time violation or absent real job-drain receipt retains the original worker and root; parent-only termination is never called verified tree drainage. The separate supervisor pin grants no wallet/profile kernel admission. The ordinary artifact copier/source preparer now includes all Windows/common resource-contract sources and compiled physical-privacy/cleanup dependencies; it executes none of them. Authored Unix filesystem cases cover real descriptor/path IDs, link/privacy refusals, directory persistence and concrete shared cleanup retry. Windows HANDLE/DACL, image-replacement, process-tree and durability behavior still require actual qualified host cases. No compiler, build, formatter, test, native/addon, mutation or CI was run while implementation remains incomplete.
+
+## Consumer integration and qualification commands
+
+The entries and commands below remain subject to the current candidate status, exact-source qualification and supported-platform requirements.
 
 ### Candidate Node KDF worker and device backup lifecycle
 

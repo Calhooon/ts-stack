@@ -10,7 +10,7 @@ import { Brc38PrivateNativeRestoreNode } from './Brc38PrivateNativeRestoreNode'
 import { Brc38PublishedProfileNode } from './Brc38PublishedProfileNode'
 import { Brc38ProfileInventoryNode } from './Brc38ProfileInventoryNode'
 
-const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
+const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 describe('actual durable profile inventory admission, recovery and retirement', () => {
   let cleanup: Array<() => Promise<void>>
   beforeEach(() => {
@@ -23,7 +23,12 @@ describe('actual durable profile inventory admission, recovery and retirement', 
   })
   async function source() {
     const proof = restoreProofFixture(),
-      staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+      staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
+    let closeRestore: (() => Promise<void>) | undefined
+    cleanup.push(async () => {
+      await closeRestore?.()
+      await staged.close()
+    })
     const restore = await Brc38PrivateNativeRestoreNode.open(staged.value.reservation.store, {
       receiptPolicy: previewReceiptPolicy,
       maximumStepRows: 16,
@@ -32,10 +37,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
       maximumJournalLogicalBytes: 516096,
       services: proof.services
     })
-    cleanup.push(async () => {
-      await restore.close()
-      await staged.close()
-    })
+    closeRestore = async () => await restore.close()
     await runInSeries(
       Array.from({ length: 14 }, (_value, index) => index),
       async fromRow => {
@@ -96,7 +98,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
     expect(await peer.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     expect(await first.staged.root.usage()).toEqual(firstUsage)
     expect(await second.staged.root.usage()).toEqual(secondUsage)
@@ -127,7 +129,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
     expect(await peer.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
   })
   test('the actual native inventory writer is released during source copy while the independent profile claim remains held', async () => {
@@ -142,7 +144,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
       expect(await peer.usage()).toEqual({
         profiles: 1,
         published: 0,
-        reservedPhysicalBytes: 7340032
+        reservedPhysicalBytes: 11534336
       })
       await expect(peer.publish(other.store, other.admission)).rejects.toThrow('capacity exceeded before creation')
       await expect(peer.open(selected.importId, selected.bindingSha256)).rejects.toThrow()
@@ -199,7 +201,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
       expect(await peer.usage()).toEqual({
         profiles: 1,
         published: 1,
-        reservedPhysicalBytes: 7340032
+        reservedPhysicalBytes: 11534336
       })
       expect(await selected.staged.root.usage()).toEqual(sourceUsage)
     } finally {
@@ -226,7 +228,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
       expect(await peer.usage()).toEqual({
         profiles: 1,
         published: 0,
-        reservedPhysicalBytes: 7340032
+        reservedPhysicalBytes: 11534336
       })
       expect((await lstat(profilePath)).isDirectory()).toBe(true)
       await root.close()
@@ -259,7 +261,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
     expect(await root.usage()).toMatchObject({
       profiles: 1,
       published: 0,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     const now = jest.spyOn(Date, 'now').mockReturnValue(selected.admission.expiresAt + 1)
     try {
@@ -286,7 +288,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
     expect(await peer.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
   })
   test.each(['retained native owner', 'fresh native owner'] as const)(
@@ -323,7 +325,7 @@ describe('actual durable profile inventory admission, recovery and retirement', 
         expect(await root.usage()).toEqual({
           profiles: 1,
           published: 0,
-          reservedPhysicalBytes: 7340032
+          reservedPhysicalBytes: 11534336
         })
         await expect(lstat(join(directory, name))).rejects.toMatchObject({ code: 'ENOENT' })
         expect((await lstat(retired)).isDirectory()).toBe(true)

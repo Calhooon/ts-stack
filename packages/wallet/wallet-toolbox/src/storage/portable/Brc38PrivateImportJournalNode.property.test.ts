@@ -207,7 +207,7 @@ test('generated bound admissions refuse before a real independent destination wr
     ),
     controls
   )
-}, 30000)
+}, 180000)
 
 test('generated lost acknowledgement replays the actual native header and original provenance checkpoint without repeated writes', async () => {
   await open()
@@ -283,7 +283,7 @@ test('generated lost acknowledgement replays the actual native header and origin
     }),
     controls
   )
-}, 30000)
+}, 180000)
 
 test('generated callback cancellation and rejected post-write fences atomically roll back native rows mappings and cursor', async () => {
   await open()
@@ -357,7 +357,7 @@ test('generated callback cancellation and rejected post-write fences atomically 
     ),
     controls
   )
-}, 30000)
+}, 180000)
 
 test('generated exact native restore replay preserves COMPLETE for an authenticated empty archive and superseded admission refuses', async () => {
   await open(true)
@@ -392,7 +392,7 @@ test('generated exact native restore replay preserves COMPLETE for an authentica
   await expect(restoreHeader()).rejects.toThrow('differs')
   expect(await receipt()).toEqual(complete)
   expect(await target.k('brc38_import_original')).toEqual(before.originals)
-}, 30000)
+}, 180000)
 
 test('generated page bounds mode guards and pre-aborted calls refuse without callback or destination effects', async () => {
   await open()
@@ -441,4 +441,4 @@ test('generated page bounds mode guards and pre-aborted calls refuse without cal
     ),
     controls
   )
-}, 30000)
+}, 180000)

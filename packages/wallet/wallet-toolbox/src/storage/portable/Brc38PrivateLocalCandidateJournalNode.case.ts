@@ -260,7 +260,7 @@ export async function verifyBrc38PrivateLocalCandidateTwoPassJournal(controller:
   controller.check()
 }
 
-/** Fresh actual empty all47 candidate. Explicit points are progress DATA only.
+/** Fresh actual empty all48 candidate. Explicit points are progress DATA only.
  * Proves cleanup cannot skip retained points or jump backwards, and bounded
  * retries cannot be silently reset when a new COPY begins. */
 export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: ActualController): Promise<void> {
@@ -276,7 +276,7 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
   )
   await controller.withWriter(async trx => {
     await trx(points).insert({
-      tableId: 46,
+      tableId: 47,
       rowId: -9,
       revision: 0,
       generation: 0,
@@ -285,12 +285,12 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
     })
   })
   await controller.withWriter(async trx => {
-    await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds: 1, clearTable: 46 })
+    await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds: 1, clearTable: 47 })
   })
   let refused = false
   try {
     await controller.withWriter(async trx => {
-      await trx(state).where({ slot: 1 }).update({ clearTable: 45 })
+      await trx(state).where({ slot: 1 }).update({ clearTable: 46 })
     })
   } catch {
     refused = true
@@ -299,7 +299,7 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
   const rollback = new Error('independent private cleanup rollback')
   try {
     await controller.withWriter(async trx => {
-      await trx(points).where({ tableId: 46, rowId: -9 }).delete()
+      await trx(points).where({ tableId: 47, rowId: -9 }).delete()
       throw rollback
     })
   } catch (cause) {
@@ -307,7 +307,7 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
   }
   requireCase((await controller.withRead(async trx => await readBrc38PrivateLocalCandidateJournal(trx))).records === 1)
   await controller.withWriter(async trx => {
-    requireCase((await trx(points).where({ tableId: 46, rowId: -9 }).delete()) === 1)
+    requireCase((await trx(points).where({ tableId: 47, rowId: -9 }).delete()) === 1)
   })
   requireCase((await controller.withRead(async trx => await readBrc38PrivateLocalCandidateJournal(trx))).records === 0)
   refused = false
@@ -319,7 +319,7 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
     refused = true
   }
   requireCase(refused)
-  for (let table = 45; table >= -1; table--)
+  for (let table = 46; table >= -1; table--)
     await controller.withWriter(async trx => {
       await trx(state).where({ slot: 1 }).update({ clearTable: table })
     })
@@ -330,9 +330,9 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
   requireCase(copied.phase === 'COPY' && copied.rebuilds === 1 && copied.records === 0)
   for (let rebuilds = 2; rebuilds <= 3; rebuilds++) {
     await controller.withWriter(async trx => {
-      await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds, clearTable: 46 })
+      await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds, clearTable: 47 })
     })
-    for (let table = 45; table >= -1; table--)
+    for (let table = 46; table >= -1; table--)
       await controller.withWriter(async trx => {
         await trx(state).where({ slot: 1 }).update({ clearTable: table })
       })
@@ -343,7 +343,7 @@ export async function verifyBrc38PrivateLocalCandidateClearJournal(controller: A
   refused = false
   try {
     await controller.withWriter(async trx => {
-      await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds: 4, clearTable: 46 })
+      await trx(state).where({ slot: 1 }).update({ phase: 'CLEAR', rebuilds: 4, clearTable: 47 })
     })
   } catch {
     refused = true

@@ -1,7 +1,6 @@
 import { importJournalFixture } from './Brc38ImportJournalFixture'
 import { commitBrc38ImportJournalStep, readBrc38ImportJournal } from './Brc38ImportJournal'
 import { loadBrc38ImportIdMap } from './Brc38ImportIdMap'
-import { installBrc38ImportJournalSchema } from './Brc38ImportJournalSchema'
 
 describe('actual durable import mapping charge', () => {
   let fixture: Awaited<ReturnType<typeof importJournalFixture>>
@@ -160,18 +159,28 @@ describe('actual durable import mapping charge', () => {
     await fixture.commit(fixture.step(0, 3))
     await fixture.commit(fixture.step(3, 2))
     expect((await receipt()).mappedIds).toBe(5)
-    expect(queries.some(sql => /count\s*\(/i.test(sql))).toBe(false)
+    const counts = queries.filter(sql => /count\s*\(/i.test(sql))
+    expect(
+      counts.every(sql => /\bfrom\s+(?:[`"]?main[`"]?\.)?[`"]?sqlite_(?:schema|master)(?:[`"]|\b)/i.test(sql))
+    ).toBe(true)
     const loads = queries.filter(sql => /^select/i.test(sql) && sql.includes('brc38_import_ids'))
     expect(loads).toHaveLength(2)
     expect(loads.every(sql => sql.includes('incomingId') && sql.includes(' in '))).toBe(true)
   })
   test('a removed source-owned charge trigger is refused before any continuation mutation', async () => {
     await fixture.prepare()
+    const original = await fixture
+      .k('sqlite_schema')
+      .where({ type: 'trigger', name: 'brc38_import_ids_insert_charge' })
+      .first('sql')
+    expect(typeof original.sql).toBe('string')
     await fixture.k.raw('DROP TRIGGER brc38_import_ids_insert_charge')
     const before = await state()
     await expect(fixture.commit(fixture.step(0, 1))).rejects.toThrow('schema differs')
     expect(await state()).toEqual(before)
-    await fixture.k.transaction(async trx => await installBrc38ImportJournalSchema(trx))
+    // The guarded installer must refuse partial families. Restore only the
+    // fixture's exact original SQL; the next commit freshly validates it.
+    await fixture.k.raw(original.sql)
     expect((await fixture.commit(fixture.step(0, 1))).mappedIds).toBe(1)
   })
 })

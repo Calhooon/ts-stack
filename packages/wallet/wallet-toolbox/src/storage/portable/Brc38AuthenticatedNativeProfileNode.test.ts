@@ -32,14 +32,17 @@ interface RawDriver {
 }
 const raw: RawDriver = require('./NativeProfileSqlite.cjs')
 const executable = nativeTestExecutable()
-const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 7340032 }
+const capacity = { maximumProfiles: 1, maximumPhysicalBytes: 11534336 }
 
 describe('authenticated original Root and Profile native reacquisition', () => {
   let source: Awaited<ReturnType<typeof completedSource>>
+  let stagedSetup: Awaited<ReturnType<typeof previewPrivateFixture>> | undefined
+  let restoreSetup: Brc38PrivateNativeRestoreNode | undefined
   let cleanup: Array<() => Promise<void>>
   async function completedSource() {
     const proof = restoreProofFixture()
-    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152)
+    const staged = await previewPrivateFixture(undefined, data => restorePortableProof(data, proof), 2097152, 8388608)
+    stagedSetup = staged
     const restore = await Brc38PrivateNativeRestoreNode.open(staged.value.reservation.store, {
       receiptPolicy: previewReceiptPolicy,
       maximumStepRows: 16,
@@ -48,6 +51,7 @@ describe('authenticated original Root and Profile native reacquisition', () => {
       maximumJournalLogicalBytes: 516096,
       services: proof.services
     })
+    restoreSetup = restore
     await runInSeries(
       Array.from({ length: 14 }, (_v, index) => index),
       async fromRow => {
@@ -66,8 +70,19 @@ describe('authenticated original Root and Profile native reacquisition', () => {
     source = await completedSource()
   })
   afterAll(async () => {
-    await source.restore.close()
-    await source.staged.close()
+    const failures: unknown[] = []
+    await runInSeries(
+      [async () => await restoreSetup?.close(), async () => await stagedSetup?.close()],
+      async close => {
+        try {
+          await close()
+        } catch (cause) {
+          failures.push(cause)
+        }
+      }
+    )
+    if (failures.length !== 0)
+      throw new AggregateError(failures, 'Authenticated native setup retains actual cleanup owners')
   })
   beforeEach(() => {
     cleanup = []
@@ -148,7 +163,7 @@ describe('authenticated original Root and Profile native reacquisition', () => {
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     for (const name of ['db', 'nativeOwner', 'nativeClaim', 'session', 'connection', 'fixed'])
       expect(Object.hasOwn(profile, name)).toBe(false)
@@ -219,7 +234,7 @@ describe('authenticated original Root and Profile native reacquisition', () => {
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     const recovered = await Brc38PublishedProfileNode.open(profile.directory, source.store.binding!.digest)
     extra.push(recovered)
@@ -275,7 +290,7 @@ describe('authenticated original Root and Profile native reacquisition', () => {
     expect(await root.usage()).toEqual({
       profiles: 1,
       published: 1,
-      reservedPhysicalBytes: 7340032
+      reservedPhysicalBytes: 11534336
     })
     const recovered = await Brc38PublishedProfileNode.open(profile.directory, source.store.binding!.digest)
     extra.push(recovered)

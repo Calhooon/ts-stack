@@ -3,12 +3,18 @@
 This guide describes the unpublished Toolbox 2.15.0 source candidate. It is not
 a release or qualification receipt. PR569 remains open and unmerged. The
 [implementation map](./implementation-544.md) names the source components and
-authored coverage. The finite source inventory currently has no known missing
-production components or integration wiring. The qualification sequence below
-must still demonstrate the complete system; this source checkpoint is not
+authored coverage. The finite source inventory identifies the required components;
+runtime qualification must still expose and resolve implementation or integration defects.
+The qualification sequence below must demonstrate the complete system; this source checkpoint is not
 merge or production readiness. The native recovery expected-JSON helper has a
 canonical numeric-key ordering correction pending fresh full-contract validation;
 all original data and full byte comparisons remain.
+
+## Qualification actor boundaries
+
+The low-level portable SQL exporter retains a caller-owned connection. Supply a dedicated reader while a serving manager remains active; a one-connection serving pool cannot simultaneously retain that export transaction. Measure both roles and drain both before accepting cleanup. Do not widen a serving pool or omit foreground checks to hide a blocked reader.
+
+The eight original Linux root-copy fixtures require the installer identity. The held branch CI runs their complete test file under that identity, validates every original result and merges coverage. Other wallet tests remain ordinary-user work. This root-copy result does not qualify Darwin ACL installation, native executable behavior, platform custody or a release.
 
 ## Artifact and compatibility boundary
 

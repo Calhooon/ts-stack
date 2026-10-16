@@ -233,7 +233,7 @@ export function requireBrc38PackedWriter(trx: Knex.Transaction): void {
 /** Compare fresh source definitions inside SQLite, returning one scalar per
  * bounded batch. Never retain a verdict or fetch the complete SQL inventory.
  * A long original definition keeps its individual query; batches add at most
- * eight definitions and 8KiB of bindings. Callers independently validate their
+ * 32 definitions and 32KiB of bindings. Callers independently validate their
  * complete family count, layout, primary indexes and actual source authority. */
 export async function verifyBrc38NativePackedDefinitions(
   trx: Knex.Transaction,
@@ -262,10 +262,10 @@ export async function verifyBrc38NativePackedDefinitions(
   }
   for (const [name, source] of expected) {
     const amount = Buffer.byteLength(name) + Buffer.byteLength(source.type) + Buffer.byteLength(source.sql)
-    if (batch.length !== 0 && (batch.length >= 8 || amount > 8192 - bytes)) await flush()
+    if (batch.length !== 0 && (batch.length >= 32 || amount > 32768 - bytes)) await flush()
     batch.push({ name, type: source.type, sql: source.sql })
     bytes += amount
-    if (amount > 8192) await flush()
+    if (amount > 32768) await flush()
   }
   await flush()
 }

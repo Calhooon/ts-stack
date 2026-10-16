@@ -666,3 +666,26 @@ test('both mutation workflows provision the qualified native executable before w
     assert.match(source, /name: mutation-native-\$\{\{ github\.run_id \}\}/)
   }
 })
+
+test('all original privileged root-copy cases run once as installer with mandatory report and coverage', () => {
+  const { wallet, steps } = nativeWalletFixtureSteps()
+  const root = steps.find(step =>
+    step.includes('name: Qualify the original privileged native root-copy fixtures')
+  )
+  assert.ok(root)
+  assert.match(root, /if: matrix\.id == 'shard-1'/)
+  assert.match(root, /timeout-minutes: 3/)
+  assert.match(root, /sudo --preserve-env=TS_STACK_NATIVE_TEST_EXECUTABLE/)
+  assert.match(
+    root,
+    /--runInBand --watchman=false --testPathIgnorePatterns=man\.test\.ts --runTestsByPath/
+  )
+  assert.match(root, /src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs/)
+  assert.match(root, /node scripts\/wallet-native-root-copy-ci\.mjs native-root-copy-result\.json/)
+  assert.match(root, /\.coverage-output\/wallet-native-root-copy\.lcov\.info/)
+  assert.doesNotMatch(root, /testNamePattern|continue-on-error|passWithNoTests/)
+  assert.match(
+    wallet,
+    /--testPathIgnorePatterns='[^']*\|src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs'/
+  )
+})

@@ -1103,6 +1103,28 @@ jobs:
         run: node scripts/provision-wallet-native-browser.mjs
       - name: Deliver the exactly pinned qualified native test executable
         run: bash scripts/provision-wallet-native-tests.sh
+      - name: Qualify the original privileged native root-copy fixtures
+        if: matrix.id == 'shard-1'
+        working-directory: packages/wallet/wallet-toolbox
+        timeout-minutes: 3
+        run: |
+          native_node="$(command -v node)"
+          jest_entry="$(node -p "require.resolve('jest/bin/jest')")"
+          mkdir -p coverage/native-root-copy
+          sudo --preserve-env=TS_STACK_NATIVE_TEST_EXECUTABLE env CI=true NODE_OPTIONS=--max-old-space-size=1536 \
+            "$native_node" "$jest_entry" --coverage --coverageDirectory=coverage/native-root-copy \
+            --runInBand --watchman=false --testPathIgnorePatterns=man.test.ts --runTestsByPath \
+            src/storage/portable/native/RootNativeCopyContracts.test.cjs \
+            --json --outputFile="$GITHUB_WORKSPACE/native-root-copy-result.json"
+          cd "$GITHUB_WORKSPACE"
+          node scripts/wallet-native-root-copy-ci.mjs native-root-copy-result.json
+          sudo "$native_node" scripts/normalize-lcov-paths.mjs \
+            packages/wallet/wallet-toolbox/coverage/native-root-copy/lcov.info \
+            packages/wallet/wallet-toolbox
+          mkdir -p .coverage-output
+          cp packages/wallet/wallet-toolbox/coverage/native-root-copy/lcov.info \
+            .coverage-output/wallet-native-root-copy.lcov.info
+          cp native-root-copy-result.json .coverage-output/native-root-copy-result.json
       - name: Preserve native component delivery evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1155,7 +1177,7 @@ jobs:
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand

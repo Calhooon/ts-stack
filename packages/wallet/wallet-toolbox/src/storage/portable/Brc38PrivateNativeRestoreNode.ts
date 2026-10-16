@@ -299,9 +299,20 @@ async function completePrivateNativeCandidateJournal(
     snapshotJournalRevision(MAX_SNAPSHOT_JOURNAL_REVISION),
     receiptPolicy
   )
+  const maximumRecords = 1000
   let complete = await completeBrc38OwnedEmptyBootstrap(store, receiptPolicy)
-  await runInSeries(Array.from({ length: 20 }), async () => {
-    if (!complete) complete = (await copySnapshotJournalBootstrapPage(storage.knex, 1000)).complete
+  // Every nonempty page consumes at least one of the original 1000 records;
+  // each of the original seventeen streams also needs its terminal empty page.
+  // Keep that exact row allowance and the native owner's original deadline.
+  function* remainingPages() {
+    for (let remaining = maximumRecords + 17; !complete && remaining > 0; remaining--) yield undefined
+  }
+  await runInSeries(remainingPages(), async () => {
+    store.assertPrivateNativeDestination(store.knex)
+    const page = await copySnapshotJournalBootstrapPage(storage.knex, maximumRecords)
+    if (page.invalidated) throw new Error('Private empty native destination bootstrap did not finish')
+    complete = page.complete
+    store.assertPrivateNativeDestination(store.knex)
   })
   if (!complete) throw new Error('Private empty native destination bootstrap did not finish')
   // Use the actual validated native completion receipt after its transaction

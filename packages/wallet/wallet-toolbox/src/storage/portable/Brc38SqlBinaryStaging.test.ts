@@ -1,3 +1,4 @@
+import { runInSeries } from '../../utility/runInSeries'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -165,7 +166,24 @@ test('the real bounded JSON parser binds private fields to the same physical res
           const first = await target.readBinaryFieldChunk('transactions', 0, 'rawTx', 0)
           expect(first!.descriptor.bytes).toBe(131073)
           expect(first!.descriptor.sha256).toBe(digest(Buffer.alloc(131073, 41)))
-          expect(first!.bytes).toEqual(Uint8Array.from(Buffer.alloc(65536, 41)))
+          let offset = 0
+          const whole = createHash('sha256')
+          function* remainingChunks() {
+            for (let index = 0; offset < 131073 && index < 131073; index++) yield offset
+          }
+          await runInSeries(remainingChunks(), async selectedOffset => {
+            const chunk = await target.readBinaryFieldChunk('transactions', 0, 'rawTx', selectedOffset)
+            expect(chunk).toBeDefined()
+            expect(chunk!.offset).toBe(selectedOffset)
+            expect(chunk!.bytes.byteLength).toBeGreaterThan(0)
+            expect(chunk!.bytes.byteLength).toBeLessThanOrEqual(65536)
+            expect(chunk!.bytes).toEqual(Uint8Array.from(Buffer.alloc(chunk!.bytes.byteLength, 41)))
+            whole.update(chunk!.bytes)
+            offset += chunk!.bytes.byteLength
+          })
+          expect(offset).toBe(131073)
+          expect(whole.digest('hex')).toBe(digest(Buffer.alloc(131073, 41)))
+          expect(await target.readBinaryFieldChunk('transactions', 0, 'rawTx', offset)).toBeUndefined()
           verified = true
           await target.seal(header, counts)
         },
