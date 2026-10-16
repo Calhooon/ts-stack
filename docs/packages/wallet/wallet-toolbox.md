@@ -5,9 +5,8 @@ kind: package
 domain: wallet
 npm: '@bsv/wallet-toolbox'
 version: '2.15.0'
-last_updated: '2026-10-12'
-last_verified: '2026-10-12'
-
+last_updated: '2026-10-13'
+last_verified: '2026-10-13'
 review_cadence_days: 30
 status: stable
 tags: ['wallet', 'brc100']
@@ -35,6 +34,20 @@ state after restart. Legacy entity sync/export, IndexedDB, remote providers and
 browser/mobile wrappers do not carry this state. Stop new use and reconcile
 outstanding operations before rollback. These local receipts do not establish
 settlement, quote-time service capacity or protected delivery.
+
+Broadcast result completion in the 2.14.9 source candidate preserves an already
+`unmined` or `completed` request while returning the actual provider outcome.
+A successful first receipt without a mining proof therefore no longer fails
+with an internal unknown-status error on shared storage or after concurrent
+storage-worker progress. Negative provider outcomes still reject that receipt;
+repeat successful receipt remains idempotent. Upgrade the implementation
+performing broadcast/internalization after protected publication. No public
+API or wire migration is required. SQL storage adds a durable user/TXID receipt
+claim table while preserving historical transaction and output rows. Back up
+and preflight the database, then coordinate the rollout across every serving storage instance;
+older instances do not honor the claim. Local IndexedDB does not use the SQL
+claim. This candidate does not deploy hosted storage or repair older partial
+receipts automatically.
 
 ## Optional registry descriptions
 

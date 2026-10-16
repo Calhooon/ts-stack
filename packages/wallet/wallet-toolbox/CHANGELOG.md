@@ -22,6 +22,57 @@ attention to changes that materially alter behavior or extend functionality.
 - The previously recorded 2.14.5 no-send ownership corrections remain included.
   This candidate has not been published and does not complete private acquisition.
 
+- Adds a `regtest` `Chain` for Teranode regression-network deployments
+  (go-chaincfg `RegressionNetParams`). `genesisHeader('regtest')` returns the
+  canonical regtest genesis header; `ChaintracksServiceClient` and
+  `GoChaintracksServiceClient` accept a service that reports its chain as
+  `regtest`; Arcade and ChainTracks endpoints come from `REGTEST_ARCADE_URL` and
+  `REGTEST_CHAINTRACKS_URL` (`regtestArcadeUrl`, `regtestChaintracksUrl`). Like
+  TTN, the default regtest services use Arcade as broadcaster and Merkle-path
+  provider and register no legacy ARC fallback; like `tstn`, no WhatsOnChain
+  provider is registered.
+- Header proof-of-work and chain-work checks take an optional `chain`, and the
+  new `proofOfWorkLimitBits(chain)` reports the limit it selects. Only
+  `regtest` raises it, to `0x207fffff`. Every other chain, and every check that
+  names no chain, keeps the mainnet limit of `0x1d00ffff`, so no existing
+  validation is relaxed. Every ChainTracks client, storage, ingestor, bulk-file
+  path and Monitor header check now passes its configured chain.
+- `tstn` is unchanged: it keeps go-chaincfg's `TeraScalingTestNetParams`
+  genesis and proof-of-work limit. A deployment that runs regtest parameters
+  should configure `regtest`, not `tstn`.
+- A WhatsOnChain instance for a network with no WhatsOnChain service (`tstn`,
+  `regtest`) now refuses every request (`isAvailable` is `false`) instead of
+  sending it to a relative URL, which a browser resolves against the page's
+  origin. `Services.hashToHeader` no longer falls back to WhatsOnChain on those
+  networks, so their headers come only from ChainTracks.
+
+## wallet-toolbox 2.14.10
+
+- Live `syncToWriter` / `syncFromReader` compare reader and writer
+  `TableSettings.chain` before any chunk moves and throw `WERR_NETWORK_CHAIN`
+  on mismatch. The class remains a public sdk export with its deserializer and
+  JSON round-trip. Portable BRC-38 import still throws a generic `Error`.
+  Custom `processSyncChunk` writers may set `ProcessSyncChunkResult.error`;
+  both live-sync loops throw that error and stop. First-party providers still
+  throw. No API or schema migration is required.
+
+## wallet-toolbox 2.14.9
+
+- Complete per-transaction broadcast results when the refreshed request is
+  already `unmined` or `completed`, preserving that durable state. Successful
+  first receipt without a mining proof no longer throws an internal unknown
+  status error on shared storage or when another worker advances the request.
+  Negative broadcast results and competing-transaction evidence remain negative;
+  they do not authorize recipient output credit. Repeated successful receipt
+  remains idempotent, and valid mined payments retain the proof path.
+- SQL storage uses a durable, leased user/TXID receipt claim to keep a second
+  pod from crediting a pending first receipt. Completed claims remain as
+  coordination keys; expired claims can be recovered, and an old owner cannot
+  finalize after its claim is replaced. The migration preserves historical
+  transactions and outputs, including duplicates. No API or wire migration.
+  Back up and preflight SQL storage, then coordinate all storage instances in
+  the protected rollout; this source candidate does not deploy hosted storage.
+
 ## wallet-toolbox 2.14.8
 
 - `WalletPermissionsManager.internalizeAction` stores basket `customInstructions`

@@ -213,7 +213,8 @@ export async function internalizeActionCore(
   auth: AuthId,
   args: InternalizeActionArgs,
   profile: typeof BRC197_INTERNALIZATION_PROFILE | null,
-  recovery?: FundingRecoveryCommit
+  recovery?: FundingRecoveryCommit,
+  receipt?: InternalizeReceiptClaim
 ): Promise<StorageInternalizeActionResult> {
   if (profile !== null && profile !== BRC197_INTERNALIZATION_PROFILE)
     throw new WERR_INVALID_PARAMETER('profile', 'an installed internalization profile')
@@ -221,8 +222,9 @@ export async function internalizeActionCore(
     throw new WERR_INVALID_PARAMETER('recovery', 'the installed fixed-profile storage pipeline')
   if (recovery !== undefined)
     requireFunding(recovery.protocol === 'wallet-funding-recovery-v1', 'Unsupported funding recovery protocol')
-  const ctx = new InternalizeActionContext(storage, auth, args, profile)
+  const ctx = new InternalizeActionContext(storage, auth, args, profile, receipt)
   if (recovery !== undefined) {
+    requireFunding(receipt === undefined, 'Funding recovery owns its independent atomic receipt')
     // Verification/header I/O occurs before the short ownership transaction.
     // The caller has already retained the operation intent durably.
     await ctx.setupEvidence()
@@ -235,6 +237,14 @@ export async function internalizeActionCore(
   else await ctx.newInternalize()
 
   return ctx.r
+}
+
+/** SQL storage uses a durable claim to fence ordinary receipt writes across processes. */
+export interface InternalizeReceiptClaim {
+  retryNew: boolean
+  assertActive: (trx: TrxToken) => Promise<void>
+  markNew: (trx: TrxToken) => Promise<void>
+  complete: (trx: TrxToken) => Promise<void>
 }
 
 interface BasketInsertionX extends BasketInsertion {
@@ -278,6 +288,7 @@ class InternalizeActionContext {
   walletPayments: WalletPaymentX[]
   /** outputs this call transitioned spendable=true → false (for rollback) */
   spentInputs: SpentInputTransition[]
+  retryExistingTransaction = false
   userId: number
   vargs: ValidInternalizeActionArgs
 
@@ -285,7 +296,8 @@ class InternalizeActionContext {
     public storage: StorageProvider,
     public auth: AuthId,
     public args: InternalizeActionArgs,
-    private readonly profile: typeof BRC197_INTERNALIZATION_PROFILE | null
+    private readonly profile: typeof BRC197_INTERNALIZATION_PROFILE | null,
+    private readonly receipt?: InternalizeReceiptClaim
   ) {
     if (profile === BRC197_INTERNALIZATION_PROFILE)
       assertBrc197Recipient(args as Brc197InternalizeActionArgs, auth.identityKey)
@@ -391,6 +403,7 @@ class InternalizeActionContext {
       })
     )
     const allowedStatuses: TransactionStatus[] = ['completed', 'unproven', 'sending', 'nosend']
+    if (this.receipt?.retryNew) allowedStatuses.push('failed')
     if (trx !== undefined) allowedStatuses.push('unprocessed')
     if (this.etx != null && !allowedStatuses.includes(this.etx.status)) {
       throw new WERR_INVALID_PARAMETER(
@@ -399,6 +412,13 @@ class InternalizeActionContext {
       )
     }
     this.isMerge = this.etx != null
+    if (this.receipt?.retryNew && this.etx != null) {
+      const existingOutputs = await this.storage.findOutputs({ partial: { userId: this.userId, txid: this.txid }, trx })
+      if (existingOutputs.length === 0) {
+        this.retryExistingTransaction = true
+        this.isMerge = false
+      }
+    }
   }
 
   private async linkExistingOutputs(trx?: TrxToken): Promise<void> {
@@ -658,6 +678,15 @@ class InternalizeActionContext {
     }
     const tr = await this.storage.findOrInsertTransaction(newTx, trx)
     if (!tr.isNew) {
+      if (this.retryExistingTransaction) {
+        const update: Partial<TableTransaction> = { satoshis }
+        if (provenTx != null) {
+          update.provenTxId = provenTxId
+          update.status = status
+        }
+        await this.storage.updateTransaction(tr.tx.transactionId, update, trx)
+        return tr.tx
+      }
       if (!this.isMerge)
       // For now, only allow transaction record to pre-exist if it was there at the start.
       {
@@ -782,6 +811,7 @@ class InternalizeActionContext {
     const preparedProven = wasNoSend ? await this.prepareNoSendProof() : undefined
 
     await this.storage.transaction(async trx => {
+      await this.receipt?.assertActive(trx)
       await this.addLabels(transactionId, trx)
 
       // Externally-broadcast txs internalized into a pre-existing storage
@@ -820,6 +850,7 @@ class InternalizeActionContext {
       // TaskCheckForProofs picks it up on its next nudge cycle. This
       // hands off to Monitor's standard proof-fetching flow.
       if (wasNoSend) await this.retireNoSendTransaction(transactionId, preparedProven, trx)
+      await this.receipt?.complete(trx)
     })
   }
 
@@ -846,11 +877,13 @@ class InternalizeActionContext {
     let pr: StorageProvenOrReq = { proven: undefined, req: undefined }
 
     await this.storage.transaction(async trx => {
+      await this.receipt?.assertActive(trx)
       if (preparedProven != null) {
         pr.proven = await this.storeResolvedProvenTx(preparedProven, trx)
       }
 
       this.etx = await this.findOrInsertTargetTransaction(this.satoshis, pr.proven, trx)
+      await this.receipt?.markNew(trx)
 
       const transactionId = this.etx.transactionId
 
@@ -874,7 +907,15 @@ class InternalizeActionContext {
       }
       // A proof can also become available through getProvenOrReq. Preserve
       // ownership in that case as well as for a proof supplied by the caller.
-      if (pr.proven != null) await this.persistNewOwnership(transactionId, trx)
+      if (pr.proven != null) {
+        await this.storage.updateTransaction(
+          transactionId,
+          { provenTxId: pr.proven.provenTxId, status: 'completed' },
+          trx
+        )
+        await this.persistNewOwnership(transactionId, trx)
+        await this.receipt?.complete(trx)
+      }
     })
 
     const transactionId = this.etx!.transactionId
@@ -906,7 +947,12 @@ class InternalizeActionContext {
       // Publication remains outside the writer. Store unproven recipient
       // ownership only after it succeeds; proven ownership committed above.
       await this.storage.transaction(async trx => {
+        await this.receipt?.assertActive(trx)
+        if (this.retryExistingTransaction) {
+          await this.storage.updateTransaction(transactionId, { status: 'unproven' }, trx)
+        }
         await this.persistNewOwnership(transactionId, trx)
+        await this.receipt?.complete(trx)
       })
     }
   }
