@@ -3,7 +3,7 @@ id: local-funding-recovery
 title: 'Crediting a Payment Exactly Once in a Local Wallet'
 kind: guide
 version: '1.0.0'
-last_updated: '2026-10-08'
+last_updated: '2026-10-16'
 last_verified: '2026-10-08'
 review_cadence_days: 30
 status: experimental
@@ -33,6 +33,12 @@ expired ordinary receipt can be recovered without adding its provisional balance
 again; its superseded writer cannot subsequently credit or finalize. Existing
 operations still recover through their original funding ID and retained journal.
 These claims do not turn local ownership into broadcast or mining evidence.
+
+The local funding path also acquires its SQL claim inside that transaction,
+after verification and journal coordination. Killing an uncommitted writer
+therefore rolls back its claim as well as its ownership writes. It leaves no
+independently committed lease to delay recovery or block another prepared local
+participant. Ordinary internalization keeps its existing external-work lease.
 
 ## Installation and authority
 
@@ -70,7 +76,7 @@ pull an SDK 3.3.0-only type into an existing consumer.
 ## Shared backend receipt coordination
 
 `StorageKnex.withInternalizeReceipt` is a local backend coordination port used by
-ordinary internalization, the fixed-child companion and installed funding recovery.
+ordinary internalization and the fixed-child companion.
 Its types retain the ordinary SDK peer interface. It neither verifies Script nor
 credits an output, authorizes an acquisition or proves publication.
 
@@ -83,6 +89,16 @@ lease or grant a superseded writer authority. Existing methods compose these
 checks; applications should use their higher-level interfaces. The port is not a
 BRC-100 wire method, remote-provider capability or substitute for the ownership
 and user-identity checks performed by the selected internalization profile.
+
+`StorageKnex.withInternalizeReceiptTransaction` joins an existing active ownership
+transaction. It accepts the authenticated storage user and Atomic BEEF identity,
+and supplies a fence bound to that exact transaction. The installed funding
+journal uses this companion after taking its write guard; acquisition, ownership,
+the SQL completion key and the original funding receipt commit or roll back
+together. A competing active external owner is refused immediately, allowing the
+writer transaction to roll back before a later retry of the original operation.
+It never waits on a lease while holding the database writer. This does not shorten
+ordinary leases, seize a live owner's claim or authorize a new payment.
 
 ## One output, one operation
 

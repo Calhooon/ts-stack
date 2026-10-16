@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { resolve } from 'node:path'
+import knex from 'knex'
 import { _tu } from '../../../../test/utils/TestUtilsWalletStorage'
 import { SQLiteFundingRecoveryStore } from '../../../storage/fundingRecovery/SQLiteFundingRecoveryStore'
 import { fundingFixture } from '../../../storage/fundingRecovery/__tests__/fundingFixture'
@@ -15,6 +16,15 @@ interface Message {
   outputs?: number
   satoshis?: number
   message?: string
+}
+
+async function receiptState(database: string, userId: number, txid: string) {
+  const db = knex({ client: 'better-sqlite3', connection: { filename: database }, useNullAsDefault: true })
+  try {
+    return await db('internalize_receipts').where({ userId, txid }).select('state', 'needsNewReceipt')
+  } finally {
+    await db.destroy()
+  }
 }
 
 function receive(child: ChildProcess): Promise<Message> {
@@ -55,6 +65,11 @@ test.each(['intent-before-commit', 'intent-after-commit', 'ownership-before-comm
     first.send({ ...input, mode: 'interrupt', stage })
     expect(await boundary).toEqual({ event: 'boundary', stage })
     await stop(first)
+    // A killed uncommitted writer must leave neither ownership nor a separate
+    // pending lease behind. The committed case retains its completed fence.
+    expect(await receiptState(input.database, context.userId, input.operation.funding.txid)).toEqual(
+      stage === 'receipt-after-commit' ? [{ state: 'complete', needsNewReceipt: 0 }] : []
+    )
     second = fork(worker, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
     const recovery = receive(second)
     second.send({ ...input, mode: 'recover' })
@@ -83,12 +98,14 @@ test('two independent wallet processes racing the same intent commit one credit 
     const ready = children.map(receive)
     for (const child of children) child.send(input)
     expect(await Promise.all(ready)).toEqual([{ event: 'boundary', stage: 'ready-to-credit' }, { event: 'boundary', stage: 'ready-to-credit' }])
+    expect(await receiptState(input.database, context.userId, input.operation.funding.txid)).toEqual([])
     const results = children.map(receive)
     for (const child of children) child.send({ proceed: true })
     const completed = await Promise.all(results)
     expect(completed[0].result).toMatchObject({ state: 'accepted', funding: input.operation.funding })
     expect(completed[1].result).toEqual(completed[0].result)
     for (const child of children) await stop(child)
+    expect(await receiptState(input.database, context.userId, input.operation.funding.txid)).toEqual([{ state: 'complete', needsNewReceipt: 0 }])
     const recovery = fork(worker, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
     children.push(recovery)
     const final = receive(recovery)

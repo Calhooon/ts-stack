@@ -6,6 +6,12 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## wallet-toolbox 2.15.0 (source candidate)
 
+- Acquire the local funding route's shared SQL receipt fence inside its atomic
+  ownership/journal transaction. A killed uncommitted writer leaves no pending
+  lease, and independently prepared contenders can reach their coordination
+  boundary. Add an optional transaction-bound backend port without changing
+  ordinary receipt leases, BRC-100 requests or test deadlines.
+
 - Require an exact canonical compressed public-key round trip for opt-in BRC-197 fixed-child recipients before ownership. Add native lifecycle coverage that preserves pre-existing transaction accounting and uses distinct fixture references; ordinary internalization is unchanged.
 
 - Add opt-in local SQLite action recovery for atomic allocation, exact prepared

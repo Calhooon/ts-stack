@@ -351,6 +351,7 @@ function walletFundingTarget(repositoryRoot, source, property) {
   target.runnerOptions.jest.config.testMatch = [
     '<rootDir>/src/storage/fundingRecovery/__test/*.test.ts',
     '<rootDir>/src/signer/fundingRecovery/__test/*.test.ts',
+    '<rootDir>/test/wallet/action/internalizeAction.test.ts',
     '<rootDir>/test/storage/internalizeActionManagedChangePolicy.test.ts',
     '<rootDir>/test/storage/internalizeActionMarkInputsSpent.test.ts',
     '<rootDir>/test/storage/internalizeActionBasketReclassification.test.ts',
@@ -459,7 +460,7 @@ export function buildMutationTargets(repositoryRoot) {
           repositoryRoot,
           'packages/wallet/wallet-toolbox',
           'src/storage/StorageKnex.ts',
-          '  override async internalizeAction(',
+          '  private async acquireInternalizeReceipt(',
           '  private databaseSystem('
         ),
         sourceLineRange(

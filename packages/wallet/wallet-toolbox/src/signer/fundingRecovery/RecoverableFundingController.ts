@@ -36,7 +36,7 @@ export class RecoverableFundingController {
         tx: decodeOutputBytes(operation.beef, 65536),
         outputs: [{ outputIndex: operation.funding.outputIndex, protocol: 'wallet payment', paymentRemittance: { derivationPrefix: operation.derivationPrefix, derivationSuffix: operation.derivationSuffix, senderIdentityKey: operation.buyer } }],
         description: 'Recoverable acquisition funding'
-      }, async args => await this.store.storage.withInternalizeReceipt(auth, args, claim => storeInternalize(this.store.storage, auth, args, retained, claim)))
+      }, async args => await storeInternalize(this.store.storage, auth, args, retained))
       const result = await this.store.getInternalization(userId, this.wallet.identityKey, operation.id)
       requireFunding(result.state === 'accepted', 'Funding recovery ownership has not committed')
       return result

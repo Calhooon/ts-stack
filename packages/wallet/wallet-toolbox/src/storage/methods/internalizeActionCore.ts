@@ -229,7 +229,7 @@ export async function internalizeActionCore(
     // The caller has already retained the operation intent durably.
     await ctx.setupEvidence()
     await ctx.prepareRecoveryProof()
-    return await recovery.commit(async trx => await ctx.internalizeAtomically(trx))
+    return await recovery.commit(async (trx, claim) => await ctx.internalizeAtomically(trx, claim))
   }
   await ctx.asyncSetup()
 
@@ -387,7 +387,7 @@ class InternalizeActionContext {
     })
   }
 
-  private async loadExistingTransaction(trx?: TrxToken): Promise<void> {
+  private async loadExistingTransaction(trx?: TrxToken, receipt = this.receipt): Promise<void> {
     this.etx = verifyOneOrNone(
       await this.storage.findTransactions({
         partial: { userId: this.userId, txid: this.txid },
@@ -395,7 +395,7 @@ class InternalizeActionContext {
       })
     )
     const allowedStatuses: TransactionStatus[] = ['completed', 'unproven', 'sending', 'nosend']
-    if (this.receipt?.retryNew) allowedStatuses.push('failed')
+    if (receipt?.retryNew) allowedStatuses.push('failed')
     if (trx !== undefined) allowedStatuses.push('unprocessed')
     if (this.etx != null && !allowedStatuses.includes(this.etx.status)) {
       throw new WERR_INVALID_PARAMETER(
@@ -404,7 +404,7 @@ class InternalizeActionContext {
       )
     }
     this.isMerge = this.etx != null
-    if (this.receipt?.retryNew && this.etx != null) {
+    if (receipt?.retryNew && this.etx != null) {
       const existingOutputs = await this.storage.findOutputs({ partial: { userId: this.userId, txid: this.txid }, trx })
       if (existingOutputs.length === 0) {
         this.retryExistingTransaction = true
@@ -500,7 +500,7 @@ class InternalizeActionContext {
     for (const output of this.vargs.outputs) this.classifyRequestedOutput(output)
   }
 
-  private async setupStorage(trx?: TrxToken): Promise<void> {
+  private async setupStorage(trx?: TrxToken, receipt = this.receipt): Promise<void> {
     this.changeBasket = verifyOne(
       await this.storage.findOutputBaskets({
         partial: { userId: this.userId, name: 'default' },
@@ -508,7 +508,7 @@ class InternalizeActionContext {
       })
     )
     this.baskets = {}
-    await this.loadExistingTransaction(trx)
+    await this.loadExistingTransaction(trx, receipt)
     await this.linkExistingOutputs(trx)
     await this.validateBasketMerges(trx)
     this.computeWalletPaymentBalance()
@@ -551,9 +551,9 @@ class InternalizeActionContext {
    * SQLite write guard. An unmined transaction is queued for the existing monitor;
    * the receipt proves ownership, not broadcast or mining. No network I/O occurs here.
    */
-  async internalizeAtomically(trx: TrxToken): Promise<StorageInternalizeActionResult> {
-    await this.receipt?.assertActive(trx)
-    await this.setupStorage(trx)
+  async internalizeAtomically(trx: TrxToken, receipt = this.receipt): Promise<StorageInternalizeActionResult> {
+    await receipt?.assertActive(trx)
+    await this.setupStorage(trx, receipt)
     const existing = this.etx
     const total = (this.retryExistingTransaction ? 0 : (existing?.satoshis ?? 0)) + this.satoshis
     requireFunding(Number.isSafeInteger(total), 'Funding recovery transaction balance is not a safe integer')
@@ -561,7 +561,7 @@ class InternalizeActionContext {
     if (this.recoveryProven !== undefined)
       proven = (await this.storage.findOrInsertProvenTx(this.recoveryProven, trx)).proven
     this.etx = await this.findOrInsertTargetTransaction(this.satoshis, proven, trx)
-    await this.receipt?.markNew(trx)
+    await receipt?.markNew(trx)
     const transactionId = this.etx.transactionId
     await this.markInputsSpent(transactionId, trx)
     await this.addLabels(transactionId, trx)
@@ -569,7 +569,7 @@ class InternalizeActionContext {
     await this.mergeBasketInsertions(transactionId, trx)
     if (proven !== undefined) await this.completeRecoveryProof(proven, trx)
     else await this.queueRecoveryMonitoring(existing, transactionId, trx)
-    await this.receipt?.complete(trx)
+    await receipt?.complete(trx)
     return this.r
   }
 

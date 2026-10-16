@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { canonicalOutputJSON, outputHex32, parseOutputChain, type OutputChain, type OutputWalletFundingOperation } from '@bsv/sdk'
+import { canonicalOutputJSON, decodeOutputBytes, outputHex32, parseOutputChain, type OutputChain, type OutputWalletFundingOperation } from '@bsv/sdk'
 import type { TrxToken } from '../../sdk/WalletStorage.interfaces'
 import { StorageKnex } from '../StorageKnex'
 import { genesisHeader } from '../../services/chaintracker/chaintracks/util/blockHeaderUtilities'
@@ -140,7 +140,12 @@ export class SQLiteFundingRecoveryStore {
         requireFunding(row?.semantic === semantic, 'Funding recovery intent is absent or changed')
         requireFunding(row.rejected === 0, 'Rejected funding cannot be credited')
         if (row.receipt !== null) return { accepted: true, isMerge: true, txid: operation.funding.txid, satoshis: 0 }
-        const result = await run(trx)
+        const result = await this.storage.withInternalizeReceiptTransaction(
+          { userId, identityKey: walletIdentity },
+          { tx: decodeOutputBytes(operation.beef, 65536) },
+          trx,
+          receipt => run(trx, receipt)
+        )
         requireFunding(result.accepted && result.txid === operation.funding.txid && result.sendWithResults === undefined && result.notDelayedResults === undefined, 'Funding recovery did not finish ownership writes')
         const transactions = await this.storage.findTransactions({ partial: { userId, txid: result.txid }, trx, noRawTx: true })
         requireFunding(transactions.length === 1, 'Funding recovery transaction is absent')

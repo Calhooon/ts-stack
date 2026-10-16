@@ -1,4 +1,5 @@
 import type { StorageInternalizeActionResult, TrxToken } from '../../sdk/WalletStorage.interfaces'
+import type { InternalizeReceiptClaim } from '../methods/InternalizeReceiptClaim'
 
 /**
  * Installed local hook only: no new BRC-100 wire field or default behavior.
@@ -8,5 +9,5 @@ import type { StorageInternalizeActionResult, TrxToken } from '../../sdk/WalletS
 export interface FundingRecoveryCommit {
   readonly protocol: 'wallet-funding-recovery-v1'
   reject(): Promise<void>
-  commit(run: (trx: TrxToken) => Promise<StorageInternalizeActionResult>): Promise<StorageInternalizeActionResult>
+  commit(run: (trx: TrxToken, receipt?: InternalizeReceiptClaim) => Promise<StorageInternalizeActionResult>): Promise<StorageInternalizeActionResult>
 }

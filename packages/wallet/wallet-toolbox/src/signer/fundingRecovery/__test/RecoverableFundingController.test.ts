@@ -50,6 +50,57 @@ describe('durable local acquisition funding', () => {
     expect(await context.activeStorage.findOutputs({ partial: { txid: input.funding.txid } })).toEqual([])
   })
 
+  test('the transaction-bound port refuses missing, malformed and completed transaction capabilities', async () => {
+    const { operation } = await setup()
+    const input = operation()
+    const auth = await context.wallet.storage.getAuth(true)
+    const args = { tx: Utils.toArray(input.beef, 'base64') }
+    const write = jest.fn()
+    const malformed = Object.assign(jest.fn(), { isTransaction: true })
+    for (const invalid of [undefined, context.activeStorage.knex, { isTransaction: true }, malformed]) {
+      await expect(context.activeStorage.withInternalizeReceiptTransaction(auth, args, invalid as never, write)).rejects.toMatchObject({ code: 'WERR_INVALID_PARAMETER', parameter: 'trx' })
+    }
+    let completed: unknown
+    await context.activeStorage.transaction(async trx => { completed = trx })
+    await expect(context.activeStorage.withInternalizeReceiptTransaction(auth, args, completed as never, write)).rejects.toMatchObject({ code: 'WERR_INVALID_PARAMETER', parameter: 'trx' })
+    expect(write).not.toHaveBeenCalled()
+    expect(malformed).not.toHaveBeenCalled()
+    expect(await context.activeStorage.knex('internalize_receipts').select()).toEqual([])
+  })
+
+  test.each([false, true])('a transaction-scoped fence rolls back with its owner and preserves prior completed history=%s', async completed => {
+    const { operation } = await setup()
+    const input = operation()
+    const auth = await context.wallet.storage.getAuth(true)
+    const rows = context.activeStorage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid })
+    if (completed) await context.activeStorage.knex('internalize_receipts').insert({ userId: context.userId, txid: input.funding.txid, ownerToken: 'owned-prior-atomic-fixture', state: 'complete', leaseUntil: 0, needsNewReceipt: false })
+    await expect(context.activeStorage.transaction(async trx => {
+      return await context.activeStorage.withInternalizeReceiptTransaction(auth, { tx: Utils.toArray(input.beef, 'base64') }, trx, async claim => {
+        await expect(claim.assertActive(undefined as never)).rejects.toMatchObject({ code: 'WERR_INVALID_PARAMETER', parameter: 'trx' })
+        await claim.assertActive(trx)
+        await claim.markNew(trx)
+        throw new Error('Controlled atomic owner rollback')
+      })
+    })).rejects.toThrow('Controlled atomic owner rollback')
+    if (completed) expect(await rows.clone().first()).toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+    else expect(await rows.clone().select()).toEqual([])
+  })
+
+  test('an active external receipt owner refuses atomic funding without losing its original recovery intent', async () => {
+    const { operation, controller } = await setup()
+    const input = operation()
+    const rows = context.activeStorage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid })
+    await context.activeStorage.knex('internalize_receipts').insert({ userId: context.userId, txid: input.funding.txid, ownerToken: 'independent-active-fixture', state: 'pending', leaseUntil: Date.now() + 60000, needsNewReceipt: false })
+    await expect(controller.internalizeOnce(input)).rejects.toThrow('already being processed')
+    expect(await controller.getInternalization(input.id)).toEqual({ state: 'unknown' })
+    expect(await context.activeStorage.findOutputs({ partial: { txid: input.funding.txid } })).toEqual([])
+    expect(await rows.clone().first()).toMatchObject({ state: 'pending', needsNewReceipt: 0 })
+    await rows.clone().delete()
+    expect(await controller.internalizeOnce(input)).toMatchObject({ state: 'accepted', funding: input.funding })
+    expect(await context.activeStorage.findOutputs({ partial: { txid: input.funding.txid } })).toHaveLength(1)
+    expect(await rows.clone().first()).toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+  })
+
   test('recovery takes over an expired ordinary receipt without double accounting or a stale writer', async () => {
     const { operation, controller } = await setup()
     const input = operation()
