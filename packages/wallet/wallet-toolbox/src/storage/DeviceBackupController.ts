@@ -143,7 +143,7 @@ export class DeviceBackupController {
         typeof copy.identityKey !== 'string' ||
         copy.identityKey.length < 1 ||
         copy.identityKey.length > 256 ||
-        !['main', 'test', 'stn', 'ttn', 'tstn', 'mock'].includes(copy.chain) ||
+        !['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock'].includes(copy.chain) ||
         typeof copy.openDestination !== 'function' ||
         typeof copy.closeDestination !== 'function'
       )

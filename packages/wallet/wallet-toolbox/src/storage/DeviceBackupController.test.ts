@@ -3,6 +3,7 @@ import {
   migrateDeviceBackupPreferences,
   type DeviceBackupProfile
 } from './DeviceBackupController'
+import type { Chain } from '../sdk/types'
 import type { WalletStorageManager } from './WalletStorageManager'
 import type { WalletStorageProvider } from '../sdk/WalletStorage.interfaces'
 import type { SyncSessionOptions, SyncSessionResult } from './sync/syncSession'
@@ -16,7 +17,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 const completed: SyncSessionResult = { status: 'completed', mode: 'paged', pages: 1, inserts: 1, updates: 0 }
-function profile(id: string, effects: string[], chain: 'main' | 'test' = 'test'): DeviceBackupProfile {
+function profile(id: string, effects: string[], chain: Chain = 'test'): DeviceBackupProfile {
   const primary = {} as WalletStorageProvider
   return {
     profileId: id,
@@ -69,6 +70,16 @@ test('one device preference selects independent authenticated profile runs witho
   expect(effects).toEqual(['open:archive', 'sync:identity-a', 'close', 'open:archive', 'sync:identity-b', 'close'])
   expect(preferences.write).not.toHaveBeenCalled()
   await controller.close()
+})
+test('regtest backup profiles preserve their declared network and independent destination', async () => {
+  const effects: string[] = []
+  const controller = await DeviceBackupController.open(store(), [profile('regtest', effects, 'regtest')])
+  try {
+    expect((await controller.syncNow()).map(value => value.profileId)).toEqual(['regtest'])
+    expect(effects).toEqual(['open:archive', 'sync:identity-regtest', 'close'])
+  } finally {
+    await controller.close()
+  }
 })
 test('suspension awaits an in-flight acknowledged commit and closes the actual provider before resume', async () => {
   const effects: string[] = [],

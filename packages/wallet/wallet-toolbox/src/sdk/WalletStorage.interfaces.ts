@@ -169,6 +169,11 @@ export interface WalletStorageSync extends WalletStorageWriter, WalletStorageSyn
   setActive: (auth: AuthId, newActiveStorageIdentityKey: string) => Promise<number>
 
   getSyncChunk: (args: RequestSyncChunkArgs) => Promise<SyncChunk>
+  /**
+   * Apply one sync page. First-party providers throw on failure.
+   * A custom writer may instead set `ProcessSyncChunkResult.error`;
+   * `WalletStorageManager` live-sync loops throw that error and stop.
+   */
   processSyncChunk: (args: RequestSyncChunkArgs, chunk: SyncChunk) => Promise<ProcessSyncChunkResult>
 }
 
@@ -719,6 +724,8 @@ export interface ProcessSyncChunkResult {
    * Optional failure channel for custom providers; local providers normally throw.
    * A failure takes precedence over done, counters and nextCheckpoint. Callers stop
    * and resume from the destination's durable checkpoint instead of retrying a write.
+   * First-party implementations throw. Live syncToWriter and syncFromReader
+   * stop immediately when a custom writer returns this field.
    */
   error?: WalletError
 }

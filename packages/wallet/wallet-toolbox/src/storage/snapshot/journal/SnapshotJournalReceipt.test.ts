@@ -290,7 +290,7 @@ test('binding refuses non-record values and textual lookalikes before hashing', 
 })
 
 test('all supported chains and exact UTF-8 storage identity boundaries bind distinctly', () => {
-  const chains = ['main', 'test', 'stn', 'ttn', 'tstn', 'mock']
+  const chains = ['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock']
   expect(new Set(chains.map(chain => snapshotJournalReceiptBinding({ ...binding, chain }))).size).toBe(chains.length)
   const identities = ['x', 'x'.repeat(256), 'é'.repeat(128), '😀'.repeat(64)]
   const hashes = identities.map(storageIdentity => snapshotJournalReceiptBinding({ ...binding, storageIdentity }))

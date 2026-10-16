@@ -897,3 +897,14 @@ describe('acknowledged destination window succession', () => {
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 })
+
+test('regtest destination windows keep their network binding and reject another chain', async () => {
+  await db('settings').update({ chain: 'regtest' })
+  binding = { ...binding, source: { ...binding.source, chain: 'regtest' } }
+  binding.receipt = { ...binding.receipt, binding: snapshotJournalReceiptBinding(binding.source) }
+  const opened = await db.transaction(t => beginSnapshotJournalDestinationWindow(t, binding, sessionId))
+  expect(opened).toBeDefined()
+  const wrong = { ...binding, source: { ...binding.source, chain: 'test' } }
+  wrong.receipt = { ...wrong.receipt, binding: snapshotJournalReceiptBinding(wrong.source) }
+  await expect(db.transaction(t => beginSnapshotJournalDestinationWindow(t, wrong, sessionId))).rejects.toThrow()
+})

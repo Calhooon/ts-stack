@@ -42,7 +42,7 @@ export type SnapshotJournalDestinationStep =
 
 const table = 'snapshot_reconciliation_windows'
 const digest = /^[0-9a-f]{64}$/
-const chains = ['main', 'test', 'stn', 'ttn', 'tstn', 'mock']
+const chains = ['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock']
 
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Invalid or stale journal destination window')

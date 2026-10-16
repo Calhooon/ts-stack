@@ -71,7 +71,7 @@ export function snapshotJournalReceiptBinding(value: SnapshotJournalReceiptBindi
     typeof value.identityKey !== 'string' ||
     !/^(02|03)[0-9a-f]{64}$/.test(value.identityKey) ||
     !boundedInteger(value.userId, Number.MAX_SAFE_INTEGER) ||
-    !['main', 'test', 'stn', 'ttn', 'tstn', 'mock'].includes(value.chain)
+    !['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock'].includes(value.chain)
   )
     return invalid()
   return createHash('sha256')

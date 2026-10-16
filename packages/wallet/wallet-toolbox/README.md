@@ -63,6 +63,30 @@ invocation. The all-table allocation refusal matrix uses the fixture's existing
 allocation limit, all transfer widths and the exact exhaustion assertions. This
 qualification allowance does not renew ownership or change production limits.
 
+## Receiving already-broadcast payments
+
+The 2.14.9 source candidate completes broadcast results even when storage
+already marks the request `unmined` or `completed`. This fixes first receipt
+without a mining proof on shared storage, and the same result path when another
+storage worker advances the request before the broadcast result refresh. The
+stored advanced state remains intact; unsuccessful provider results still
+reject receipt and do not credit new recipient outputs. Repeated successful
+receipt remains idempotent. A payment carrying its valid mining proof follows
+the existing proof path without rebroadcast.
+
+SQL storage now serializes receipt ownership across independent processes
+through a durable user/TXID claim. The migration preserves legacy transaction
+and output rows, including historical duplicates, while adding the claim table.
+Ambiguous historical receipts still require separate reconciliation; this
+change prevents a new same-recipient overlap from creating another local credit.
+Back up and preflight the database before rollout, then upgrade all storage
+instances together; an older instance can bypass the new receipt claim.
+Pending claims recover after their database-timed lease expires. No
+public API or wire migration is required. Browser IndexedDB does not use the
+SQL receipt claim. Source versions are candidates until published through the
+protected release workflow; upgrading an app alone does not upgrade its remote
+storage server.
+
 ## Backup and recovery: keep both keys and wallet data
 
 **A root key or seed alone is not a complete BRC-100 wallet backup.** Users
@@ -923,11 +947,22 @@ synchronized tracker can continue serving its last-good checked data during a
 provider outage. WhatsOnChain remains a mainnet/testnet fallback and anonymous
 requests are serialized below its documented public rate.
 
-The supported chain identifiers are `main`, `test`, `stn`, `ttn`, and `tstn`
-(`mock` remains available for test utilities). STN and Terra Scaling TestNet do
-not have operator-independent public endpoints: set `STN_CHAINTRACKS_URL` or
-`TSTN_CHAINTRACKS_URL`, use the matching Arcade environment variable, or inject
-an explicit `ChaintracksClientApi`. URLs ending in `/v2` use the reconnecting
+The supported chain identifiers are `main`, `test`, `stn`, `ttn`, `tstn`, and
+`regtest` (`mock` remains available for test utilities). STN, Terra Scaling
+TestNet, and regtest do not have operator-independent public endpoints: set
+`STN_CHAINTRACKS_URL`, `TSTN_CHAINTRACKS_URL`, or `REGTEST_CHAINTRACKS_URL`, use
+the matching Arcade environment variable, or inject an explicit
+`ChaintracksClientApi`. Like TTN, the default regtest services use Arcade
+(`REGTEST_ARCADE_URL`) as broadcaster and Merkle-path provider and register no
+legacy ARC fallback.
+
+`regtest` is Teranode's regression network (go-chaincfg `RegressionNetParams`):
+the canonical regtest genesis header and a proof-of-work limit of `0x207fffff`.
+Only a caller that names `regtest` gets that limit; every other chain, and every
+header check that names no chain, keeps the mainnet limit of `0x1d00ffff`.
+Regtest proof of work costs nothing to produce, so a regtest wallet trusts its
+ChainTracks service for the header chain. Use it for private test deployments
+only. URLs ending in `/v2` use the reconnecting
 go-chaintracks client; existing legacy v1 URLs and explicit clients remain
 compatible. Browser and mobile distributions expose the same fetch/SSE client
 without Node `Buffer` or filesystem dependencies.

@@ -39,7 +39,7 @@ describe.each(['to', 'from'] as const)('sync %s failure contracts', direction =>
       : manager.syncFromReader(identityKey, reader)
   }
 
-  test.each<Chain>(['main', 'stn', 'ttn', 'tstn', 'mock'])(
+  test.each<Chain>(['main', 'stn', 'ttn', 'tstn', 'regtest', 'mock'])(
     'rejects test/%s before user registration, checkpoint creation or a chunk read',
     async chain => {
       const reader = await makeStorage(chain)
@@ -55,6 +55,17 @@ describe.each(['to', 'from'] as const)('sync %s failure contracts', direction =>
       expect(await writer.countSyncStates({ partial: {} })).toBe(0)
     }
   )
+
+  test('copies regtest profiles without crossing a network boundary', async () => {
+    const reader = await makeStorage('regtest')
+    const writer = await makeStorage('regtest')
+    const { user } = await reader.findOrInsertUser(identityKey)
+    await reader.findOrInsertTxLabel(user.userId, 'regtest profile data')
+    await copy(reader, writer)
+    expect(await writer.findTxLabels({ partial: {} })).toEqual([
+      expect.objectContaining({ label: 'regtest profile data' })
+    ])
+  })
 
   test.each([undefined, 'invalid'])('does not guess an absent or unrecognized chain: %s', async chain => {
     const reader = await makeStorage()
