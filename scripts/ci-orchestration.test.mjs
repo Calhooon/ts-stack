@@ -681,7 +681,10 @@ test('all original privileged root-copy cases run once as installer with mandato
     /--runInBand --watchman=false --testPathIgnorePatterns=man\.test\.ts --runTestsByPath/
   )
   assert.match(root, /src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs/)
-  assert.match(root, /node scripts\/wallet-native-root-copy-ci\.mjs native-root-copy-result\.json/)
+  assert.match(
+    root,
+    /node scripts\/wallet-native-root-copy-ci\.mjs < native-root-copy-result\.json/
+  )
   assert.match(root, /\.coverage-output\/wallet-native-root-copy\.lcov\.info/)
   assert.doesNotMatch(root, /testNamePattern|continue-on-error|passWithNoTests/)
   assert.match(

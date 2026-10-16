@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -42,10 +41,57 @@ export function validateRootCopyReport(report, repositoryRoot = root) {
   )
   return { originalCases: rootCopyCaseNames.length, passed: rootCopyCaseNames.length }
 }
+/** Consume a bounded CI report without accepting a filesystem path from the CLI. */
+export function readRootCopyReport(input) {
+  return new Promise((resolveReport, rejectReport) => {
+    let buffer = Buffer.alloc(67108864),
+      bytes = 0,
+      settled = false
+    const clean = () => {
+      input.off('data', data)
+      input.off('end', end)
+      input.off('error', fail)
+      input.off('close', close)
+      buffer = undefined
+    }
+    const fail = error => {
+      if (settled) return
+      settled = true
+      clean()
+      input.destroy()
+      rejectReport(error)
+    }
+    const data = chunk => {
+      if (!Buffer.isBuffer(chunk)) {
+        fail(new TypeError('Root-copy report requires byte input'))
+        return
+      }
+      if (chunk.length > 67108864 - bytes) {
+        fail(new RangeError('Root-copy report exceeds its 64 MiB byte ceiling'))
+        return
+      }
+      chunk.copy(buffer, bytes)
+      bytes += chunk.length
+    }
+    const end = () => {
+      if (settled) return
+      try {
+        const report = JSON.parse(buffer.toString('utf8', 0, bytes))
+        settled = true
+        clean()
+        resolveReport(report)
+      } catch (error) {
+        fail(error)
+      }
+    }
+    const close = () => fail(new Error('Root-copy report input closed before completion'))
+    input.on('data', data)
+    input.once('end', end)
+    input.once('error', fail)
+    input.once('close', close)
+  })
+}
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  assert.equal(process.argv.length, 3)
-  assert.ok(statSync(process.argv[2]).size <= 67108864)
-  console.log(
-    JSON.stringify(validateRootCopyReport(JSON.parse(readFileSync(process.argv[2], 'utf8'))))
-  )
+  assert.equal(process.argv.length, 2)
+  console.log(JSON.stringify(validateRootCopyReport(await readRootCopyReport(process.stdin))))
 }

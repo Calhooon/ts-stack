@@ -1120,7 +1120,7 @@ jobs:
             src/storage/portable/native/RootNativeCopyContracts.test.cjs \
             --json --outputFile="$GITHUB_WORKSPACE/native-root-copy-result.json"
           cd "$GITHUB_WORKSPACE"
-          node scripts/wallet-native-root-copy-ci.mjs native-root-copy-result.json
+          node scripts/wallet-native-root-copy-ci.mjs < native-root-copy-result.json
           sudo "$native_node" scripts/normalize-lcov-paths.mjs \
             packages/wallet/wallet-toolbox/coverage/native-root-copy/lcov.info \
             packages/wallet/wallet-toolbox
