@@ -18,7 +18,9 @@ import { toArray, toBase64 } from '../primitives/utils.js'
 export const OUTPUT_PROCESSOR_ATTESTATION_POLICY =
   'https://bsv.brc.dev/overlays/0196#processor-attestation-v1'
 
-const block = s.fixedObject({
+// Fixed grammar construction has no external effects. Bundlers may discard an
+// unused companion while every retained parser still performs all validation.
+const block = /* @__PURE__ */ s.fixedObject({
   blockHash: s.hex,
   height: s.u64,
   tipHash: s.hex,
@@ -27,13 +29,13 @@ const block = s.fixedObject({
   contextId: s.text,
   chainPolicyDigest: s.hex
 })
-const release = s.fixedObject(
+const release = /* @__PURE__ */ s.fixedObject(
   { chain: s.chain, txid: s.hex, policy: parseOutputReleasePolicy, acceptedAt: s.u64 },
   { processorEvidence: s.bytes, blockEvidence: block }
 )
-const processor = s.fixedObject({
-  body: s.fixedObject({
-    version: s.literal(1),
+const processor = /* @__PURE__ */ s.fixedObject({
+  body: /* @__PURE__ */ s.fixedObject({
+    version: /* @__PURE__ */ s.literal(1),
     chain: s.chain,
     txid: s.hex,
     policy: s.iri,
