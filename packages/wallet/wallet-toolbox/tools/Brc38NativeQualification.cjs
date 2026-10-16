@@ -828,7 +828,7 @@ async function runNativeQualification(options, mode) {
     )
     if (
       records[12].stdout !==
-      'PASS independent compact observer names sources=47 transitions=423 checks=2784 fixturesDrained=true\n'
+      'PASS independent compact observer names sources=48 transitions=432 checks=2824 fixturesDrained=true\n'
     )
       throw new Error('Independent native contract receipt differs: independent-local-observer-names')
     await checkInputs()

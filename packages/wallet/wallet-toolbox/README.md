@@ -16,10 +16,12 @@ those no-op entries must not be rewritten as deployed schema changes.
 
 The finite implementation inventory covers the original 24 required behavior
 families, including #542 and #543. Integration, consumer entry points and
-delivery/rollback documentation are present. After reconciling newer main,
-native whole-profile recovery still needs integration of the new durable
-`internalize_receipts` table with its fixed local inventory. The existing
-47-family evidence does not establish preservation of that new family.
+delivery/rollback documentation are present. Native whole-profile recovery now
+includes the durable `internalize_receipts` family added on main: 48 local
+families, with the original 47 coordinates unchanged. The source observer,
+baseline/candidate copy, post-merge comparison and independent fixtures include
+the new receipt keys, owner, state and lease values. Qualification of this
+extension remains pending; earlier 47-family evidence does not qualify it.
 All eleven whole-program acceptance rows remain open. The complete
 native foreground-refold contract passes; the committed-ACK-loss/reopen/refold
 contract now also passes with both complete 47-family comparisons and consumed-ID

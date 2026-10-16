@@ -17,17 +17,17 @@ import { previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { brc38NativeLocalBaselineTables } from './Brc38NativeLocalBaselineTables'
 import { brc38PrivateLocalCandidateStateTable } from './Brc38PrivateLocalCandidateJournalNode'
 
-// Full all47 preparation measured minutes and the unchanged customer workflow
+// Full all48 preparation measured minutes and the unchanged customer workflow
 // took 39.4 minutes. These three cases admit fresh instances under the existing
 // one-hour fixture and 16 KiB read selection, with 30s outer cleanup headroom.
 // Original operations/oracles and actual expiry remain; no packet is renewed.
 // These test allowances are not production latency promises.
 
-/** Source-only genuine runner wiring. The declared graph contains all47
+/** Source-only genuine runner wiring. The declared graph contains all48
  * nonempty local families, an occupied incoming transaction, all13 archive
  * families and inert original provenance. These cases remain UNRUN. */
 test.each([false, true])(
-  'complete native runner drains scopes and independently compares all47 rows; refold=%s',
+  'complete native runner drains scopes and independently compares all48 rows; refold=%s',
   async mutate => {
     const description = 'independent incoming program\u0000雪😀'.repeat(1000),
       monitorEvent = 'independent foreground during committed import'
@@ -36,7 +36,7 @@ test.each([false, true])(
         const before = await captureComposedSemanticFixture(fixture.source.manager),
           expected = nativeMergeExpectedFixture(fixture.initial, before, fixture.source.incomingData)
         try {
-          expect(Object.keys(expected)).toHaveLength(47)
+          expect(Object.keys(expected)).toHaveLength(48)
           for (const rows of Object.values(expected)) expect(rows.length).toBeGreaterThan(0)
           expect(expected.monitor_events).toHaveLength(1)
           if (mutate)
@@ -73,7 +73,7 @@ test.each([false, true])(
                   const users = await trx('users').select('userId').limit(2)
                   if (users.length === 0) {
                     // Rebuilding an inactive candidate deliberately clears all
-                    // 47 families before copying users again. Read-slot drainage
+                    // 48 families before copying users again. Read-slot drainage
                     // must not require a completed image at this boundary.
                     expect(mutate).toBe(true)
                     const states = await trx(brc38PrivateLocalCandidateStateTable)

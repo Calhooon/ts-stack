@@ -53,7 +53,8 @@ const tables = [
   'snapshot_reconciliation_membership_retirements',
   'snapshot_reconciliation_provenance_budgets',
   'snapshot_reconciliation_provenance',
-  'snapshot_reconciliation_window_progress'
+  'snapshot_reconciliation_window_progress',
+  'internalize_receipts'
 ] as const
 const cells: Readonly<
   Record<
@@ -285,7 +286,7 @@ async function logicalCell(
  * Capture before the operation, declare later postimages before mutation, and
  * compare to separately read candidates. This is synthetic oracle DATA only. */
 export async function readIndependentNativeInventory(k: Knex.Transaction): Promise<IndependentNativeInventory> {
-  requireFixture(k.isTransaction && !k.isCompleted() && tables.length === 47)
+  requireFixture(k.isTransaction && !k.isCompleted() && tables.length === 48)
   const result = {} as Record<Brc38NativeLocalBaselineTable, IndependentLocalCandidateRow[]>
   let rows = 0,
     bytes = 0

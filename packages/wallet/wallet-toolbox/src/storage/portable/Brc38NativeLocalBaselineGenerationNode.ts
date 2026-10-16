@@ -962,7 +962,7 @@ export async function retireBrc38NativeLocalBaselineEpochPage(
 }
 /** Exact finite reset after retirement. Existing unsafe physical keys refuse
  * activation using each table's rowid index. The NEW epoch then requires the
- * ordinary bounded all47 bootstrap with observers active before capture. */
+ * ordinary bounded all48 bootstrap with observers active before capture. */
 export async function activateBrc38NativeLocalBaselineRecoveredEpoch(
   k: Knex.Transaction,
   expectedEpoch: string

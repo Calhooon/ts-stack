@@ -50,7 +50,8 @@ export const brc38NativeLocalBaselineTables = Object.freeze([
   'snapshot_reconciliation_membership_retirements',
   'snapshot_reconciliation_provenance_budgets',
   'snapshot_reconciliation_provenance',
-  'snapshot_reconciliation_window_progress'
+  'snapshot_reconciliation_window_progress',
+  'internalize_receipts'
 ] as const)
 export const brc38NativeLocalBaselineTableCount = brc38NativeLocalBaselineTables.length
 export type Brc38NativeLocalBaselineTable = (typeof brc38NativeLocalBaselineTables)[number]

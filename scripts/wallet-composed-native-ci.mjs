@@ -114,7 +114,7 @@ export const nativeMergeCohorts = Object.freeze(
   [
     ...[false, true].map(refold => ({
       id: refold ? 'runner-refold' : 'runner',
-      name: `complete native runner drains scopes and independently compares all47 rows; refold=${refold}`,
+      name: `complete native runner drains scopes and independently compares all48 rows; refold=${refold}`,
       minutes: 90
     })),
     {

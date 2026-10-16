@@ -54,7 +54,8 @@ const allTables = [
   'snapshot_reconciliation_membership_retirements',
   'snapshot_reconciliation_provenance_budgets',
   'snapshot_reconciliation_provenance',
-  'snapshot_reconciliation_window_progress'
+  'snapshot_reconciliation_window_progress',
+  'internalize_receipts'
 ] as const
 const digest = (bytes: Uint8Array | string): string => createHash('sha256').update(bytes).digest('hex')
 // Independently authored auxiliary coordinates; do not import the production
@@ -114,6 +115,14 @@ export async function seedComposedAuxiliaryFixture(
       sourceGeneration: generation
     },
     rows: Record<string, Row> = {
+      internalize_receipts: {
+        userId,
+        txid: 'e'.repeat(64),
+        ownerToken: 'original-completed-receipt-owner',
+        state: 'complete',
+        leaseUntil: 0,
+        needsNewReceipt: 0
+      },
       monitor_events: { ...times, id: 400, event: 'inactive-fixture', details: text },
       prepared_beefs: {
         ...times,
@@ -367,7 +376,7 @@ export async function assertComposedAuxiliaryFixture(
       reader = driver.createOwnedNativeReadDatabase(active.knex)
     try {
       await reader.transaction(async read => {
-        expect(allTables).toHaveLength(47)
+        expect(allTables).toHaveLength(48)
         for (const table of allTables) {
           const present = await read(table).select(read.raw('1 AS present')).limit(1)
           expect(present).toHaveLength(1)

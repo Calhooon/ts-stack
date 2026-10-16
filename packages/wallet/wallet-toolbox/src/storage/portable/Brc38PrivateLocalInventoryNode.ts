@@ -100,7 +100,7 @@ const incomingTables = new Set<string>([
   'certificate_fields',
   'sync_states'
 ])
-/** The fixed 33 local recovery families: 31 remain unchanged, while two
+/** The fixed 34 local recovery families: 32 remain unchanged, while two
  * prepared-cache families follow independently reconstructed proof effects.
  * Full source/candidate keys, metadata, physical markers and logical bytes are
  * compared again after import. Shared quota is independently recounted from

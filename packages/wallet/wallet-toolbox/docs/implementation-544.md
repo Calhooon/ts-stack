@@ -2750,3 +2750,23 @@ insufficient evidence. The repository-health CI job installs locked root and
 wallet compiler dependencies and rebuilds the audited esbuild binary before
 running its unchanged complete control suite, including real ts-jest/esbuild
 configuration regressions. No check is skipped or suppressed.
+
+### Durable SQL receipt family after main integration
+
+Native local composition now enumerates 48 families. `internalize_receipts` is
+appended at coordinate 47, preserving all prior coordinates. Its durable
+user/TXID key, owner token, state, lease and retry flag are operational local
+state and participate in coherent baseline capture, mutation observation,
+candidate copying and post-merge preservation. They are not added to the
+standard BRC-38 v1 archive closure. Independent SQL fixtures seed actual
+completed claims and compare their full metadata; native observer tests add all
+three mutations, physical coordinates and rollback for the new family.
+
+This changes the exact fingerprint of the unpublished private native journal.
+Old candidate journal families are refused by exact schema comparison before
+installation; no occupied journal is rewritten or data reset. Finish pending
+work with its original pinned artifact before creating and verifying a fresh
+current enrollment; retain the original profile and artifact for rollback.
+This internal candidate transition does not replace main's standard SQL receipt
+migration or change ordinary released-wallet rows. Current 48-family native
+qualification is required; historical 47-family results cannot establish it.

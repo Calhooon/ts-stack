@@ -137,7 +137,7 @@ export async function verifyBrc38PrivateLocalCandidateJournal(controller: Actual
   refused = false
   try {
     await controller.withWriter(async trx => {
-      await trx(state).where({ slot: 1 }).update({ phase: 'RECOVERY', copyTable: 47, afterRowId: null })
+      await trx(state).where({ slot: 1 }).update({ phase: 'RECOVERY', copyTable: 48, afterRowId: null })
     })
   } catch {
     refused = true
@@ -159,12 +159,12 @@ export async function verifyBrc38PrivateLocalCandidateTwoPassJournal(controller:
         maximumRows: 4
       })
   )
-  for (let table = 1; table <= 47; table++)
+  for (let table = 1; table <= 48; table++)
     await controller.withWriter(async trx => {
       requireCase(
         (await trx(state)
           .where({ slot: 1 })
-          .update({ copyTable: table, ...(table === 47 ? { phase: 'DELTA' } : {}) })) === 1
+          .update({ copyTable: table, ...(table === 48 ? { phase: 'DELTA' } : {}) })) === 1
       )
     })
   await controller.withWriter(async trx => {

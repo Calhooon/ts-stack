@@ -153,6 +153,17 @@ require their operational authorization after complete artifact validation.
   private composition, through the actual idle owner. Persisted receipts do not
   replace current kernel state; full source, image and row checks still run.
 
+- Preserve main's durable SQL receipt claims in native local composition and
+  recovery. Append the family after all 47 existing table coordinates; observe
+  actual inserts, updates, deletes and rollback without adding it to BRC-38's
+  thirteen-table archive. Independent native fixtures retain actual receipt
+  keys, owner token, completed state and lease metadata.
+- Fresh private native enrollments require the current complete source/schema
+  fingerprint. Pre-change unpublished candidate journals are not silently
+  rewritten: finish pending work with their original pinned artifact, retain
+  the old profile for rollback and verify a fresh current enrollment. Ordinary
+  released SQL wallets retain main's standard receipt migration and rows.
+
 ### Additional public-main 2.15.0 changes
 
 - Adds a `regtest` `Chain` for Teranode regression-network deployments

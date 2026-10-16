@@ -75,6 +75,7 @@ static int localObserverNamesContracts(void) {
     "snapshot_reconciliation_provenance_budgets",
     "snapshot_reconciliation_provenance",
     "snapshot_reconciliation_window_progress",
+    "internalize_receipts",
   };
 
   const char *names[] = {"insert","delete","update"}, *events[] = {"INSERT","DELETE","UPDATE"};
@@ -106,7 +107,7 @@ static int localObserverNamesContracts(void) {
       profileRequire(controlSql(driverDb[0],"DELETE FROM independent_local_coordinates")==SQLITE_OK,"observer names point reset");
     }
   }
-  profileRequire(transitions==423,"observer names all47 all141 three forms");
+  profileRequire(transitions==432,"observer names all48 all144 three forms");
   profileRequire(controlSql(driverDb[0],"CREATE TRIGGER brc38_local_baseline_s15_insert AFTER INSERT ON monitor_events BEGIN INSERT INTO brc38_local_baseline_event VALUES(15,NULL,NEW.rowid,1); END")==SQLITE_OK,"observer names exact compact anchor");
   profileRequire(sqlite3_exec(driverDb[0],"INSERT INTO brc38_local_baseline_event VALUES(15,NULL,9,1)",NULL,NULL,NULL)==SQLITE_AUTH,"observer names direct event refused");
   profileRequire(controlSql(driverDb[0],"CREATE TEMP TRIGGER BRC38_LOCAL_BASELINE_S15_INSERT AFTER INSERT ON main.monitor_events BEGIN SELECT 1; END")==SQLITE_OK,"observer names case insensitive shadow");
@@ -124,6 +125,6 @@ static int localObserverNamesContracts(void) {
   profileRequire(closeNative(0)==SQLITE_OK && brc38QuotaClose(&driverQuota)==SQLITE_OK,"observer names physical kernel VFS drain");
   profileRemove(root);
   profileRequire(sqlite3_memory_highwater(0)<=4194304 && sqlite3_shutdown()==SQLITE_OK,"observer names original heap and shutdown");
-  printf("PASS independent compact observer names sources=47 transitions=423 checks=%d fixturesDrained=true\n",profileChecks);
+  printf("PASS independent compact observer names sources=48 transitions=432 checks=%d fixturesDrained=true\n",profileChecks);
   return 0;
 }

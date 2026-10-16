@@ -311,7 +311,7 @@ export class Brc38NativeLocalBaselineSource {
     })
   }
   /** Recovery lineage DATA from the actual retired reader, freshly reread on
-   * its original inventory/catalog/kernel and coherent all47 wallet view.
+   * its original inventory/catalog/kernel and coherent all48 wallet view.
    * This variant cannot grant a live writer or current-provider permission. */
   static retiredCompositionOrigin(source: Brc38NativeLocalBaselineSource): Promise<
     Readonly<{
@@ -358,7 +358,7 @@ export class Brc38NativeLocalBaselineSource {
     })
   }
   /** Fresh LIVE source observation on its actual root writer, distinct from
-   * facts() on this retained historical snapshot. The complete all47 mutation
+   * facts() on this retained historical snapshot. The complete all48 mutation
    * generation and original profile/backend/schema/primary fence must still
    * match. No bytes/crypto/network/index work runs under this short writer.
    * A true result is DATA only; final cutover needs its own retained ownership. */
@@ -1923,7 +1923,7 @@ export class Brc38NativeLocalBaselineSource {
   }
   /** Full historical source after durable retirement. Actual inventory/kernel
    * membership and the original readonly transaction supply lifecycle. Fresh
-   * schema, physical backend, profile, primary and all47 generation reads must
+   * schema, physical backend, profile, primary and all48 generation reads must
    * match the immutable retirement coordinates; no report can enroll a source.
    * This variant has no StorageProvider and cannot inspectCurrent, acquire a
    * source writer, assert a manager or retire the original provider again. */
