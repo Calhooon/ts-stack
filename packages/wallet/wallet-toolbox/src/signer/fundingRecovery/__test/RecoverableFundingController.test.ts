@@ -86,6 +86,36 @@ describe('durable local acquisition funding', () => {
     else expect(await rows.clone().select()).toEqual([])
   })
 
+  test('expiry at final receipt completion rolls back ownership and recovers through the original intent', async () => {
+    const { operation, controller } = await setup()
+    const input = operation()
+    const storage = context.activeStorage
+    const original = storage.withInternalizeReceiptTransaction.bind(storage)
+    jest.spyOn(storage, 'withInternalizeReceiptTransaction').mockImplementationOnce(async (auth, args, trx, write) => {
+      return await original(auth, args, trx, async claim => await write({
+        ...claim,
+        complete: async transaction => {
+          // Model database time expiring after ownership was written but before
+          // the final compare-and-set. The real SQL fence must reject completion.
+          expect(await storage.toDb(transaction)('internalize_receipts')
+            .where({ userId: context.userId, txid: input.funding.txid, state: 'pending' })
+            .update({ leaseUntil: 0 })).toBe(1)
+          await claim.complete(transaction)
+        }
+      }))
+    })
+    await expect(controller.internalizeOnce(input)).rejects.toThrow('wallet receipt claim expired or was superseded')
+    expect(await controller.getInternalization(input.id)).toEqual({ state: 'unknown' })
+    expect(await storage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })).toEqual([])
+    expect(await storage.findTransactions({ partial: { userId: context.userId, txid: input.funding.txid } })).toEqual([])
+    expect(await storage.findProvenTxReqs({ partial: { txid: input.funding.txid } })).toEqual([])
+    expect(await storage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid })).toEqual([])
+    expect(await controller.internalizeOnce(input)).toMatchObject({ state: 'accepted', funding: input.funding })
+    expect(await storage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })).toHaveLength(1)
+    expect(await storage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid }).first())
+      .toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+  })
+
   test('an active external receipt owner refuses atomic funding without losing its original recovery intent', async () => {
     const { operation, controller } = await setup()
     const input = operation()

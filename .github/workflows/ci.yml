@@ -1192,7 +1192,7 @@ jobs:
     services:
       # The Knex storage suites also run against Postgres (RUNPOSTGRES).
       postgres:
-        image: public.ecr.aws/docker/library/postgres@sha256:d5daad18926b71c3d663f358af0aea798670cb79fb550c106d19662a9d1627ef # 17-alpine
+        image: postgres@sha256:d5daad18926b71c3d663f358af0aea798670cb79fb550c106d19662a9d1627ef # 17-alpine
         env:
           POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         ports:
@@ -1730,8 +1730,13 @@ jobs:
       - name: Build Linux image
         if: matrix.run && matrix.component != 'uhrp-server-cloud-bucket/notifier'
         run: |
+          context_lines=$(node scripts/ci-container-base-contexts.mjs)
+          context_arguments=()
+          while IFS= read -r context; do
+            if [ -n "$context" ]; then context_arguments+=(--build-context "$context"); fi
+          done <<< "$context_lines"
           for attempt in 1 2 3; do
-            if docker build --tag "ts-stack-${{ strategy.job-index }}:ci" "infra/${{ matrix.component }}"; then
+            if docker build "${context_arguments[@]}" --tag "ts-stack-${{ strategy.job-index }}:ci" "infra/${{ matrix.component }}"; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then

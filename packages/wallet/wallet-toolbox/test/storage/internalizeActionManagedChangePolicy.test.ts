@@ -10,6 +10,7 @@ import { P2PKH, WalletProtocol } from '@bsv/sdk'
 import { isManagedChangeOutput } from '../../src/storage/methods/managedChange'
 import { _tu, TestWalletNoSetup } from '../utils/TestUtilsWalletStorage'
 import { Wallet } from '../../src/Wallet'
+import { StorageProvider } from '../../src/storage/StorageProvider'
 
 describe('internalizeAction managed-change policy', () => {
   jest.setTimeout(30000)
@@ -324,6 +325,10 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
     expect(result.satoshis).toBe(100)
     expect(await ctx.wallet.balance()).toBe(before + 100)
     expect((await ctx.wallet.internalizeBrc197Action(args)).satoshis).toBe(0)
+    const auth = await ctx.storage.getAuth(true)
+    const baseReplay = await StorageProvider.prototype.internalizeBrc197Action.call(ctx.activeStorage, auth, args)
+    expect(baseReplay).toMatchObject({ accepted: true, isMerge: true, satoshis: 0 })
+    expect(await ctx.wallet.balance()).toBe(before + 100)
     expect(post).toHaveBeenCalledTimes(1)
     const rows = await ctx.activeStorage.findOutputs({ partial: { userId: ctx.userId, txid: fixture.tx.id('hex') } })
     expect(rows).toHaveLength(1)
@@ -357,6 +362,8 @@ describe('explicit local BRC-197 fixed-child ownership', () => {
     await expect(ctx.wallet.internalizeBrc197Action(args)).rejects.toThrow('fixed-child P2PKH')
     const auth = await ctx.storage.getAuth(true)
     await expect(ctx.activeStorage.internalizeBrc197Action(auth, args)).rejects.toThrow('fixed-child P2PKH')
+    await expect(StorageProvider.prototype.internalizeBrc197Action.call(ctx.activeStorage, auth, args))
+      .rejects.toThrow('fixed-child P2PKH')
     await expect(
       ctx.wallet.internalizeBrc197Action({ ...args, recipientIdentityKey: new PrivateKey(81).toPublicKey().toString() })
     ).rejects.toThrow('authenticated wallet identity')

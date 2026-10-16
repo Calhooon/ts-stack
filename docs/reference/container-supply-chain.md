@@ -3,14 +3,26 @@ id: container-supply-chain
 title: 'Container Supply Chain'
 kind: reference
 version: '1.3.0'
-last_updated: '2026-10-02'
-last_verified: '2026-10-02'
+last_updated: '2026-10-16'
+last_verified: '2026-10-16'
 review_cadence_days: 30
 status: stable
 tags: [reference, infrastructure, containers, security, releases]
 ---
 
 # Container Supply Chain
+
+CI obtains its database fixtures from their canonical registry references with
+the same immutable digests. Its Node builds use
+`scripts/ci-container-base-contexts.mjs` to select the registered discovery
+reference for each governed alias. Both sides retain the identical digest.
+Dockerfile defaults and release builds keep their existing references. This
+separates CI transport from image identity when a mirror refuses anonymous pulls.
+It does not change versions, platform, vulnerability gates or runtime assertions.
+The helper emits BuildKit named contexts for the shell, or an Actions output with
+`--github-output`. [Docker documents this override mechanism](https://docs.docker.com/reference/cli/docker/buildx/build/#build-context).
+Base updates still require resolving every governed reference to the same
+multi-platform digest before merge.
 
 The infrastructure images are deployable artifacts, so their build inputs,
 review gates, provenance, and rollback identity are part of the public release
