@@ -1,5 +1,7 @@
 # #544 implementation map (unpublished candidate)
 
+The complete native candidate-schema success fixtures admit 5 MiB after the ordinary 4 MiB fixture reproduced native SQLITE_FULL during trigger installation. Both ordinary and local variants retain real 4 MiB exhaustion tests, all schema/policy/generation/re-entry checks and their original 30-second case guards. Production quota defaults and native enforcement are unchanged.
+
 Post-import native recovery includes all34 retained local families after main added internalize_receipts, keeping every existing family comparison. Nested history spelling reuses the original projection scratch after its selection banks drain: the retained output plus two note-spelling banks stay inside its existing six-bank byte ceiling. The outer source keeps its original two grammar indexes; no index-count, temporary-byte, owner, deadline or production default is enlarged. Complete original occupied-customer, cleanup/retry and history oracles remain required.
 
 SQLite journal bootstrap now preserves the existing signed sync-state key domain, including negative and zero physical/profile keys and resumed page cursors, matching the installed observers. Other entity keys remain positive and MySQL retains unsigned keys. No DDL, ABI, wire format, production quota or default changes. Full native metadata and independent cross-page signed-key regressions remain required qualification evidence.

@@ -50,14 +50,14 @@ async function exerciseNativeSchema(local: boolean, maximumPhysicalBytes: number
 
 test.each([false, true])(
   'actual private candidate seals after its selected layouts, local=%s',
-  async local => await exerciseNativeSchema(local, local ? 5242880 : 4194304),
+  async local => await exerciseNativeSchema(local, 5242880),
   30000
 )
 
-test('actual local candidate retains its original native physical quota refusal at 4 MiB', async () => {
+async function expectNativePhysicalQuotaRefusal(local: boolean): Promise<void> {
   let refused = false
   try {
-    await exerciseNativeSchema(true, 4194304)
+    await exerciseNativeSchema(local, 4194304)
   } catch (cause) {
     let current: unknown = cause
     for (let depth = 0; depth < 8 && current !== null && typeof current === 'object'; depth++) {
@@ -70,4 +70,12 @@ test('actual local candidate retains its original native physical quota refusal 
     if (!refused) throw cause
   }
   expect(refused).toBe(true)
+}
+
+test('actual local candidate retains its original native physical quota refusal at 4 MiB', async () => {
+  await expectNativePhysicalQuotaRefusal(true)
+}, 30000)
+
+test('actual ordinary candidate retains its native physical quota refusal at 4 MiB', async () => {
+  await expectNativePhysicalQuotaRefusal(false)
 }, 30000)

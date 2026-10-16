@@ -1,5 +1,7 @@
 # BSV Wallet Toolbox
 
+The complete native candidate-schema success fixtures admit 5 MiB after the ordinary 4 MiB fixture reproduced native SQLITE_FULL during trigger installation. Both ordinary and local variants retain real 4 MiB exhaustion tests, all schema/policy/generation/re-entry checks and their original 30-second case guards. Production quota defaults and native enforcement are unchanged.
+
 On Ubuntu with restricted user namespaces, pinned Chrome for Testing delivery installs a temporary AppArmor attachment for that exact verified executable path. Chrome retains its original sandbox flags and the global user-namespace restriction is unchanged. An always-run CI cleanup step removes and verifies absence of its own attachment, including setup and environment-handoff failure cleanup. Delivery and blank-page startup evidence do not qualify the full native browser program. The complete HTTP benchmark owns serving sockets before the first authenticated client request, preserving the real post-commit disconnect and independent durable recovery oracles.
 
 Source setup guidance: https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md .
@@ -5368,8 +5370,11 @@ Testing155.0.8059.39 ARM64 archive. Its measured198202003-byte archive expands
 to415397541 bytes across306 entries; the archive and289475976-byte executable
 are checked against separate fixed SHA256 pins. Transport is bounded, extraction
 stays inside an owned private directory, and changed bytes, lengths, paths or
-symlink substitutes fail. The installer never disables the browser sandbox or
-changes host security settings. It exposes `CHROME_BIN` for the enclosing job;
+symlink substitutes fail. The installer preserves Chrome sandbox flags and, on restricted Ubuntu hosts,
+installs a temporary AppArmor attachment for the exact verified executable.
+The always-run cleanup removes that attachment and verifies its absence; the
+global user-namespace restriction is unchanged. It exposes `CHROME_BIN` and an
+explicit owned delivery receipt for the enclosing job;
 its receipt is delivery-only and grants no runtime or process-tree qualification.
 Mutation setup follows the actual selected tests, avoiding the download for
 node-only targets; ordinary wallet shards also receive the native browser.
