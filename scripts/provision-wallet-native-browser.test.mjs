@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import {
   browserPin,
@@ -12,7 +13,8 @@ import {
   nativeBrowserPlan,
   needsNativeBrowserDelivery,
   verifyBrowserFile,
-  cleanupNativeBrowserDelivery
+  cleanupNativeBrowserDelivery,
+  readNativeBrowserDeliveryReceipt
 } from './provision-wallet-native-browser.mjs'
 
 test('native browser delivery selects the exact source-pinned ARM64 or x64 distribution', () => {
@@ -143,4 +145,83 @@ test('measured browser admission preserves all other original case and cleanup b
 
 test('browser cleanup requires its explicit delivery receipt instead of adopting an ambient Chrome executable', async () => {
   assert.deepEqual(await cleanupNativeBrowserDelivery(), { allocated: false })
+})
+
+test('browser cleanup receipt uses a private bounded descriptor and rejects path substitutes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'browser-receipt-contract-'))
+  const file = join(directory, 'component-delivery.json')
+  try {
+    const expected = { kind: 'native-browser-delivery', original: true }
+    await writeFile(file, JSON.stringify(expected), { mode: 0o600, flag: 'wx' })
+    assert.deepEqual(await readNativeBrowserDeliveryReceipt(file), expected)
+    await assert.rejects(readNativeBrowserDeliveryReceipt(join(directory, 'other.json')))
+    await chmod(file, 0o644)
+    await assert.rejects(readNativeBrowserDeliveryReceipt(file), /private regular owned/)
+    await chmod(file, 0o600)
+    const alias = join(directory, 'hard-link')
+    await link(file, alias)
+    await assert.rejects(readNativeBrowserDeliveryReceipt(file), /private regular owned/)
+    await rm(alias)
+    await writeFile(file, Buffer.alloc(16385, 32))
+    await assert.rejects(readNativeBrowserDeliveryReceipt(file), /16 KiB/)
+    await writeFile(file, '{')
+    await assert.rejects(readNativeBrowserDeliveryReceipt(file), SyntaxError)
+    await rm(file)
+    await symlink(join(directory, 'missing-target'), file)
+    await assert.rejects(readNativeBrowserDeliveryReceipt(file), /ELOOP/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('receipt bytes stay bound to the opened descriptor after its pathname is replaced', () => {
+  const script = `
+    const assert = require('node:assert/strict')
+    const fs = require('node:fs/promises')
+    const { tmpdir } = require('node:os')
+    const { join } = require('node:path')
+    const { syncBuiltinESMExports } = require('node:module')
+    ;(async () => {
+      const directory = await fs.mkdtemp(join(tmpdir(), 'browser-receipt-race-'))
+      const file = join(directory, 'component-delivery.json')
+      const replacement = join(directory, 'replacement.json')
+      const originalOpen = fs.open
+      let swapped = false
+      try {
+        await fs.writeFile(file, JSON.stringify({ original: true }), { mode: 0o600 })
+        await fs.writeFile(replacement, Buffer.alloc(32768, 32), { mode: 0o600 })
+        fs.open = async (path, ...args) => {
+          const handle = await originalOpen(path, ...args)
+          if (path === file && !swapped) {
+            await fs.rename(file, file + '.held')
+            await fs.symlink(replacement, file)
+            swapped = true
+          }
+          return handle
+        }
+        syncBuiltinESMExports()
+        const module = await import(${JSON.stringify(new URL('./provision-wallet-native-browser.mjs', import.meta.url).href)})
+        assert.deepEqual(await module.readNativeBrowserDeliveryReceipt(file), { original: true })
+        assert.equal(swapped, true)
+        assert.equal((await fs.lstat(file)).isSymbolicLink(), true)
+        await fs.rm(file)
+        const fifo = require('node:child_process').spawnSync('/usr/bin/mkfifo', ['-m', '600', file], { encoding: 'utf8', timeout: 5000 })
+        assert.equal(fifo.error, undefined)
+        assert.equal(fifo.status, 0, fifo.stderr)
+        await assert.rejects(module.readNativeBrowserDeliveryReceipt(file), /private regular owned/)
+      } finally {
+        fs.open = originalOpen
+        syncBuiltinESMExports()
+        await fs.rm(directory, { recursive: true, force: true })
+      }
+    })().catch(error => { console.error(error); process.exitCode = 1 })
+  `
+  const result = spawnSync(process.execPath, ['--input-type=commonjs', '-'], {
+    input: script,
+    encoding: 'utf8',
+    timeout: 15000,
+    maxBuffer: 65536
+  })
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 0, result.stderr)
 })

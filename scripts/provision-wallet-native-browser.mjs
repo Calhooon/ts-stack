@@ -3,16 +3,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import {
-  appendFile,
-  chmod,
-  copyFile,
-  lstat,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile
-} from 'node:fs/promises'
+import { appendFile, chmod, copyFile, lstat, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, matchesGlob, resolve } from 'node:path'
@@ -191,13 +182,54 @@ export async function provisionNativeBrowser({
   }
 }
 
+/** Read the checked receipt through one no-follow descriptor and a fixed byte bound. */
+export async function readNativeBrowserDeliveryReceipt(receiptFile) {
+  assert.equal(typeof receiptFile, 'string')
+  assert.equal(resolve(receiptFile), receiptFile)
+  assert.equal(receiptFile, join(dirname(receiptFile), 'component-delivery.json'))
+  const uid = process.getuid?.()
+  assert.ok(Number.isSafeInteger(uid), 'Browser receipt requires a POSIX owner')
+  const file = await open(
+    receiptFile,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+  )
+  try {
+    const before = await file.stat({ bigint: true })
+    assert.ok(
+      before.isFile() &&
+        before.nlink === 1n &&
+        before.uid === BigInt(uid) &&
+        (before.mode & 0o777n) === 0o600n &&
+        before.size >= 0n &&
+        before.size <= 16384n,
+      'Browser receipt requires its private regular owned file within 16 KiB'
+    )
+    const buffer = Buffer.alloc(16385)
+    let used = 0
+    while (used < buffer.length) {
+      const read = await file.read(buffer, used, buffer.length - used, used)
+      if (read.bytesRead === 0) break
+      used += read.bytesRead
+    }
+    assert.equal(used, Number(before.size), 'Browser receipt changed its bounded length')
+    const after = await file.stat({ bigint: true })
+    for (const field of ['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeNs', 'ctimeNs'])
+      assert.equal(
+        after[field],
+        before[field],
+        'Browser receipt identity or bytes changed during read'
+      )
+    return JSON.parse(buffer.toString('utf8', 0, used))
+  } finally {
+    await file.close()
+  }
+}
+
 export async function cleanupNativeBrowserDelivery(receiptFile) {
   if (receiptFile === undefined) return { allocated: false }
   const pin = nativeBrowserPlan(),
     privateRoot = dirname(receiptFile)
-  const info = await lstat(receiptFile)
-  assert.ok(info.isFile() && !info.isSymbolicLink() && info.size <= 16384)
-  const receipt = JSON.parse(await readFile(receiptFile, 'utf8'))
+  const receipt = await readNativeBrowserDeliveryReceipt(receiptFile)
   const executable = receipt.executable
   assert.equal(receiptFile, join(privateRoot, 'component-delivery.json'))
   assert.equal(receipt.executableSha256, pin.executableSha256)

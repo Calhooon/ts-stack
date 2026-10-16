@@ -30,6 +30,10 @@ Ordinary replica merge and coherent archive capture are separate APIs. A
 replica checkpoint is never substituted for the source archive's original
 sync-state rows. Existing BRC-38/39 formats remain unchanged.
 
+## Provisional delivery budget
+
+The held #569 Metro artifact ceilings provisionally admit15 percent above the original2620000/675000/510000-byte raw/gzip/Brotli baseline:3013000/776250/586500. The complete current514 consumer measured2765570/729495/558373 bytes after its retained namespace and mobile-safe composition checks, leaving about5–9 percent headroom. This applies the operator's direction to use measured, judicious limits; it is separate from the earlier browser30percent allowance. Hermes stays5095000/2140000/1675000 bytes and still requires actual qualification. The governed mobile budget records owner, original baseline, measured source/job, earliest review date and removal condition. Review occurs only after full goal completion and compares the complete qualified feature set with baseline cost; increasing a ceiling is not a passing mobile artifact, Hermes/device proof or feature-completeness claim. No export, dependency, compiler/minifier setting, map/license, runtime or negative security/resource oracle changes. Earlier failed samples and unapplied-proposal checkpoints retain their original identities.
+
 ## Receiving already-broadcast payments
 
 The 2.14.9 source candidate completes broadcast results even when storage
