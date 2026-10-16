@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import coverageLibrary from 'istanbul-lib-coverage'
-import { enforceGlobalCoverage, mergeCoverage } from './output-knowledge-coverage.mjs'
+import {
+  assertCoverageArtifact,
+  enforceGlobalCoverage,
+  mergeCoverage
+} from './output-knowledge-coverage.mjs'
 
 const { createCoverageMap } = coverageLibrary
 
@@ -60,5 +64,66 @@ test('fresh-process batches retain all instrumented files and their uncovered co
     enforceGlobalCoverage(mergeCoverage([{ coverage: coverage([1, 0]) }]), {
       global: { branches: 80, functions: 80, lines: 85, statements: 85 }
     })
+  )
+})
+
+test('artifact comparison preserves every serialized field across Istanbul class instances', () => {
+  const sourceMap = {
+    version: 3,
+    sources: ['fixture.ts'],
+    names: [],
+    mappings: 'AAAA',
+    sourcesContent: ['export const fixture = true']
+  }
+  const first = coverage([2, 0]),
+    second = coverage([0, 3]),
+    expected = coverage([2, 3])
+  for (const value of [first, second, expected]) value['/fixture.ts'].inputSourceMap = sourceMap
+  const recomputed = mergeCoverage([{ coverage: first }, { coverage: second }]).toJSON()
+  assert.notDeepEqual(expected, recomputed)
+  assert.doesNotThrow(() => assertCoverageArtifact(expected, recomputed))
+  for (const mutate of [
+    value => {
+      value['/fixture.ts'].s[0]++
+    },
+    value => {
+      value['/fixture.ts'].f[0]++
+    },
+    value => {
+      value['/fixture.ts'].b[0][0]++
+    },
+    value => {
+      value['/fixture.ts'].statementMap[0].start.line++
+    },
+    value => {
+      value['/fixture.ts'].fnMap[0].loc.end.line++
+    },
+    value => {
+      value['/fixture.ts'].inputSourceMap.sourcesContent[0] = 'changed'
+    },
+    value => {
+      delete value['/fixture.ts']
+    },
+    value => {
+      value['/extra.ts'] = structuredClone(value['/fixture.ts'])
+    }
+  ]) {
+    const changed = structuredClone(expected)
+    mutate(changed)
+    assert.throws(() => assertCoverageArtifact(changed, recomputed), /merged coverage differs/)
+  }
+})
+
+test('rejected coverage produces a bounded error without dumping report contents', () => {
+  const expected = coverage([1, 1]),
+    changed = coverage([0, 1])
+  changed['/fixture.ts'].inputSourceMap = { sourcesContent: ['private-source-marker'.repeat(5000)] }
+  assert.throws(
+    () => assertCoverageArtifact(changed, expected),
+    error =>
+      error.code === 'ERR_ASSERTION' &&
+      error.message === 'merged coverage differs from raw batches' &&
+      !error.stack.includes('private-source-marker') &&
+      error.stack.length < 4096
   )
 })

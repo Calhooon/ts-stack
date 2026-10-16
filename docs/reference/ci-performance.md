@@ -2,7 +2,7 @@
 id: ci-performance
 title: 'CI Performance Governance'
 kind: reference
-version: '1.8.10'
+version: '1.8.11'
 last_updated: '2026-10-16'
 last_verified: '2026-10-16'
 review_cadence_days: 30
@@ -236,6 +236,12 @@ context. The buyer-alias property retains its 300-case minimum, seed, replay
 setting, assertions and 150-second interruption limit. Every batch instruments the
 complete source inventory, and all same-attempt batch receipts must reconcile
 before the original global and patch coverage gates can pass.
+Aggregation compares recomputed Istanbul maps in their complete serialized JSON
+form with the uploaded reports, retaining every file, counter, location and source
+map. Library class instances and their persisted JSON are equivalent at this
+boundary. Rejected report comparisons produce bounded errors instead of printing
+entire test or coverage maps. Test-union, identity and coverage requirements remain
+unchanged.
 The three reporting libraries are direct, exact-version development dependencies
 already present in the frozen graph; no runtime package dependency changes. Dependency-free inventory/result controls remain in the zero-install repository-health job. The actual reporting-library integration runs unconditionally after the frozen install and before build; its execution cannot be skipped to satisfy early health.
 

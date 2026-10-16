@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 import coverageLibrary from 'istanbul-lib-coverage'
 import reportLibrary from 'istanbul-lib-report'
 import reports from 'istanbul-reports'
@@ -43,6 +44,13 @@ export function mergeCoverage(shards) {
     map.merge(shard.coverage)
   }
   return map
+}
+
+export function assertCoverageArtifact(actual, recomputed) {
+  // Istanbul's toJSON() still contains FileCoverage instances. Compare the
+  // complete JSON representation written by collect(), including source maps.
+  const expected = JSON.parse(JSON.stringify(recomputed))
+  assert.ok(isDeepStrictEqual(actual, expected), 'merged coverage differs from raw batches')
 }
 
 function identity() {
@@ -165,12 +173,11 @@ function aggregate(input, output) {
       })
       const results = mergeCoverageBatchResults(batches, manifest.identity, manifest.selectedTests)
       const coverage = mergeCoverage(batches).toJSON()
-      assert.deepEqual(read('results.json'), results, 'merged test results differ from raw batches')
-      assert.deepEqual(
-        read('coverage-final.json'),
-        coverage,
-        'merged coverage differs from raw batches'
+      assert.ok(
+        isDeepStrictEqual(read('results.json'), results),
+        'merged test results differ from raw batches'
       )
+      assertCoverageArtifact(read('coverage-final.json'), coverage)
       return { manifest, results, coverage }
     }
   )
