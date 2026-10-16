@@ -140,21 +140,25 @@ export class SQLiteFundingRecoveryStore {
         requireFunding(row?.semantic === semantic, 'Funding recovery intent is absent or changed')
         requireFunding(row.rejected === 0, 'Rejected funding cannot be credited')
         if (row.receipt !== null) return { accepted: true, isMerge: true, txid: operation.funding.txid, satoshis: 0 }
-        const result = await this.storage.withInternalizeReceiptTransaction(
+        return await this.storage.withInternalizeReceiptTransaction(
           { userId, identityKey: walletIdentity },
           { tx: decodeOutputBytes(operation.beef, 65536) },
           trx,
-          receipt => run(trx, receipt)
+          async receipt => {
+            await receipt.assertActive(trx)
+            const result = await run(trx, receipt.retryNew)
+            requireFunding(result.accepted && result.txid === operation.funding.txid && result.sendWithResults === undefined && result.notDelayedResults === undefined, 'Funding recovery did not finish ownership writes')
+            const transactions = await this.storage.findTransactions({ partial: { userId, txid: result.txid }, trx, noRawTx: true })
+            requireFunding(transactions.length === 1, 'Funding recovery transaction is absent')
+            const outputs = await this.storage.findOutputs({ partial: { userId, txid: result.txid, vout: operation.funding.outputIndex }, trx })
+            requireFunding(outputs.length === 1 && isManagedChangeOutput(outputs[0]) && outputs[0].satoshis.toString() === operation.satoshis && outputs[0].derivationPrefix === operation.derivationPrefix && outputs[0].derivationSuffix === operation.derivationSuffix && outputs[0].senderIdentityKey === operation.buyer, 'Funding recovery ownership does not match retained intent')
+            const retainedReceipt: FundingRecoveryReceipt = { protocol: 'wallet-funding-recovery-v1', operationId: operation.id, funding: operation.funding, satoshis: operation.satoshis, walletIdentity, storageIdentity: this.storage.getSettings().storageIdentityKey, transactionId: transactions[0].transactionId }
+            const encoded = canonicalOutputJSON(retainedReceipt, { bytes: 4096 })
+            requireFunding(await this.storage.toDb(trx)(records).where({ id: operation.id, receipt: null }).update({ receipt: encoded, operation: canonicalOutputJSON(operation) }) === 1, 'Funding recovery receipt did not commit')
+            await receipt.complete(trx)
+            return result
+          }
         )
-        requireFunding(result.accepted && result.txid === operation.funding.txid && result.sendWithResults === undefined && result.notDelayedResults === undefined, 'Funding recovery did not finish ownership writes')
-        const transactions = await this.storage.findTransactions({ partial: { userId, txid: result.txid }, trx, noRawTx: true })
-        requireFunding(transactions.length === 1, 'Funding recovery transaction is absent')
-        const outputs = await this.storage.findOutputs({ partial: { userId, txid: result.txid, vout: operation.funding.outputIndex }, trx })
-        requireFunding(outputs.length === 1 && isManagedChangeOutput(outputs[0]) && outputs[0].satoshis.toString() === operation.satoshis && outputs[0].derivationPrefix === operation.derivationPrefix && outputs[0].derivationSuffix === operation.derivationSuffix && outputs[0].senderIdentityKey === operation.buyer, 'Funding recovery ownership does not match retained intent')
-        const receipt: FundingRecoveryReceipt = { protocol: 'wallet-funding-recovery-v1', operationId: operation.id, funding: operation.funding, satoshis: operation.satoshis, walletIdentity, storageIdentity: this.storage.getSettings().storageIdentityKey, transactionId: transactions[0].transactionId }
-        const encoded = canonicalOutputJSON(receipt, { bytes: 4096 })
-        requireFunding(await this.storage.toDb(trx)(records).where({ id: operation.id, receipt: null }).update({ receipt: encoded, operation: canonicalOutputJSON(operation) }) === 1, 'Funding recovery receipt did not commit')
-        return result
       })
     }
   }

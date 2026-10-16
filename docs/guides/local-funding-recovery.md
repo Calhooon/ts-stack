@@ -4,7 +4,7 @@ title: 'Crediting a Payment Exactly Once in a Local Wallet'
 kind: guide
 version: '1.0.0'
 last_updated: '2026-10-16'
-last_verified: '2026-10-08'
+last_verified: '2026-10-16'
 review_cadence_days: 30
 status: experimental
 tags: [wallet, utxo, recovery, sqlite, private-overlay]

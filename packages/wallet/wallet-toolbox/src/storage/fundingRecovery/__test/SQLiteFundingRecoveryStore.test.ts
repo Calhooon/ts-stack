@@ -163,6 +163,11 @@ describe('bounded atomic funding journal', () => {
       expect((await context.activeStorage.findOutputs({ partial: { outputId: output.outputId } }))[0]).toEqual(output)
       expect(await store.getInternalization(context.userId, context.identityKey, input.id)).toEqual({ state: 'unknown' })
     }
+    await db('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid }).delete()
+    await hook.commit(async () => ({ accepted: true, isMerge: true, txid: input.funding.txid, satoshis: 0 }))
+    expect(await db('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid }).first()).toMatchObject({ state: 'complete', needsNewReceipt: 0 })
+    expect(await store.getInternalization(context.userId, context.identityKey, input.id)).toMatchObject({ state: 'accepted', funding: input.funding })
+    expect(await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid, vout: input.funding.outputIndex } })).toHaveLength(1)
     await db(records).where({ id: input.id }).update(saved)
     const receipt = JSON.parse(saved.receipt)
     for (const change of [{ transactionId: 0 }, { transactionId: 0.5 }, { transactionId: Number.MAX_SAFE_INTEGER + 1 }, { walletIdentity: input.buyer }, { storageIdentity: input.buyer }, { operationId: '00'.repeat(32) }, { satoshis: '99' }, { extra: true }]) {
