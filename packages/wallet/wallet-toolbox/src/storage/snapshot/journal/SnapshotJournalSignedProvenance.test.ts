@@ -135,7 +135,8 @@ test('real acknowledged provenance preserves signed keys through intake, bounded
     )
   }
   while (state.phase === 'intake') await advance({ phase: 'intake', examined: 0, complete: true })
-  for (const _table of snapshotSyncTables) await advance({ phase: 'promoting', examined: 0, complete: true })
+  for (const _table of snapshotSyncTables)
+    await advance({ phase: 'promoting', examined: 0, complete: true, promotionSequence: 0 })
   expect(state.phase).toBe('acknowledged')
   const read = async (after?: number) =>
     await db.transaction(async trx => await readSnapshotJournalProvenancePage(trx, binding, state, after, 2))

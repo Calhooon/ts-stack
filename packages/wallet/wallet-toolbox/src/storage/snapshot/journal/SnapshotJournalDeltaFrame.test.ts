@@ -353,7 +353,7 @@ test.each([-Number.MAX_SAFE_INTEGER, -1, 0, Number.MAX_SAFE_INTEGER])(
       complete: false,
       after: input.after
     })
-    expect(decoded.payloadBytes).toBeGreaterThan(0)
+    expect(decoded.payloadBytes).toBe(input.payloadBytes)
     if (id < 1) {
       const ordinary: SnapshotJournalDeltaPage = {
         ...input,

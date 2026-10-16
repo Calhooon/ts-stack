@@ -308,3 +308,72 @@ test('partial measurement cannot become completed replay permission and close dr
   expect(f.working.used).toBe(0)
   expect(f.indexes.every(index => index.closed)).toBe(true)
 })
+
+test('nested complete-field history spelling keeps each actual source at two indexes and uses the original projection scratch', async () => {
+  const existing = '{"notes":[{"when":"2026-01-01T00:00:00.000Z","what":"original","detail":"A"}],"tail":"kept"}',
+    incoming = '{"notes":[{"when":"2026-01-02T00:00:00.000Z","what":"incoming","detail":"B"}]}'
+  const f = fixture(existing, incoming),
+    expected = legacy(existing, incoming)
+  let sourcePeak = 0,
+    projectionBytes = 0,
+    projectionPeak = 0
+  const boundedSource = (source: Brc38StreamedStructured): Brc38StreamedStructured => {
+    let open = 0
+    return {
+      ...source,
+      openIndex: async () => {
+        if (open >= 2) throw new Error('Original two source grammar indexes remain owned')
+        const index = await source.openIndex(),
+          close = index.close.bind(index)
+        open++
+        sourcePeak = Math.max(sourcePeak, open)
+        let closed = false
+        index.close = async () => {
+          await close()
+          if (!closed) {
+            closed = true
+            open--
+          }
+        }
+        return index
+      }
+    }
+  }
+  const owners: Brc38StructuredProjectionOwners = {
+    ...f.owners,
+    openIndex: async policy => {
+      if (projectionBytes + policy.maximumTemporaryPhysicalBytes > f.policy.maximumTemporaryIndexBytes)
+        throw new Error('Original aggregate projection scratch is owned')
+      const index = await f.owners.openIndex(policy),
+        close = index.close.bind(index)
+      projectionBytes += policy.maximumTemporaryPhysicalBytes
+      projectionPeak = Math.max(projectionPeak, projectionBytes)
+      let closed = false
+      index.close = async () => {
+        await close()
+        if (!closed) {
+          closed = true
+          projectionBytes -= policy.maximumTemporaryPhysicalBytes
+        }
+      }
+      return index
+    }
+  }
+  const field = await Brc38StreamedHistoryProjection.prepareField(
+    owners,
+    boundedSource(f.incoming),
+    f.policy,
+    boundedSource(f.existing)
+  )
+  try {
+    expect(await output(field.measureChunks(64))).toBe(expected)
+    expect(await output(field.chunks(64))).toBe(expected)
+    expect(sourcePeak).toBe(2)
+    expect(projectionPeak).toBeLessThanOrEqual(f.policy.maximumTemporaryIndexBytes)
+  } finally {
+    await field.close()
+  }
+  expect(projectionBytes).toBe(0)
+  expect(f.indexes.every(index => index.closed)).toBe(true)
+  expect(f.working.used).toBe(0)
+})

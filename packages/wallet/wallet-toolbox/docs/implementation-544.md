@@ -1,5 +1,7 @@
 # #544 implementation map (unpublished candidate)
 
+Post-import native recovery includes all34 retained local families after main added internalize_receipts, keeping every existing family comparison. Nested history spelling reuses the original projection scratch after its selection banks drain: the retained output plus two note-spelling banks stay inside its existing six-bank byte ceiling. The outer source keeps its original two grammar indexes; no index-count, temporary-byte, owner, deadline or production default is enlarged. Complete original occupied-customer, cleanup/retry and history oracles remain required.
+
 SQLite journal bootstrap now preserves the existing signed sync-state key domain, including negative and zero physical/profile keys and resumed page cursors, matching the installed observers. Other entity keys remain positive and MySQL retains unsigned keys. No DDL, ABI, wire format, production quota or default changes. Full native metadata and independent cross-page signed-key regressions remain required qualification evidence.
 
 The finite source inventory accounts for all 24 required behavior families,

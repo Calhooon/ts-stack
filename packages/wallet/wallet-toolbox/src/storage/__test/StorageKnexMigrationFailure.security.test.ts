@@ -3,6 +3,7 @@ import { StorageKnex } from '../StorageKnex'
 import { KnexMigrations } from '../schema/KnexMigrations'
 
 const sqliteFixtures: Knex[] = []
+const sqliteQueries = new WeakMap<Knex, string[]>()
 function emptySqlite(migrations: { currentVersion: ReturnType<typeof jest.fn>; down: ReturnType<typeof jest.fn> }) {
   const db = createKnex({
     client: 'better-sqlite3',
@@ -11,9 +12,12 @@ function emptySqlite(migrations: { currentVersion: ReturnType<typeof jest.fn>; d
     pool: { min: 0, max: 1 }
   })
   sqliteFixtures.push(db)
-  jest.spyOn(db.migrate, 'currentVersion').mockImplementation(migrations.currentVersion)
-  jest.spyOn(db.migrate, 'down').mockImplementation(migrations.down)
-  jest.spyOn(db, 'raw')
+  // Knex exposes a fresh Migrator per getter access; install this deliberate
+  // failure fixture once while actual auxiliary-schema SQL remains real.
+  Object.defineProperty(db, 'migrate', { value: migrations })
+  const queries: string[] = []
+  db.on('query', (query: { sql: string }) => queries.push(query.sql))
+  sqliteQueries.set(db, queries)
   return db
 }
 afterEach(async () => {
@@ -57,12 +61,10 @@ describe('StorageKnex migration failure boundaries', () => {
     await StorageKnex.prototype.dropAllData.call(storageWithKnex(knex))
 
     expect(knex.migrate.down).toHaveBeenCalledTimes(1)
-    expect(
-      jest
-        .mocked(knex.raw)
-        .mock.calls.map(call => call[0])
-        .filter(sql => String(sql).startsWith('PRAGMA foreign_keys'))
-    ).toEqual(['PRAGMA foreign_keys = OFF;', 'PRAGMA foreign_keys = ON;'])
+    expect(sqliteQueries.get(knex)!.filter(sql => sql.startsWith('PRAGMA foreign_keys'))).toEqual([
+      'PRAGMA foreign_keys = OFF;',
+      'PRAGMA foreign_keys = ON;'
+    ])
   })
 
   test.each([
@@ -77,7 +79,7 @@ describe('StorageKnex migration failure boundaries', () => {
     await expect(StorageKnex.prototype.dropAllData.call(storageWithKnex(knex))).rejects.toThrow(
       _name === 'throws' ? 'rollback failed' : 'database migration rollback returned no result'
     )
-    expect(knex.raw).toHaveBeenLastCalledWith('PRAGMA foreign_keys = ON;')
+    expect(sqliteQueries.get(knex)!.at(-1)).toBe('PRAGMA foreign_keys = ON;')
   })
 
   test('migrate restores SQLite foreign keys when migration fails', async () => {
@@ -108,7 +110,7 @@ test('dropAllData bounds a migrator that never reaches the empty schema', async 
   expect(database.migrate.down).toHaveBeenCalledTimes(
     Object.keys(new KnexMigrations('test', '', '', 1024).migrations).length
   )
-  expect(database.raw).toHaveBeenLastCalledWith('PRAGMA foreign_keys = ON;')
+  expect(sqliteQueries.get(database)!.at(-1)).toBe('PRAGMA foreign_keys = ON;')
 })
 
 test('MySQL full deletion does not issue SQLite generation operations', async () => {

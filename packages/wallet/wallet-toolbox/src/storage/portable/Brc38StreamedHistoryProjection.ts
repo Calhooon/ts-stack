@@ -66,7 +66,8 @@ export class Brc38StreamedHistoryProjection {
     private readonly policy: Readonly<Brc38StreamedHistoryProjectionPolicy>,
     private readonly checkActor: () => void,
     private readonly deadline: number,
-    private readonly reservation: Brc38WorkingCharge
+    private readonly reservation: Brc38WorkingCharge,
+    private readonly openSpellingIndex: () => Promise<Brc38JsonMemberIndex>
   ) {}
 
   static async prepare(
@@ -421,7 +422,11 @@ export class Brc38StreamedHistoryProjection {
         policy as Readonly<Brc38StreamedHistoryProjectionPolicy>,
         owners.check,
         deadline,
-        reservation
+        reservation,
+        async () => {
+          check()
+          return await owners.openIndex(indexPolicy)
+        }
       )
     } catch (cause) {
       if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
@@ -694,7 +699,11 @@ export class Brc38StreamedHistoryProjection {
         this.check()
         if (position !== 0) yield admit(encoder.encode(','))
         for await (const bytes of stringifyBrc38StructuredJsonSpan(
-          this.sources[ref.source],
+          // The outer complete-field spelling retains that source's two
+          // grammar/order indexes. Note spelling uses the projection scratch
+          // whose four preparation banks have already drained; its output
+          // plus these two banks stay inside the original six-bank allowance.
+          { ...this.sources[ref.source], openIndex: this.openSpellingIndex },
           ref,
           {
             maximumInputBytes: 1000000000,

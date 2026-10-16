@@ -48,11 +48,11 @@ function normalized(value: unknown): unknown {
     )
   return value
 }
-/** UNRUN genuine completed occupied merge. Independently authored all33 table
+/** UNRUN genuine completed occupied merge. Independently authored all34 table
  * fixtures include signed physical keys, typed metadata, null/empty and Unicode
  * text, BEEF/action/transfer fields and exact sessions/primary/reconciliation
  * values. Incoming core rows/checkpoint differ from the source baseline, while
- * 31 recovery families remain unchanged. Prepared-cache fixture postimages
+ * 32 recovery families remain unchanged. Prepared-cache fixture postimages
  * independently reflect changed proof pages: epoch increments, READY rows
  * become stale/version zero and already-stale rows retain their metadata.
  * Include no-change, empty-cache and repeated changed/identical alias programs,
@@ -66,7 +66,7 @@ export async function verifyBrc38PrivatePostImportLocalRecovery(
   expectedLogicalBytes: number
 ): Promise<void> {
   requireCase(
-    Object.keys(expected).length === 33 &&
+    Object.keys(expected).length === 34 &&
       Number.isSafeInteger(expectedLogicalBytes) &&
       expectedLogicalBytes >= 0 &&
       expectedLogicalBytes <= 1048576
@@ -97,7 +97,7 @@ export async function verifyBrc38PrivatePostImportLocalRecovery(
   const result = await inspect()
   requireCase(result.rows === rows && result.logicalBytes === String(expectedLogicalBytes))
   const actual = await controller.readLocalRecovery()
-  requireCase(Object.keys(actual).length === 33)
+  requireCase(Object.keys(actual).length === 34)
   for (const table of Object.keys(expected)) {
     const ordered = (values: readonly IndependentLocalCandidateRow[]) => [...values].sort((a, b) => a.rowId - b.rowId)
     requireCase(

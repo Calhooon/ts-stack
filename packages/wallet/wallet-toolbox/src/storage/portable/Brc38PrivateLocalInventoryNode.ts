@@ -113,7 +113,7 @@ export async function inspectBrc38PrivateLocalRecovery(
   selected: Readonly<Brc38PrivateLocalInventoryPolicy>
 ): Promise<Readonly<{ rows: number; logicalBytes: string }>> {
   const tables = brc38NativeLocalBaselineTables.filter(table => !incomingTables.has(table))
-  if (tables.length !== 33) invalid()
+  if (tables.length !== 34) invalid()
   store.assertPrivateNativeReadTransaction(k)
   const recovery = await readBrc38PrivateMergeRecovery(k)
   if (recovery?.phase !== 'IMPORT' || recovery.activeImportId === null) invalid()
