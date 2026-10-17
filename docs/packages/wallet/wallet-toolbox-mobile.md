@@ -15,6 +15,8 @@ tags: [wallet, react-native, mobile, storage, brc-100]
 
 # @bsv/wallet-toolbox-mobile
 
+The held #569 candidate adds an internal bounded logical journal-field source and verified native content-staging connection. Client/mobile journal artifact capability and packet encoding remain unchanged; remote field transfer/promotion and remote primary handoff still need implementation. Exact leading U+FEFF, NUL and astral SQL text survives the existing journal frame format. This component does not establish complete large-field sync or production readiness.
+
 The unpublished 2.15 candidate exports the portable resumable sync API. Remote destinations retain exclusive execution unless a future capability explicitly guarantees safe concurrency; this package does not acquire a local native database. See the [sync contract and rollout guide](../../guides/wallet-sync-reliability.md).
 
 `@bsv/wallet-toolbox-mobile` is the React Native and mobile-safe Wallet

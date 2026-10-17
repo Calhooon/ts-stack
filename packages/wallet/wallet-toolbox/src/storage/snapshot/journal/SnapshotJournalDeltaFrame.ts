@@ -50,7 +50,8 @@ function integer(value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTE
 
 function text(value: unknown, maximum: number): string {
   if (typeof value !== 'string' || brc38Utf8ByteLength(value) > maximum) invalid()
-  if (new TextDecoder().decode(new TextEncoder().encode(value)) !== value) invalid()
+  if (new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(new TextEncoder().encode(value)) !== value)
+    invalid()
   return value
 }
 

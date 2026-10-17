@@ -15,6 +15,8 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/wall
 
 # @bsv/wallet-toolbox
 
+The held #569 candidate adds an internal bounded logical journal-field source and verified native content-staging connection. Client/mobile journal artifact capability and packet encoding remain unchanged; remote field transfer/promotion and remote primary handoff still need implementation. Exact leading U+FEFF, NUL and astral SQL text survives the existing journal frame format. This component does not establish complete large-field sync or production readiness.
+
 The unpublished 2.15 candidate adds `syncFromReaderResumable`, fair foreground scheduling, network/error preflight and canonical proof recovery. See the [sync contract and rollout guide](../../guides/wallet-sync-reliability.md). Existing sync methods and BRC-38/39/40 formats remain supported.
 
 `@bsv/wallet-toolbox` is the reference toolkit for building BRC-100 wallets. It connects `@bsv/sdk` primitives to wallet storage, key derivation, signing, services, monitoring, permissions, and authentication flows.

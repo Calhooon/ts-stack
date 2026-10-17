@@ -1,3 +1,6 @@
+import { preparePackedNativeSnapshotJournalField } from './preparePackedNativeSnapshotFieldNode'
+import { readSnapshotJournalCaptureConfiguration } from './journal/SnapshotJournalLifecycle'
+import { snapshotJournalRevision } from './journal/SnapshotJournalRevision'
 import { nativeTestExecutable } from '../portable/Brc38NativeTestPath'
 import { composedNativeFixture } from '../portable/Brc38ComposedNativeFixture'
 import { restoreProofFixture } from '../../../test/utils/Brc38ImportEntityRestoreFixture'
@@ -496,6 +499,78 @@ test.each(['request', 'transaction'] as const)(
         })
         expect(rows).toHaveLength(1)
         await verifyNativeSnapshotSyncRequestStale(target.storage, source, checkpoint, { kind, row: rows[0] })
+      }
+    })
+  },
+  pairCaseMilliseconds
+)
+
+// This case requires the genuine pinned native runtime. Typechecking it is not
+// evidence that packed source/pointer/reuse behavior has executed successfully.
+test(
+  'actual journal fields stage verified native bytes with rollback, consumed actors and content reuse',
+  async () => {
+    await withPair('packed-field', async ({ origin, target, source, checkpoint, proof }) => {
+      const rows = await target.storage.findOutputs({ partial: { userId: target.manager.getActiveUser().userId } }),
+        page = await source.fieldReader!.readMetadataPage('outputs', checkpoint.cursor, {
+          maxRows: 1,
+          maxBytes: 32768
+        }),
+        expected = Uint8Array.from(proof.tx.outputs[0].lockingScript.toBinary())
+      expect(rows).toHaveLength(1)
+      expect(page.rows).toHaveLength(1)
+      expect(rows[0].lockingScript == null).toBe(true)
+      // Drain the original source before reusing this provider's one source slot.
+      await source.close()
+      const configuration = await readSnapshotJournalCaptureConfiguration(origin.storage.knex),
+        journal = await origin.storage.openSnapshotJournalSource(
+          origin.manager.getActiveUser().identityKey,
+          configuration,
+          {
+            lifetimeMs: Math.min(origin.expiresAt, target.expiresAt) - Date.now()
+          }
+        )
+      try {
+        const request = {
+            bootstrap: true as const,
+            stream: 'scope' as const,
+            tableId: 1,
+            low: snapshotJournalRevision('0'),
+            maximumRows: 2,
+            maximumBytes: 32768
+          },
+          reader = journal.fieldDeltaReader
+        if (reader === undefined) throw new Error('Actual native journal did not issue its field reader')
+        const metadata = await reader.readPage(request),
+          selected = metadata.changes.find(
+            change => change.present && change.metadata.id1 === page.rows[0].fields.outputId
+          )
+        if (selected === undefined || !selected.present) throw new Error('Actual native journal output is missing')
+        expect(selected.row).not.toHaveProperty('lockingScript')
+        expect(selected.fields.lockingScript.bytes).toBe(expected.length)
+        await verifyPackedNativeSnapshotField({
+          storage: target.storage,
+          source,
+          cursor: page.rows[0].cursor,
+          descriptor: page.rows[0].extents.lockingScript,
+          targetRowId: rows[0].outputId,
+          expected,
+          expiresAt: Math.min(journal.expiresAt, target.expiresAt),
+          prepare: async policy =>
+            await preparePackedNativeSnapshotJournalField(
+              target.storage,
+              journal,
+              request,
+              selected.metadata,
+              'lockingScript',
+              selected.fields.lockingScript,
+              policy
+            )
+        })
+      } finally {
+        expected.fill(0)
+        await journal.close()
+        await journal.closed
       }
     })
   },

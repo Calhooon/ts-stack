@@ -1,3 +1,9 @@
+import type {
+  SnapshotJournalReconciliationSource,
+  SnapshotJournalDeltaRequest
+} from './journal/SnapshotJournalProvider'
+import type { SnapshotJournalMetadata } from './journal/SnapshotJournalTypes'
+import type { SnapshotJournalFieldDescriptor } from './journal/SnapshotJournalFieldTypes'
 import { nativePackedTextSource } from '../portable/Brc38NativePackedTextSources'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -217,6 +223,112 @@ export async function preparePackedNativeSnapshotField(
   )
 }
 
+/** Actual retained journal field -> actual native content owner. The journal
+ * reader independently rechecks its pinned profile, interval and physical
+ * lifetime on every extent. No synthetic WalletReadSnapshot, source SQL fence,
+ * serialized seal, primary authority or financial ACK is constructed here.
+ * Pointer attachment still belongs to the caller's original semantic writer. */
+export async function preparePackedNativeSnapshotJournalField(
+  storage: StorageKnex,
+  source: SnapshotJournalReconciliationSource,
+  selectedRequest: SnapshotJournalDeltaRequest,
+  selectedMetadata: SnapshotJournalMetadata,
+  field: string,
+  selectedDescriptor: Readonly<SnapshotJournalFieldDescriptor>,
+  selectedPolicy: PackedNativeSnapshotFieldPolicy
+): Promise<Readonly<PreparedPackedNativeSnapshotField>> {
+  const policy = Object.freeze({ ...selectedPolicy }),
+    descriptor = Object.freeze({ ...selectedDescriptor }),
+    metadata = Object.freeze({ ...selectedMetadata }),
+    request = Object.freeze({
+      ...selectedRequest,
+      ...(selectedRequest.after === undefined ? {} : { after: Object.freeze({ ...selectedRequest.after }) })
+    }),
+    reader = source.fieldDeltaReader
+  if (
+    brc38WorkingAllocation(policy.workingAllocation) === undefined ||
+    reader === undefined ||
+    typeof field !== 'string' ||
+    field.length < 1 ||
+    field.length > 128 ||
+    !['binary', 'utf8'].includes(descriptor.kind) ||
+    !Number.isSafeInteger(descriptor.bytes) ||
+    descriptor.bytes < 0 ||
+    descriptor.bytes > policy.maximumFieldBytes ||
+    (descriptor.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(descriptor.sha256)) ||
+    !Number.isSafeInteger(policy.maximumFieldBytes) ||
+    policy.maximumFieldBytes < 0 ||
+    policy.maximumFieldBytes > 1000000000 ||
+    !Number.isSafeInteger(policy.maximumReadBytes) ||
+    policy.maximumReadBytes < 64 ||
+    policy.maximumReadBytes > 65536 ||
+    !Number.isSafeInteger(policy.expiresAt) ||
+    policy.expiresAt <= Date.now() ||
+    policy.expiresAt > source.expiresAt ||
+    policy.expiresAt > Date.now() + 3600000 ||
+    !metadata.present ||
+    !Number.isSafeInteger(request.tableId) ||
+    request.tableId < 0 ||
+    request.tableId > 12
+  )
+    invalid()
+  // Journal and portable table orders intentionally differ.
+  const tables: readonly WalletSnapshotTable[] = [
+    'transactions',
+    'outputs',
+    'certificates',
+    'txLabels',
+    'outputBaskets',
+    'outputTags',
+    'commissions',
+    'syncStates',
+    'provenTxs',
+    'provenTxReqs',
+    'txLabelMaps',
+    'outputTagMaps',
+    'certificateFields'
+  ]
+  const checkSource = (): void => {
+    policy.signal?.throwIfAborted()
+    if (!source.isOpen || source.fieldDeltaReader !== reader || policy.expiresAt > source.expiresAt) invalid()
+  }
+  checkSource()
+  await source.verifyLive()
+  checkSource()
+  const encoded = async function* (hash: ReturnType<typeof createHash>): AsyncGenerator<Uint8Array> {
+    const utf8 = descriptor.kind === 'utf8' ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }) : undefined
+    for (let offset = 0; offset < descriptor.bytes || (offset === 0 && descriptor.bytes === 0);) {
+      checkSource()
+      const length = Math.min(policy.maximumReadBytes, descriptor.bytes - offset),
+        bytes = await reader.readExtent(request, metadata, field, offset, length, descriptor)
+      try {
+        checkSource()
+        if (!(bytes instanceof Uint8Array) || bytes.length !== length) invalid()
+        utf8?.decode(bytes, { stream: true })
+        hash.update(bytes)
+        if (length === 0) break
+        offset += length
+        yield bytes
+      } finally {
+        if (bytes instanceof Uint8Array) bytes.fill(0)
+      }
+    }
+    utf8?.decode()
+    checkSource()
+  }
+  return await prepareNativeSnapshotContent(
+    storage,
+    source,
+    tables[request.tableId],
+    field,
+    descriptor.kind === 'binary',
+    policy,
+    encoded,
+    checkSource,
+    descriptor.sha256
+  )
+}
+
 /** Derived UTF-8 text from the concrete original structured owner. The issuer
  * does not synthesize a WalletReadSnapshot or accept descriptor membership as
  * authority. Both complete projection passes re-enter their actual owners;
@@ -299,7 +411,7 @@ export async function stageNativeSnapshotSyncInlineText(
 
 async function prepareNativeSnapshotContent(
   storage: StorageKnex,
-  source: WalletReadSnapshot,
+  source: Pick<WalletReadSnapshot, 'isOpen'>,
   table: WalletSnapshotTable,
   field: string,
   binary: boolean,

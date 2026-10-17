@@ -1,3 +1,4 @@
+import type { SnapshotJournalFieldReader } from './SnapshotJournalFieldTypes'
 import type { WalletStorageProvider } from '../../../sdk/WalletStorage.interfaces'
 import type { RetainedReadSnapshotOptions } from '../RetainedReadSnapshot'
 import type { WalletReadSnapshot } from '../WalletReadSnapshot'
@@ -33,6 +34,8 @@ export interface SnapshotJournalDeltaRequest {
  * actual physical source ownership and verify current authority independently. */
 export interface SnapshotJournalReconciliationSource extends SnapshotJournalSource {
   readonly primary: { activeStorage: string | null; epoch: SnapshotJournalRevision }
+  /** Optional bounded logical-field producer from this SAME actual view. */
+  readonly fieldDeltaReader?: SnapshotJournalFieldReader
   verifyLive: () => Promise<void>
   withCommitFence: <T>(commit: () => Promise<T>) => Promise<T>
   withCurrentDataFence: <T>(

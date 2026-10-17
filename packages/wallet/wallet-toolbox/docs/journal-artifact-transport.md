@@ -8,6 +8,39 @@ Ordinary manager pulls and the direct local-source DATA coordinator are integrat
 Verified large-payload reuse and full remote primary reconciliation remain required. This component alone
 does not complete #544 or establish production readiness.
 
+## Bounded logical journal fields
+
+The actual SQL capture now exposes an internal `fieldDeltaReader`. Its metadata
+page separates supported binary and TEXT cells from small row cells; NULL stays
+NULL, and an empty non-NULL field has a zero-byte descriptor. Metadata reads do
+not select payload cells. Every extent is at most64KiB and repeats the actual
+retained profile, generation, interval, physical membership, field type and logical
+length checks. Captured private coordinates remain authoritative when callers
+mutate public header copies. A foreground WAL write does not change this view.
+Native packed fields report their logical lengths and stored digest DATA rather
+than empty SQL markers. Unpacked native TEXT uses the bounded native extent
+metadata protocol; ordinary SQLite/MySQL use exact binary/UTF-8 extents.
+
+`preparePackedNativeSnapshotJournalField` connects this reader to the existing
+native content owner. It hashes streamed source bytes, replays bounded writes and
+independently hashes stored content before issuing a one-use pointer attachment.
+An existing sealed version is freshly verified for reuse. Source reads run outside
+the native writer. No `WalletReadSnapshot` or SQL source fence is fabricated;
+semantic row merge, profile/primary checks and financial ACK remain the actual
+caller's responsibility. These internal APIs do not advertise a new remote
+capability or change `wallet-journal-packets/1`.
+
+The bounded legacy full-row journal reader now precharges and hydrates actual
+native logical fields before encoding; oversized rows still require the field
+path. Version-one frames retain leading U+FEFF as exact SQL text, alongside NUL
+and astral characters, without changing their existing byte format. Focused host
+regressions include a2MiB source, independent hashes, foreground writes, forged
+coordinates, expiry/cleanup contracts and NULL/empty/Unicode values. A genuine
+native rollback/reuse case is authored but still requires pinned-runtime execution.
+Remote field artifact/transfer/staging/semantic promotion and full remote primary
+handoff remain implementation work. This source connection is not complete
+large-payload sync or whole-system qualification.
+
 A version-three binding identifies `wallet-journal-packets/1`. It records the
 actual captured source/profile/schema, exact receipt/high-water/floor, source
 primary DATA and requested lower bound. A matching retained position selects

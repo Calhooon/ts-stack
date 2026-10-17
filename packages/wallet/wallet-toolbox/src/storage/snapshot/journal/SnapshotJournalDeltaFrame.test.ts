@@ -364,3 +364,20 @@ test.each([-Number.MAX_SAFE_INTEGER, -1, 0, Number.MAX_SAFE_INTEGER])(
     }
   }
 )
+
+test('a leading U+FEFF is exact SQL text in version-one frames, including NUL and astral characters', () => {
+  const data = page(),
+    change = data.changes[0],
+    exact = '\ufeffstart\0雪😀end'
+  if (!change.present) throw new Error('Independent exact SQL row is required')
+  change.row.label = exact
+  const encoded = encodeSnapshotJournalDeltaFrame(data, bound),
+    decoded = decodeSnapshotJournalDeltaFrame(encoded, bound),
+    actual = decoded.changes[0]
+  if (!actual.present) throw new Error('Decoded exact SQL row is required')
+  expect(actual.row.label).toBe(exact)
+  expect(Buffer.from(actual.row.label as string)).toEqual(
+    Buffer.from([239, 187, 191, 115, 116, 97, 114, 116, 0, 233, 155, 170, 240, 159, 152, 128, 101, 110, 100])
+  )
+  expect(decoded).toEqual(data)
+})

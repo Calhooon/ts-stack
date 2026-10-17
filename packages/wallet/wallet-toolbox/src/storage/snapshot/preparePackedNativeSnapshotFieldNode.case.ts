@@ -7,6 +7,10 @@ import { Brc38StagingCleanupError } from '../portable/Brc38StagingCleanupError'
 import { nativePreparedFieldsTable } from '../portable/Brc38NativePreparedFieldSchemaNode'
 import { nativePackedTables } from '../portable/Brc38NativePackedSchemaNode'
 import { readBrc38NativePackedDescriptor, readBrc38NativePackedExtent } from '../portable/Brc38NativePackedFieldsNode'
+import type {
+  PackedNativeSnapshotFieldPolicy,
+  PreparedPackedNativeSnapshotField
+} from './preparePackedNativeSnapshotFieldNode'
 import { preparePackedNativeSnapshotField } from './preparePackedNativeSnapshotFieldNode'
 import type { WalletReadSnapshot, WalletSnapshotCursor, WalletSnapshotFieldDescriptor } from './WalletReadSnapshot'
 
@@ -23,6 +27,7 @@ export async function verifyPackedNativeSnapshotField(
     targetRowId: number
     expected: Uint8Array
     expiresAt: number
+    prepare?: (policy: PackedNativeSnapshotFieldPolicy) => Promise<Readonly<PreparedPackedNativeSnapshotField>>
   }>
 ): Promise<void> {
   const { storage, source, cursor, descriptor, targetRowId, expected, expiresAt } = fixture,
@@ -55,7 +60,9 @@ export async function verifyPackedNativeSnapshotField(
       return result
     },
     prepare = async () =>
-      await preparePackedNativeSnapshotField(storage, source, 'outputs', cursor, 'lockingScript', descriptor, policy)
+      await (fixture.prepare === undefined
+        ? preparePackedNativeSnapshotField(storage, source, 'outputs', cursor, 'lockingScript', descriptor, policy)
+        : fixture.prepare(policy))
   if (
     !(expected instanceof Uint8Array) ||
     expected.length < 65537 ||

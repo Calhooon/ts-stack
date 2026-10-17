@@ -1,3 +1,4 @@
+import type { SnapshotJournalFieldReader } from './SnapshotJournalFieldTypes'
 import {
   prepareSnapshotArchiveGuardBackend,
   assertSnapshotArchiveGuardBackend,
@@ -49,8 +50,17 @@ import {
   type SnapshotJournalReceiptBinding
 } from './SnapshotJournalReceipt'
 import { snapshotJournalRevision, type SnapshotJournalRevision } from './SnapshotJournalRevision'
-import { readSnapshotJournalDeltaPage, snapshotJournalPhysicalMember } from './SnapshotJournalDeltaPage'
-import { readSnapshotJournalMetadataPage, type SnapshotJournalInterval } from './SnapshotJournalPage'
+import {
+  readSnapshotJournalDeltaPage,
+  readSnapshotJournalFieldPage,
+  readSnapshotJournalFieldExtent,
+  snapshotJournalPhysicalMember
+} from './SnapshotJournalDeltaPage'
+import {
+  readSnapshotJournalMetadataPage,
+  snapshotJournalMetadataQuery,
+  type SnapshotJournalInterval
+} from './SnapshotJournalPage'
 import { encodeSnapshotJournalDeltaFrame } from './SnapshotJournalDeltaFrame'
 import { readSnapshotJournalRowSourceIdentities } from './SnapshotJournalRowReferences'
 import { readSnapshotJournalSqliteGeneration } from './SnapshotJournalSqliteGeneration'
@@ -634,7 +644,99 @@ export function retainSnapshotJournalCapture(
         reading = false
       }
     }
+    const readFields = async <T>(
+      input: SnapshotJournalDeltaRequest,
+      work: (
+        trx: Knex,
+        interval: SnapshotJournalInterval,
+        indexes: {
+          profile: KnexSnapshotArchiveHeader['profileIndexes']
+          relation: KnexSnapshotArchiveHeader['relationIndexes']
+          certificate: KnexSnapshotArchiveHeader['certificateIndexes']
+          global: KnexSnapshotArchiveHeader['globalIndexes']
+        },
+        maximumBytes: number
+      ) => Promise<T>
+    ): Promise<T> => {
+      if (reading) return invalid()
+      const request = { ...input, ...(input.after === undefined ? {} : { after: { ...input.after } }) }
+      if (request.bootstrap !== undefined && request.bootstrap !== true) return invalid()
+      reading = true
+      try {
+        return await view.read(async token => {
+          await owned.verifyLive()
+          const trx = storage!.toDb(token),
+            header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
+          const interval: SnapshotJournalInterval = {
+            ...(request.bootstrap === true ? { bootstrap: true as const } : {}),
+            stream: request.stream,
+            tableId: request.tableId,
+            userId: owned.binding.userId,
+            floor: owned.receipt.floor,
+            low: snapshotJournalRevision(request.low),
+            high: owned.receipt.highWater,
+            after: request.after,
+            limit: request.maximumRows
+          }
+          snapshotJournalMetadataQuery(trx, interval)
+          if (
+            !Number.isSafeInteger(request.maximumBytes) ||
+            request.maximumBytes < 1 ||
+            request.maximumBytes > 16777216
+          )
+            return invalid()
+          const result = await work(
+            trx,
+            interval,
+            {
+              profile: header.profileIndexes,
+              relation: header.relationIndexes,
+              certificate: header.certificateIndexes,
+              global: header.globalIndexes
+            },
+            request.maximumBytes
+          )
+          await owned.verifyLive()
+          return result
+        })
+      } finally {
+        reading = false
+      }
+    }
+    const fieldDeltaReader: SnapshotJournalFieldReader = {
+      readPage: async request =>
+        await readFields(request, async (trx, interval, indexes, maximumBytes) => {
+          if (
+            interval.bootstrap === true &&
+            interval.stream === 'scope' &&
+            (interval.tableId === 8 || interval.tableId === 9)
+          )
+            return {
+              table: interval.tableId === 8 ? ('provenTxs' as const) : ('provenTxReqs' as const),
+              changes: [],
+              examined: 0,
+              metadataBytes: 0,
+              fieldBytes: 0,
+              complete: true
+            }
+          return await readSnapshotJournalFieldPage(trx, interval, maximumBytes, indexes)
+        }),
+      readExtent: async (request, metadata, field, offset, length, descriptor) => {
+        const selected = { ...metadata },
+          expected = Object.freeze({ ...descriptor })
+        return await readFields(request, async (trx, interval, indexes) => {
+          if (
+            interval.bootstrap === true &&
+            interval.stream === 'scope' &&
+            (interval.tableId === 8 || interval.tableId === 9)
+          )
+            return invalid()
+          return await readSnapshotJournalFieldExtent(trx, interval, selected, field, offset, length, expected, indexes)
+        })
+      }
+    }
     const source: SnapshotJournalReconciliationSource = {
+      fieldDeltaReader,
       ...archiveSource,
       get sourceStorage() {
         return archiveSource.sourceStorage
