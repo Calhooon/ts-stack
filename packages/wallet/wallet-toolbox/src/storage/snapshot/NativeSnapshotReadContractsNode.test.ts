@@ -8,7 +8,8 @@ import {
   verifyNativeConcurrentSnapshotSource
 } from './NativeConcurrentSnapshotSourceNode.case'
 import { verifyNativePackedHashWindowOracle } from '../portable/Brc38NativePackedHashWindowNode.case'
-import { createOwnedNativeReadDatabase } from '../schema/ownedNativeSqliteConnectionsNode'
+import { createOwnedNativeReadDatabase, ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
+import { openBrc38KnexSource } from '../portable/Brc38KnexSource'
 import { verifyNativePayloadTextSource, type NativePayloadTextSourceCase } from './NativeSnapshotPayloadTextSource.case'
 import { withComposedFixtureRead } from '../portable/Brc38ComposedSemanticFixture'
 import type { WalletSnapshotTable } from './WalletReadSnapshot'
@@ -275,3 +276,51 @@ test(
   },
   nativeFixtureCaseTimeoutMs
 )
+
+test('native portable measurement keeps foreground capacity while its dedicated export reader is retained', async () => {
+  let borrowed: ReturnType<typeof createOwnedNativeReadDatabase> | undefined
+  await withComposedNativeFixture(
+    async fixture => {
+      const storage = fixture.storage,
+        user = fixture.manager.getActiveUser(),
+        originalMaximum = storage.knex.client.config.pool?.max,
+        reader = await fixture.openPortableReader(storage)
+      borrowed = reader.knex
+      expect(originalMaximum).toBe(1)
+      expect(reader.knex).not.toBe(storage.knex)
+      expect(ownedNativeRootIdentity(reader.knex)?.slot).toBe(3)
+      expect(ownedNativeRootIdentity(reader.knex)?.token).toBe(ownedNativeRootIdentity(storage.knex)?.token)
+      await expect(fixture.openPortableReader(Object.create(storage))).rejects.toThrow('current fixture provider')
+      const source = await openBrc38KnexSource(reader, user.identityKey, {
+        lifetimeMs: Math.min(60000, fixture.expiresAt - Date.now()),
+        maximumPageRows: 8,
+        maximumPageBytes: 1048576,
+        maximumRowAllocationBytes: 1048576,
+        maximumCertificateGroupBytes: 1048576
+      })
+      fixture.retainCleanup(async () => await source.release())
+      const labels = await fixture.manager.runAsReader(async active => {
+        if (active !== storage) throw new Error('Portable foreground reader changed its current provider')
+        return await storage.findTxLabels({ partial: { userId: user.userId }, paged: { limit: 1, offset: 0 } })
+      })
+      expect(labels.length).toBeGreaterThan(0)
+      const name = 'independent retained portable foreground basket',
+        basket = await fixture.manager.runAsWriter(async active => {
+          if (active !== storage) throw new Error('Portable foreground writer changed its current provider')
+          return await storage.findOrInsertOutputBasket(user.userId, name)
+        })
+      expect(basket.outputBasketId).toBeGreaterThan(0)
+      const captured = []
+      for await (const row of source.rows('outputBaskets')) captured.push(row)
+      expect(captured.length).toBeGreaterThan(0)
+      expect(captured.some(row => row.name === name)).toBe(false)
+      expect(storage.knex.client.config.pool?.max).toBe(originalMaximum)
+      await source.release()
+    },
+    nativeTestExecutable(),
+    undefined,
+    360000
+  )
+  expect(borrowed).toBeDefined()
+  expect(ownedNativeRootIdentity(borrowed!)).toBeUndefined()
+}, 390000)

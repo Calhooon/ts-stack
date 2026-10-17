@@ -2,6 +2,8 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { StorageKnex } from '../StorageKnex'
+import { StorageProvider } from '../StorageProvider'
+import { createOwnedNativeReadDatabase } from '../schema/ownedNativeSqliteConnectionsNode'
 import { restoreProofFixture, restorePortableProof } from '../../../test/utils/Brc38ImportEntityRestoreFixture'
 import { semanticStageFixture } from './Brc38SemanticStageFixture'
 import {
@@ -374,6 +376,30 @@ export async function composedNativeFixture(
         }
       },
       chunks: () => chunks(bytes, measurement === undefined ? 137 : 1024),
+      /** The low-level exporter retains its caller's pool. Keep the serving
+       * writer free by owning an actual separate readonly native lease, with
+       * its cleanup enrolled before any constructor or setup can fail. */
+      async openPortableReader(provider: StorageKnex): Promise<StorageKnex> {
+        check()
+        if (provider !== manager.getActive()) throw new Error('Portable reader requires the current fixture provider')
+        const options = StorageProvider.createStorageBaseOptions(provider.chain),
+          database = createOwnedNativeReadDatabase(provider.knex)
+        let reader: StorageKnex | undefined
+        closes.push(async () => {
+          if (reader === undefined) await database.destroy()
+          else await reader.destroy()
+        })
+        reader = new StorageKnex({
+          ...options,
+          snapshotSync: false,
+          snapshotJournalRetention: false,
+          knex: database
+        })
+        await reader.makeAvailable()
+        check()
+        if (provider !== manager.getActive()) throw new Error('Portable reader lost the current fixture provider')
+        return reader
+      },
       retainCleanup(cleanup: () => Promise<void>) {
         closes.push(cleanup)
       },

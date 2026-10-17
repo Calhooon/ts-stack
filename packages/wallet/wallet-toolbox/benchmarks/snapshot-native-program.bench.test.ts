@@ -80,7 +80,11 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
         failure: unknown
       const reports: Record<string, unknown>[] = [],
         observerOwners = new Set<Knex>()
-      const measure = async <T>(phase: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const measure = async <T>(
+        phase: string,
+        run: (signal: AbortSignal) => Promise<T>,
+        readers: readonly InstanceType<typeof StorageKnex>[] = []
+      ): Promise<T> => {
         const cancellation = new AbortController()
         const signal = AbortSignal.any([native.signal, cancellation.signal])
         native.beginPhase()
@@ -108,10 +112,11 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
           const provider = fixture.manager.getActive()
           if (!(provider instanceof StorageKnex))
             throw new Error('Native measurement requires its actual current provider')
-          if (!observerOwners.has(provider.knex)) {
-            provider.knex.on('query', query)
-            observerOwners.add(provider.knex)
-          }
+          for (const actor of [provider, ...readers])
+            if (!observerOwners.has(actor.knex)) {
+              actor.knex.on('query', query)
+              observerOwners.add(actor.knex)
+            }
         }
         observeCurrent()
         const timer = setInterval(() => {
@@ -245,46 +250,52 @@ describe.each(snapshotMeasurementCases)('actual native program measurement: $nam
           policy
         )
         fixture.retainCleanup(async () => await cipher?.discard())
-        const encrypted = await measure('full13-native-streamed-export', async signal => {
-          const source = await openBrc38KnexSource(imported.provider, fixture.manager.getActiveUser().identityKey, {
-            maximumPageRows: 128,
-            maximumPageBytes: 262144,
-            maximumMetadataAllocationBytes: 65536,
-            maximumRowAllocationBytes: 1048576,
-            maximumCertificateGroupBytes: 1048576,
-            lifetimeMs: Math.min(120000, fixture.expiresAt - Date.now()),
-            signal,
-            streamedBinary: { maximumBinaryBytes: 1048576, maximumExtentBytes: 4096 },
-            streamedText: { maximumTextBytes: 1048576 },
-            streamedStructured: {
-              maximumStructuredBytes: 2097152,
-              privateIndexParent: fixture.directory,
-              maximumTemporaryIndexBytes: 8388608,
-              maximumIndexMembers: 30000
-            }
-          })
-          stream = await createBrc38Stream(source, {
-            exportedAt: '2026-10-08T00:00:00.000Z',
-            maximumArchiveBytes: 8388608,
-            maximumRowBytes: 4194304,
-            maximumChunkBytes: 4096,
-            signal,
-            streamedRows: {
+        const reader = await fixture.openPortableReader(imported.provider)
+        const encrypted = await measure(
+          'full13-native-streamed-export',
+          async signal => {
+            const source = await openBrc38KnexSource(reader, fixture.manager.getActiveUser().identityKey, {
+              maximumPageRows: 128,
+              maximumPageBytes: 262144,
               maximumMetadataAllocationBytes: 65536,
-              maximumBinaryBytes: 1048576,
-              maximumStructuredBytes: 2097152,
-              maximumTextBytes: 1048576,
-              maximumRowBytes: 4194304
-            }
-          })
-          fixture.retainCleanup(async () => await stream?.close())
-          return await encryptBrc39StreamToQuarantine(
-            { ...stream, chunks: delayed(stream.chunks) },
-            authenticatedStagePassword,
-            cipher!,
-            { policy, maximumPasswordBytes: 1024, maximumKdfMilliseconds: 30000, signal }
-          )
-        })
+              maximumRowAllocationBytes: 1048576,
+              maximumCertificateGroupBytes: 1048576,
+              lifetimeMs: Math.min(120000, fixture.expiresAt - Date.now()),
+              signal,
+              streamedBinary: { maximumBinaryBytes: 1048576, maximumExtentBytes: 4096 },
+              streamedText: { maximumTextBytes: 1048576 },
+              streamedStructured: {
+                maximumStructuredBytes: 2097152,
+                privateIndexParent: fixture.directory,
+                maximumTemporaryIndexBytes: 8388608,
+                maximumIndexMembers: 30000
+              }
+            })
+            fixture.retainCleanup(async () => await source.release())
+            stream = await createBrc38Stream(source, {
+              exportedAt: '2026-10-08T00:00:00.000Z',
+              maximumArchiveBytes: 8388608,
+              maximumRowBytes: 4194304,
+              maximumChunkBytes: 4096,
+              signal,
+              streamedRows: {
+                maximumMetadataAllocationBytes: 65536,
+                maximumBinaryBytes: 1048576,
+                maximumStructuredBytes: 2097152,
+                maximumTextBytes: 1048576,
+                maximumRowBytes: 4194304
+              }
+            })
+            fixture.retainCleanup(async () => await stream?.close())
+            return await encryptBrc39StreamToQuarantine(
+              { ...stream, chunks: delayed(stream.chunks) },
+              authenticatedStagePassword,
+              cipher!,
+              { policy, maximumPasswordBytes: 1024, maximumKdfMilliseconds: 30000, signal }
+            )
+          },
+          [reader]
+        )
         await cipher.validateAuthenticated()
         await cipher.withAuthenticatedChunks(async chunks => {
           const parts: Uint8Array[] = []
