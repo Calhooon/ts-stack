@@ -12,7 +12,7 @@ export type {
   SnapshotJournalRetention
 } from './SnapshotJournalTypes'
 import type { Knex } from 'knex'
-import { createHash } from 'node:crypto'
+import { hashSnapshotJournalReceiptBinding } from './SnapshotJournalReceiptData'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { snapshotArchiveDatabaseNow } from '../archive/SnapshotArchiveSql'
 import { reserveSnapshotJournalCaptureFence } from './SnapshotJournalCaptureFence'
@@ -74,21 +74,7 @@ export function snapshotJournalReceiptBinding(value: SnapshotJournalReceiptBindi
     !['main', 'test', 'stn', 'ttn', 'tstn', 'regtest', 'mock'].includes(value.chain)
   )
     return invalid()
-  return createHash('sha256')
-    .update('snapshot-journal-receipt-binding-v1\n')
-    .update(
-      JSON.stringify([
-        value.backend,
-        value.epoch,
-        value.source,
-        value.schema,
-        value.storageIdentity,
-        value.identityKey,
-        value.userId,
-        value.chain
-      ])
-    )
-    .digest('hex')
+  return hashSnapshotJournalReceiptBinding(value)
 }
 
 /** Owned generation DDL only. This helper neither adopts objects nor registers a migration. */

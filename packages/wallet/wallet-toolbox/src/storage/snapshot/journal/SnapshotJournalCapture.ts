@@ -557,9 +557,15 @@ export function retainSnapshotJournalCapture(
       get isOpen() {
         return view.isOpen
       },
-      receipt: { ...captured.receipt },
-      receiptBinding: { ...captured.binding },
-      primary: { ...captured.primary },
+      get receipt() {
+        return { ...owned.receipt }
+      },
+      get receiptBinding() {
+        return { ...owned.binding }
+      },
+      get primary() {
+        return { ...owned.primary }
+      },
       readContentRevision: async selectedSince => {
         const since = selectedSince === undefined ? undefined : parseSnapshotSyncContentPosition(selectedSince)
         if (!view.isOpen || reading) return invalid()

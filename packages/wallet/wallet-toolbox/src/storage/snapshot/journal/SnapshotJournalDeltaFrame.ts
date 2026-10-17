@@ -1,3 +1,4 @@
+import { brc38Utf8ByteLength } from '../../portable/Brc38Utf8Length'
 import type { WalletSnapshotTable } from '../WalletReadSnapshot'
 import type { SnapshotJournalDelta, SnapshotJournalDeltaPage } from './SnapshotJournalDeltaPage'
 import type { SnapshotJournalMetadata, SnapshotJournalPosition } from './SnapshotJournalPage'
@@ -48,8 +49,8 @@ function integer(value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTE
 }
 
 function text(value: unknown, maximum: number): string {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > maximum) invalid()
-  if (Buffer.from(value, 'utf8').toString('utf8') !== value) invalid()
+  if (typeof value !== 'string' || brc38Utf8ByteLength(value) > maximum) invalid()
+  if (new TextDecoder().decode(new TextEncoder().encode(value)) !== value) invalid()
   return value
 }
 
@@ -106,12 +107,21 @@ function position(value: unknown, tableId: number): SnapshotJournalPosition {
   return { revision, id1, id2, exactText }
 }
 
+function compareText(left: string, right: string): number {
+  const a = new TextEncoder().encode(left),
+    b = new TextEncoder().encode(right)
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    if (a[index] !== b[index]) return a[index] - b[index]
+  }
+  return a.length - b.length
+}
+
 function compare(left: SnapshotJournalPosition, right: SnapshotJournalPosition): number {
   return (
     compareSnapshotJournalRevisions(left.revision, right.revision) ||
     left.id1 - right.id1 ||
     left.id2 - right.id2 ||
-    Buffer.compare(Buffer.from(left.exactText, 'utf8'), Buffer.from(right.exactText, 'utf8'))
+    compareText(left.exactText, right.exactText)
   )
 }
 
@@ -184,7 +194,7 @@ export function encodeSnapshotJournalDeltaFrame(
     budget += amount
     if (!Number.isSafeInteger(budget) || budget > SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES) invalid()
   }
-  if (after !== undefined) charge(6 * Buffer.byteLength(after.exactText, 'utf8'))
+  if (after !== undefined) charge(6 * brc38Utf8ByteLength(after.exactText))
   const parts: Uint8Array[] = []
   let previous: SnapshotJournalMetadata | undefined
   // Validate and precharge every cell before allocating any payload copy/frame.
@@ -193,7 +203,7 @@ export function encodeSnapshotJournalDeltaFrame(
     const meta = metadata(entry.metadata, bound)
     if (entry.present !== meta.present || (previous !== undefined && compare(previous, meta) >= 0)) invalid()
     previous = meta
-    charge(512 + 6 * Buffer.byteLength(meta.exactText, 'utf8'))
+    charge(512 + 6 * brc38Utf8ByteLength(meta.exactText))
     if (!meta.present) {
       if (Object.hasOwn(entry, 'row')) invalid()
       return { metadata: meta, present: false as const }
@@ -201,7 +211,7 @@ export function encodeSnapshotJournalDeltaFrame(
     const entries = rowEntries(entry.row)
     identity(Object.fromEntries(entries), meta, bound.tableId)
     const cells = entries.map(([name, value]): Cell | [string, 'pendingBytes', Uint8Array] => {
-      charge(256 + 6 * Buffer.byteLength(name, 'utf8'))
+      charge(256 + 6 * brc38Utf8ByteLength(name))
       if (value === null) return [name, 'null', null]
       if (typeof value === 'boolean') return [name, 'boolean', value]
       if (typeof value === 'number') {
@@ -216,7 +226,7 @@ export function encodeSnapshotJournalDeltaFrame(
       }
       if (typeof value === 'string') {
         // Charge before UTF-8 validation can allocate a buffer.
-        charge(6 * Buffer.byteLength(value, 'utf8'))
+        charge(6 * brc38Utf8ByteLength(value))
         return [name, 'string', text(value, SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES)]
       }
       if (value instanceof Date) {

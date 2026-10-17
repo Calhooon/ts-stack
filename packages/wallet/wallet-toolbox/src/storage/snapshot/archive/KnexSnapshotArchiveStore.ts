@@ -1,3 +1,13 @@
+import {
+  parseSnapshotJournalArchiveBinding,
+  snapshotJournalArchiveStreams,
+  type SnapshotJournalArchiveBinding,
+  type SnapshotJournalArchiveManifest
+} from '../journal/SnapshotJournalArchiveBinding'
+import {
+  decodeSnapshotJournalArchivePacket,
+  snapshotJournalArchiveEncoding
+} from '../journal/SnapshotJournalArchivePacket'
 import { parseSnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { hasSnapshotArchiveOwner, SnapshotArchiveCleanupPendingError } from './SnapshotArchiveOwner'
 import { Hash, Random, Utils } from '@bsv/sdk'
@@ -138,11 +148,50 @@ export class KnexSnapshotArchiveStore {
     if (binding.version === 1 && Object.hasOwn(binding, 'contentRevision'))
       throw new WERR_INVALID_PARAMETER('binding', 'a version-one binding without content revision')
     const identityKey = binding.user.identityKey
-    const encoded = JSON.stringify(
-      binding.version === 1
-        ? binding
-        : { ...binding, contentRevision: parseSnapshotSyncContentRevision(binding.contentRevision) }
+    let contentRevision: ReturnType<typeof parseSnapshotSyncContentRevision> | undefined
+    if (binding.version === 2) {
+      try {
+        contentRevision = parseSnapshotSyncContentRevision(binding.contentRevision)
+      } catch {
+        throw new WERR_INVALID_PARAMETER('binding', 'a version-two binding with valid content revision DATA')
+      }
+    }
+    const encoded = JSON.stringify(binding.version === 1 ? binding : { ...binding, contentRevision })
+    return await this.beginEncoded(identityKey, encoded, reservedBytes, lifetimeMs)
+  }
+
+  /** Separate producer admission: a journal artifact never enters the row
+   * archive API, even though its charged auxiliary storage is shared. */
+  async beginJournal(
+    input: SnapshotJournalArchiveBinding,
+    options: { maxBytes?: number; lifetimeMs?: number } = {}
+  ): Promise<SnapshotArchiveWriter> {
+    const binding = parseSnapshotJournalArchiveBinding(input),
+      reservedBytes = integer(
+        options.maxBytes ?? snapshotArchiveLimits.archiveBytes,
+        snapshotArchiveLimits.headerCharge + 1,
+        snapshotArchiveLimits.archiveBytes,
+        'maxBytes'
+      ),
+      lifetimeMs = integer(options.lifetimeMs ?? 300000, 1, snapshotArchiveLimits.lifetimeMs, 'lifetimeMs'),
+      now = await this.now(this.knex)
+    if (now + lifetimeMs > binding.journal.receipt.expiresAt) throw unavailable()
+    return await this.beginEncoded(
+      binding.user.identityKey,
+      JSON.stringify(binding),
+      reservedBytes,
+      lifetimeMs,
+      binding.journal.receipt.expiresAt
     )
+  }
+
+  private async beginEncoded(
+    identityKey: string,
+    encoded: string,
+    reservedBytes: number,
+    lifetimeMs: number,
+    maximumExpiresAt = Number.MAX_SAFE_INTEGER
+  ): Promise<SnapshotArchiveWriter> {
     const bytes = new TextEncoder().encode(encoded)
     const usedBytes = bytes.length + snapshotArchiveLimits.headerCharge
     if (bytes.length > snapshotArchiveLimits.bindingBytes || usedBytes > reservedBytes) {
@@ -159,12 +208,14 @@ export class KnexSnapshotArchiveStore {
       ) {
         throw new SnapshotResourceLimitError('Snapshot archive capacity is occupied')
       }
+      const expiresAt = (await this.now(trx)) + lifetimeMs
+      if (expiresAt > maximumExpiresAt) throw unavailable()
       await trx('snapshot_archives').insert({
         ...writer,
         identityKey,
         state: 'building',
         binding: encoded,
-        expiresAt: (await this.now(trx)) + lifetimeMs,
+        expiresAt,
         reservedBytes,
         usedBytes,
         nextSequence: 0,
@@ -196,6 +247,23 @@ export class KnexSnapshotArchiveStore {
     page: Omit<SnapshotArchivePage, 'digest'>,
     authorize?: (trx: Knex) => Promise<void>
   ): Promise<void> {
+    await this.appendPage(writer, page, authorize, false)
+  }
+
+  async appendJournal(
+    writer: SnapshotArchiveWriter,
+    page: Omit<SnapshotArchivePage, 'digest'>,
+    authorize?: (trx: Knex) => Promise<void>
+  ): Promise<void> {
+    await this.appendPage(writer, page, authorize, true)
+  }
+
+  private async appendPage(
+    writer: SnapshotArchiveWriter,
+    page: Omit<SnapshotArchivePage, 'digest'>,
+    authorize: ((trx: Knex) => Promise<void>) | undefined,
+    journal: boolean
+  ): Promise<void> {
     integer(page.sequence, 0, snapshotArchiveLimits.pages - 1, 'sequence')
     integer(page.rows, 0, snapshotArchiveLimits.rowsPerPage, 'rows')
     if (
@@ -204,7 +272,7 @@ export class KnexSnapshotArchiveStore {
       !(page.bytes instanceof Uint8Array) ||
       page.bytes.length < 1 ||
       page.bytes.length > snapshotArchiveLimits.pageBytes ||
-      (page.rows === 0 && !page.done)
+      (page.rows === 0 && !page.done && !journal)
     )
       throw new WERR_INVALID_PARAMETER('page', 'a bounded snapshot archive page')
     // Detach before taking an asynchronous lock, including caller-owned typed bytes.
@@ -215,6 +283,7 @@ export class KnexSnapshotArchiveStore {
       await this.capacity(trx)
       await authorize?.(trx)
       const row = await this.ownedWriter(trx, owner)
+      if (this.journalRow(row) !== journal) throw unavailable()
       if (input.sequence < row.nextSequence) {
         const prior: PageRow | undefined = await trx('snapshot_archive_pages')
           .where({ archiveId: row.archiveId, sequence: input.sequence })
@@ -228,12 +297,22 @@ export class KnexSnapshotArchiveStore {
           throw unavailable()
         return
       }
-      if (
-        row.state !== 'building' ||
-        input.sequence !== row.nextSequence ||
-        input.table !== snapshotArchiveTables[row.tableIndex]
-      )
-        throw unavailable()
+      if (row.state !== 'building' || input.sequence !== row.nextSequence) throw unavailable()
+      if (journal) {
+        const binding = parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
+          stream = snapshotJournalArchiveStreams[row.tableIndex]
+        if (stream === undefined || input.table !== stream.table) throw unavailable()
+        const packet = decodeSnapshotJournalArchivePacket(
+          input.bytes,
+          { stream: stream.stream, tableId: stream.tableId },
+          binding.journal.receipt.highWater
+        )
+        if (
+          input.rows !== (packet.kind === 'frame' ? packet.page.changes.length : 0) ||
+          input.done !== (packet.kind === 'frame' && packet.page.complete)
+        )
+          throw unavailable()
+      } else if (input.table !== snapshotArchiveTables[row.tableIndex]) throw unavailable()
       const usedBytes = Number(row.usedBytes) + input.bytes.length + snapshotArchiveLimits.pageCharge
       if (usedBytes > Number(row.reservedBytes))
         throw new SnapshotResourceLimitError('Snapshot archive reservation exhausted')
@@ -261,7 +340,34 @@ export class KnexSnapshotArchiveStore {
     })
   }
 
+  private journalRow(row: ArchiveRow): boolean {
+    if (typeof row.binding !== 'string' || row.binding.length > snapshotArchiveLimits.bindingBytes) throw unavailable()
+    const binding: unknown = JSON.parse(row.binding)
+    if (binding === null || typeof binding !== 'object') throw unavailable()
+    const version = Object.getOwnPropertyDescriptor(binding, 'version')?.value
+    if (version === 3) {
+      parseSnapshotJournalArchiveBinding(binding)
+      return true
+    }
+    if (version !== 1 && version !== 2) throw unavailable()
+    return false
+  }
+
+  private journalManifest(row: ArchiveRow): SnapshotJournalArchiveManifest {
+    if (!this.journalRow(row)) throw unavailable()
+    return {
+      version: 1,
+      archiveId: row.archiveId,
+      binding: parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
+      expiresAt: Number(row.expiresAt),
+      pages: row.nextSequence,
+      rows: Number(row.rows),
+      digest: row.digest
+    }
+  }
+
   private manifest(row: ArchiveRow): SnapshotArchiveManifest {
+    if (this.journalRow(row)) throw unavailable()
     const binding = JSON.parse(row.binding) as SnapshotArchiveBinding
     for (const metadata of [binding.sourceStorage, binding.user]) {
       metadata.created_at = new Date(String(metadata.created_at))
@@ -284,19 +390,31 @@ export class KnexSnapshotArchiveStore {
     return await this.knex.transaction(async trx => {
       await this.capacity(trx)
       const row = await this.ownedWriter(trx, owner)
-      if (row.tableIndex !== snapshotArchiveTables.length) throw unavailable()
+      if (this.journalRow(row) || row.tableIndex !== snapshotArchiveTables.length) throw unavailable()
       await trx('snapshot_archives').where({ archiveId: row.archiveId }).update({ state: 'ready' })
       return this.manifest(row)
     })
   }
 
-  private async ready(identityKey: string, archiveId: string): Promise<ArchiveRow> {
+  async sealJournal(writer: SnapshotArchiveWriter): Promise<SnapshotJournalArchiveManifest> {
+    const owner = { archiveId: writer.archiveId, writerToken: writer.writerToken }
+    return await this.knex.transaction(async trx => {
+      await this.capacity(trx)
+      const row = await this.ownedWriter(trx, owner)
+      if (!this.journalRow(row) || row.tableIndex !== snapshotJournalArchiveStreams.length) throw unavailable()
+      await trx('snapshot_archives').where({ archiveId: row.archiveId }).update({ state: 'ready' })
+      return this.journalManifest(row)
+    })
+  }
+
+  private async ready(identityKey: string, archiveId: string, journal = false): Promise<ArchiveRow> {
     identity(identityKey)
     identifier(archiveId, 'archiveId')
     const row: ArchiveRow | undefined = await this.knex('snapshot_archives')
       .where({ archiveId, identityKey, state: 'ready' })
       .first()
-    if (row === undefined || Number(row.expiresAt) <= (await this.now(this.knex))) throw unavailable()
+    if (row === undefined || this.journalRow(row) !== journal || Number(row.expiresAt) <= (await this.now(this.knex)))
+      throw unavailable()
     return row
   }
 
@@ -304,9 +422,21 @@ export class KnexSnapshotArchiveStore {
     return this.manifest(await this.ready(identityKey, archiveId))
   }
 
+  async inspectJournal(identityKey: string, archiveId: string): Promise<SnapshotJournalArchiveManifest> {
+    return this.journalManifest(await this.ready(identityKey, archiveId, true))
+  }
+
+  async journalDirectory(identityKey: string, archiveId: string) {
+    return await this.directoryData(identityKey, archiveId, true)
+  }
+
   /** Bounded inclusion metadata, without fetching any staged row payloads. */
   async directory(identityKey: string, archiveId: string): Promise<SnapshotArchiveDirectory> {
-    const header = await this.ready(identityKey, archiveId)
+    return { ...(await this.directoryData(identityKey, archiveId, false)), encoding: snapshotArchiveEncoding }
+  }
+
+  private async directoryData(identityKey: string, archiveId: string, journal: boolean) {
+    const header = await this.ready(identityKey, archiveId, journal)
     const pages: Array<Omit<PageRow, 'payload' | 'archiveId'>> = await this.knex('snapshot_archive_pages')
       .select('sequence', 'tableName', 'rows', 'done', 'digest')
       .where({ archiveId })
@@ -314,10 +444,10 @@ export class KnexSnapshotArchiveStore {
       .limit(snapshotArchiveLimits.pages)
     if (pages.length !== header.nextSequence) throw unavailable()
     // A concurrent close or expiry must not publish a newly stale directory.
-    await this.ready(identityKey, archiveId)
+    await this.ready(identityKey, archiveId, journal)
     return {
-      version: 1,
-      encoding: snapshotArchiveEncoding,
+      version: 1 as const,
+      encoding: journal ? snapshotJournalArchiveEncoding : snapshotArchiveEncoding,
       archiveId,
       expiresAt: Number(header.expiresAt),
       pages: header.nextSequence,
@@ -335,14 +465,27 @@ export class KnexSnapshotArchiveStore {
   }
 
   async read(identityKey: string, archiveId: string, sequence: number): Promise<SnapshotArchivePage> {
+    return await this.readPage(identityKey, archiveId, sequence, false)
+  }
+
+  async readJournal(identityKey: string, archiveId: string, sequence: number): Promise<SnapshotArchivePage> {
+    return await this.readPage(identityKey, archiveId, sequence, true)
+  }
+
+  private async readPage(
+    identityKey: string,
+    archiveId: string,
+    sequence: number,
+    journal: boolean
+  ): Promise<SnapshotArchivePage> {
     integer(sequence, 0, snapshotArchiveLimits.pages - 1, 'sequence')
-    const header = await this.ready(identityKey, archiveId)
+    const header = await this.ready(identityKey, archiveId, journal)
     if (sequence >= header.nextSequence) throw unavailable()
     const page: PageRow | undefined = await this.knex('snapshot_archive_pages').where({ archiveId, sequence }).first()
     if (page === undefined) throw unavailable()
     if (hash(page.payload) !== page.digest) throw unavailable()
     // Release/expiry during I/O cannot return a newly stale page.
-    await this.ready(identityKey, archiveId)
+    await this.ready(identityKey, archiveId, journal)
     return {
       sequence,
       table: page.tableName,
