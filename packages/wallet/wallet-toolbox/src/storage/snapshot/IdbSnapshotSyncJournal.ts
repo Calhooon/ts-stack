@@ -1,3 +1,11 @@
+import {
+  parseSnapshotSyncContentRevision,
+  snapshotSyncContentConfirms,
+  snapshotSyncContentRevisionData,
+  type SnapshotSyncContentRevision
+} from './SnapshotSyncContentRevision'
+import { packedIdbSnapshotContentRevision } from './PackedIdbSnapshotContentRevision'
+import type { SnapshotSyncContentReceipt } from './SnapshotSync'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection, type PackedIdbConnection } from '../idbPackedConnection'
 import {
@@ -48,6 +56,44 @@ import { brc38WorkingAllocation, type Brc38WorkingAllocation } from '../portable
 import { packedIdbQuarantineReclaim, packedIdbUnresolvedReclaim } from '../idbPackedReclaimMetadata'
 import { isSyncChain } from '../sync/syncFailure'
 
+interface IdbContentReceiptData {
+  readonly version: 1
+  readonly source: Readonly<SnapshotSyncContentRevision>
+  readonly destination?: Readonly<SnapshotSyncContentRevision>
+}
+function contentReceiptData(input: unknown): Readonly<IdbContentReceiptData> {
+  if (input === null || typeof input !== 'object' || ![null, Object.prototype].includes(Object.getPrototypeOf(input)))
+    invalid()
+  const keys = Reflect.ownKeys(input)
+  if (
+    keys.length < 2 ||
+    keys.length > 3 ||
+    keys.some(key => !['version', 'source', 'destination'].includes(String(key)))
+  )
+    invalid()
+  const value = (key: string) => {
+    const d = Object.getOwnPropertyDescriptor(input, key)
+    if (d === undefined || !Object.hasOwn(d, 'value') || !d.enumerable) invalid()
+    return d.value
+  }
+  if (value('version') !== 1) invalid()
+  return Object.freeze({
+    version: 1,
+    source: snapshotSyncContentRevisionData(value('source')),
+    ...(Object.hasOwn(input, 'destination')
+      ? { destination: snapshotSyncContentRevisionData(value('destination')) }
+      : {})
+  })
+}
+function contentReceiptJson(input: unknown): string {
+  return JSON.stringify(contentReceiptData(input))
+}
+function storedContentReceipt(input: unknown): Readonly<IdbContentReceiptData> {
+  if (typeof input !== 'string' || input.length > 2048) invalid()
+  const data = contentReceiptData(JSON.parse(input))
+  if (JSON.stringify(data) !== input) invalid()
+  return data
+}
 interface Session {
   format: 'wallet-packed-sync/v1'
   userId: number
@@ -68,6 +114,7 @@ interface Session {
   sequence: number
   tableIndex: number
   cursor: string | null
+  content?: string
 }
 interface Header {
   readonly clock: PackedIdbClock
@@ -388,6 +435,10 @@ function stored(value: unknown): Session {
       invalid()
     copySnapshotCursor(cursor)
   }
+  if (Object.hasOwn(row, 'content')) {
+    const content = storedContentReceipt(row.content)
+    if (content.destination !== undefined && row.tableIndex !== snapshotSyncTables.length) invalid()
+  }
   return row
 }
 
@@ -526,7 +577,91 @@ export class IdbSnapshotSyncJournal {
     )
       invalid()
   }
-  async begin(input: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
+  #contentRevision(header: Header) {
+    return packedIdbSnapshotContentRevision({
+      epoch: header.clock.epoch,
+      revision: header.clock.revision,
+      userRevision: header.userRevision,
+      databaseName: this.#owner.database.name,
+      databaseVersion: this.#owner.database.version,
+      sourceStorage: header.settings as unknown as TableSettings,
+      user: header.user
+    })
+  }
+
+  async #contentHeader(raw: PackedIdbTransaction, identityKey: string): Promise<Header | undefined> {
+    text(identityKey, 130)
+    // A first backup has no destination user yet. Comparison does not create
+    // that user; an existing user's malformed header still refuses normally.
+    if ((await raw.objectStore('users').index('identityKey').getKey(identityKey)) === undefined) return undefined
+    return await this.#header(raw, identityKey)
+  }
+
+  async previousContentReceipt(
+    identityKey: string,
+    sourceIdentity: string
+  ): Promise<SnapshotSyncContentReceipt | undefined> {
+    text(sourceIdentity)
+    return await this.#run('readonly', async (_wallet, raw) => {
+      const header = await this.#contentHeader(raw, identityKey)
+      if (header === undefined) return undefined
+      const value = await raw.objectStore(packedIdbStores.syncSessions).get([header.user.userId, sourceIdentity])
+      if (value === undefined) return undefined
+      const row = stored(value)
+      this.#binding(row, header, true)
+      const content = row.content === undefined ? undefined : storedContentReceipt(row.content)
+      if (row.sourceStorageIdentityKey !== sourceIdentity) invalid()
+      if (
+        row.tableIndex !== snapshotSyncTables.length ||
+        content?.destination === undefined ||
+        row.userRevision !== header.userRevision ||
+        row.activeStorage !== (header.user.activeStorage ?? null)
+      )
+        return undefined
+      return { checkpoint: checkpoint(row), source: content.source }
+    })
+  }
+
+  async confirmContentReceipt(
+    identityKey: string,
+    sourceIdentity: string,
+    input: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint | undefined> {
+    const source = parseSnapshotSyncContentRevision(input)
+    text(sourceIdentity)
+    return await this.#run('readwrite', async (_wallet, raw) => {
+      const header = await this.#contentHeader(raw, identityKey)
+      if (header === undefined) return undefined
+      const store = raw.objectStore(packedIdbStores.syncSessions),
+        value = await store.get([header.user.userId, sourceIdentity])
+      if (value === undefined) return undefined
+      const row = stored(value)
+      this.#binding(row, header, true)
+      const content = row.content === undefined ? undefined : storedContentReceipt(row.content)
+      if (row.sourceStorageIdentityKey !== sourceIdentity) invalid()
+      if (
+        row.tableIndex !== snapshotSyncTables.length ||
+        content?.destination === undefined ||
+        row.userRevision !== header.userRevision ||
+        row.activeStorage !== (header.user.activeStorage ?? null) ||
+        !snapshotSyncContentConfirms(content.source, source)
+      )
+        return undefined
+      const destination = this.#contentRevision(header)
+      if (!snapshotSyncContentConfirms(content.destination, destination)) return undefined
+      row.content = contentReceiptJson({ version: 1, source, destination })
+      stored(row)
+      await store.put(row as unknown as Record<string, unknown>)
+      return checkpoint(row)
+    })
+  }
+
+  async begin(
+    input: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    contentInput?: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint> {
+    const content = contentInput === undefined ? undefined : contentReceiptJson({ version: 1, source: contentInput })
     if (
       input.version !== 1 ||
       !isSyncChain(input.sourceStorage.chain) ||
@@ -578,6 +713,18 @@ export class IdbSnapshotSyncJournal {
           this.#binding(row, header)
           live(row.expiresAt)
           for (const [key, value] of Object.entries(source)) if (Reflect.get(row, key) !== value) invalid()
+          if (content !== undefined) {
+            if (row.content === undefined) {
+              if (row.tableIndex !== 0 || row.sequence !== 0) invalid()
+              row.content = content
+              stored(row)
+              await store.put(row as unknown as Record<string, unknown>)
+            } else if (
+              JSON.stringify(storedContentReceipt(row.content).source) !==
+              JSON.stringify(storedContentReceipt(content).source)
+            )
+              invalid()
+          }
           return checkpoint(row)
         }
       } else await chargePackedIdb(raw, 32768, 1)
@@ -595,7 +742,8 @@ export class IdbSnapshotSyncJournal {
         activeStorage: header.user.activeStorage ?? null,
         sequence: 0,
         tableIndex: 0,
-        cursor: null
+        cursor: null,
+        ...(content === undefined ? {} : { content })
       }
       stored(row)
       await store.put(row as unknown as Record<string, unknown>)
@@ -1025,6 +1173,15 @@ export class IdbSnapshotSyncJournal {
       row.cursor = nextCursor
       row.userRevision = current.userRevision
       row.activeStorage = current.user.activeStorage ?? null
+      if (nextTable === snapshotSyncTables.length && row.content !== undefined) {
+        const content = storedContentReceipt(row.content)
+        if (content.destination !== undefined) invalid()
+        row.content = contentReceiptJson({
+          version: 1,
+          source: content.source,
+          destination: this.#contentRevision(current)
+        })
+      }
       stored(row)
       await sessions.put(row as unknown as Record<string, unknown>)
       return { checkpoint: checkpoint(row), ...result }

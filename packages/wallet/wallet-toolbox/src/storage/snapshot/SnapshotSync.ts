@@ -1,3 +1,4 @@
+import type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 import type { TableSettings, TableUser } from '../schema/tables'
 import type {
   WalletReadSnapshot,
@@ -53,6 +54,12 @@ export interface SnapshotSyncCommit {
   updates: number
 }
 
+/** Previous completed-copy DATA, distinct from a newly opened physical view. */
+export interface SnapshotSyncContentReceipt {
+  readonly checkpoint: SnapshotSyncCheckpoint
+  readonly source: Readonly<SnapshotSyncContentRevision>
+}
+
 /** One-use preparation owns any staged content/allocation until close drains.
  * Close is required after success, refusal and cancellation, outside manager
  * write admission. Neither metadata nor this local callback is a durable ACK. */
@@ -74,6 +81,35 @@ export interface SnapshotSyncStorage {
   fallbackOnResourceError?: boolean
   /** True only after the version-one auxiliary schema and primary fencing migration committed. */
   supportsDestination: () => Promise<boolean>
+  /** Separately negotiated optional content comparison. Every probe is fresh;
+   * old providers retain the original row/session path. */
+  supportsContentDestination?: () => Promise<boolean>
+  openContentSource?: (
+    identityKey: string,
+    options?: WalletReadSnapshotOptions
+  ) => Promise<WalletReadSnapshot | undefined>
+  /** Physically close the actual observation before returning comparison DATA. */
+  observeContentRevision?: (
+    identityKey: string,
+    since?: SnapshotSyncContentPosition,
+    options?: WalletReadSnapshotOptions
+  ) => Promise<Readonly<SnapshotSyncContentRevision> | undefined>
+  previousContentReceipt?: (
+    identityKey: string,
+    sourceStorageIdentityKey: string
+  ) => Promise<SnapshotSyncContentReceipt | undefined>
+  /** Return the previous durable ACK only after fresh destination confirmation. */
+  confirmContentReceipt?: (
+    identityKey: string,
+    sourceStorageIdentityKey: string,
+    revision: SnapshotSyncContentRevision
+  ) => Promise<SnapshotSyncCheckpoint | undefined>
+  beginContent?: (
+    source: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    revision: SnapshotSyncContentRevision,
+    limits?: Readonly<{ maximumSourceScopes: number }>
+  ) => Promise<SnapshotSyncCheckpoint>
   /** Undefined means this configuration cannot retain a view while foreground writes proceed. */
   openSource: (identityKey: string, options?: WalletReadSnapshotOptions) => Promise<WalletReadSnapshot | undefined>
   /** Same-view retry resumes the destination cursor. A different view atomically fences its predecessor and starts at table zero. */

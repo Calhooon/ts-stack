@@ -17,6 +17,7 @@
     "permissionCallbacks.ts",
     "actionBatchPack.ts",
     "internalizeActionResult.ts",
-    "privateMigrationSource.ts"
+    "privateMigrationSource.ts",
+    "snapshotSyncContent.ts"
   ]
 }

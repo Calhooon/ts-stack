@@ -1033,9 +1033,11 @@ export class StorageServer {
   private async snapshotArchiveSettings(): Promise<Record<string, unknown>> {
     const snapshotArchive = await this.snapshotArchives?.capabilities()
     const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
+    const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
     return {
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
-      ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination })
+      ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
+      ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent })
     }
   }
 

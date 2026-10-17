@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 import { SnapshotWorkingAllocationLimitError } from './SnapshotWorkingAllocationLimitError'
 import type { RequestSyncChunkArgs } from '../../sdk/WalletStorage.interfaces'
@@ -245,12 +246,22 @@ export async function runSnapshotSyncSession(
     return true
   }
   if (cancelled()) return result
+  const contentRevision =
+    session.view.readContentRevision !== undefined &&
+    session.destination.beginContent !== undefined &&
+    session.destination.supportsContentDestination !== undefined &&
+    (await session.destination.supportsContentDestination())
+      ? parseSnapshotSyncContentRevision(await session.view.readContentRevision())
+      : undefined
+  if (cancelled()) return result
   const start = await commitSyncAdmission(
     session.commit,
     async () =>
       options.signal?.aborted === true
         ? undefined
-        : await session.destination.begin(session.view, session.activeStorage),
+        : contentRevision === undefined
+          ? await session.destination.begin(session.view, session.activeStorage)
+          : await session.destination.beginContent!(session.view, session.activeStorage, contentRevision),
     options.signal
   )
   if (start === undefined) {

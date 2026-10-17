@@ -156,7 +156,11 @@ export async function assertSnapshotArchiveGuardBackend(
   }
 }
 
-async function attachGuard(k: Knex, connection: unknown, binding: SnapshotArchiveGuardBinding): Promise<void> {
+export async function attachSnapshotArchiveSourceGuard(
+  k: Knex,
+  connection: unknown,
+  binding: SnapshotArchiveGuardBinding
+): Promise<void> {
   await assertSnapshotArchiveGuardBackend(k, binding, connection)
   if (binding.kind === 'mysql') {
     const [rows]: Array<Array<{ acquired: number | null }>> = await k
@@ -183,6 +187,15 @@ async function holdSQLiteGuard(trx: Knex, binding: SQLiteGuardBinding): Promise<
     if ((error as NodeJS.ErrnoException).code === 'SQLITE_BUSY') throw new SnapshotArchiveGuardBusyError()
     throw error
   }
+}
+
+/** Internal journal/archive composition: acquire the SQLite guard in the SAME
+ * actual retained source transaction. MySQL's connection guard is already held. */
+export async function holdSnapshotArchiveSourceGuard(
+  trx: Knex.Transaction,
+  binding: SnapshotArchiveGuardBinding
+): Promise<void> {
+  if (binding.kind === 'sqlite') await holdSQLiteGuard(trx, binding)
 }
 
 /** This pool is exclusively owned by this operation; no connection is returned for reuse. */
@@ -238,7 +251,7 @@ export async function withSnapshotArchiveBackendGuard<T>(
     await closeGuardPool(k, connection)
   }
   try {
-    await attachGuard(k, connection, binding)
+    await attachSnapshotArchiveSourceGuard(k, connection, binding)
     const trx = await k.transaction({ connection })
     void trx.executionPromise.catch(() => undefined)
     let outcome: { ok: true; value: T } | { ok: false; error: unknown }

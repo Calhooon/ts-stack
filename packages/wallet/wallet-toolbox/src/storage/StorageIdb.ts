@@ -1,3 +1,9 @@
+import {
+  parseSnapshotSyncContentPosition,
+  parseSnapshotSyncContentRevision,
+  type SnapshotSyncContentPosition
+} from './snapshot/SnapshotSyncContentRevision'
+import { closeSnapshotJournalSource } from './snapshot/journal/closeSnapshotJournalSource'
 import { recoveredProofUpdate, sameSyncProof } from './methods/validateSyncProof'
 import { type ValidListActionsArgs, type ValidListOutputsArgs } from '@bsv/sdk/wallet/validationHelpers'
 import { deleteDB, IDBPDatabase, IDBPObjectStore, IDBPTransaction, openDB } from 'idb'
@@ -255,6 +261,15 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     return {
       fallbackOnResourceError: false,
       supportsDestination: () => destination.supportsDestination(),
+      supportsContentDestination: () => destination.supportsContentDestination(),
+      openContentSource: (identityKey, options) => openPackedIdbSyncSource(this, identityKey, options),
+      observeContentRevision: (identityKey, since, options) =>
+        this.observeSnapshotSyncContentRevision(identityKey, since, options),
+      beginContent: (source, activeStorage, revision) => destination.beginContent(source, activeStorage, revision),
+      previousContentReceipt: (identityKey, sourceIdentity) =>
+        destination.previousContentReceipt(identityKey, sourceIdentity),
+      confirmContentReceipt: (identityKey, sourceIdentity, revision) =>
+        destination.confirmContentReceipt(identityKey, sourceIdentity, revision),
       openSource: (identityKey, options) => openPackedIdbSyncSource(this, identityKey, options),
       begin: (source, activeStorage) => destination.begin(source, activeStorage),
       checkpoint: (identityKey, sourceIdentity) => destination.checkpoint(identityKey, sourceIdentity),
@@ -262,6 +277,36 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       prepareFields: (checkpoint, page, source, signal) => destination.prepareFields(checkpoint, page, source, signal),
       fieldPageLimits: destination.fieldPageLimits
     }
+  }
+
+  /** Observe only the actual retained metadata/clock owner; a new full copy
+   * still runs the original complete closure validation in its own source. */
+  async observeSnapshotSyncContentRevision(
+    identityKey: string,
+    input?: SnapshotSyncContentPosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const since = input === undefined ? undefined : parseSnapshotSyncContentPosition(input)
+    const source = await this.openWalletReadSnapshot(identityKey, options)
+    let failure: { error: unknown } | undefined, result: ReturnType<typeof parseSnapshotSyncContentRevision> | undefined
+    try {
+      if (source.readContentRevision === undefined)
+        throw new WERR_INVALID_OPERATION('Actual packed content revision reader is unavailable')
+      result = parseSnapshotSyncContentRevision(await source.readContentRevision(since))
+    } catch (error) {
+      failure = { error }
+    }
+    try {
+      await closeSnapshotJournalSource(source, options.signal)
+    } catch (error) {
+      if (failure !== undefined && error !== failure.error)
+        throw new AggregateError([failure.error, error], 'Packed content observation and physical cleanup failed', {
+          cause: failure.error
+        })
+      throw error
+    }
+    if (failure !== undefined) throw failure.error
+    return result
   }
 
   /** Durable MVCC ceiling with short page/extent transactions. The returned

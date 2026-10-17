@@ -1,3 +1,9 @@
+import {
+  parseSnapshotSyncContentPosition,
+  assertSnapshotSyncContentPositionNotFuture,
+  parseSnapshotSyncContentRevision,
+  type SnapshotSyncContentPosition
+} from '../SnapshotSyncContentRevision'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
 import type { WalletReadSnapshot, WalletReadSnapshotOptions } from '../WalletReadSnapshot'
@@ -101,6 +107,21 @@ export async function openRemoteSnapshot(
       },
       closed: lease.closed,
       close: () => lease.close(),
+      ...(binding.version === 2
+        ? {
+            readContentRevision: (since?: SnapshotSyncContentPosition) => {
+              if (since !== undefined)
+                assertSnapshotSyncContentPositionNotFuture(
+                  parseSnapshotSyncContentPosition(since),
+                  binding.contentRevision
+                )
+              lease.assertOpen()
+              // This DATA is integrity-bound to the actual immutable archive, not
+              // a preliminary observation or renewed source SQL/retention grant.
+              return Promise.resolve(parseSnapshotSyncContentRevision(binding.contentRevision))
+            }
+          }
+        : {}),
       readPage: createRemoteSnapshotPageReader(transport, directory, lease)
     })
   } catch (error) {

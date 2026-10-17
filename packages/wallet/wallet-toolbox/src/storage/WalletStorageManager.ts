@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision, snapshotSyncContentPosition } from './snapshot/SnapshotSyncContentRevision'
 import { Brc38CleanupScope } from './portable/Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
 import type { StorageIdb } from './StorageIdb'
@@ -1219,20 +1220,17 @@ export class WalletStorageManager implements sdk.WalletStorage {
     return ss.makeRequestSyncChunkArgs(auth.identityKey, toStorageIdentityKey)
   }
 
-  private async runSnapshotCopy(
-    view: WalletReadSnapshot,
+  private snapshotCommit(
     destination: SnapshotSyncStorage,
-    direction: 'push' | 'pull',
     options: SyncSessionOptions,
     generation: number,
     active: sdk.WalletStorageProvider
-  ): Promise<SyncSessionResult> {
-    if (view.user.identityKey !== this._authId.identityKey) throw new WERR_UNAUTHORIZED()
+  ): <T>(operation: () => Promise<T>) => Promise<T> {
     const assertCurrent = (): void => {
       if (generation !== this.generation || active !== this.getActive())
         throw new WERR_INVALID_OPERATION('Snapshot sync primary generation changed; resume on the selected storage')
     }
-    const commit = async <T>(operation: () => Promise<T>): Promise<T> => {
+    return async <T>(operation: () => Promise<T>): Promise<T> => {
       if (destination.commitOutsideManager === true) {
         // Dispatch starts only inside current queue admission. Returning the
         // wrapper releases it immediately, without awaiting the remote promise.
@@ -1263,6 +1261,18 @@ export class WalletStorageManager implements sdk.WalletStorage {
         options.signal
       )
     }
+  }
+
+  private async runSnapshotCopy(
+    view: WalletReadSnapshot,
+    destination: SnapshotSyncStorage,
+    direction: 'push' | 'pull',
+    options: SyncSessionOptions,
+    generation: number,
+    active: sdk.WalletStorageProvider
+  ): Promise<SyncSessionResult> {
+    if (view.user.identityKey !== this._authId.identityKey) throw new WERR_UNAUTHORIZED()
+    const commit = this.snapshotCommit(destination, options, generation, active)
     return await runSnapshotSyncSession(
       {
         view,
@@ -1335,10 +1345,82 @@ export class WalletStorageManager implements sdk.WalletStorage {
       updates: 0
     }
     try {
-      view = await source.openSource(this._authId.identityKey, {
-        lifetimeMs: options.snapshotLifetimeMs,
-        signal: options.signal
-      })
+      const content =
+        source.observeContentRevision !== undefined &&
+        destination.supportsContentDestination !== undefined &&
+        destination.beginContent !== undefined &&
+        destination.previousContentReceipt !== undefined &&
+        destination.confirmContentReceipt !== undefined &&
+        (await destination.supportsContentDestination())
+      if (content) {
+        const identityKey = this._authId.identityKey,
+          sourceIdentity = (await reader.makeAvailable()).storageIdentityKey,
+          previous = await destination.previousContentReceipt!(identityKey, sourceIdentity)
+        if (cancelled()) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+        if (previous !== undefined) {
+          const prior = { ...previous.checkpoint, cursor: copySnapshotCursor(previous.checkpoint.cursor) }
+          const observed = await source.observeContentRevision!(
+            identityKey,
+            snapshotSyncContentPosition(previous.source),
+            { lifetimeMs: options.snapshotLifetimeMs, signal: options.signal }
+          )
+          if (cancelled()) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+          if (observed !== undefined) {
+            const revision = parseSnapshotSyncContentRevision(observed)
+            const confirmed = await this.snapshotCommit(
+              destination,
+              options,
+              selected.generation,
+              selected.active
+            )(() => destination.confirmContentReceipt!(identityKey, sourceIdentity, revision))
+            if (confirmed !== undefined) {
+              if (
+                !prior.done ||
+                !confirmed.done ||
+                prior.cursor !== undefined ||
+                confirmed.cursor !== undefined ||
+                [
+                  'version',
+                  'sessionId',
+                  'identityKey',
+                  'sourceStorageIdentityKey',
+                  'destinationStorageIdentityKey',
+                  'snapshotId',
+                  'sequence',
+                  'tableIndex',
+                  'done'
+                ].some(key => prior[key as keyof typeof prior] !== confirmed[key as keyof typeof confirmed])
+              )
+                throw new WERR_INVALID_OPERATION('Content confirmation changed the previous durable copy ACK')
+              const result: SyncSessionResult = {
+                status: cancelled() ? 'cancelled' : 'completed',
+                mode: 'paged',
+                pages: 0,
+                inserts: 0,
+                updates: 0,
+                noChangeReceipt: { checkpoint: { ...confirmed }, source: revision }
+              }
+              try {
+                options.onProgress?.({
+                  ...result,
+                  noChangeReceipt: { checkpoint: { ...confirmed }, source: revision },
+                  state: result.status
+                })
+              } catch (error) {
+                observerFailure = { error }
+                throw error
+              }
+              return result
+            }
+          }
+        }
+      }
+      const sourceOptions = { lifetimeMs: options.snapshotLifetimeMs, signal: options.signal }
+      view =
+        content && source.openContentSource !== undefined
+          ? await source.openContentSource(this._authId.identityKey, sourceOptions)
+          : undefined
+      if (view === undefined) view = await source.openSource(this._authId.identityKey, sourceOptions)
       if (view === undefined) return undefined
       let failed = false
       try {
@@ -1385,7 +1467,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
       }
     } catch (error) {
       if (observerFailure !== undefined && error === observerFailure.error) throw error
-      if (error instanceof SnapshotCancelledError && cancelled())
+      if (cancelled() && (error instanceof SnapshotCancelledError || error === options.signal?.reason))
         return { status: 'cancelled', mode: 'paged', ...partial }
       // Existing ordinary backups must continue to accept large records and long
       // copies. Only explicit resource limits select the established serialized

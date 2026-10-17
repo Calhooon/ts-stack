@@ -1,3 +1,8 @@
+import {
+  addSnapshotSyncContentReceiptSchema,
+  removeSnapshotSyncContentReceiptSchema,
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION
+} from './snapshotSyncReceiptMigration'
 import { forSnapshotSqlDialect } from './snapshotSqlMigration'
 import {
   addSnapshotJournalDestinationSchema,
@@ -76,6 +81,8 @@ export { SNAPSHOT_SYNC_MIGRATION } from './snapshotSyncMigration'
 export { SNAPSHOT_JOURNAL_DESTINATION_MIGRATION } from '../snapshot/journal/SnapshotJournalDestinationSchema'
 export { SNAPSHOT_JOURNAL_SOURCE_MIGRATION } from '../snapshot/journal/SnapshotJournalLifecycle'
 
+export { SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION } from './snapshotSyncReceiptMigration'
+
 export const SYNC_TRANSFER_MIGRATION = '2026-09-09-001 add bounded sync transfers'
 
 export const AUTH_SESSION_MIGRATION = '2026-07-14-001 add shared auth sessions'
@@ -148,6 +155,12 @@ export class KnexMigrations implements MigrationSource<string> {
     maxOutputScriptLength: number
   ): Record<string, Migration> {
     const migrations: Record<string, Migration> = {}
+
+    migrations[SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION] = {
+      config: { transaction: false },
+      up: forSnapshotSqlDialect(addSnapshotSyncContentReceiptSchema),
+      down: forSnapshotSqlDialect(removeSnapshotSyncContentReceiptSchema)
+    }
 
     migrations[INTERNALIZE_RECEIPT_MIGRATION] = {
       async up(knex) {

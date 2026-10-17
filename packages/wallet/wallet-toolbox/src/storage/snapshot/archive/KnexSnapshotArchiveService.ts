@@ -20,6 +20,7 @@ import { assertSnapshotArchiveCaptureActive, captureSnapshotArchiveSource } from
 
 interface Capture {
   identityKey: string
+  content: boolean
   request: Readonly<SnapshotArchiveRequest | SnapshotArchiveReaderRequest>
   controller: AbortController
   terminal: Exclude<SnapshotArchiveTerminalState, 'expired'>
@@ -96,22 +97,28 @@ export class KnexSnapshotArchiveService {
     return offer
   }
 
-  async admitReader(identityKey: string, input: unknown): Promise<SnapshotArchiveAdmission> {
+  async admitReader(identityKey: string, input: unknown, content = false): Promise<SnapshotArchiveAdmission> {
     const request = parseSnapshotArchiveReaderRequest(input)
     try {
-      return { version: 1, outcome: 'accepted', receipt: await this.admit(identityKey, request, true).accepted }
+      return {
+        version: 1,
+        outcome: 'accepted',
+        receipt: await this.admit(identityKey, request, true, content).accepted
+      }
     } catch (error) {
       if (!(error instanceof SnapshotArchiveAdmissionLimitError)) throw error
       return { version: 1, outcome: 'resource-limited', requestId: request.requestId, expiresAt: request.notAfter }
     }
   }
 
-  private admit(identityKey: string, input: unknown, reader = false): Capture {
+  private admit(identityKey: string, input: unknown, reader = false, content = false): Capture {
     this.assertOpen()
     const request = reader ? parseSnapshotArchiveReaderRequest(input) : parseSnapshotArchiveRequest(input)
     if (this.active !== undefined) {
-      if (this.active.identityKey === identityKey && this.active.request.requestId === request.requestId)
+      if (this.active.identityKey === identityKey && this.active.request.requestId === request.requestId) {
+        if (this.active.content !== content) throw new WERR_INVALID_OPERATION('Snapshot reader capture mode changed')
         return this.active
+      }
       throw new SnapshotArchiveAdmissionLimitError('Snapshot archive capture is opening or active')
     }
     const claim = Promise.resolve().then(async () => {
@@ -133,6 +140,7 @@ export class KnexSnapshotArchiveService {
       })
     const job: Capture = {
       identityKey,
+      content,
       request,
       controller: new AbortController(),
       terminal: 'failed',
@@ -169,11 +177,10 @@ export class KnexSnapshotArchiveService {
       assertSnapshotArchiveCaptureActive(controller.signal)
       const remaining = request.notAfter - (await snapshotArchiveDatabaseNow(this.storage.knex))
       if (remaining < 1) throw new SnapshotResourceLimitError('Snapshot archive request expired before capture')
-      source = await this.storage.openSnapshotArchiveSource(
-        identityKey,
-        { signal: controller.signal, lifetimeMs: Math.min(300000, remaining) },
-        owner
-      )
+      const sourceOptions = { signal: controller.signal, lifetimeMs: Math.min(300000, remaining) }
+      source = job.content
+        ? await this.storage.openSnapshotSyncContentSource(identityKey, sourceOptions, owner)
+        : await this.storage.openSnapshotArchiveSource(identityKey, sourceOptions, owner)
       assertSnapshotArchiveCaptureActive(controller.signal)
       this.assertOpen()
       if (source === undefined) throw new WERR_NOT_IMPLEMENTED('Snapshot archive capture requires SQLite WAL or MySQL')
@@ -190,7 +197,7 @@ export class KnexSnapshotArchiveService {
         },
         identityKey,
         this.storage.chain,
-        { signal: controller.signal }
+        { signal: controller.signal, contentRevision: job.content ? true : undefined }
       )
       return await this.requests.status(identityKey, request.requestId)
     } catch (error) {

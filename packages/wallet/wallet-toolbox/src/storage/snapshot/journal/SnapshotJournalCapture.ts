@@ -1,3 +1,17 @@
+import {
+  prepareSnapshotArchiveGuardBackend,
+  assertSnapshotArchiveGuardBackend,
+  attachSnapshotArchiveSourceGuard,
+  holdSnapshotArchiveSourceGuard,
+  type SnapshotArchiveGuardBinding
+} from '../archive/SnapshotArchiveGuardBackend'
+import {
+  readSnapshotArchiveOwnerGuard,
+  bindSnapshotArchiveOwnerGuard,
+  assertSnapshotArchiveGuardOwner,
+  type SnapshotArchiveOwnerGuard
+} from '../archive/SnapshotArchiveGuardRegistry'
+import type { SnapshotArchiveRequestOwner } from '../archive/SnapshotArchiveRequest'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { createOwnedNativeReadDatabase, ownedNativeRootIdentity } from '../../schema/ownedNativeSqliteConnectionsNode'
 import type { SnapshotJournalReconciliationSource } from './SnapshotJournalProvider'
@@ -37,6 +51,8 @@ import { encodeSnapshotJournalDeltaFrame } from './SnapshotJournalDeltaFrame'
 import { readSnapshotJournalRowSourceIdentities } from './SnapshotJournalRowReferences'
 import { readSnapshotJournalSqliteGeneration } from './SnapshotJournalSqliteGeneration'
 import { readSnapshotJournalMysqlGeneration } from './SnapshotJournalMysqlGeneration'
+import { readSnapshotJournalContentRevision } from './SnapshotJournalContentRevision'
+import { parseSnapshotSyncContentPosition } from '../SnapshotSyncContentRevision'
 import { reserveSnapshotJournalCaptureFence } from './SnapshotJournalCaptureFence'
 import { withSnapshotJournalPrimaryCommitFence } from './SnapshotJournalPrimaryCommitFence'
 import {
@@ -116,10 +132,16 @@ async function commit(trx: Knex.Transaction): Promise<void> {
   await trx.commit()
   await trx.executionPromise
 }
-async function prepareReader(writer: Knex, write: unknown, reader: Knex, read: unknown): Promise<void> {
+async function prepareReader(
+  writer: Knex,
+  write: unknown,
+  reader: Knex,
+  read: unknown,
+  guarded = false
+): Promise<void> {
   if (reader.client.config.client === 'better-sqlite3' || isOwnedNativeSqlite(reader)) {
     await prepareSnapshotJournalSqliteWriter(writer, write)
-    await reader.raw('PRAGMA query_only = ON').connection(read)
+    await reader.raw(guarded ? 'PRAGMA query_only = OFF' : 'PRAGMA query_only = ON').connection(read)
   } else {
     await reader.raw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY').connection(read)
   }
@@ -135,14 +157,16 @@ interface CaptureOptions {
   assertActive: () => void
   hold: (trx: Knex.Transaction, captured: Captured) => Promise<void>
   releaseWriter?: () => Promise<void>
+  guard?: Readonly<{ binding: SnapshotArchiveGuardBinding; context: SnapshotArchiveOwnerGuard }>
+  retainGuardView?: (view: Knex.Transaction) => void
 }
 async function capture(options: CaptureOptions): Promise<void> {
   const { storage, writer, write, read, backend, identityKey, request, assertActive, hold } = options
   const reader = storage.knex,
     transactions: Knex.Transaction[] = []
-  let failure: { error: unknown } | undefined
+  let failure: { error: unknown } | undefined, guardedView: Knex.Transaction | undefined
   try {
-    await prepareReader(writer, write, reader, read)
+    await prepareReader(writer, write, reader, read, options.guard !== undefined)
     assertActive()
     const barrier = await begin(writer, write, transactions)
     assertActive()
@@ -153,6 +177,12 @@ async function capture(options: CaptureOptions): Promise<void> {
     }
     assertActive()
     const view = await begin(reader, read, transactions)
+    if (options.guard !== undefined) {
+      guardedView = view
+      options.retainGuardView?.(view)
+      await holdSnapshotArchiveSourceGuard(view, options.guard.binding)
+      await assertSnapshotArchiveGuardOwner(view, options.guard.context)
+    }
     assertActive()
     const generation =
       reader.client.config.client === 'better-sqlite3' || isOwnedNativeSqlite(reader)
@@ -359,7 +389,10 @@ async function capture(options: CaptureOptions): Promise<void> {
     failure = { error }
     throw error
   } finally {
-    await endTransactions(transactions, failure)
+    await endTransactions(
+      guardedView === undefined ? transactions : transactions.filter(trx => trx !== guardedView),
+      failure
+    )
   }
 }
 
@@ -371,7 +404,8 @@ export function retainSnapshotJournalCapture(
   identity: string,
   input: SnapshotJournalCaptureRequest,
   options: RetainedReadSnapshotOptions = {},
-  actualNativeRoot?: Knex
+  actualNativeRoot?: Knex,
+  archiveInput?: Readonly<{ control: Knex; owner: SnapshotArchiveRequestOwner }>
 ): SnapshotJournalCaptureLifetime {
   if (typeof identity !== 'string' || !/^(02|03)[0-9a-fA-F]{64}$/.test(identity))
     throw new WERR_INVALID_PARAMETER('identityKey', 'a compressed public identity key')
@@ -381,12 +415,16 @@ export function retainSnapshotJournalCapture(
     receiptPolicy: snapshotJournalReceiptPolicy(input.receiptPolicy)
   }
   if (request.ceiling === '0') return invalid()
+  const archive =
+    archiveInput === undefined ? undefined : { control: archiveInput.control, owner: { ...archiveInput.owner } }
   let storage: StorageKnex | undefined, captured: Captured | undefined
   const lifetime = retainReadSnapshot(
     async (hold, assertActive) => {
       let writer: Knex | undefined,
         borrowedWriter = false,
-        failure: { error: unknown } | undefined
+        failure: { error: unknown } | undefined,
+        guardedView: Knex.Transaction | undefined,
+        guardedReaderClosed = false
       try {
         const config = await resolveConfig()
         assertActive()
@@ -404,6 +442,23 @@ export function retainSnapshotJournalCapture(
           snapshotSync: false,
           knex: borrowedWriter ? createOwnedNativeReadDatabase(writer) : createKnex(ownedConfig(config))
         })
+        let guard: Readonly<{ binding: SnapshotArchiveGuardBinding; context: SnapshotArchiveOwnerGuard }> | undefined
+        if (archive !== undefined) {
+          const expectedGuard = await readSnapshotArchiveOwnerGuard(archive.control, archive.owner)
+          const binding = await prepareSnapshotArchiveGuardBackend(
+            storage.knex,
+            expectedGuard.slot,
+            expectedGuard.bindingJson
+          )
+          const context = await bindSnapshotArchiveOwnerGuard(
+            archive.control,
+            expectedGuard,
+            JSON.stringify(binding),
+            trx => assertSnapshotArchiveGuardBackend(trx, binding)
+          )
+          guard = { binding, context }
+          assertActive()
+        }
         await withSnapshotJournalConnections(
           writer,
           storage.knex,
@@ -411,6 +466,7 @@ export function retainSnapshotJournalCapture(
           async (write, read, releaseWriter) => {
             const backend = await bindSnapshotJournalCaptureBackend(writer!, write, storage!.knex, read, expected)
             assertActive()
+            if (guard !== undefined) await attachSnapshotArchiveSourceGuard(storage!.knex, read, guard.binding)
             await capture({
               storage: storage!,
               writer: writer!,
@@ -421,6 +477,10 @@ export function retainSnapshotJournalCapture(
               request,
               assertActive,
               releaseWriter: borrowedWriter ? releaseWriter : undefined,
+              guard,
+              retainGuardView: trx => {
+                guardedView = trx
+              },
               hold: async (trx, value) => {
                 captured = value
                 await hold(trx)
@@ -429,7 +489,10 @@ export function retainSnapshotJournalCapture(
           },
           async (owner, connection) => {
             if (borrowedWriter && owner === writer) await owner.client.releaseConnection(connection)
-            else await closeSnapshotJournalCapturePool(owner, connection)
+            else {
+              await closeSnapshotJournalCapturePool(owner, connection)
+              if (owner === storage?.knex) guardedReaderClosed = true
+            }
           }
         )
       } catch (error) {
@@ -442,6 +505,13 @@ export function retainSnapshotJournalCapture(
           cancelled = error_ === error
         }
         if (!cancelled) failure = { error }
+      }
+      if (guardedReaderClosed && guardedView !== undefined) {
+        // The actual reader connection already closed with its guard held.
+        // Settle Knex's manual transaction as the existing archive owner does;
+        // never roll it back first and call an unclosed source drained.
+        await guardedView.rollback().catch(() => undefined)
+        await guardedView.executionPromise.catch(() => undefined)
       }
       const settled = await Promise.allSettled([borrowedWriter ? undefined : writer?.destroy(), storage?.destroy()])
       const failed = settled.filter(result => result.status === 'rejected')
@@ -472,17 +542,54 @@ export function retainSnapshotJournalCapture(
   )
   const opened = lifetime.opened.then(view => {
     if (storage === undefined || captured === undefined || !view.isOpen) return invalid()
-    const owned = captured
+    const owned = captured,
+      archiveSource = createKnexSnapshotArchiveSource(storage, view, captured.header)
     let reading = false
     let identityWriter = false
     const source: SnapshotJournalReconciliationSource = {
-      ...createKnexSnapshotArchiveSource(storage, view, captured.header),
+      ...archiveSource,
+      get sourceStorage() {
+        return archiveSource.sourceStorage
+      },
+      get user() {
+        return archiveSource.user
+      },
       get isOpen() {
         return view.isOpen
       },
       receipt: { ...captured.receipt },
       receiptBinding: { ...captured.binding },
       primary: { ...captured.primary },
+      readContentRevision: async selectedSince => {
+        const since = selectedSince === undefined ? undefined : parseSnapshotSyncContentPosition(selectedSince)
+        if (!view.isOpen || reading) return invalid()
+        reading = true
+        try {
+          return await view.read(async token => {
+            await owned.verifyLive()
+            const trx = storage!.toDb(token)
+            // Read actual retained metadata again instead of trusting mutable
+            // public header objects or a receipt copied by the consumer.
+            const header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
+            const revision = await readSnapshotJournalContentRevision(
+              trx as Knex.Transaction,
+              {
+                binding: owned.receipt.binding,
+                floor: owned.receipt.floor,
+                highWater: owned.receipt.highWater,
+                sourceStorage: header.header.sourceStorage,
+                user: header.header.user,
+                primaryEpoch: owned.primary.epoch
+              },
+              since
+            )
+            await owned.verifyLive()
+            return revision
+          })
+        } finally {
+          reading = false
+        }
+      },
       hasChangesSince: async since => {
         snapshotJournalRevision(since)
         if (!view.isOpen || reading || compareSnapshotJournalRevisions(since, owned.receipt.highWater) > 0)

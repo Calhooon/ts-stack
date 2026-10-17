@@ -1,3 +1,4 @@
+import type { SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import type { TableSettings, TableUser } from '../../schema/tables'
 import type { WalletSnapshotTable } from '../WalletReadSnapshot'
 
@@ -31,14 +32,18 @@ export const snapshotArchiveLimits = Object.freeze({
   pageCharge: 512
 })
 
-export interface SnapshotArchiveBinding {
-  version: 1
+interface SnapshotArchiveBindingBase {
   /** The original retained source view, never a replacement replica checkpoint. */
   snapshotId: string
   sourceStorage: TableSettings
   sourceSchema: string
   user: TableUser
 }
+
+/** Version two is requested only through separately negotiated content reader
+ * admission; its exact JSON and same-view revision enter the archive digest. */
+export type SnapshotArchiveBinding = SnapshotArchiveBindingBase &
+  ({ version: 1; contentRevision?: never } | { version: 2; contentRevision: Readonly<SnapshotSyncContentRevision> })
 
 export interface SnapshotArchiveWriter {
   archiveId: string

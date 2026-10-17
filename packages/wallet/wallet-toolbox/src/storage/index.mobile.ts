@@ -76,9 +76,12 @@ export type {
 export { snapshotSyncTables } from './snapshot/SnapshotSync'
 export type {
   SnapshotSyncSource,
+  SnapshotSyncContentReceipt,
   SnapshotSyncCheckpoint,
   SnapshotSyncCommit,
   SnapshotSyncFieldPreparation,
   SnapshotSyncStorage,
   SnapshotSyncTable
 } from './snapshot/SnapshotSync'
+
+export type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from './snapshot/SnapshotSyncContentRevision'

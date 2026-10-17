@@ -156,6 +156,7 @@ const cases = [
   ['verifyBrowserIncrementalGcmRefusals', 'src/storage/portable/Brc39WebCryptoGcm.browser.case.ts'],
   ['verifyBrowserIncrementalEncryptionIndependentOracles', 'src/storage/portable/Brc39WebCryptoGcm.browser.case.ts'],
   ['verifyIdbSnapshotSyncCertificateFields', 'src/storage/snapshot/IdbSnapshotSyncCertificateFields.browser.case.ts'],
+  ['verifyPackedIdbSnapshotContentReceipts', 'src/storage/snapshot/IdbSnapshotSyncContent.browser.case.ts'],
   ['verifyOccupiedPackedIdbSnapshotJournal', 'src/storage/snapshot/IdbSnapshotSyncJournal.browser.case.ts'],
   ['verifyIdbSnapshotSyncProvenTxReqs', 'src/storage/snapshot/IdbSnapshotSyncProvenTxReqs.browser.case.ts'],
   ['verifyIdbSnapshotSyncProvenTxs', 'src/storage/snapshot/IdbSnapshotSyncProvenTxs.browser.case.ts'],

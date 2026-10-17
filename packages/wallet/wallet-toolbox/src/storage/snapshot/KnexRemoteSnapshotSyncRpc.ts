@@ -1,3 +1,9 @@
+import {
+  isRemoteSnapshotSyncContentMethod,
+  parseRemoteSnapshotSyncContentInput,
+  validateRemoteSnapshotSyncContentCapabilities,
+  type RemoteSnapshotSyncContentMethod
+} from './RemoteSnapshotSyncContentProtocol'
 import type { Knex } from 'knex'
 import { KnexSyncTransferStore } from '../remoting/KnexSyncTransferStore'
 import { validateSyncProofs } from '../remoting/validateRpcSyncProofs'
@@ -80,6 +86,60 @@ export class KnexRemoteSnapshotSyncRpc {
     this.current()
     return remoteSnapshotSyncCapabilities
   }
+  async contentCapabilities() {
+    this.current()
+    if ((await this.capabilities()) === undefined) return undefined
+    const adapter = await this.destination()
+    const destination = adapter.supportsContentDestination !== undefined && (await adapter.supportsContentDestination())
+    if (!destination) return undefined
+    const source = await this.storage.supportsSnapshotJournalSync()
+    this.current()
+    return source || destination
+      ? validateRemoteSnapshotSyncContentCapabilities({ version: 1, source, destination, maxIoMs: 30000 })
+      : undefined
+  }
+
+  private async executeContent(
+    method: RemoteSnapshotSyncContentMethod,
+    params: unknown[],
+    identityKey: string,
+    chain: StorageKnex['chain'],
+    deadline: number
+  ) {
+    const input = parseRemoteSnapshotSyncContentInput(method, params, identityKey, chain)
+    const adapter = await this.destination()
+    this.current()
+    if (this.storage.chain !== chain || performance.now() >= deadline)
+      throw new WERR_INVALID_OPERATION('Remote content original network or deadline changed')
+    if (adapter.supportsContentDestination === undefined || !(await adapter.supportsContentDestination()))
+      throw new WERR_INVALID_OPERATION('Remote content protocol is not installed')
+    this.current()
+    if (input.method === 'observeSnapshotSyncContent') {
+      const result = await this.storage.observeSnapshotSyncContentRevision(identityKey, input.since, {
+        lifetimeMs: Math.max(1, Math.floor(deadline - performance.now()))
+      })
+      this.current()
+      if (performance.now() >= deadline) throw new WERR_INVALID_OPERATION('Remote content observation deadline reached')
+      return result ?? null
+    }
+    if (performance.now() >= deadline) throw new WERR_INVALID_OPERATION('Remote content destination deadline reached')
+    let result: unknown
+    if (input.method === 'beginSnapshotSyncContent') {
+      if (adapter.beginContent === undefined) throw new WERR_INVALID_OPERATION('Remote content begin is unavailable')
+      result = await adapter.beginContent(input.source, input.activeStorage, input.revision, { maximumSourceScopes: 8 })
+    } else if (input.method === 'getSnapshotSyncContentReceipt') {
+      if (adapter.previousContentReceipt === undefined)
+        throw new WERR_INVALID_OPERATION('Remote content receipt is unavailable')
+      result = await adapter.previousContentReceipt(identityKey, input.sourceStorageIdentityKey)
+    } else {
+      if (adapter.confirmContentReceipt === undefined)
+        throw new WERR_INVALID_OPERATION('Remote content confirmation is unavailable')
+      result = await adapter.confirmContentReceipt(identityKey, input.sourceStorageIdentityKey, input.revision)
+    }
+    this.current()
+    return result ?? null
+  }
+
   dispatch(method: RemoteSnapshotSyncMethod, params: unknown[], authenticatedIdentity: string): Promise<unknown> {
     this.current()
     if (!remoteSnapshotSyncMethods.includes(method)) throw new TypeError('Unknown remote snapshot destination method')
@@ -107,6 +167,8 @@ export class KnexRemoteSnapshotSyncRpc {
       throw new TypeError('Invalid remote snapshot destination arguments')
     const chain = this.storage.chain
     if (!isSyncChain(chain)) throw new WERR_INVALID_OPERATION('Remote snapshot destination network is unavailable')
+    if (isRemoteSnapshotSyncContentMethod(method))
+      return await this.executeContent(method, params, authenticatedIdentity, chain, deadline)
     // Detach identity/source admission before the first asynchronous boundary.
     const source =
       method === 'beginSnapshotSync'

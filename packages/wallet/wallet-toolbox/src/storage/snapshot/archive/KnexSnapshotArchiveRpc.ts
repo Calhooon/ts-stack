@@ -87,8 +87,18 @@ export class KnexSnapshotArchiveRpc {
       throw new WERR_UNAUTHORIZED('Snapshot archive identity must match authentication')
     if ((await this.capabilities()) === undefined)
       throw new WERR_INVALID_OPERATION('Snapshot archive transport is unavailable')
+    if (input.method === 'getSnapshotContentArchiveReaderOffer' || input.method === 'admitSnapshotContentArchive') {
+      const adapter = this.storage.getSnapshotSync()
+      if (
+        adapter?.supportsContentDestination === undefined ||
+        !(await adapter.supportsContentDestination()) ||
+        !(await this.storage.supportsSnapshotJournalSync())
+      )
+        throw new WERR_INVALID_OPERATION('Snapshot content archive is not negotiated')
+    }
     const identityKey = authenticatedIdentityKey
     switch (input.method) {
+      case 'getSnapshotContentArchiveReaderOffer':
       case 'getSnapshotArchiveReaderOffer': {
         // Read source metadata before issuing a retained request, so failed metadata
         // cannot leave a caller-owned request that was never returned.
@@ -103,8 +113,13 @@ export class KnexSnapshotArchiveRpc {
           request: issued.request
         } satisfies SnapshotArchiveReaderOffer
       }
+      case 'admitSnapshotContentArchive':
       case 'admitSnapshotArchive':
-        return await this.service.admitReader(identityKey, input.request)
+        return await this.service.admitReader(
+          identityKey,
+          input.request,
+          input.method === 'admitSnapshotContentArchive'
+        )
       case 'cancelSnapshotArchiveRequest':
         try {
           await this.service.cancelReader(identityKey, input.request)

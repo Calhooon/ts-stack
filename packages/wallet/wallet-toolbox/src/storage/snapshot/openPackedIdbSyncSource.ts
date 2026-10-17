@@ -126,8 +126,18 @@ export async function openPackedIdbSyncSource(
     return {
       version: 1,
       snapshotId,
-      sourceStorage: structuredClone(view.sourceStorage),
-      user: structuredClone(view.user),
+      get sourceStorage() {
+        return structuredClone(view.sourceStorage)
+      },
+      get user() {
+        return structuredClone(view.user)
+      },
+      ...(view.readContentRevision === undefined
+        ? {}
+        : {
+            readContentRevision: (since: Parameters<NonNullable<WalletReadSnapshot['readContentRevision']>>[0]) =>
+              ownedRead(() => view.readContentRevision!(since))
+          }),
       expiresAt: view.expiresAt,
       get isOpen() {
         return view.isOpen

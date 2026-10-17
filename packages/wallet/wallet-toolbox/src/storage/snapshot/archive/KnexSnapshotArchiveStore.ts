@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { hasSnapshotArchiveOwner, SnapshotArchiveCleanupPendingError } from './SnapshotArchiveOwner'
 import { Hash, Random, Utils } from '@bsv/sdk'
 import type { Knex } from 'knex'
@@ -115,7 +116,7 @@ export class KnexSnapshotArchiveStore {
     identity(binding?.user?.identityKey)
     identifier(binding?.snapshotId, 'snapshotId')
     if (
-      binding.version !== 1 ||
+      ![1, 2].includes(binding.version) ||
       !['main', 'test'].includes(binding.sourceStorage?.chain) ||
       typeof binding.sourceSchema !== 'string' ||
       binding.sourceSchema.length < 1 ||
@@ -134,8 +135,14 @@ export class KnexSnapshotArchiveStore {
         }
       }
     }
+    if (binding.version === 1 && Object.hasOwn(binding, 'contentRevision'))
+      throw new WERR_INVALID_PARAMETER('binding', 'a version-one binding without content revision')
     const identityKey = binding.user.identityKey
-    const encoded = JSON.stringify(binding)
+    const encoded = JSON.stringify(
+      binding.version === 1
+        ? binding
+        : { ...binding, contentRevision: parseSnapshotSyncContentRevision(binding.contentRevision) }
+    )
     const bytes = new TextEncoder().encode(encoded)
     const usedBytes = bytes.length + snapshotArchiveLimits.headerCharge
     if (bytes.length > snapshotArchiveLimits.bindingBytes || usedBytes > reservedBytes) {

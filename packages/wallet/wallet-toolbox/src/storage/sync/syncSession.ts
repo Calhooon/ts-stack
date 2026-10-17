@@ -1,3 +1,4 @@
+import type { SnapshotSyncContentReceipt } from '../snapshot/SnapshotSync'
 import type { SnapshotSyncCheckpoint } from '../snapshot/SnapshotSync'
 import type { SnapshotJournalDestinationCheckpoint } from '../snapshot/journal/SnapshotJournalTypes'
 import type { SnapshotJournalReconciliationProgress } from '../snapshot/journal/runSnapshotJournalReconciliation'
@@ -37,6 +38,8 @@ export interface SyncSessionProgress {
   updates: number
   /** Present for negotiated local snapshot sync; legacy offsets remain separate. */
   snapshotCheckpoint?: SnapshotSyncCheckpoint
+  /** Prior completed DATA re-confirmed with fresh source/destination checks. */
+  noChangeReceipt?: SnapshotSyncContentReceipt
   journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
   readMs?: number
@@ -56,6 +59,8 @@ export interface SyncSessionResult {
   updates: number
   /** Present for negotiated local snapshot sync; legacy offsets remain separate. */
   snapshotCheckpoint?: SnapshotSyncCheckpoint
+  /** Prior completed DATA re-confirmed with fresh source/destination checks. */
+  noChangeReceipt?: SnapshotSyncContentReceipt
   journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
 }

@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { syncTransferDigest } from '../../remoting/SyncTransfer'
 import type { WalletSnapshotTable } from '../WalletReadSnapshot'
 import {
@@ -33,6 +34,7 @@ export interface SnapshotArchiveExpectedSource {
   archiveId?: string
   digest?: string
   sourceSchema?: string
+  contentRevision?: true
 }
 
 export interface SnapshotArchiveTableRange {
@@ -90,8 +92,15 @@ function date(value: unknown): Date {
 function binding(encoded: string, expected: SnapshotArchiveExpectedSource): SnapshotArchiveBinding {
   const bytes = new TextEncoder().encode(encoded)
   if (bytes.length > snapshotArchiveLimits.bindingBytes || new TextDecoder().decode(bytes) !== encoded) invalid()
-  const value = record(JSON.parse(encoded), ['version', 'snapshotId', 'sourceStorage', 'sourceSchema', 'user'])
-  if (value.version !== 1) invalid()
+  const value = record(JSON.parse(encoded), [
+    'version',
+    'snapshotId',
+    'sourceStorage',
+    'sourceSchema',
+    'user',
+    ...(expected.contentRevision ? ['contentRevision'] : [])
+  ])
+  if (value.version !== (expected.contentRevision ? 2 : 1)) invalid()
   const storage = record(value.sourceStorage, [
     'created_at',
     'updated_at',
@@ -111,7 +120,9 @@ function binding(encoded: string, expected: SnapshotArchiveExpectedSource): Snap
     invalid()
   if (storage.dbtype !== 'SQLite' && storage.dbtype !== 'MySQL') invalid()
   return {
-    version: 1,
+    ...(expected.contentRevision
+      ? { version: 2 as const, contentRevision: parseSnapshotSyncContentRevision(value.contentRevision) }
+      : { version: 1 as const }),
     snapshotId: digest(value.snapshotId),
     sourceSchema: text(value.sourceSchema, 256),
     sourceStorage: {

@@ -12,10 +12,12 @@ import {
   SNAPSHOT_GLOBAL_INDEX_MIGRATION,
   SNAPSHOT_SQLITE_INDEX_MIGRATION,
   SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
-  INTERNALIZE_RECEIPT_MIGRATION
+  INTERNALIZE_RECEIPT_MIGRATION,
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION
 } from '../schema/KnexMigrations'
 
 const selectedMigrations = [
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
   SNAPSHOT_PROFILE_INDEX_MIGRATION,
   SNAPSHOT_RELATION_INDEX_MIGRATION,
   SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
@@ -58,7 +60,7 @@ describe('private native migration configuration preserves canonical schema and 
     cleanup.push(async () => await staged.close())
     return staged
   }
-  test('only four copied configs change; callback identities, v2 and all public source configs stay original', async () => {
+  test('only five copied configs change; callback identities, v2 and all public source configs stay original', async () => {
     const staged = await fixture(),
       store = staged.value.reservation.store,
       source = originalSource(store),
@@ -109,7 +111,8 @@ describe('private native migration configuration preserves canonical schema and 
         'output_baskets',
         'output_tags',
         'commissions',
-        'sync_states'
+        'sync_states',
+        'snapshot_sync_content_receipts'
       ],
       async table => {
         expect(await next.knex(table)).toEqual(await previous.knex(table))

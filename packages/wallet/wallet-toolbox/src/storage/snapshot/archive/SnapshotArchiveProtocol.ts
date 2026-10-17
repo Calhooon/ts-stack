@@ -27,6 +27,8 @@ export const snapshotArchiveCapabilities = Object.freeze({
 export type SnapshotArchiveCapabilities = typeof snapshotArchiveCapabilities
 
 export const snapshotArchiveMethods = Object.freeze([
+  'getSnapshotContentArchiveReaderOffer',
+  'admitSnapshotContentArchive',
   'getSnapshotArchiveOffer',
   'startSnapshotArchive',
   'getSnapshotArchiveStatus',
@@ -82,9 +84,13 @@ export function validateSnapshotArchiveCapabilities(input: unknown): SnapshotArc
 }
 
 export type SnapshotArchiveRpcInput =
-  | { method: 'getSnapshotArchiveReaderOffer'; identityKey: string; options: Readonly<SnapshotArchiveReaderOptions> }
   | {
-      method: 'admitSnapshotArchive' | 'cancelSnapshotArchiveRequest'
+      method: 'getSnapshotArchiveReaderOffer' | 'getSnapshotContentArchiveReaderOffer'
+      identityKey: string
+      options: Readonly<SnapshotArchiveReaderOptions>
+    }
+  | {
+      method: 'admitSnapshotArchive' | 'admitSnapshotContentArchive' | 'cancelSnapshotArchiveRequest'
       identityKey: string
       request: Readonly<SnapshotArchiveReaderRequest>
     }
@@ -96,8 +102,10 @@ export type SnapshotArchiveRpcInput =
 
 function requestFields(method: SnapshotArchiveMethod): string[] {
   switch (method) {
+    case 'getSnapshotContentArchiveReaderOffer':
     case 'getSnapshotArchiveReaderOffer':
       return ['options']
+    case 'admitSnapshotContentArchive':
     case 'admitSnapshotArchive':
     case 'cancelSnapshotArchiveRequest':
     case 'startSnapshotArchive':
@@ -125,8 +133,10 @@ export function parseSnapshotArchiveRpcInput(
     invalid()
   const identityKey = input.identityKey
   switch (method) {
+    case 'getSnapshotContentArchiveReaderOffer':
     case 'getSnapshotArchiveReaderOffer':
       return { method, identityKey, options: validateSnapshotArchiveReaderOptions(input.options) }
+    case 'admitSnapshotContentArchive':
     case 'admitSnapshotArchive':
     case 'cancelSnapshotArchiveRequest':
       return { method, identityKey, request: parseSnapshotArchiveReaderRequest(input.request) }

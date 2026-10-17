@@ -1,5 +1,6 @@
 import type * as tables from '../schema/tables'
 import type { RetainedReadSnapshotOptions } from './RetainedReadSnapshot'
+import type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 
 /** Version-one retained row contract. Binary columns never expand into number arrays. */
 export type PackedSnapshotRow<T> = { [K in keyof T]: PackedSnapshotValue<T[K]> }
@@ -148,6 +149,10 @@ export interface WalletReadSnapshot {
    * path. Neither interface changes version-one wire negotiation. */
   readonly binaryReader?: WalletSnapshotBinaryReader
   readonly fieldReader?: WalletSnapshotFieldReader
+  /** Optional comparison DATA derived within this same actual view. Calling
+   * it retains original lifetime/schema/profile checks; a returned digest is
+   * not a new view, transferable authority or a completed destination ACK. */
+  readonly readContentRevision?: (since?: SnapshotSyncContentPosition) => Promise<Readonly<SnapshotSyncContentRevision>>
   /**
    * One read at a time. Repeating a cursor and limits repeats the same page.
    * Rows include tombstones and stored values; no operational policy is applied.

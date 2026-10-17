@@ -123,9 +123,7 @@ export async function migrateSnapshotJournalSource(k: Knex): Promise<void> {
 /** Actual complete current source, including the registered migration, before
  * returning capture configuration. Configuration remains data and the capture
  * repeats all physical/profile/receipt checks in its own coherent view. */
-export async function readSnapshotJournalCaptureConfiguration(
-  k: Knex
-): Promise<{ ceiling: SnapshotJournalRevision; receiptPolicy: SnapshotJournalReceiptPolicy }> {
+async function currentJournalConfiguration(k: Knex) {
   const config = await configuration(k),
     remote = mysql(k)
   const migrationTable = k.client.config.migrations?.tableName ?? 'knex_migrations'
@@ -134,8 +132,32 @@ export async function readSnapshotJournalCaptureConfiguration(
   const actual = remote
     ? await readSnapshotJournalMysqlGeneration(k, config.ceiling, config.policy, k.client.config.migrations)
     : await readSnapshotJournalSqliteGeneration(k, config.policy, k.client.config.migrations)
-  if (!actual.complete || !actual.enabled) invalid()
+  if (!actual.complete) invalid()
+  return { config, actual }
+}
+
+export async function readSnapshotJournalCaptureConfiguration(
+  k: Knex
+): Promise<{ ceiling: SnapshotJournalRevision; receiptPolicy: SnapshotJournalReceiptPolicy }> {
+  const { config, actual } = await currentJournalConfiguration(k)
+  if (!actual.enabled) invalid()
   return { ceiling: config.ceiling, receiptPolicy: { ...config.policy } }
+}
+
+/** Fresh complete-generation DATA for optional comparison bookkeeping. A
+ * physically verified but disabled event window cannot issue a receipt;
+ * partial/altered schema errors still propagate instead of becoming fallback. */
+export async function readSnapshotJournalObservationConfiguration(k: Knex): Promise<
+  | {
+      ceiling: SnapshotJournalRevision
+      epoch: string
+      source: string
+    }
+  | undefined
+> {
+  const { config, actual } = await currentJournalConfiguration(k)
+  if (!actual.enabled) return undefined
+  return { ceiling: config.ceiling, epoch: actual.epoch, source: actual.source }
 }
 
 /** Current configuration DATA for automatic housekeeping. Every subsequent

@@ -115,10 +115,25 @@ export function createKnexSnapshotArchiveSource(
 ): SnapshotArchiveSource {
   const userId = header.user.userId
   const snapshotId = Utils.toHex(Random(32))
+  const copyDates = <T extends { created_at: Date; updated_at: Date }>(value: T): T => ({
+    ...value,
+    created_at: new Date(value.created_at),
+    updated_at: new Date(value.updated_at)
+  })
+  const sourceStorage = copyDates(header.sourceStorage),
+    user = copyDates(header.user)
   return {
     version: 1,
     snapshotId,
     ...header,
+    // Public metadata is DATA. A consumer's edits to its copy must not alter
+    // the actual view header used by a later copy or content receipt.
+    get sourceStorage() {
+      return copyDates(sourceStorage)
+    },
+    get user() {
+      return copyDates(user)
+    },
     expiresAt: view.expiresAt,
     get isOpen() {
       return view.isOpen

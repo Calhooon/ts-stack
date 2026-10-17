@@ -1,3 +1,5 @@
+import { KnexSnapshotSyncContentReceipts } from './KnexSnapshotSyncContentReceipts'
+import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 import { requireSyncTransferTransaction } from '../remoting/KnexSyncTransferStore'
 import { nativeSnapshotSyncMappingMigration } from './NativeSnapshotSyncMappingSchemaNode'
 import { hasBrc38NativePackedSchema } from '../portable/Brc38NativePackedSchemaNode'
@@ -19,6 +21,7 @@ import {
   snapshotSyncTables,
   type SnapshotSyncCheckpoint,
   type SnapshotSyncCommit,
+  type SnapshotSyncContentReceipt,
   type SnapshotSyncSource,
   type SnapshotSyncTable
 } from './SnapshotSync'
@@ -174,11 +177,13 @@ function validateSource(source: SnapshotSyncSource): void {
 /** Destination-authoritative state. Every session mutation locks the user before its session to preserve one lock order. */
 export class KnexSnapshotSyncDestination {
   private readonly database: Knex
+  private readonly contentReceipts: KnexSnapshotSyncContentReceipts
   constructor(
     private readonly storage: StorageKnex,
     private readonly prepareProofs: ProofPreparation
   ) {
     this.database = storage.knex
+    this.contentReceipts = new KnexSnapshotSyncContentReceipts(storage)
   }
 
   private assertOriginalRoot(): void {
@@ -200,6 +205,82 @@ export class KnexSnapshotSyncDestination {
     await verifySnapshotSyncPrimaryFence(k)
     this.assertOriginalRoot()
     return true
+  }
+
+  async supportsContentDestination(): Promise<boolean> {
+    return (await this.supportsDestination()) && (await this.contentReceipts.supports())
+  }
+
+  async beginContent(
+    source: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    revision: SnapshotSyncContentRevision,
+    limits?: Readonly<{ maximumSourceScopes: number }>
+  ): Promise<SnapshotSyncCheckpoint> {
+    return await this.begin(source, activeStorage, {
+      ...limits,
+      contentRevision: parseSnapshotSyncContentRevision(revision)
+    })
+  }
+
+  private async withContentSession<T>(
+    identityKey: string,
+    sourceStorageIdentityKey: string,
+    work: (k: Knex.Transaction, row: SessionRow) => Promise<T>
+  ): Promise<T | undefined> {
+    this.assertOriginalRoot()
+    if (!(await this.supportsContentDestination())) return undefined
+    return await this.database.transaction(async k => {
+      this.assertOriginalRoot()
+      await verifySnapshotSyncPrimaryFence(k)
+      const existing = await this.storage.findUserByIdentityKey(identityKey, k)
+      if (existing === undefined) return undefined
+      const user = await this.lockUser(identityKey, k)
+      const row: SessionRow | undefined = await k('snapshot_sync_sessions')
+        .where({ userId: user.userId, sourceStorageIdentityKey })
+        .first()
+      if (row === undefined) return undefined
+      if (
+        row.identityKey !== identityKey ||
+        row.sourceStorageIdentityKey !== sourceStorageIdentityKey ||
+        row.chain !== this.storage.chain ||
+        row.destinationStorageIdentityKey !== this.storage.getSettings().storageIdentityKey ||
+        row.version !== 1
+      )
+        throw new WERR_INVALID_OPERATION('Snapshot content session or selected primary changed')
+      // A legitimate selection invalidates comparison DATA. Decline it so a
+      // fresh copy can use the normal current-primary BEGIN; never renew the
+      // old session or turn changed schema/root failures into fallback.
+      if (
+        row.activeStorage !== (user.activeStorage ?? null) ||
+        Number(row.primaryEpoch) !== (await this.primaryEpoch(user.userId, k))
+      )
+        return undefined
+      const result = await work(k, row)
+      this.assertOriginalRoot()
+      return result
+    })
+  }
+
+  async previousContentReceipt(
+    identityKey: string,
+    sourceStorageIdentityKey: string
+  ): Promise<SnapshotSyncContentReceipt | undefined> {
+    return await this.withContentSession(identityKey, sourceStorageIdentityKey, async (k, row) => {
+      const source = await this.contentReceipts.previous(k, row)
+      return source === undefined ? undefined : { checkpoint: checkpoint(row), source }
+    })
+  }
+
+  async confirmContentReceipt(
+    identityKey: string,
+    sourceStorageIdentityKey: string,
+    input: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint | undefined> {
+    const revision = parseSnapshotSyncContentRevision(input)
+    return await this.withContentSession(identityKey, sourceStorageIdentityKey, async (k, row) =>
+      (await this.contentReceipts.confirm(k, row, revision)) ? checkpoint(row) : undefined
+    )
   }
 
   readonly fieldPageLimits = Object.freeze({ maxRows: 128, maxBytes: 262144 })
@@ -533,6 +614,10 @@ export class KnexSnapshotSyncDestination {
       )
         throw new WERR_INVALID_OPERATION('Native field session or primary changed; recover its durable checkpoint')
       requireLiveSource(row.expiresAt, 'destination commit')
+      const completeContent =
+        detached.nextTable === snapshotSyncTables.length
+          ? await this.contentReceipts.prepareCompletion(trx, row)
+          : undefined
       const table = snapshotSyncTables[row.tableIndex],
         sourceUser: TableUser = {
           userId: row.sourceUserId,
@@ -619,6 +704,7 @@ export class KnexSnapshotSyncDestination {
         })) !== 1
       )
         throw new WERR_INVALID_OPERATION('Native field checkpoint did not update its exact current session')
+      if (completeContent !== undefined) await completeContent(row)
       check()
       return { checkpoint: checkpoint(row), inserts: result.inserts, updates: result.updates + userUpdates }
     })
@@ -639,10 +725,12 @@ export class KnexSnapshotSyncDestination {
   async begin(
     input: SnapshotSyncSource,
     activeStorage: string | undefined,
-    limits?: Readonly<{ maximumSourceScopes: number }>
+    limits?: Readonly<{ maximumSourceScopes?: number; contentRevision?: SnapshotSyncContentRevision }>
   ): Promise<SnapshotSyncCheckpoint> {
     this.assertOriginalRoot()
     const maximumSourceScopes = limits?.maximumSourceScopes
+    const contentRevision =
+      limits?.contentRevision === undefined ? undefined : parseSnapshotSyncContentRevision(limits.contentRevision)
     if (
       maximumSourceScopes !== undefined &&
       (!Number.isSafeInteger(maximumSourceScopes) || maximumSourceScopes < 1 || maximumSourceScopes > 128)
@@ -714,6 +802,8 @@ export class KnexSnapshotSyncDestination {
         }
         requireLiveSource(Number(previous.expiresAt), 'session admission')
         this.assertOriginalRoot()
+        if (contentRevision !== undefined)
+          await this.contentReceipts.stage(k as Knex.Transaction, previous, contentRevision, maximumSourceScopes)
         return checkpoint(previous)
       }
       requireLiveSource(source.expiresAt, 'session admission')
@@ -740,6 +830,8 @@ export class KnexSnapshotSyncDestination {
         cursor: null
       }
       await k('snapshot_sync_sessions').insert(row).onConflict(['userId', 'sourceStorageIdentityKey']).merge(row)
+      if (contentRevision !== undefined)
+        await this.contentReceipts.stage(k as Knex.Transaction, row, contentRevision, maximumSourceScopes)
       this.assertOriginalRoot()
       requireLiveSource(source.expiresAt, 'session admission completion')
       return checkpoint(row)
@@ -818,6 +910,10 @@ export class KnexSnapshotSyncDestination {
         throw new WERR_INVALID_OPERATION('Snapshot session changed or expired; resume from its durable checkpoint')
       }
       requireLiveSource(Number(row.expiresAt), 'destination commit')
+      const completeContent =
+        detached.nextTable === snapshotSyncTables.length
+          ? await this.contentReceipts.prepareCompletion(nativeTransaction, row)
+          : undefined
       await this.verifyProofs(proofs, trx)
       this.assertOriginalRoot()
       const mappings = await loadSnapshotIdMap(
@@ -859,6 +955,7 @@ export class KnexSnapshotSyncDestination {
         primaryEpoch: row.primaryEpoch,
         activeStorage: row.activeStorage
       })
+      if (completeContent !== undefined) await completeContent(row)
       this.assertOriginalRoot()
       requireLiveSource(Number(row.expiresAt), 'destination commit completion')
       transactionFence?.(nativeTransaction)

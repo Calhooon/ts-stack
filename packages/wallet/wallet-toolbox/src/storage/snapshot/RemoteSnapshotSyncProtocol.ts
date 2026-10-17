@@ -27,6 +27,10 @@ export const remoteSnapshotSyncCapabilities = Object.freeze({
 })
 export type RemoteSnapshotSyncCapabilities = typeof remoteSnapshotSyncCapabilities
 export const remoteSnapshotSyncMethods = Object.freeze([
+  'beginSnapshotSyncContent',
+  'getSnapshotSyncContentReceipt',
+  'confirmSnapshotSyncContentReceipt',
+  'observeSnapshotSyncContent',
   'beginSnapshotSync',
   'getSnapshotSyncCheckpoint',
   'commitSnapshotSyncPage',

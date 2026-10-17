@@ -143,6 +143,7 @@ export type {
 export { snapshotSyncTables } from './snapshot/SnapshotSync'
 export type {
   SnapshotSyncSource,
+  SnapshotSyncContentReceipt,
   SnapshotSyncCheckpoint,
   SnapshotSyncCommit,
   SnapshotSyncFieldPreparation,
@@ -163,3 +164,5 @@ export type {
   Brc39ExpiredPendingComposedRecoveryResult
 } from './portable/Brc39ExpiredPendingComposedRecoveryNode'
 export { Brc38NativeRecoveryTemporaryQuota } from './portable/Brc38NativeRecoveryScratchNode'
+
+export type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from './snapshot/SnapshotSyncContentRevision'

@@ -28,6 +28,7 @@ import * as MysqlGeneration from './SnapshotJournalMysqlGeneration'
 import * as Fence from './SnapshotJournalCaptureFence'
 import * as ArchiveSql from '../archive/SnapshotArchiveSql'
 import { createHash } from 'node:crypto'
+import { snapshotSyncContentPosition } from '../SnapshotSyncContentRevision'
 import { Duplex } from 'node:stream'
 
 const identity = '02' + '11'.repeat(32)
@@ -85,6 +86,76 @@ async function fixture(complete = true) {
 }
 
 afterEach(() => jest.restoreAllMocks())
+
+test('actual retained content revisions ignore capture-only clocks and refuse closed sources', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.storage.openSnapshotJournalSource(identity, request)
+    let highWater: string, revision: Awaited<ReturnType<NonNullable<typeof first.readContentRevision>>>
+    try {
+      if (first.readContentRevision === undefined) throw new Error('Actual source content revision reader is required')
+      highWater = first.receipt.highWater
+      revision = await first.readContentRevision()
+      // These public DATA copies are not the actual producer metadata.
+      first.sourceStorage.storageIdentityKey = 'copied-storage'
+      first.user.updated_at.setUTCFullYear(2040)
+      first.receipt.binding = 'ff'.repeat(32)
+      expect(await first.readContentRevision()).toEqual(revision)
+    } finally {
+      await first.close()
+      await first.closed
+    }
+    if (first.readContentRevision === undefined) throw new Error('Content revision reader disappeared')
+    await expect(first.readContentRevision()).rejects.toThrow()
+    const second = await f.storage.openSnapshotJournalSource(identity, request)
+    try {
+      if (second.readContentRevision === undefined) throw new Error('Actual source content revision reader is required')
+      expect(BigInt(second.receipt.highWater)).toBeGreaterThan(BigInt(highWater))
+      const observed = await second.readContentRevision(snapshotSyncContentPosition(revision))
+      expect(observed.content).toBe(revision.content)
+      expect(observed.metadata).toBe(revision.metadata)
+      expect(observed.highWater).toBe(second.receipt.highWater)
+      expect(observed.unchangedSince).toBe(revision.highWater)
+    } finally {
+      await second.close()
+      await second.closed
+    }
+  } finally {
+    await f.close()
+  }
+})
+
+test('actual content metadata stays in its pinned view and a later writer changes the next revision', async () => {
+  const f = await fixture()
+  try {
+    const first = await f.storage.openSnapshotJournalSource(identity, request)
+    let revision: Awaited<ReturnType<NonNullable<typeof first.readContentRevision>>>
+    try {
+      if (first.readContentRevision === undefined) throw new Error('Actual source content revision reader is required')
+      revision = await first.readContentRevision()
+      const [label] = await f.storage.findTxLabels({
+        partial: { userId: first.user.userId },
+        paged: { limit: 1, offset: 0 }
+      })
+      expect(label).toBeDefined()
+      await f.storage.updateTxLabel(label.txLabelId, { label: 'changed-after-content-capture', updated_at: new Date() })
+      expect(await first.readContentRevision()).toEqual(revision)
+    } finally {
+      await first.close()
+      await first.closed
+    }
+    const second = await f.storage.openSnapshotJournalSource(identity, request)
+    try {
+      if (second.readContentRevision === undefined) throw new Error('Actual source content revision reader is required')
+      expect(await second.readContentRevision()).not.toEqual(revision)
+    } finally {
+      await second.close()
+      await second.closed
+    }
+  } finally {
+    await f.close()
+  }
+})
 
 test('a source primary fence blocks selection only through one physically owned destination flight', async () => {
   const f = await fixture(),

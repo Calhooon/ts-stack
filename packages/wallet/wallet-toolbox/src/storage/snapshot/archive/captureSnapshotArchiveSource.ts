@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import type { Chain } from '../../../sdk/types'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -15,6 +16,7 @@ import type { SnapshotArchiveSource } from './KnexSnapshotArchiveSource'
 
 export interface SnapshotArchiveCaptureOptions {
   signal?: AbortSignal
+  contentRevision?: true
   lifetimeMs?: number
   maxBytes?: number
   /** Acknowledged staging progress only; no source IDs, row contents or secrets. */
@@ -61,9 +63,17 @@ export async function captureSnapshotArchiveSource(
     if (source.user.identityKey !== identityKey || source.sourceStorage.chain !== chain) {
       throw new WERR_INVALID_OPERATION('Snapshot source does not match the requested profile and chain')
     }
+    const content =
+      options.contentRevision === true
+        ? source.readContentRevision === undefined
+          ? undefined
+          : parseSnapshotSyncContentRevision(await source.readContentRevision())
+        : undefined
+    if (options.contentRevision === true && content === undefined)
+      throw new WERR_INVALID_OPERATION('Content archive requires the actual same-view revision reader')
     writer = await store.begin(
       {
-        version: 1,
+        ...(content === undefined ? { version: 1 as const } : { version: 2 as const, contentRevision: content }),
         snapshotId: source.snapshotId,
         sourceStorage: source.sourceStorage,
         sourceSchema: source.sourceSchema,

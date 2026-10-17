@@ -38,7 +38,8 @@ export class SnapshotArchiveTransport {
     private readonly identityKey: string,
     private readonly sourceStorageIdentityKey: string,
     private readonly chain: 'main' | 'test',
-    readonly supportsReader = false
+    readonly supportsReader = false,
+    readonly contentRevision = false
   ) {
     parseSnapshotArchiveRpcInput('getSnapshotArchiveOffer', [{ version: 1, identityKey }])
   }
@@ -85,7 +86,11 @@ export class SnapshotArchiveTransport {
     this.requireReader()
     const options = validateSnapshotArchiveReaderOptions(input)
     return validateSnapshotArchiveReaderOffer(
-      await this.call('getSnapshotArchiveReaderOffer', { options }, signal),
+      await this.call(
+        this.contentRevision ? 'getSnapshotContentArchiveReaderOffer' : 'getSnapshotArchiveReaderOffer',
+        { options },
+        signal
+      ),
       options,
       this.sourceStorageIdentityKey,
       this.chain
@@ -95,7 +100,14 @@ export class SnapshotArchiveTransport {
   async admit(input: SnapshotArchiveReaderRequest, signal?: AbortSignal): Promise<Readonly<SnapshotArchiveAdmission>> {
     this.requireReader()
     const request = parseSnapshotArchiveReaderRequest(input)
-    return validateSnapshotArchiveAdmission(await this.call('admitSnapshotArchive', { request }, signal), request)
+    return validateSnapshotArchiveAdmission(
+      await this.call(
+        this.contentRevision ? 'admitSnapshotContentArchive' : 'admitSnapshotArchive',
+        { request },
+        signal
+      ),
+      request
+    )
   }
 
   async readerStatus(
@@ -140,7 +152,8 @@ export class SnapshotArchiveTransport {
         sourceStorageIdentityKey: this.sourceStorageIdentityKey,
         archiveId,
         digest,
-        sourceSchema
+        sourceSchema,
+        ...(this.contentRevision ? { contentRevision: true as const } : {})
       },
       now
     )

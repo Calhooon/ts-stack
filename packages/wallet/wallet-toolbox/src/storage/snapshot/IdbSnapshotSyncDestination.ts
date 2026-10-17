@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 import type { StorageIdb } from '../StorageIdb'
 import type { SyncChunk } from '../../sdk/WalletStorage.interfaces'
 import type { TableProvenTx } from '../schema/tables'
@@ -42,6 +43,42 @@ export class IdbSnapshotSyncDestination {
     } catch {
       return false
     }
+  }
+  async supportsContentDestination(): Promise<boolean> {
+    await IdbSnapshotSyncJournal.open(this.storage)
+    return true
+  }
+  async beginContent(
+    source: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    input: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint> {
+    const revision = parseSnapshotSyncContentRevision(input)
+    const captured: SnapshotSyncSource = {
+      version: source.version,
+      snapshotId: source.snapshotId,
+      expiresAt: source.expiresAt,
+      user: {
+        ...source.user,
+        created_at: new Date(source.user.created_at),
+        updated_at: new Date(source.user.updated_at)
+      },
+      sourceStorage: {
+        ...source.sourceStorage,
+        created_at: new Date(source.sourceStorage.created_at),
+        updated_at: new Date(source.sourceStorage.updated_at)
+      }
+    }
+    return await (await IdbSnapshotSyncJournal.open(this.storage)).begin(captured, activeStorage, revision)
+  }
+  async previousContentReceipt(identityKey: string, sourceIdentity: string) {
+    return await (await IdbSnapshotSyncJournal.open(this.storage)).previousContentReceipt(identityKey, sourceIdentity)
+  }
+  async confirmContentReceipt(identityKey: string, sourceIdentity: string, input: SnapshotSyncContentRevision) {
+    const revision = parseSnapshotSyncContentRevision(input)
+    return await (
+      await IdbSnapshotSyncJournal.open(this.storage)
+    ).confirmContentReceipt(identityKey, sourceIdentity, revision)
   }
   async begin(source: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
     // Journal captures input before its first await; do not postpone that

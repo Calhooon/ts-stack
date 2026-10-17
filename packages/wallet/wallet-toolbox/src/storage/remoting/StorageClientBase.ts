@@ -1,4 +1,8 @@
 import {
+  validateRemoteSnapshotSyncContentCapabilities,
+  type RemoteSnapshotSyncContentCapabilities
+} from '../snapshot/RemoteSnapshotSyncContentProtocol'
+import {
   type ValidCreateActionArgs,
   type ValidListActionsArgs,
   type ValidListCertificatesArgs,
@@ -142,6 +146,7 @@ type RemoteStorageSettings = TableSettings & {
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotArchiveReaderVersion?: 1
   snapshotSyncDestination?: RemoteSnapshotSyncCapabilities
+  snapshotSyncContent?: RemoteSnapshotSyncContentCapabilities
 }
 
 export interface StorageClientOptions {
@@ -298,6 +303,8 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
+  if (properties.snapshotSyncContent != null)
+    validateRemoteSnapshotSyncContentCapabilities(properties.snapshotSyncContent.value)
   if (properties.snapshotSyncDestination != null)
     validateRemoteSnapshotSyncCapabilities(properties.snapshotSyncDestination.value)
   if (
@@ -377,26 +384,41 @@ export abstract class StorageClientBase implements WalletStorageProvider {
         const settings = await this.makeAvailable()
         return {
           storageIdentityKey: settings.storageIdentityKey,
-          supportsDestination: settings.snapshotSyncDestination !== undefined
+          supportsDestination: settings.snapshotSyncDestination !== undefined,
+          supportsContentSource: settings.snapshotSyncContent?.source === true,
+          supportsContentDestination: settings.snapshotSyncContent?.destination === true
         }
       },
       async (identityKey, options) => {
         const transport = await this.getSnapshotArchiveTransport(identityKey)
+        return transport === undefined ? undefined : await openRemoteSnapshot(transport, options)
+      },
+      async (identityKey, options) => {
+        const transport = await this.getSnapshotArchiveTransport(identityKey, true)
         return transport === undefined ? undefined : await openRemoteSnapshot(transport, options)
       }
     )
   }
 
   /** Available only after an authenticated compatible advertisement. */
-  async getSnapshotArchiveTransport(identityKey: string): Promise<SnapshotArchiveTransport | undefined> {
-    await this.makeAvailable()
-    if (!this.snapshotArchivesEnabled || this.snapshotSource === undefined) return undefined
+  async getSnapshotArchiveTransport(
+    identityKey: string,
+    contentRevision = false
+  ): Promise<SnapshotArchiveTransport | undefined> {
+    const settings = await this.makeAvailable()
+    if (
+      !this.snapshotArchivesEnabled ||
+      this.snapshotSource === undefined ||
+      (contentRevision && settings.snapshotSyncContent?.source !== true)
+    )
+      return undefined
     return new SnapshotArchiveTransport(
       (method, params, signal) => this.snapshotRpcCall(method, params, signal),
       identityKey,
       this.snapshotSource.identityKey,
       this.snapshotSource.chain,
-      this.snapshotSource.supportsReader
+      this.snapshotSource.supportsReader,
+      contentRevision
     )
   }
 

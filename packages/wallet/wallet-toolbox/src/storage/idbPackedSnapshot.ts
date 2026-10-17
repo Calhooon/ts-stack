@@ -1,3 +1,8 @@
+import { packedIdbSnapshotContentRevision } from './snapshot/PackedIdbSnapshotContentRevision'
+import {
+  parseSnapshotSyncContentPosition,
+  assertSnapshotSyncContentPositionNotFuture
+} from './snapshot/SnapshotSyncContentRevision'
 import type { TableSettings, TableUser } from './schema/tables'
 import type {
   WalletReadSnapshot,
@@ -398,7 +403,7 @@ export async function openPackedIdbSnapshot(
           : packedIdbInvalid()
     return packedIdbKey(key)
   }
-  const operation = async <T>(run: (tx: PackedIdbTransaction) => Promise<T>): Promise<T> => {
+  const operation = async <T>(run: (tx: PackedIdbTransaction) => Promise<T> | T): Promise<T> => {
     current()
     if (busy) packedIdbInvalid()
     busy = true
@@ -566,8 +571,28 @@ export async function openPackedIdbSnapshot(
   const result: PackedIdbReadSnapshot = {
     version: 1,
     snapshotId: id,
-    sourceStorage: structuredClone(source.settings) as unknown as TableSettings,
-    user: structuredClone(source.user) as unknown as TableUser,
+    get sourceStorage() {
+      return structuredClone(source.settings) as unknown as TableSettings
+    },
+    get user() {
+      return structuredClone(source.user) as unknown as TableUser
+    },
+    readContentRevision: input => {
+      const since = input === undefined ? undefined : parseSnapshotSyncContentPosition(input)
+      return operation(() => {
+        const revision = packedIdbSnapshotContentRevision({
+          epoch: source.epoch,
+          revision: source.revision,
+          userRevision: source.userRevision,
+          databaseName: db.name,
+          databaseVersion: db.version,
+          sourceStorage: source.settings as unknown as TableSettings,
+          user: source.user as unknown as TableUser
+        })
+        if (since !== undefined) assertSnapshotSyncContentPositionNotFuture(since, revision)
+        return revision
+      })
+    },
     expiresAt,
     get isOpen() {
       return (

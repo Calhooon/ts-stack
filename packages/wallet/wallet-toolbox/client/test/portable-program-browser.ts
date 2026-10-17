@@ -1,3 +1,4 @@
+import { verifyPackedIdbSnapshotContentReceipts } from '../../src/storage/snapshot/IdbSnapshotSyncContent.browser.case'
 const { nativeBrowserCaseTimeout } = require('./native-browser-budgets.cjs')
 // Authored UNRUN. Every current exported native-browser case is selected
 // explicitly. A fresh native browser/controller/resource agreement is required
@@ -340,6 +341,11 @@ export const portableBrowserCases: ReadonlyArray<Readonly<{ id: string; source: 
       id: 'verifyIdbSnapshotSyncCertificateFields',
       source: 'src/storage/snapshot/IdbSnapshotSyncCertificateFields.browser.case.ts',
       run: async () => await verifyIdbSnapshotSyncCertificateFields(Date.now() + 30000)
+    }),
+    Object.freeze({
+      id: 'verifyPackedIdbSnapshotContentReceipts',
+      source: 'src/storage/snapshot/IdbSnapshotSyncContent.browser.case.ts',
+      run: async () => await verifyPackedIdbSnapshotContentReceipts(Date.now() + 30000)
     }),
     Object.freeze({
       id: 'verifyOccupiedPackedIdbSnapshotJournal',

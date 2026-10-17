@@ -62,6 +62,8 @@ test('generated protocol requests preserve exact identity, deadlines and termina
         expect(await transport.status(request)).toEqual(receipt)
         expect(rpc.mock.calls[0]).toEqual(['startSnapshotArchive', [{ version: 1, identityKey, request }], undefined])
         const extras: Record<SnapshotArchiveMethod, object> = {
+          getSnapshotContentArchiveReaderOffer: { options: { lifetimeMs: duration, maxBytes } },
+          admitSnapshotContentArchive: { request: readerRequest },
           getSnapshotArchiveReaderOffer: { options: { lifetimeMs: duration, maxBytes } },
           admitSnapshotArchive: { request: readerRequest },
           cancelSnapshotArchiveRequest: { request: readerRequest },

@@ -1,3 +1,9 @@
+import {
+  parseSnapshotSyncContentPosition,
+  parseSnapshotSyncContentRevision,
+  type SnapshotSyncContentPosition
+} from './snapshot/SnapshotSyncContentRevision'
+import { closeSnapshotJournalSource } from './snapshot/journal/closeSnapshotJournalSource'
 import { forSnapshotSqlDialect } from './schema/snapshotSqlMigration'
 import {
   withBrc38NativeLocalPackedWalletMutation,
@@ -682,6 +688,16 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     const destination = new KnexSnapshotSyncDestination(this, chunk => this.prepareSyncProofs(chunk))
     return {
       supportsDestination: () => destination.supportsDestination(),
+      supportsContentDestination: () => destination.supportsContentDestination(),
+      openContentSource: (identityKey, options) => this.openSnapshotSyncContentSource(identityKey, options),
+      observeContentRevision: (identityKey, since, options) =>
+        this.observeSnapshotSyncContentRevision(identityKey, since, options),
+      previousContentReceipt: (identityKey, sourceIdentity) =>
+        destination.previousContentReceipt(identityKey, sourceIdentity),
+      confirmContentReceipt: (identityKey, sourceIdentity, revision) =>
+        destination.confirmContentReceipt(identityKey, sourceIdentity, revision),
+      beginContent: (source, activeStorage, revision, limits) =>
+        destination.beginContent(source, activeStorage, revision, limits),
       openSource: (identityKey, options) =>
         this.openConcurrentSyncSource(identityKey, options ?? {}, (reader, identity, settings) =>
           reader.openWalletReadSnapshot(identity, settings)
@@ -702,6 +718,60 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
           }
         : {})
     }
+  }
+
+  /** New negotiated comparison source. Maintenance has its own short bound;
+   * the actual retained source keeps the caller's original copy deadline. */
+  async openSnapshotSyncContentSource(
+    identityKey: string,
+    options: WalletReadSnapshotOptions = {},
+    archiveOwner?: SnapshotArchiveRequestOwner
+  ): Promise<SnapshotJournalReconciliationSource | undefined> {
+    if (!(await this.supportsSnapshotJournalSync())) return undefined
+    if (this.snapshotJournalRetentionPolicy !== false)
+      await this.maintainCurrentSnapshotJournal({
+        signal: options.signal,
+        lifetimeMs: Math.min(options.lifetimeMs ?? 5000, 5000)
+      })
+    const configuration = await readSnapshotJournalCaptureConfiguration(this.knex)
+    try {
+      return await this.openSnapshotJournalSource(identityKey, configuration, options, archiveOwner)
+    } catch (error) {
+      await this.awaitSnapshotJournalCaptureCleanup()
+      throw error
+    }
+  }
+
+  /** A completed observation is DATA only. Its physical source is closed and
+   * drained before the result can be returned or another source admitted. */
+  async observeSnapshotSyncContentRevision(
+    identityKey: string,
+    input?: SnapshotSyncContentPosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const since = input === undefined ? undefined : parseSnapshotSyncContentPosition(input)
+    const source = await this.openSnapshotSyncContentSource(identityKey, options)
+    if (source === undefined) return undefined
+    let failure: { error: unknown } | undefined
+    let result: ReturnType<typeof parseSnapshotSyncContentRevision> | undefined
+    try {
+      if (source.readContentRevision === undefined)
+        throw new WERR_INVALID_OPERATION('Actual content revision reader is unavailable')
+      result = parseSnapshotSyncContentRevision(await source.readContentRevision(since))
+    } catch (error) {
+      failure = { error }
+    }
+    try {
+      await closeSnapshotJournalSource(source, options.signal)
+    } catch (error) {
+      if (failure !== undefined && error !== failure.error)
+        throw new AggregateError([failure.error, error], 'Content observation and physical cleanup failed', {
+          cause: failure.error
+        })
+      throw error
+    }
+    if (failure !== undefined) throw failure.error
+    return result
   }
 
   /** Internal original-controller transfer bridge. Absent from RPC and the
@@ -804,7 +874,8 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
   async openSnapshotJournalSource(
     identityKey: string,
     request: SnapshotJournalCaptureRequest,
-    options: RetainedReadSnapshotOptions = {}
+    options: RetainedReadSnapshotOptions = {},
+    archiveOwner?: SnapshotArchiveRequestOwner
   ): Promise<SnapshotJournalReconciliationSource> {
     if (this.snapshotAdmissionStopped)
       throw new WERR_INVALID_OPERATION('Snapshot journal sources are unavailable after destruction begins')
@@ -828,7 +899,8 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
         identityKey,
         request,
         options,
-        this.knex
+        this.knex,
+        archiveOwner === undefined ? undefined : { control: this.knex, owner: { ...archiveOwner } }
       )
     } catch (error) {
       this.snapshotSyncBusy = false
@@ -1095,8 +1167,19 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       }
       const closed = view.closed.finally(() => this.releaseConcurrentSource(reader))
       void closed.catch(() => undefined)
+      const copyDates = <V extends { created_at: Date; updated_at: Date }>(value: V): V => ({
+        ...value,
+        created_at: new Date(value.created_at),
+        updated_at: new Date(value.updated_at)
+      })
       return {
         ...view,
+        get sourceStorage() {
+          return copyDates(view.sourceStorage)
+        },
+        get user() {
+          return copyDates(view.user)
+        },
         get isOpen() {
           return view.isOpen
         },

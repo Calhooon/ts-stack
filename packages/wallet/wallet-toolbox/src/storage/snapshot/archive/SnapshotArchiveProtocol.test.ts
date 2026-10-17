@@ -141,6 +141,8 @@ test('every RPC has exact typed arguments and no ownership-token parameter', () 
   const readerFields = { ...fields, version: 2 as const }
   const readerRequest = { ...readerFields, requestId: snapshotArchiveReaderRequestId(readerFields) }
   const extras: Record<SnapshotArchiveMethod, Record<string, unknown>> = {
+    getSnapshotContentArchiveReaderOffer: { options: { lifetimeMs: 300000, maxBytes: 32768 } },
+    admitSnapshotContentArchive: { request: readerRequest },
     getSnapshotArchiveOffer: {},
     startSnapshotArchive: { request },
     getSnapshotArchiveStatus: { requestId: request.requestId },

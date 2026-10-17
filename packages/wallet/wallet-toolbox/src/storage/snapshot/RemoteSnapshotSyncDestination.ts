@@ -1,3 +1,11 @@
+import { SnapshotCancelledError } from './SnapshotCancelledError'
+import {
+  parseSnapshotSyncContentPosition,
+  parseSnapshotSyncContentRevision,
+  type SnapshotSyncContentPosition,
+  type SnapshotSyncContentRevision
+} from './SnapshotSyncContentRevision'
+import { parseRemoteSnapshotSyncContentReceipt } from './RemoteSnapshotSyncContentProtocol'
 import {
   encodeSyncTransfer,
   syncTransferDigest,
@@ -10,7 +18,8 @@ import {
   type SnapshotSyncSource,
   type SnapshotSyncCheckpoint,
   type SnapshotSyncTable,
-  type SnapshotSyncCommit
+  type SnapshotSyncCommit,
+  type SnapshotSyncContentReceipt
 } from './SnapshotSync'
 import type { WalletReadSnapshot, WalletReadSnapshotOptions, WalletSnapshotPage } from './WalletReadSnapshot'
 import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
@@ -41,6 +50,8 @@ interface Session {
 interface Peer {
   readonly storageIdentityKey: string
   readonly supportsDestination: boolean
+  readonly supportsContentSource?: boolean
+  readonly supportsContentDestination?: boolean
 }
 
 /** Retains the concrete authenticated cleanup of one original SQL transfer.
@@ -91,6 +102,10 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
     readonly openSource: (
       identityKey: string,
       options?: WalletReadSnapshotOptions
+    ) => Promise<WalletReadSnapshot | undefined>,
+    readonly openContentSource?: (
+      identityKey: string,
+      options?: WalletReadSnapshotOptions
     ) => Promise<WalletReadSnapshot | undefined>
   ) {}
 
@@ -127,7 +142,87 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
     }
   }
 
+  async supportsContentDestination(): Promise<boolean> {
+    return (await this.peer()).supportsContentDestination === true
+  }
+
+  async observeContentRevision(
+    identityKey: string,
+    input?: SnapshotSyncContentPosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const since = input === undefined ? undefined : parseSnapshotSyncContentPosition(input)
+    const requested = options.lifetimeMs ?? remoteSnapshotSyncCapabilities.maxIoMs
+    if (!Number.isSafeInteger(requested) || requested < 1 || requested > 3600000)
+      throw new TypeError('Invalid snapshot content observation lifetime')
+    if (options.signal?.aborted)
+      throw new SnapshotCancelledError('Remote content observation cancelled before admission')
+    const peer = await this.peer()
+    if (peer.supportsContentSource !== true) return undefined
+    if (options.signal?.aborted)
+      throw new SnapshotCancelledError('Remote content observation cancelled before admission')
+    const lifetimeMs = Math.min(requested, remoteSnapshotSyncCapabilities.maxIoMs)
+    const result = await this.request('observeSnapshotSyncContent', [identityKey, since ?? null], {
+      expiresAt: Date.now() + lifetimeMs,
+      deadline: performance.now() + lifetimeMs
+    })
+    const revision = result === null ? undefined : parseSnapshotSyncContentRevision(result)
+    // Keep the original bounded HTTP operation until its actual source-close
+    // reply drains. Caller cancellation never proves remote physical cleanup.
+    if (options.signal?.aborted) throw new SnapshotCancelledError('Remote content observation cancelled after drainage')
+    return revision
+  }
+
+  async previousContentReceipt(
+    identityKey: string,
+    sourceStorageIdentityKey: string
+  ): Promise<SnapshotSyncContentReceipt | undefined> {
+    const peer = await this.peer()
+    if (peer.supportsContentDestination !== true) return undefined
+    const result = await this.request('getSnapshotSyncContentReceipt', [identityKey, sourceStorageIdentityKey])
+    return parseRemoteSnapshotSyncContentReceipt(result, {
+      identityKey,
+      sourceStorageIdentityKey,
+      destinationStorageIdentityKey: peer.storageIdentityKey
+    })
+  }
+
+  async confirmContentReceipt(
+    identityKey: string,
+    sourceStorageIdentityKey: string,
+    input: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint | undefined> {
+    const revision = parseSnapshotSyncContentRevision(input),
+      peer = await this.peer()
+    if (peer.supportsContentDestination !== true) return undefined
+    const result = await this.request('confirmSnapshotSyncContentReceipt', [sourceStorageIdentityKey, revision])
+    if (result === null) return undefined
+    const checkpoint = parseRemoteSnapshotSyncCheckpoint(result, {
+      identityKey,
+      sourceStorageIdentityKey,
+      destinationStorageIdentityKey: peer.storageIdentityKey
+    })
+    if (!checkpoint.done) throw new WERR_INVALID_OPERATION('Content confirmation returned an incomplete copy')
+    return checkpoint
+  }
+
   async begin(source: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
+    return await this.beginSession(source, activeStorage)
+  }
+
+  async beginContent(
+    source: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    input: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint> {
+    return await this.beginSession(source, activeStorage, parseSnapshotSyncContentRevision(input))
+  }
+
+  private async beginSession(
+    source: SnapshotSyncSource,
+    activeStorage: string | undefined,
+    revision?: SnapshotSyncContentRevision
+  ): Promise<SnapshotSyncCheckpoint> {
     // Detach supplied source DATA before the first await. Reader-only peers
     // also reject absent DATA with the existing negotiation error.
     const selected =
@@ -163,7 +258,16 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
     if (!peer.supportsDestination) throw new WERR_INVALID_OPERATION('Remote snapshot destination is not negotiated')
     if (selected === undefined || session === undefined)
       throw new WERR_INVALID_OPERATION('Remote snapshot begin requires its original source')
-    const result = await this.request('beginSnapshotSync', [selected, activeStorage], session)
+    if (revision !== undefined && peer.supportsContentDestination !== true)
+      throw new WERR_INVALID_OPERATION('Remote snapshot content destination is not negotiated')
+    const result =
+      revision === undefined
+        ? await this.request('beginSnapshotSync', [selected, activeStorage], session)
+        : await this.request(
+            'beginSnapshotSyncContent',
+            [selected, { activeStorage: activeStorage ?? null, revision }],
+            session
+          )
     const checkpoint = parseRemoteSnapshotSyncCheckpoint(result, {
       identityKey: selected.user.identityKey,
       sourceStorageIdentityKey: selected.sourceStorage.storageIdentityKey,
