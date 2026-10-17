@@ -766,10 +766,31 @@ test(
         if (rows.length !== 1) throw new Error('Legacy history fixture requires one actual request')
         expect(await active.updateProvenTxReq(rows[0].provenTxReqId, { history: legacyHistory })).toBe(1)
       })
-      const expected = composedArchivePostimage(
-        await captureComposedSemanticFixture(fixture.manager),
-        fixture.incomingData
-      )
+      const checkpointPostimage = composedArchivePostimage(
+          await captureComposedSemanticFixture(fixture.manager),
+          fixture.incomingData
+        ),
+        originalNote = { when: fixture.sourceData.exportedAt, what: 'original', detail: 'A'.repeat(33000) },
+        incomingNote = { when: fixture.incomingData.exportedAt, what: 'incoming', detail: 'B'.repeat(33000) },
+        priorRequest = checkpointPostimage.proven_tx_reqs[0]
+      expect(checkpointPostimage.proven_tx_reqs).toHaveLength(1)
+      expect(priorRequest.history).toEqual({ notes: [originalNote], localOnly: null })
+      expect(priorRequest.notified).toBe(1)
+      // This case deliberately changes request history. The generic occupied
+      // fixture leaves that row unchanged; declare this case's full postimage
+      // from its independent input literals BEFORE invoking the import.
+      // Existing note ordering is by when/what, and merging the notification
+      // transaction IDs clears notified when the changed request is persisted.
+      const expected = {
+        ...checkpointPostimage,
+        proven_tx_reqs: [
+          {
+            ...priorRequest,
+            history: { notes: [incomingNote, originalNote], localOnly: null },
+            notified: 0
+          }
+        ]
+      }
       const result = await importBrc39ComposedNativeProfile(
         fixture.chunks(),
         authenticatedStagePassword,
@@ -869,8 +890,11 @@ test('actual composed current transaction field selection preserves its physical
   const fixture = await composedNativeFixture(nativeTestExecutable(), undefined, 300000)
   try {
     const userId = fixture.manager.getActiveUser().userId,
-      txid = fixture.sourceData.tables.transactions[0].txid
+      txid = fixture.sourceData.tables.transactions[0].txid,
+      description = fixture.sourceData.tables.transactions[0].description
     expect(typeof txid).toBe('string')
+    if (typeof txid !== 'string' || typeof description !== 'string')
+      throw new Error('Original transaction coordinate fixture requires string identity and description')
     await fixture.manager.runAsStorageProvider(async () => {
       await fixture.storage.toDb().transaction(async trx => {
         const direct: Array<{ physical: number; localId: number; coordinateType: string }> = await trx.raw(
@@ -900,9 +924,7 @@ test('actual composed current transaction field selection preserves its physical
         expect(fields[0].binaryRowId).toBe(direct[0].physical)
         expect(fields[0].metadata?.transactionId).toBe(direct[0].localId)
         expect(fields[0].metadata).not.toHaveProperty('__brc38NativeBinaryRowId')
-        expect(fields[0].texts?.description?.bytes).toBe(
-          Buffer.byteLength(fixture.sourceData.tables.transactions[0].description)
-        )
+        expect(fields[0].texts?.description?.bytes).toBe(Buffer.byteLength(description))
         await expect(
           readBrc38NativeCurrentFieldTargets(
             trx,
@@ -937,6 +959,7 @@ test('actual occupied native request identity reuses the original legacy archive
     const userId = fixture.manager.getActiveUser().userId,
       archivedTxid = fixture.incomingData.tables.provenTxReqs[0].txid
     expect(archivedTxid).toMatch(/^[0-9A-F]{64}$/)
+    if (typeof archivedTxid !== 'string') throw new Error('Original request coordinate fixture requires a string txid')
     await fixture.manager.runAsStorageProvider(async () => {
       await fixture.storage.toDb().transaction(async trx => {
         const stored = await trx('proven_tx_reqs').select('provenTxReqId', 'txid')
