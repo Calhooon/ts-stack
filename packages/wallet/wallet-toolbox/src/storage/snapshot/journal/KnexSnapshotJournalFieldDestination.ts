@@ -8,6 +8,7 @@ import { verifySnapshotJournalCapturedIdentityPrefix } from './SnapshotJournalCa
 import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
 import {
   prepareSnapshotJournalNativeActionMerge,
+  prepareSnapshotJournalNativeRequestMerge,
   prepareSnapshotJournalNativeSimpleMerge,
   prepareSnapshotJournalNativeProofMerge
 } from './SnapshotJournalNativeActionMerge'
@@ -330,6 +331,19 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
               )
             if (receipt.tableId === 8)
               return await prepareSnapshotJournalNativeProofMerge(
+                this.storage,
+                this.binding,
+                expected,
+                receipt,
+                index,
+                archive,
+                frame,
+                this.limits,
+                this.admission,
+                this.signal
+              )
+            if (receipt.tableId === 9)
+              return await prepareSnapshotJournalNativeRequestMerge(
                 this.storage,
                 this.binding,
                 expected,

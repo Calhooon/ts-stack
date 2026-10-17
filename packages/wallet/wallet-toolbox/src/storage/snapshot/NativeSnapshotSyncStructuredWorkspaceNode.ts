@@ -8,8 +8,8 @@ import type { Brc38StructuredProjectionOwners } from '../portable/Brc38Structure
 import { Brc38StagingCleanupError } from '../portable/Brc38StagingCleanupError'
 import type { Brc38WorkingCharge } from '../portable/Brc38WorkingAllocation'
 import {
-  NativeSnapshotSyncStructuredSource,
-  requireNativeSnapshotSyncStructuredSource
+  type NativeSnapshotStructuredOwner,
+  requireNativeSnapshotStructuredOwner
 } from './NativeSnapshotSyncStructuredSourceNode'
 import {
   assertPreparedPackedNativeSnapshotField,
@@ -33,15 +33,15 @@ export class NativeSnapshotSyncStructuredWorkspace {
   #closed = false
   #closing?: Promise<void>
   private constructor(
-    readonly owner: NativeSnapshotSyncStructuredSource,
+    readonly owner: NativeSnapshotStructuredOwner,
     readonly directory: string,
     readonly identity: Readonly<{ dev: number; ino: number; uid: number }>,
     readonly retained: Brc38WorkingCharge,
     readonly maximumIndexBytes = 67108864,
     readonly maximumMembers = 1000000
   ) {}
-  static async open(owner: NativeSnapshotSyncStructuredSource): Promise<NativeSnapshotSyncStructuredWorkspace> {
-    requireNativeSnapshotSyncStructuredSource(owner)
+  static async open(owner: NativeSnapshotStructuredOwner): Promise<NativeSnapshotSyncStructuredWorkspace> {
+    requireNativeSnapshotStructuredOwner(owner)
     await owner.fresh()
     const retained = owner.working.claim(16384)
     let directory: string | undefined
@@ -106,7 +106,7 @@ export class NativeSnapshotSyncStructuredWorkspace {
     }
   }
   readonly check = (): void => {
-    requireNativeSnapshotSyncStructuredSource(this.owner)
+    requireNativeSnapshotStructuredOwner(this.owner)
     if (this.#closed) throw new Error('Native structured workspace closed')
   }
   async #directory(): Promise<void> {

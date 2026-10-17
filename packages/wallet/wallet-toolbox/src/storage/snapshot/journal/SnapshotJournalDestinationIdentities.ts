@@ -1,3 +1,7 @@
+import {
+  readSnapshotJournalCapturedIdentities,
+  requireSnapshotJournalCapturedFrame
+} from './SnapshotJournalCapturedIdentities'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { createSyncMap, type SyncMap } from '../../schema/entities/EntityBase'
@@ -8,9 +12,10 @@ import {
   type SnapshotJournalIdentityLimits,
   type SnapshotJournalIdentityTable
 } from './SnapshotJournalIdentityLedger'
-import type {
-  SnapshotJournalDestinationBinding,
-  SnapshotJournalDestinationCheckpoint
+import {
+  withSnapshotJournalDestinationWindowFence,
+  type SnapshotJournalDestinationBinding,
+  type SnapshotJournalDestinationCheckpoint
 } from './SnapshotJournalDestinationWindow'
 import {
   chargeSnapshotJournalAllocation,
@@ -206,4 +211,45 @@ export async function loadSnapshotJournalDestinationParents(
     }
   }
   return { map, ...(self === undefined ? {} : { self }) }
+}
+
+/** Journal-only notification projection. Every batch resolves original sealed
+ * captured references through current associations and real physical parents;
+ * missing/unsafe legacy IDs remain unmapped. No snapshot_sync_ids or whole map. */
+export async function readSnapshotJournalNotificationMappings(
+  trx: Knex,
+  binding: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  frameDigest: string,
+  changeIndex: number,
+  frameChanges: number,
+  incoming: readonly number[],
+  limits: SnapshotJournalIdentityLimits
+): Promise<readonly (number | undefined)[]> {
+  if (!Array.isArray(incoming) || incoming.length > 128 || incoming.some(id => !Number.isInteger(id))) invalid()
+  return await withSnapshotJournalDestinationWindowFence(trx, binding, expected, async actual => {
+    await requireSnapshotJournalCapturedFrame(actual, binding, expected, frameDigest, frameChanges)
+    const ids = [...new Set(incoming.filter(id => Number.isSafeInteger(id) && id > 0))]
+    if (ids.length === 0) return Object.freeze(incoming.map(() => undefined))
+    const references = await readSnapshotJournalCapturedIdentities(
+      actual,
+      binding,
+      expected,
+      frameDigest,
+      changeIndex,
+      undefined,
+      { kind: 'transaction-points', ids }
+    )
+    if (references.some(reference => reference.tableId !== 0 || !reference.required)) invalid()
+    const loaded = await prepareSnapshotJournalIdentityLedger(actual, binding, expected, references, limits),
+      map = createSyncMap(),
+      result = new Map<number, number>()
+    for (const reference of references) {
+      const association = loaded.associations.get('0:' + reference.incomingId)
+      if (association === undefined) invalid()
+      await verifySnapshotJournalDestinationIdentity(actual, binding.destinationUserId, reference, association, map)
+      result.set(reference.incomingId, association.localId)
+    }
+    return Object.freeze(incoming.map(id => result.get(id)))
+  })
 }

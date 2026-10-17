@@ -1,3 +1,16 @@
+import { NativeSnapshotJournalStructuredSource } from '../NativeSnapshotSyncStructuredSourceNode'
+import { NativeSnapshotSyncStructuredWorkspace } from '../NativeSnapshotSyncStructuredWorkspaceNode'
+import { snapshotSyncRequestMetadata } from '../SnapshotSyncRequestMetadata'
+import {
+  readNativeSnapshotSyncRequestCurrent,
+  readNativeSnapshotSyncRequestCurrentExtent
+} from '../NativeSnapshotSyncRequestsCurrentNode'
+import {
+  prepareNativeSnapshotRequestFields,
+  applyPreparedNativeSnapshotRequests,
+  type PreparedNativeSnapshotRequest
+} from '../NativeSnapshotSyncProvenTxReqsNode'
+import { readSnapshotJournalNotificationMappings } from './SnapshotJournalDestinationIdentities'
 import {
   applyPreparedNativeSnapshotSimplePayloads,
   type PreparedNativeSnapshotSimplePayload
@@ -77,7 +90,7 @@ function changeDigest(
   receipt: SnapshotJournalDestinationStageReceipt
 ): string {
   const context = snapshotJournalDestinationStreams[receipt.streamIndex]
-  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1, 2, 6, 8, 12].includes(receipt.tableId))
+  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1, 2, 6, 8, 9, 12].includes(receipt.tableId))
     invalid()
   const { revision, id1, id2, exactText } = change.metadata
   return createHash('sha256')
@@ -144,6 +157,9 @@ async function prepareSnapshotJournalNativeEntityMerge(
     working = new Brc38WorkingAllocation(limits.maximumAllocationBytes),
     allocations: Brc38WorkingCharge[] = [],
     stages: PreparedPackedNativeSnapshotField[] = [],
+    requestStages = new Set<PreparedPackedNativeSnapshotField>(),
+    workspaces = new Set<NativeSnapshotSyncStructuredWorkspace>(),
+    temporary = new Set<{ close(): Promise<void> }>(),
     failures = new Set<Brc38StagingCleanupError>(),
     expiresAt = Math.min(source.expiresAt, binding.receipt.expiresAt),
     deadline = performance.now() + expiresAt - Date.now()
@@ -156,7 +172,7 @@ async function prepareSnapshotJournalNativeEntityMerge(
     changeIndex < 0 ||
     change === undefined ||
     !change.present ||
-    ![0, 1, 2, 6, 8, 12].includes(frame.tableId) ||
+    ![0, 1, 2, 6, 8, 9, 12].includes(frame.tableId) ||
     receipt.tableId !== frame.tableId ||
     snapshotJournalDestinationStreams[receipt.streamIndex]?.stream !== frame.stream ||
     digest !== frame.frameDigest ||
@@ -179,14 +195,18 @@ async function prepareSnapshotJournalNativeEntityMerge(
           ? outputPayloadFields
           : table === 'provenTxs'
             ? ['rawTx', 'merklePath']
-            : nativeSimplePayloadFields[table]
+            : table === 'provenTxReqs'
+              ? ['history', 'notify', 'rawTx', 'inputBEEF']
+              : nativeSimplePayloadFields[table]
   let closed = false,
     consumed = false,
     closing: Promise<void> | undefined,
     applying: Promise<{ inserts: number; updates: number }> | undefined,
     row: PreparedNativeSnapshotAction | undefined,
     proofRow: PreparedNativeSnapshotProof | undefined,
-    simpleRow: PreparedNativeSnapshotSimplePayload | undefined
+    simpleRow: PreparedNativeSnapshotSimplePayload | undefined,
+    requestRow: PreparedNativeSnapshotRequest | undefined,
+    requestOwner: NativeSnapshotJournalStructuredSource | undefined
   const check = (): void => {
     signal?.throwIfAborted()
     assertRemoteSnapshotJournalFieldFrame(source, frame)
@@ -236,6 +256,19 @@ async function prepareSnapshotJournalNativeEntityMerge(
     closed = true
     if (applying !== undefined) await applying.catch(() => undefined)
     const causes: unknown[] = []
+    const drain = async <T extends { close(): Promise<void> }>(collection: Set<T>): Promise<void> => {
+      for (const item of collection) {
+        try {
+          await item.close()
+          collection.delete(item)
+        } catch (cause) {
+          causes.push(cause)
+        }
+      }
+    }
+    await drain(temporary)
+    await drain(workspaces)
+    await drain(requestStages)
     for (const stage of stages)
       try {
         await stage.close()
@@ -259,6 +292,8 @@ async function prepareSnapshotJournalNativeEntityMerge(
     proofRow = undefined
     if (simpleRow !== undefined) for (const field of simpleRow.inline.fields) field.bytes.fill(0)
     simpleRow = undefined
+    requestRow = undefined
+    requestOwner = undefined
   }
   try {
     check()
@@ -288,6 +323,123 @@ async function prepareSnapshotJournalNativeEntityMerge(
         expiresAt,
         deadline,
         signal
+      )
+    } else if (table === 'provenTxReqs') {
+      const extents = { ...change.fields }
+      for (const name of ['status', 'txid', 'batch']) {
+        const descriptor = extents[name]
+        if (descriptor === undefined) continue
+        if (descriptor.kind !== 'utf8' || descriptor.bytes > (name === 'status' ? 32 : 4096)) invalid()
+        allocations.push(working.claim(8192 + 16 * descriptor.bytes))
+        const bytes = await source.readFieldExtent(frame, changeIndex, name, 0, descriptor.bytes)
+        try {
+          check()
+          if (
+            bytes.length !== descriptor.bytes ||
+            createHash('sha256').update(bytes).digest('hex') !== descriptor.sha256
+          )
+            invalid()
+          fields[name] = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+        } finally {
+          bytes.fill(0)
+        }
+        delete extents[name]
+      }
+      const incoming = snapshotSyncRequestMetadata(fields, extents),
+        owner = await NativeSnapshotJournalStructuredSource.open(
+          storage,
+          binding,
+          expected,
+          receipt,
+          changeIndex,
+          source,
+          frame,
+          working,
+          expiresAt,
+          admission,
+          check,
+          signal
+        ),
+        load = async (trx: Knex.Transaction) =>
+          await loadSnapshotJournalDestinationParents(
+            trx,
+            binding,
+            expected,
+            readSnapshotJournalEntityFrameIdentities(
+              trx,
+              binding,
+              expected,
+              receipt.digest,
+              changeIndex,
+              'request-scalars'
+            ),
+            limits,
+            { remaining: working.maximum - working.used }
+          ),
+        allowance = working.claim(16384 + 16 * 65536)
+      requestOwner = owner
+      allocations.push(allowance)
+      const current = await owner.inspect(
+        async trx =>
+          await readNativeSnapshotSyncRequestCurrent(
+            storage,
+            trx,
+            binding.destinationUserId,
+            incoming,
+            (await load(trx)).map,
+            signal
+          )
+      )
+      allowance.resize(16384 + 16 * current.field.allocationBytes)
+      requestRow = await prepareNativeSnapshotRequestFields(
+        owner,
+        { fields },
+        incoming,
+        current,
+        requestStages,
+        workspaces,
+        temporary,
+        check,
+        async (name, descriptor) => {
+          if (descriptor !== extents[name]) invalid()
+          return await preparePackedNativeSnapshotArchiveField(storage, source, frame, changeIndex, name, {
+            workingAllocation: working,
+            maximumFieldBytes: 1000000000,
+            maximumReadBytes: 16384,
+            expiresAt,
+            signal
+          })
+        },
+        async ids =>
+          await owner.inspect(
+            async trx =>
+              await readSnapshotJournalNotificationMappings(
+                trx,
+                binding,
+                expected,
+                receipt.digest,
+                changeIndex,
+                frame.page.changes.length,
+                ids,
+                limits
+              )
+          ),
+        async (name, offset, length) =>
+          await owner.inspect(
+            async trx =>
+              await readNativeSnapshotSyncRequestCurrentExtent(
+                storage,
+                trx,
+                binding.destinationUserId,
+                incoming,
+                (await load(trx)).map,
+                current,
+                name,
+                offset,
+                length,
+                signal
+              )
+          )
       )
     } else if (table !== 'transactions' && table !== 'outputs') {
       if (fields.userId !== binding.source.userId) invalid()
@@ -414,7 +566,7 @@ async function prepareSnapshotJournalNativeEntityMerge(
         check()
         if (
           consumed ||
-          (row === undefined && proofRow === undefined && simpleRow === undefined) ||
+          (row === undefined && proofRow === undefined && simpleRow === undefined && requestRow === undefined) ||
           JSON.stringify(actualBinding) !== originalBinding ||
           JSON.stringify(actualState) !== originalState ||
           actualReceipt.digest !== receipt.digest ||
@@ -437,7 +589,9 @@ async function prepareSnapshotJournalNativeEntityMerge(
           writerBudget = { remaining: reserved - currentReadBytes },
           prepared = row,
           preparedProof = proofRow,
-          preparedSimple = simpleRow
+          preparedSimple = simpleRow,
+          preparedRequest = requestRow,
+          preparedRequestOwner = requestOwner
         applying = (async () => {
           await verifySnapshotJournalDestinationSchema(trx)
           await readSnapshotJournalCaptureConfiguration(trx)
@@ -471,6 +625,28 @@ async function prepareSnapshotJournalNativeEntityMerge(
                   actual as Knex.Transaction,
                   binding.destinationUserId,
                   [preparedProof],
+                  map,
+                  check,
+                  signal
+                )
+              }
+              if (table === 'provenTxReqs') {
+                if (preparedRequest === undefined || preparedRequestOwner === undefined) invalid()
+                await preparedRequestOwner.assertCurrent(actual as Knex.Transaction)
+                const current = await readNativeSnapshotSyncRequestCurrent(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  preparedRequest.incoming,
+                  map,
+                  signal
+                )
+                if (current.field.metadata !== undefined) await observeCurrent(current.field.metadata)
+                return await applyPreparedNativeSnapshotRequests(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  [preparedRequest],
                   map,
                   check,
                   signal
@@ -518,7 +694,8 @@ async function prepareSnapshotJournalNativeEntityMerge(
                 check,
                 signal
               )
-            }
+            },
+            table === 'provenTxReqs' ? 'request-scalars' : undefined
           )
         })()
         try {
@@ -768,7 +945,9 @@ export async function prepareSnapshotJournalNativeSimpleMerge(
   if (![2, 6, 12].includes(args[3].tableId)) invalid()
   return await prepareSnapshotJournalNativeEntityMerge(...args)
 }
-function journalNativeEntityTable(id: number): 'transactions' | 'outputs' | 'provenTxs' | NativeSimplePayloadTable {
+function journalNativeEntityTable(
+  id: number
+): 'transactions' | 'outputs' | 'provenTxs' | 'provenTxReqs' | NativeSimplePayloadTable {
   switch (id) {
     case 0:
       return 'transactions'
@@ -780,9 +959,18 @@ function journalNativeEntityTable(id: number): 'transactions' | 'outputs' | 'pro
       return 'commissions'
     case 8:
       return 'provenTxs'
+    case 9:
+      return 'provenTxReqs'
     case 12:
       return 'certificateFields'
     default:
       return invalid()
   }
+}
+
+export async function prepareSnapshotJournalNativeRequestMerge(
+  ...args: Parameters<typeof prepareSnapshotJournalNativeEntityMerge>
+): Promise<Readonly<PreparedSnapshotJournalNativeAction>> {
+  if (args[3].tableId !== 9) invalid()
+  return await prepareSnapshotJournalNativeEntityMerge(...args)
 }

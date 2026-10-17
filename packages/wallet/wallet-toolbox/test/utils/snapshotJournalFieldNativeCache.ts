@@ -1,3 +1,6 @@
+import { NativeSnapshotJournalStructuredSource } from '../../src/storage/snapshot/NativeSnapshotSyncStructuredSourceNode'
+import { NativeSnapshotSyncStructuredWorkspace } from '../../src/storage/snapshot/NativeSnapshotSyncStructuredWorkspaceNode'
+import type { SnapshotJournalDestinationCheckpoint } from '../../src/storage/snapshot/journal/SnapshotJournalTypes'
 import type { Knex } from 'knex'
 import { readNativeSnapshotJournalMappingRevision } from '../../src/storage/snapshot/NativeSnapshotSyncMappingSchemaNode'
 import { readSnapshotJournalPointFields } from '../../src/storage/snapshot/journal/SnapshotJournalFieldSql'
@@ -252,7 +255,8 @@ async function verifyNativeJournalFinancialFieldPromotion(
           | 'outputs'
           | 'certificates'
           | 'certificateFields'
-          | 'commissions',
+          | 'commissions'
+          | 'provenTxReqs',
         binaries: readonly string[]
       ): Record<string, unknown> => {
         const original = input.sourceData.tables[table][0]
@@ -265,10 +269,17 @@ async function verifyNativeJournalFinancialFieldPromotion(
             const bytes = Buffer.from(value, 'base64')
             if (bytes.toString('base64') !== value) throw new Error('Independent fixture binary spelling differs')
             row[name] = bytes
+          } else if (
+            table === 'provenTxReqs' &&
+            ['history', 'notify'].includes(name) &&
+            value !== null &&
+            typeof value === 'object'
+          ) {
+            row[name] = JSON.stringify(value)
           } else if (value !== null && !['string', 'number', 'boolean'].includes(typeof value))
             throw new Error('Independent small financial fixture unexpectedly contains structured payload')
         }
-        if (table !== 'provenTxs') row.userId = user.userId
+        if (table !== 'provenTxs' && table !== 'provenTxReqs') row.userId = user.userId
         return row
       }
     const schemaRollback = new Error('Independent native mapping schema rollback')
@@ -353,6 +364,35 @@ async function verifyNativeJournalFinancialFieldPromotion(
         transactionId: Number(commissions[0].transactionId)
       }
     })
+    const existingRequests = await input.storage.findProvenTxReqs({ partial: {} })
+    expect(existingRequests).toHaveLength(1)
+    const initialRequest = existingRequests[0],
+      initialNotify = JSON.parse(initialRequest.notify) as Record<string, unknown>
+    await input.manager.runAsWriter(async active => {
+      if (active !== input.storage) throw new Error('Actual request fixture manager changed')
+      expect(
+        await input.storage.updateProvenTxReq(initialRequest.provenTxReqId, {
+          notify: JSON.stringify({ ...initialNotify, transactionIds: [] }),
+          notified: true
+        })
+      ).toBe(1)
+    })
+    const [beforeRequest] = await input.storage.findProvenTxReqs({
+        partial: { provenTxReqId: initialRequest.provenTxReqId }
+      }),
+      request = incoming('provenTxReqs', ['rawTx', 'inputBEEF']),
+      incomingNote = { when: '2026-10-17T21:00:00.000Z', what: expectedText },
+      expectedHistory = JSON.parse(beforeRequest.history) as { notes?: unknown[] }
+    request.history = JSON.stringify({ notes: [incomingNote] })
+    request.notify = JSON.stringify({
+      transactionIds: [transaction.transactionId, 999, transaction.transactionId, 1.5]
+    })
+    request.rawTx = Buffer.from([99, 98, 97])
+    request.status = 'unknown'
+    request.attempts = beforeRequest.attempts + 99
+    request.batch = beforeRequest.batch || 'journal independent batch'
+    request.updated_at = simpleUpdated
+    await http.storage.knex('proven_tx_reqs').insert(request)
     const { url } = await http.serve(),
       client = new StorageClient(http.wallet, url, { serverIdentityKey: http.serverIdentityKey }),
       archive = await client.openSnapshotJournalFieldArchive(identityKey)
@@ -377,11 +417,102 @@ async function verifyNativeJournalFinancialFieldPromotion(
     for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
       checkpoint = await begun.destination.stageArchiveFrame(checkpoint, archive)
     expect(checkpoint.phase).toBe('promoting')
-    while (checkpoint.phase !== 'acknowledged') {
-      if (Date.now() >= Math.min(input.expiresAt, archive.expiresAt))
-        throw new Error('Genuine financial field case reached its actual original owner deadline')
-      checkpoint = (await begun.destination.promote(checkpoint, archive)).checkpoint
+    let injectedCheckpoint: SnapshotJournalDestinationCheckpoint | undefined,
+      fenceRefusals = 0
+    const originalOpen = NativeSnapshotJournalStructuredSource.open.bind(NativeSnapshotJournalStructuredSource),
+      ownerSpy = jest.spyOn(NativeSnapshotJournalStructuredSource, 'open').mockImplementationOnce(async (...args) => {
+        const owned = await originalOpen(...args)
+        await expect(NativeSnapshotSyncStructuredWorkspace.open(Object.create(owned))).rejects.toThrow(
+          'actual producer'
+        )
+        const [storage, binding, expected, receipt, changeIndex] = args
+        expect(storage).toBe(input.storage)
+        await storage.runSnapshotJournalWriter(async trx => {
+          const selected = {
+              userId: binding.destinationUserId,
+              sourceStorageIdentity: binding.source.storageIdentity,
+              sessionId: expected.sessionId,
+              frameDigest: receipt.digest,
+              changeIndex,
+              tableId: 0
+            },
+            rows: Array<{ incomingId: number; naturalKeyJson: string }> = await trx(
+              'snapshot_reconciliation_captured_identities'
+            )
+              .where(selected)
+              .select('incomingId', 'naturalKeyJson')
+              .limit(2)
+          expect(rows).toHaveLength(1)
+          const row = rows[0],
+            key = { ...selected, incomingId: row.incomingId },
+            before = await readNativeSnapshotJournalMappingRevision(trx as Knex.Transaction)
+          // The final DATA is identical. Only the real committed event fence
+          // can reveal this away-and-back change after preparation ownership.
+          await trx('snapshot_reconciliation_captured_identities')
+            .where(key)
+            .update({ naturalKeyJson: row.naturalKeyJson + ' ' })
+          await trx('snapshot_reconciliation_captured_identities')
+            .where(key)
+            .update({ naturalKeyJson: row.naturalKeyJson })
+          expect(BigInt(await readNativeSnapshotJournalMappingRevision(trx as Knex.Transaction))).toBe(
+            BigInt(before) + 2n
+          )
+        })
+        injectedCheckpoint = structuredClone(expected)
+        return owned
+      })
+    try {
+      while (checkpoint.phase !== 'acknowledged') {
+        if (Date.now() >= Math.min(input.expiresAt, archive.expiresAt))
+          throw new Error('Genuine financial field case reached its actual original owner deadline')
+        try {
+          checkpoint = (await begun.destination.promote(checkpoint, archive)).checkpoint
+        } catch (cause) {
+          if (
+            injectedCheckpoint === undefined ||
+            fenceRefusals !== 0 ||
+            !(cause instanceof Error) ||
+            !cause.message.includes('Native structured source differs')
+          )
+            throw cause
+          const actual = (await begun.destination.status()).checkpoint
+          expect(actual).toEqual(injectedCheckpoint)
+          const [unchanged] = await input.storage.findProvenTxReqs({
+            partial: { provenTxReqId: beforeRequest.provenTxReqId }
+          })
+          expect(unchanged.history).toBe(beforeRequest.history)
+          expect(unchanged.notify).toBe(beforeRequest.notify)
+          checkpoint = actual
+          fenceRefusals++
+        }
+      }
+      expect(fenceRefusals).toBe(1)
+    } finally {
+      ownerSpy.mockRestore()
     }
+    const [afterRequest] = await input.storage.findProvenTxReqs({
+      partial: { provenTxReqId: beforeRequest.provenTxReqId }
+    })
+    expect(JSON.parse(afterRequest.history)).toEqual({
+      ...expectedHistory,
+      notes: [...(expectedHistory.notes ?? []), incomingNote]
+    })
+    expect(JSON.parse(afterRequest.notify)).toEqual({
+      ...JSON.parse(beforeRequest.notify),
+      transactionIds: [beforeSimple.transactionId]
+    })
+    expect(afterRequest).toMatchObject({
+      provenTxReqId: beforeRequest.provenTxReqId,
+      txid: beforeRequest.txid,
+      status: beforeRequest.status,
+      attempts: beforeRequest.attempts,
+      provenTxId: beforeRequest.provenTxId,
+      batch: request.batch,
+      notified: false
+    })
+    expect(Buffer.from(afterRequest.rawTx)).toEqual(Buffer.from(beforeRequest.rawTx))
+    expect(afterRequest.inputBEEF).toEqual(beforeRequest.inputBEEF)
+
     const resumed = await KnexSnapshotJournalFieldDestination.resume(
       input.storage,
       identityKey,

@@ -122,11 +122,20 @@ export async function* readSnapshotJournalEntityFrameIdentities(
   binding: SnapshotJournalDestinationBinding,
   state: SnapshotJournalDestinationCheckpoint,
   digest: string,
-  changeIndex: number
+  changeIndex: number,
+  scope?: 'request-scalars'
 ): AsyncGenerator<SnapshotJournalCapturedIdentity[]> {
   let after: { tableId: SnapshotJournalCapturedIdentity['tableId']; incomingId: number } | undefined
   while (true) {
-    const batch = await readSnapshotJournalCapturedIdentities(k, binding, state, digest, changeIndex, after)
+    const batch = await readSnapshotJournalCapturedIdentities(
+      k,
+      binding,
+      state,
+      digest,
+      changeIndex,
+      after,
+      scope === undefined ? undefined : { kind: scope }
+    )
     if (batch.length === 0) return
     yield batch
     const last = batch[batch.length - 1]
@@ -319,9 +328,11 @@ export async function applySnapshotJournalPreparedEntityEffect(
     trx: Knex,
     map: SyncMap,
     observeCurrent: (row: Readonly<Record<string, unknown>>) => Promise<void>
-  ) => Promise<{ inserts: number; updates: number }>
+  ) => Promise<{ inserts: number; updates: number }>,
+  parentScope?: 'request-scalars'
 ): Promise<{ inserts: number; updates: number }> {
   if (
+    (parentScope !== undefined && (parentScope !== 'request-scalars' || receipt.tableId !== 9)) ||
     !change.present ||
     !change.metadata.present ||
     !Number.isSafeInteger(changeIndex) ||
@@ -336,7 +347,7 @@ export async function applySnapshotJournalPreparedEntityEffect(
       fenced,
       binding,
       expected,
-      readSnapshotJournalEntityFrameIdentities(fenced, binding, expected, receipt.digest, changeIndex),
+      readSnapshotJournalEntityFrameIdentities(fenced, binding, expected, receipt.digest, changeIndex, parentScope),
       limits,
       budget
     )

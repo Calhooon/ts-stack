@@ -1,3 +1,9 @@
+import type { Knex } from 'knex'
+import type { SyncMap } from '../schema/entities/EntityBase'
+import {
+  requireNativeSnapshotStructuredOwner,
+  type NativeSnapshotStructuredOwner
+} from './NativeSnapshotSyncStructuredSourceNode'
 import type { StorageKnex } from '../StorageKnex'
 import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import { Brc38WorkingAllocation, type Brc38WorkingCharge } from '../portable/Brc38WorkingAllocation'
@@ -45,8 +51,8 @@ import { writeNativeSnapshotSyncRow } from './writeNativeSnapshotSyncRowNode'
 import type { WalletReadSnapshot, WalletSnapshotFieldMetadataPage } from './WalletReadSnapshot'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 
-interface PreparedRow {
-  readonly metadata: Readonly<DetachedSnapshotSyncFieldRow>
+export interface PreparedNativeSnapshotRequest {
+  readonly metadata: Readonly<Pick<DetachedSnapshotSyncFieldRow, 'fields'>>
   readonly incoming: SnapshotSyncRequestRow
   readonly current: NativeSnapshotSyncRequestCurrent
   readonly history: PreparedPackedNativeSnapshotField
@@ -134,7 +140,7 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
     retained = working.claim(16384 + 16 * detached.allocationBytes),
     stages = new Set<PreparedPackedNativeSnapshotField>(),
     allocations: Brc38WorkingCharge[] = [],
-    rows: PreparedRow[] = [],
+    rows: PreparedNativeSnapshotRequest[] = [],
     workspaces = new Set<NativeSnapshotSyncStructuredWorkspace>(),
     temporary = new Set<{ close(): Promise<void> }>(),
     failures = new Set<Brc38StagingCleanupError>(),
@@ -213,15 +219,6 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
       rows.length = 0
       txids.clear()
       retained.close()
-    },
-    retain = (stage: PreparedPackedNativeSnapshotField): PreparedPackedNativeSnapshotField => {
-      stages.add(stage)
-      check()
-      return stage
-    },
-    retire = async (stage: PreparedPackedNativeSnapshotField): Promise<void> => {
-      await stage.close()
-      stages.delete(stage)
     }
   try {
     check()
@@ -299,263 +296,66 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
         allocation.close()
         throw cause
       }
-      if (current.row !== undefined) planProvenTxReqMergeMetadata(current.row, incoming)
-      const workspace = await NativeSnapshotSyncStructuredWorkspace.open(owner)
-      workspaces.add(workspace)
-      const drained = async function* (chunks: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
-          try {
-            yield* chunks
-          } finally {
-            workspace.releaseReadWindows()
-          }
-        },
-        originalStages: PreparedPackedNativeSnapshotField[] = [],
-        textPolicy: Brc38StructuredJsonPolicy = {
-          maximumInputBytes: 1000000000,
-          maximumOutputBytes: 1000000000,
-          maximumChunkBytes: 16384,
-          maximumAllocationBytes: working.maximum,
-          workingAllocation: working,
-          signal
-        },
-        projectionPolicy = {
-          maximumTemporaryIndexBytes: 16777216,
-          maximumMembers: 1000000,
-          maximumOutputBytes: 1000000000,
-          maximumReadBytes: 16384,
-          maximumIndexAllocationBytes: working.maximum,
-          maximumGrammarAllocationBytes: working.maximum,
-          workingAllocation: working,
-          expiresAt,
-          signal,
-          legacyNormalizedIntegers: true
-        },
-        sourceCell = async (
-          name: 'history' | 'notify' | 'rawTx' | 'inputBEEF'
-        ): Promise<PreparedPackedNativeSnapshotField | undefined> => {
-          const cell = incoming[name]
-          if (cell === undefined) return undefined
-          let stage: PreparedPackedNativeSnapshotField
-          if (typeof cell === 'string') {
-            if (name !== 'history' && name !== 'notify') invalid()
-            stage = retain(await stageNativeSnapshotSyncInlineText(owner, name, cell))
-          } else
-            stage = retain(
-              await preparePackedNativeSnapshotField(storage, source, 'provenTxReqs', metadata.cursor, name, cell, {
-                workingAllocation: working,
-                maximumFieldBytes: 1000000000,
-                maximumReadBytes: 16384,
-                expiresAt,
-                signal
-              })
-            )
-          originalStages.push(stage)
-          return stage
-        },
-        historyInput = await sourceCell('history'),
-        notifyInput = await sourceCell('notify')
-      if (historyInput === undefined || notifyInput === undefined) invalid()
-      const incomingHistory = workspace.stagedSource(historyInput, 'history'),
-        owners: Brc38StructuredProjectionOwners = {
-          check: workspace.check,
-          openIndex: workspace.openIndex,
-          readMappings: async (entity, incomingIds) => {
-            check()
-            if (entity !== 'transaction') invalid()
-            workspace.releaseReadWindows()
-            const allowance = working.claim(16384 + 8 * 1048576)
-            try {
-              return await destination.inspectNativeFieldSession(expected, signal, async read => {
-                check()
-                if (
-                  read.sourceUserId !== binding.userId ||
-                  read.journalEpoch !== journalEpoch ||
-                  (await readNativeSnapshotSyncMappingRevision(read.transaction)) !== mappingRevision ||
-                  (await readNativeSnapshotTransactionMembershipRevision(read.transaction)) !==
-                    transactionMembershipRevision
-                )
-                  invalid()
-                const mapped = await readNativeSnapshotNotificationMappings(
-                  read.transaction,
-                  read.user.userId,
-                  expected.sourceStorageIdentityKey,
-                  incomingIds,
-                  signal
-                )
-                check()
-                return mapped
-              })
-            } finally {
-              allowance.close()
-            }
-          }
-        },
-        jsonStage = async (cell: Brc38StreamedStructured): Promise<PreparedPackedNativeSnapshotField> =>
-          retain(
-            await stageNativeSnapshotSyncText(
-              owner,
-              'history',
-              () => drained(stringifyBrc38StructuredJsonSpan(cell, { start: 0, end: cell.length }, textPolicy)),
-              () => drained(stringifyBrc38StructuredJsonSpan(cell, { start: 0, end: cell.length }, textPolicy))
-            )
-          ),
-        normalize = async (cell: Brc38StreamedStructured): Promise<PreparedPackedNativeSnapshotField> => {
-          const normalized = await prepareSnapshotSyncNormalizedNotify(cell, owners, textPolicy)
-          temporary.add(normalized)
-          const stage = retain(
-            await stageNativeSnapshotSyncText(
-              owner,
-              'notify',
-              () => drained(normalized.measureChunks()),
-              () => drained(normalized.chunks())
-            )
-          )
-          await normalized.close()
-          temporary.delete(normalized)
-          return stage
-        },
-        normalizedIncoming = await normalize(workspace.stagedSource(notifyInput, 'notify'))
-      originalStages.push(normalizedIncoming)
-      let history: PreparedPackedNativeSnapshotField,
-        notify: PreparedPackedNativeSnapshotField,
-        historyEqual = false,
-        notifyEqual = false,
-        notifiedReset = false,
-        rawTx: PreparedPackedNativeSnapshotField | undefined,
-        inputBEEF: PreparedPackedNativeSnapshotField | undefined
-      if (current.row === undefined) {
-        history = await jsonStage(incomingHistory)
-        const normalizedSource = workspace.stagedSource(normalizedIncoming, 'notify'),
-          projection = await Brc38StreamedNotifyProjection.prepare(owners, normalizedSource, projectionPolicy)
-        temporary.add(projection)
-        notifiedReset = projection.mappedIncomingIds > 0
-        const spelling = (measurement: boolean): AsyncIterable<Uint8Array> =>
-          stringifyBrc38StructuredJsonSpan(
-            normalizedSource,
-            { start: 0, end: normalizedSource.length },
-            textPolicy,
-            undefined,
-            {
-              member: 'transactionIds',
-              check: workspace.check,
-              chunks: width => (measurement ? projection.measureChunks(width) : projection.chunks(width)),
-              close: async () => undefined
-            }
-          )
-        notify = retain(
-          await stageNativeSnapshotSyncText(
-            owner,
-            'notify',
-            () => drained(spelling(true)),
-            () => drained(spelling(false))
-          )
-        )
-        await projection.close()
-        temporary.delete(projection)
-        rawTx = await sourceCell('rawTx')
-        inputBEEF = await sourceCell('inputBEEF')
-        for (const stage of [rawTx, inputBEEF])
-          if (stage !== undefined) originalStages.splice(originalStages.indexOf(stage), 1)
-      } else {
-        const currentCell = async (name: 'history' | 'notify'): Promise<Brc38StreamedStructured> => {
-            const extent = current.field.texts?.[name]
-            if (extent === undefined) invalid()
-            return await workspace.currentSource(extent, async (offset, length) => {
-              const allowance = working.claim(16384 + 8 * 65536 + 4 * length)
-              let bytes: Uint8Array | undefined
-              try {
-                bytes = await destination.inspectNativeFieldSession(expected, signal, async read => {
-                  check()
-                  if (read.sourceUserId !== binding.userId || read.journalEpoch !== journalEpoch) invalid()
-                  const map = await read.loadFieldMappings('provenTxReqs', [metadata.fields])
-                  return await readNativeSnapshotSyncRequestCurrentExtent(
-                    storage,
-                    read.transaction,
-                    read.user.userId,
-                    incoming,
-                    map,
-                    current,
-                    name,
-                    offset,
-                    length,
-                    signal
-                  )
-                })
-                return {
-                  bytes,
-                  close: () => {
-                    bytes?.fill(0)
-                    allowance.close()
-                  }
-                }
-              } catch (cause) {
-                bytes?.fill(0)
-                allowance.close()
-                throw cause
-              }
-            })
-          },
-          currentHistory = await currentCell('history'),
-          currentNotify = await currentCell('notify'),
-          historyBaseline = await jsonStage(currentHistory),
-          notifyBaseline = await normalize(currentNotify)
-        originalStages.push(historyBaseline, notifyBaseline)
-        const selectedHistory = await Brc38StreamedHistoryProjection.prepareField(
-          owners,
-          incomingHistory,
-          projectionPolicy,
-          currentHistory
-        )
-        temporary.add(selectedHistory)
-        workspace.releaseReadWindows()
-        history = retain(
-          await stageNativeSnapshotSyncText(
-            owner,
-            'history',
-            () => drained(selectedHistory.measureChunks(16384)),
-            () => drained(selectedHistory.chunks(16384))
-          )
-        )
-        await selectedHistory.close()
-        temporary.delete(selectedHistory)
-        const selectedNotify = await prepareBrc38StreamedNotifyField(
-          owners,
-          workspace.stagedSource(normalizedIncoming, 'notify'),
-          projectionPolicy,
-          workspace.stagedSource(notifyBaseline, 'notify')
-        )
-        temporary.add(selectedNotify)
-        notifiedReset = selectedNotify.notifiedReset
-        workspace.releaseReadWindows()
-        notify = retain(
-          await stageNativeSnapshotSyncText(
-            owner,
-            'notify',
-            () => drained(selectedNotify.measureChunks(16384)),
-            () => drained(selectedNotify.chunks(16384))
-          )
-        )
-        await selectedNotify.close()
-        temporary.delete(selectedNotify)
-        historyEqual = await sameStagedBytes(historyBaseline, history, working, check)
-        notifyEqual = await sameStagedBytes(notifyBaseline, notify, working, check)
-      }
-      await workspace.close()
-      workspaces.delete(workspace)
-      for (const stage of originalStages) await retire(stage)
       rows.push(
-        Object.freeze({
+        await prepareNativeSnapshotRequestFields(
+          owner,
           metadata,
           incoming,
           current,
-          history,
-          notify,
-          rawTx,
-          inputBEEF,
-          historyEqual,
-          notifyEqual,
-          notifiedReset
-        })
+          stages,
+          workspaces,
+          temporary,
+          check,
+          async (name, cell) =>
+            await preparePackedNativeSnapshotField(storage, source, 'provenTxReqs', metadata.cursor, name, cell, {
+              workingAllocation: working,
+              maximumFieldBytes: 1000000000,
+              maximumReadBytes: 16384,
+              expiresAt,
+              signal
+            }),
+          async incomingIds => {
+            return await destination.inspectNativeFieldSession(expected, signal, async read => {
+              check()
+              if (
+                read.sourceUserId !== binding.userId ||
+                read.journalEpoch !== journalEpoch ||
+                (await readNativeSnapshotSyncMappingRevision(read.transaction)) !== mappingRevision ||
+                (await readNativeSnapshotTransactionMembershipRevision(read.transaction)) !==
+                  transactionMembershipRevision
+              )
+                invalid()
+              const mapped = await readNativeSnapshotNotificationMappings(
+                read.transaction,
+                read.user.userId,
+                expected.sourceStorageIdentityKey,
+                incomingIds,
+                signal
+              )
+              check()
+              return mapped
+            })
+          },
+          async (name, offset, length) => {
+            return await destination.inspectNativeFieldSession(expected, signal, async read => {
+              check()
+              if (read.sourceUserId !== binding.userId || read.journalEpoch !== journalEpoch) invalid()
+              const map = await read.loadFieldMappings('provenTxReqs', [metadata.fields])
+              return await readNativeSnapshotSyncRequestCurrentExtent(
+                storage,
+                read.transaction,
+                read.user.userId,
+                incoming,
+                map,
+                current,
+                name,
+                offset,
+                length,
+                signal
+              )
+            })
+          }
+        )
       )
     }
     check()
@@ -585,72 +385,18 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
             'provenTxReqs',
             rows.map(row => row.metadata.fields)
           )
-          for (const row of rows) {
-            check()
-            requireSameNativeSnapshotSyncRequestCurrent(
-              row.current,
-              await readNativeSnapshotSyncRequestCurrent(
-                storage,
-                writer.transaction,
-                writer.user.userId,
-                row.incoming,
-                loaded.map,
-                signal
-              )
-            )
-          }
-          let inserts = 0
-          for (const row of rows) {
-            check()
-            const actual = await readNativeSnapshotSyncRequestCurrent(
-              storage,
-              writer.transaction,
-              writer.user.userId,
-              row.incoming,
-              loaded.map,
-              signal
-            )
-            requireSameNativeSnapshotSyncRequestCurrent(row.current, actual)
-            const prior = actual.row,
-              selected = prior === undefined ? row.incoming : planProvenTxReqMergeMetadata(prior, row.incoming)
-            if (
-              prior !== undefined &&
-              selected.batch === prior.batch &&
-              selected.updated_at.getTime() === prior.updated_at.getTime() &&
-              row.historyEqual &&
-              row.notifyEqual
-            ) {
-              loaded.map.provenTxReq.idMap[row.incoming.provenTxReqId] = prior.provenTxReqId
-              continue
-            }
-            const fields: Record<string, unknown> = { ...selected },
-              attached: Record<string, PreparedPackedNativeSnapshotField> = { history: row.history, notify: row.notify }
-            for (const name of ['rawTx', 'inputBEEF', 'history', 'notify']) delete fields[name]
-            if (row.notifiedReset) fields.notified = false
-            if (prior === undefined) {
-              delete fields.provenTxReqId
-              fields.provenTxId = actual.incomingProvenTxId
-              if (row.rawTx === undefined) invalid()
-              attached.rawTx = row.rawTx
-              if (row.inputBEEF !== undefined) attached.inputBEEF = row.inputBEEF
-            }
-            const localId = await writeNativeSnapshotSyncRow(
-              storage,
-              writer.transaction,
-              'provenTxReqs',
-              fields,
-              { row: {}, fields: [] },
-              attached,
-              prior?.provenTxReqId
-            )
-            if (prior !== undefined && localId !== prior.provenTxReqId) invalid()
-            loaded.map.provenTxReq.idMap[row.incoming.provenTxReqId] = localId
-            if (prior === undefined) inserts++
-            check()
-          }
+          const { inserts, updates } = await applyPreparedNativeSnapshotRequests(
+            storage,
+            writer.transaction,
+            writer.user.userId,
+            rows,
+            loaded.map,
+            check,
+            signal
+          )
           await loaded.persist()
           check()
-          return { inserts, updates: 0 }
+          return { inserts, updates }
         })
         try {
           const result = await applying
@@ -681,4 +427,313 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
     }
     throw cause
   }
+}
+
+/** Shared bounded preparation over a closed union of actual source owners.
+ * CODE dispatch selects original full-snapshot or genuine journal operations;
+ * it never mints SQL/source authority or commits a financial checkpoint. */
+export async function prepareNativeSnapshotRequestFields(
+  owner: NativeSnapshotStructuredOwner,
+  metadata: Readonly<Pick<DetachedSnapshotSyncFieldRow, 'fields'>>,
+  incoming: SnapshotSyncRequestRow,
+  current: NativeSnapshotSyncRequestCurrent,
+  stages: Set<PreparedPackedNativeSnapshotField>,
+  workspaces: Set<NativeSnapshotSyncStructuredWorkspace>,
+  temporary: Set<{ close(): Promise<void> }>,
+  check: () => void,
+  prepareField: (
+    name: 'history' | 'notify' | 'rawTx' | 'inputBEEF',
+    descriptor: Readonly<import('./WalletReadSnapshot').WalletSnapshotFieldDescriptor>
+  ) => Promise<PreparedPackedNativeSnapshotField>,
+  readMappings: (incomingIds: readonly number[]) => Promise<readonly (number | undefined)[]>,
+  readCurrent: (name: 'history' | 'notify', offset: number, length: number) => Promise<Uint8Array>
+): Promise<Readonly<PreparedNativeSnapshotRequest>> {
+  requireNativeSnapshotStructuredOwner(owner)
+  const { working, expiresAt, signal } = owner,
+    retain = (stage: PreparedPackedNativeSnapshotField): PreparedPackedNativeSnapshotField => {
+      stages.add(stage)
+      check()
+      return stage
+    },
+    retire = async (stage: PreparedPackedNativeSnapshotField): Promise<void> => {
+      await stage.close()
+      stages.delete(stage)
+    }
+  if (current.row !== undefined) planProvenTxReqMergeMetadata(current.row, incoming)
+  const workspace = await NativeSnapshotSyncStructuredWorkspace.open(owner)
+  workspaces.add(workspace)
+  const drained = async function* (chunks: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
+      try {
+        yield* chunks
+      } finally {
+        workspace.releaseReadWindows()
+      }
+    },
+    originalStages: PreparedPackedNativeSnapshotField[] = [],
+    textPolicy: Brc38StructuredJsonPolicy = {
+      maximumInputBytes: 1000000000,
+      maximumOutputBytes: 1000000000,
+      maximumChunkBytes: 16384,
+      maximumAllocationBytes: working.maximum,
+      workingAllocation: working,
+      signal
+    },
+    projectionPolicy = {
+      maximumTemporaryIndexBytes: 16777216,
+      maximumMembers: 1000000,
+      maximumOutputBytes: 1000000000,
+      maximumReadBytes: 16384,
+      maximumIndexAllocationBytes: working.maximum,
+      maximumGrammarAllocationBytes: working.maximum,
+      workingAllocation: working,
+      expiresAt,
+      signal,
+      legacyNormalizedIntegers: true
+    },
+    sourceCell = async (
+      name: 'history' | 'notify' | 'rawTx' | 'inputBEEF'
+    ): Promise<PreparedPackedNativeSnapshotField | undefined> => {
+      const cell = incoming[name]
+      if (cell === undefined) return undefined
+      let stage: PreparedPackedNativeSnapshotField
+      if (typeof cell === 'string') {
+        if (name !== 'history' && name !== 'notify') invalid()
+        stage = retain(await stageNativeSnapshotSyncInlineText(owner, name, cell))
+      } else stage = retain(await prepareField(name, cell))
+      originalStages.push(stage)
+      return stage
+    },
+    historyInput = await sourceCell('history'),
+    notifyInput = await sourceCell('notify')
+  if (historyInput === undefined || notifyInput === undefined) invalid()
+  const incomingHistory = workspace.stagedSource(historyInput, 'history'),
+    owners: Brc38StructuredProjectionOwners = {
+      check: workspace.check,
+      openIndex: workspace.openIndex,
+      readMappings: async (entity, incomingIds) => {
+        check()
+        if (entity !== 'transaction') invalid()
+        workspace.releaseReadWindows()
+        const allowance = working.claim(16384 + 8 * 1048576)
+        try {
+          return await readMappings(incomingIds)
+        } finally {
+          allowance.close()
+        }
+      }
+    },
+    jsonStage = async (cell: Brc38StreamedStructured): Promise<PreparedPackedNativeSnapshotField> =>
+      retain(
+        await stageNativeSnapshotSyncText(
+          owner,
+          'history',
+          () => drained(stringifyBrc38StructuredJsonSpan(cell, { start: 0, end: cell.length }, textPolicy)),
+          () => drained(stringifyBrc38StructuredJsonSpan(cell, { start: 0, end: cell.length }, textPolicy))
+        )
+      ),
+    normalize = async (cell: Brc38StreamedStructured): Promise<PreparedPackedNativeSnapshotField> => {
+      const normalized = await prepareSnapshotSyncNormalizedNotify(cell, owners, textPolicy)
+      temporary.add(normalized)
+      const stage = retain(
+        await stageNativeSnapshotSyncText(
+          owner,
+          'notify',
+          () => drained(normalized.measureChunks()),
+          () => drained(normalized.chunks())
+        )
+      )
+      await normalized.close()
+      temporary.delete(normalized)
+      return stage
+    },
+    normalizedIncoming = await normalize(workspace.stagedSource(notifyInput, 'notify'))
+  originalStages.push(normalizedIncoming)
+  let history: PreparedPackedNativeSnapshotField,
+    notify: PreparedPackedNativeSnapshotField,
+    historyEqual = false,
+    notifyEqual = false,
+    notifiedReset = false,
+    rawTx: PreparedPackedNativeSnapshotField | undefined,
+    inputBEEF: PreparedPackedNativeSnapshotField | undefined
+  if (current.row === undefined) {
+    history = await jsonStage(incomingHistory)
+    const normalizedSource = workspace.stagedSource(normalizedIncoming, 'notify'),
+      projection = await Brc38StreamedNotifyProjection.prepare(owners, normalizedSource, projectionPolicy)
+    temporary.add(projection)
+    notifiedReset = projection.mappedIncomingIds > 0
+    const spelling = (measurement: boolean): AsyncIterable<Uint8Array> =>
+      stringifyBrc38StructuredJsonSpan(
+        normalizedSource,
+        { start: 0, end: normalizedSource.length },
+        textPolicy,
+        undefined,
+        {
+          member: 'transactionIds',
+          check: workspace.check,
+          chunks: width => (measurement ? projection.measureChunks(width) : projection.chunks(width)),
+          close: async () => undefined
+        }
+      )
+    notify = retain(
+      await stageNativeSnapshotSyncText(
+        owner,
+        'notify',
+        () => drained(spelling(true)),
+        () => drained(spelling(false))
+      )
+    )
+    await projection.close()
+    temporary.delete(projection)
+    rawTx = await sourceCell('rawTx')
+    inputBEEF = await sourceCell('inputBEEF')
+    for (const stage of [rawTx, inputBEEF])
+      if (stage !== undefined) originalStages.splice(originalStages.indexOf(stage), 1)
+  } else {
+    const currentCell = async (name: 'history' | 'notify'): Promise<Brc38StreamedStructured> => {
+        const extent = current.field.texts?.[name]
+        if (extent === undefined) invalid()
+        return await workspace.currentSource(extent, async (offset, length) => {
+          const allowance = working.claim(16384 + 8 * 65536 + 4 * length)
+          let bytes: Uint8Array | undefined
+          try {
+            bytes = await readCurrent(name, offset, length)
+            return {
+              bytes,
+              close: () => {
+                bytes?.fill(0)
+                allowance.close()
+              }
+            }
+          } catch (cause) {
+            bytes?.fill(0)
+            allowance.close()
+            throw cause
+          }
+        })
+      },
+      currentHistory = await currentCell('history'),
+      currentNotify = await currentCell('notify'),
+      historyBaseline = await jsonStage(currentHistory),
+      notifyBaseline = await normalize(currentNotify)
+    originalStages.push(historyBaseline, notifyBaseline)
+    const selectedHistory = await Brc38StreamedHistoryProjection.prepareField(
+      owners,
+      incomingHistory,
+      projectionPolicy,
+      currentHistory
+    )
+    temporary.add(selectedHistory)
+    workspace.releaseReadWindows()
+    history = retain(
+      await stageNativeSnapshotSyncText(
+        owner,
+        'history',
+        () => drained(selectedHistory.measureChunks(16384)),
+        () => drained(selectedHistory.chunks(16384))
+      )
+    )
+    await selectedHistory.close()
+    temporary.delete(selectedHistory)
+    const selectedNotify = await prepareBrc38StreamedNotifyField(
+      owners,
+      workspace.stagedSource(normalizedIncoming, 'notify'),
+      projectionPolicy,
+      workspace.stagedSource(notifyBaseline, 'notify')
+    )
+    temporary.add(selectedNotify)
+    notifiedReset = selectedNotify.notifiedReset
+    workspace.releaseReadWindows()
+    notify = retain(
+      await stageNativeSnapshotSyncText(
+        owner,
+        'notify',
+        () => drained(selectedNotify.measureChunks(16384)),
+        () => drained(selectedNotify.chunks(16384))
+      )
+    )
+    await selectedNotify.close()
+    temporary.delete(selectedNotify)
+    historyEqual = await sameStagedBytes(historyBaseline, history, working, check)
+    notifyEqual = await sameStagedBytes(notifyBaseline, notify, working, check)
+  }
+  await workspace.close()
+  workspaces.delete(workspace)
+  for (const stage of originalStages) await retire(stage)
+  return Object.freeze({
+    metadata,
+    incoming,
+    current,
+    history,
+    notify,
+    rawTx,
+    inputBEEF,
+    historyEqual,
+    notifyEqual,
+    notifiedReset
+  })
+}
+
+/** Original request financial kernel. Actual enclosing owner/window checks,
+ * current maps/parents and outer atomic ACK remain the caller's responsibility. */
+export async function applyPreparedNativeSnapshotRequests(
+  storage: StorageKnex,
+  trx: Knex.Transaction,
+  userId: number,
+  rows: readonly PreparedNativeSnapshotRequest[],
+  map: SyncMap,
+  check: () => void,
+  signal?: AbortSignal
+): Promise<{ inserts: number; updates: number }> {
+  for (const row of rows) {
+    check()
+    requireSameNativeSnapshotSyncRequestCurrent(
+      row.current,
+      await readNativeSnapshotSyncRequestCurrent(storage, trx, userId, row.incoming, map, signal)
+    )
+  }
+  let inserts = 0
+  for (const row of rows) {
+    check()
+    const actual = await readNativeSnapshotSyncRequestCurrent(storage, trx, userId, row.incoming, map, signal)
+    requireSameNativeSnapshotSyncRequestCurrent(row.current, actual)
+    const prior = actual.row,
+      selected = prior === undefined ? row.incoming : planProvenTxReqMergeMetadata(prior, row.incoming)
+    if (
+      prior !== undefined &&
+      selected.batch === prior.batch &&
+      selected.updated_at.getTime() === prior.updated_at.getTime() &&
+      row.historyEqual &&
+      row.notifyEqual
+    ) {
+      map.provenTxReq.idMap[row.incoming.provenTxReqId] = prior.provenTxReqId
+      continue
+    }
+    const fields: Record<string, unknown> = { ...selected },
+      attached: Record<string, PreparedPackedNativeSnapshotField> = { history: row.history, notify: row.notify }
+    for (const name of ['rawTx', 'inputBEEF', 'history', 'notify']) delete fields[name]
+    if (row.notifiedReset) fields.notified = false
+    if (prior === undefined) {
+      delete fields.provenTxReqId
+      fields.provenTxId = actual.incomingProvenTxId
+      if (row.rawTx === undefined) invalid()
+      attached.rawTx = row.rawTx
+      if (row.inputBEEF !== undefined) attached.inputBEEF = row.inputBEEF
+    }
+    const localId = await writeNativeSnapshotSyncRow(
+      storage,
+      trx,
+      'provenTxReqs',
+      fields,
+      { row: {}, fields: [] },
+      attached,
+      prior?.provenTxReqId
+    )
+    if (prior !== undefined && localId !== prior.provenTxReqId) invalid()
+    map.provenTxReq.idMap[row.incoming.provenTxReqId] = localId
+    if (prior === undefined) inserts++
+    check()
+  }
+
+  check()
+  return { inserts, updates: 0 }
 }

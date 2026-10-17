@@ -1,3 +1,9 @@
+import {
+  snapshotJournalCapturedIdentitiesDdl,
+  readSnapshotJournalCapturedIdentities
+} from './SnapshotJournalCapturedIdentities'
+import { readSnapshotJournalNotificationMappings } from './SnapshotJournalDestinationIdentities'
+import { brc38ImportTargetIndexName } from '../../portable/Brc38ImportTargetIndexes'
 import { knex, type Knex } from 'knex'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -374,4 +380,153 @@ test('V2 profile data survives source replacement but old IDs are not reusable c
     })
     expect(actual.associations.get(request.tableId + ':' + request.incomingId)?.localId).toBe(702)
   })
+})
+
+async function capturedRequestReferences() {
+  for (const sql of snapshotJournalCapturedIdentitiesDdl(db)) await db.raw(sql)
+  const frameDigest = 'f'.repeat(64),
+    scope = {
+      userId: binding.destinationUserId,
+      sourceStorageIdentity: binding.source.storageIdentity,
+      sessionId: state.sessionId,
+      binding: state.binding,
+      frameDigest
+    },
+    captured = (incomingId: number, tableId = 0, required = 1) => ({
+      ...scope,
+      changeIndex: 0,
+      tableId,
+      incomingId,
+      generation: '2',
+      naturalIdentity: 'a'.repeat(64),
+      naturalKeyJson: JSON.stringify(
+        tableId === 0 ? { tableId: 0, reference: 'transaction-' + incomingId } : { tableId, txid: String(incomingId) }
+      ),
+      required
+    })
+  await db('snapshot_reconciliation_identity_frames').insert({
+    ...scope,
+    windowSequence: 0,
+    identities: 131,
+    sealed: 1,
+    changes: 1
+  })
+  for (let first = 1; first <= 129; first += 64) {
+    await db('snapshot_reconciliation_captured_identities').insert(
+      Array.from({ length: Math.min(64, 130 - first) }, (_, index) => captured(first + index))
+    )
+  }
+  await db('snapshot_reconciliation_captured_identities').insert([captured(300, 8), captured(400, 9, 0)])
+  return { scope, captured, frameDigest }
+}
+test('request captured point selection bounds notification batches and excludes them from scalar final maps', async () => {
+  const { frameDigest } = await capturedRequestReferences()
+  await db.transaction(async trx => {
+    const first = await readSnapshotJournalCapturedIdentities(trx, binding, state, frameDigest, 0),
+      points = await readSnapshotJournalCapturedIdentities(trx, binding, state, frameDigest, 0, undefined, {
+        kind: 'transaction-points',
+        ids: [129, 1, 129, 900]
+      }),
+      scalar = await readSnapshotJournalCapturedIdentities(trx, binding, state, frameDigest, 0, undefined, {
+        kind: 'request-scalars'
+      })
+    expect(first).toHaveLength(128)
+    expect(points.map(row => row.incomingId)).toEqual([1, 129])
+    expect(scalar.map(row => [row.tableId, row.incomingId])).toEqual([
+      [8, 300],
+      [9, 400]
+    ])
+    await expect(
+      readSnapshotJournalCapturedIdentities(trx, binding, state, frameDigest, 0, undefined, {
+        kind: 'transaction-points',
+        ids: Array.from({ length: 129 }, (_, id) => id + 1)
+      })
+    ).rejects.toThrow()
+    await expect(
+      readSnapshotJournalCapturedIdentities(trx, binding, state, frameDigest, 0, undefined, {
+        kind: 'transaction-points',
+        ids: [0]
+      })
+    ).rejects.toThrow()
+    await expect(
+      readSnapshotJournalCapturedIdentities(
+        trx,
+        binding,
+        state,
+        frameDigest,
+        0,
+        { tableId: 0, incomingId: 1 },
+        { kind: 'transaction-points', ids: [2] }
+      )
+    ).rejects.toThrow()
+  })
+})
+test('journal notification projection uses sealed current associations and refuses changed identity, profile and window', async () => {
+  const { frameDigest, scope } = await capturedRequestReferences(),
+    limit = { maximumMappings: 8 }
+  await db.raw(
+    'CREATE TABLE transactions(transactionId INTEGER PRIMARY KEY,userId INTEGER NOT NULL,reference TEXT NOT NULL,txid TEXT)'
+  )
+  await db.raw('CREATE INDEX ?? ON transactions(userId,txid)', [brc38ImportTargetIndexName('transactions')])
+  await db.raw('CREATE INDEX ?? ON transactions(userId,reference)', [
+    brc38ImportTargetIndexName('transactionReference')
+  ])
+  await db('transactions').insert([
+    { transactionId: 701, userId: 7, reference: 'transaction-1' },
+    { transactionId: 702, userId: 7, reference: 'transaction-129' }
+  ])
+  for (const [incomingId, localId] of [
+    [1, 701],
+    [129, 702]
+  ])
+    await db.transaction(async trx => {
+      const prepared = await prepareSnapshotJournalIdentityLedger(
+        trx,
+        binding,
+        state,
+        [
+          {
+            tableId: 0,
+            incomingId,
+            generation: snapshotJournalRevision('2'),
+            naturalIdentity: 'a'.repeat(64),
+            required: false
+          }
+        ],
+        limit
+      )
+      await prepared.persist(new Map([['0:' + incomingId, localId]]))
+    })
+  const statements: string[] = [],
+    observe = (query: { sql: string }) => {
+      statements.push(query.sql)
+    }
+  db.on('query', observe)
+  try {
+    const read = async (ids: number[] = [129, 1, 900, 129, 0, -1, Number.MAX_SAFE_INTEGER + 1]) =>
+      await db.transaction(
+        async trx => await readSnapshotJournalNotificationMappings(trx, binding, state, frameDigest, 0, 1, ids, limit)
+      )
+    expect(await read()).toEqual([702, 701, undefined, 702, undefined, undefined, undefined])
+    expect(statements.some(sql => sql.includes('snapshot_sync_ids'))).toBe(false)
+    await expect(read([2])).rejects.toThrow('identity ledger')
+    await db('transactions').where('transactionId', 701).update({ userId: 8 })
+    await expect(read([1])).rejects.toThrow('association')
+    await db('transactions').where('transactionId', 701).update({ userId: 7 })
+    await db('snapshot_reconciliation_captured_identities')
+      .where({ ...scope, changeIndex: 0, tableId: 0, incomingId: 1 })
+      .update({ generation: '3' })
+    await expect(read([1])).rejects.toThrow()
+    await db('snapshot_reconciliation_captured_identities')
+      .where({ ...scope, changeIndex: 0, tableId: 0, incomingId: 1 })
+      .update({ generation: '2' })
+    await db('snapshot_reconciliation_identity_frames').where(scope).update({ sealed: 0 })
+    await expect(read([1])).rejects.toThrow('captured')
+    await db('snapshot_reconciliation_identity_frames').where(scope).update({ sealed: 1 })
+    expect(await read([1, 129])).toEqual([701, 702])
+    await db('users').where('userId', 7).update({ activeStorage: 'another primary' })
+    await expect(read([1])).rejects.toThrow('window')
+  } finally {
+    db.off('query', observe)
+  }
 })

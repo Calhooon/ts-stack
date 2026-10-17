@@ -549,3 +549,23 @@ point mappings before its final writer. Registration and DDL coverage alone do
 not implement or qualify that request integration. The existing native financial
 fixture authors partial-schema refusal and rollback/reentry under its actual
 owner; pinned execution remains pending.
+
+Native journal request history/notification promotion now uses a distinct actual
+journal structured owner. Every preparation view checks the current physical
+native writer, actual admitted window/stage/captured frame, auxiliary parent/map
+revision and transaction-membership events. The workspace and derived-text
+stager accept only the closed union of actual full-snapshot and journal issuers;
+no full snapshot/session is fabricated. Source/archive I/O and bounded original
+history/notify projections finish outside the final writer. Notification mapping
+uses sealed captured transaction references and current journal associations in
+at most128-point batches. The final map excludes the potentially large
+notification family while retaining and checking request self/proof parents.
+The final writer repeats current row and event fences and reuses the original
+request financial effect, including retained status/attempt/proof/raw/input,
+batch conflicts, history/notify normalization and notification reset semantics.
+Original full-snapshot I/O/session checks, policies and finite limits remain.
+The original selected native financial fixtures now author request postimages,
+copied-owner refusal, a committed captured-reference away-and-back event after
+preparation, no request effect/cursor advance on refusal, and genuine resume.
+These new native assertions remain unexecuted. Full provenance, ordinary SQL
+field storage, manager routing and remote primary recovery remain unfinished.

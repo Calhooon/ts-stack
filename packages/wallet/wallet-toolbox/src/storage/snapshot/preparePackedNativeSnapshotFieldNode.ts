@@ -38,8 +38,8 @@ import {
   type Brc38NativeTextRead
 } from '../portable/Brc38NativeBlobProtocol'
 import {
-  requireNativeSnapshotSyncStructuredSource,
-  type NativeSnapshotSyncStructuredSource
+  requireNativeSnapshotStructuredOwner,
+  type NativeSnapshotStructuredOwner
 } from './NativeSnapshotSyncStructuredSourceNode'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 import type {
@@ -339,23 +339,23 @@ export async function preparePackedNativeSnapshotJournalField(
  * authority. Both complete projection passes re-enter their actual owners;
  * this stage supplies only one current native pointer attachment. */
 export async function stageNativeSnapshotSyncText(
-  owner: NativeSnapshotSyncStructuredSource,
+  owner: NativeSnapshotStructuredOwner,
   field: 'history' | 'notify',
   measure: () => AsyncIterable<Uint8Array>,
   replay: () => AsyncIterable<Uint8Array>
 ): Promise<Readonly<PreparedPackedNativeSnapshotField>> {
-  requireNativeSnapshotSyncStructuredSource(owner)
+  requireNativeSnapshotStructuredOwner(owner)
   await owner.fresh()
   if (field !== 'history' && field !== 'notify') invalid()
   let pass = 0
   const encoded = async function* (hash: ReturnType<typeof createHash>): AsyncGenerator<Uint8Array> {
-    requireNativeSnapshotSyncStructuredSource(owner)
+    requireNativeSnapshotStructuredOwner(owner)
     const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }),
       selected = pass++ === 0 ? measure : replay
     if (pass > 2) invalid()
     for await (const chunk of selected()) {
       try {
-        requireNativeSnapshotSyncStructuredSource(owner)
+        requireNativeSnapshotStructuredOwner(owner)
         if (!(chunk instanceof Uint8Array) || chunk.length < 1 || chunk.length > 65536) invalid()
         utf8.decode(chunk, { stream: true })
         hash.update(chunk)
@@ -365,7 +365,7 @@ export async function stageNativeSnapshotSyncText(
       }
     }
     utf8.decode()
-    requireNativeSnapshotSyncStructuredSource(owner)
+    requireNativeSnapshotStructuredOwner(owner)
   }
   return await prepareNativeSnapshotContent(
     owner.storage,
@@ -381,22 +381,22 @@ export async function stageNativeSnapshotSyncText(
       signal: owner.signal
     },
     encoded,
-    () => requireNativeSnapshotSyncStructuredSource(owner)
+    () => requireNativeSnapshotStructuredOwner(owner)
   )
 }
 
 /** Detached bounded string DATA, encoded with the native SQLite UTF-8 string
  * contract. Keep surrogate pairs together across windows; no whole-field copy. */
 export async function stageNativeSnapshotSyncInlineText(
-  owner: NativeSnapshotSyncStructuredSource,
+  owner: NativeSnapshotStructuredOwner,
   field: 'history' | 'notify',
   value: string
 ): Promise<Readonly<PreparedPackedNativeSnapshotField>> {
-  requireNativeSnapshotSyncStructuredSource(owner)
+  requireNativeSnapshotStructuredOwner(owner)
   if (typeof value !== 'string' || value.length > 131072) invalid()
   const chunks = async function* (): AsyncGenerator<Uint8Array> {
     for (let offset = 0; offset < value.length;) {
-      requireNativeSnapshotSyncStructuredSource(owner)
+      requireNativeSnapshotStructuredOwner(owner)
       let count = Math.min(4096, value.length - offset)
       const last = value.charCodeAt(offset + count - 1),
         next = value.charCodeAt(offset + count)
@@ -404,7 +404,7 @@ export async function stageNativeSnapshotSyncInlineText(
       const bytes = new TextEncoder().encode(value.slice(offset, offset + count))
       try {
         yield bytes
-        requireNativeSnapshotSyncStructuredSource(owner)
+        requireNativeSnapshotStructuredOwner(owner)
         offset += count
       } finally {
         bytes.fill(0)

@@ -358,7 +358,8 @@ export async function readSnapshotJournalCapturedIdentities(
   state: SnapshotJournalDestinationCheckpoint,
   frameDigest: string,
   changeIndex: number,
-  after?: { tableId: SnapshotJournalIdentityTable; incomingId: number }
+  after?: { tableId: SnapshotJournalIdentityTable; incomingId: number },
+  selection?: { kind: 'request-scalars' } | { kind: 'transaction-points'; ids: readonly number[] }
 ): Promise<SnapshotJournalCapturedIdentity[]> {
   const remote = transaction(k)
   const selected = {
@@ -389,6 +390,16 @@ export async function readSnapshotJournalCapturedIdentities(
         void this.where('tableId', cursor.tableId).andWhere('incomingId', '>', cursor.incomingId)
       })
     })
+  if (selection?.kind === 'request-scalars') {
+    // Explicit ranges exclude the possibly million-member notification family.
+    // Unexpected non-transaction parent families still reach the parser and refuse.
+    query.whereIn('tableId', [1, 2, 3, 4, 5, 6, 8, 9])
+  } else if (selection?.kind === 'transaction-points') {
+    if (after !== undefined || !Array.isArray(selection.ids) || selection.ids.length < 1 || selection.ids.length > 128)
+      invalid()
+    const ids = selection.ids.map(id => integer(id, 1))
+    query.where('tableId', 0).whereIn('incomingId', ids)
+  } else if (selection !== undefined) invalid()
   const rows: Array<Record<string, unknown>> = await query
   return rows.map(row => {
     const reference = owned(
@@ -402,6 +413,7 @@ export async function readSnapshotJournalCapturedIdentities(
       binding.receipt.highWater
     )
     if (typeof row.naturalKeyJson !== 'string') invalid()
+    if (selection?.kind === 'request-scalars' && ![8, 9].includes(reference.tableId)) invalid()
     const key = naturalKey(JSON.parse(row.naturalKeyJson), reference.tableId)
     if (JSON.stringify(key) !== row.naturalKeyJson) invalid()
     return { ...reference, naturalKey: key }
