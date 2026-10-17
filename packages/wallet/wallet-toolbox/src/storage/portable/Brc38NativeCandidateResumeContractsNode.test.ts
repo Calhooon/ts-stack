@@ -1,3 +1,8 @@
+import {
+  hasBrc38PrivatePriorImportSchema,
+  brc38PrivatePriorImportRows,
+  brc38PrivatePriorImportBudget
+} from './Brc38PrivatePriorImportSchemaNode'
 import { Brc38PrivateLocalCandidate } from './Brc38PrivateLocalCandidateNode'
 import { brc38PrivateLocalCandidateStateTable } from './Brc38PrivateLocalCandidateJournalNode'
 import { runInSeries } from '../../utility/runInSeries'
@@ -349,5 +354,131 @@ test('native COPY uses its admitted batch budget and resumes the exact stored ch
         })
       }
     }
+  )
+}, 630000)
+
+// Genuine prior-custody schema, actual native query packets and independent
+// DDL mutations. No prior match is retained as authority for a later read.
+test('native prior custody uses admitted batches and bounded fresh schema packets', async () => {
+  await withBrc38NativeCandidateContractFixture(
+    async fixture => {
+      const options = { ...fixture.options, maximumStepRows: 16 }
+      let complete = false
+      await runInSeries(Array(256).keys(), async () => {
+        if (!complete)
+          await fixture.withSource(
+            async source =>
+              await Brc38PrivateLocalCandidate.with(fixture.store, source, options, async candidate => {
+                const progress = await candidate.step()
+                complete = progress.recoveryRequired && progress.garbageComplete
+              })
+          )
+      })
+      expect(complete).toBe(true)
+      await fixture.withSource(
+        async source =>
+          await Brc38PrivateLocalCandidate.with(fixture.store, source, options, async candidate => {
+            const progress = await candidate.copyPriorImportStep()
+            expect(progress.complete).toBe(false)
+          })
+      )
+      const storedRecords = await fixture.withRead(async trx => {
+        const rows = await trx(brc38PrivatePriorImportRows).count({ count: '*' }).first()
+        expect(Number.isSafeInteger(rows?.count)).toBe(true)
+        return Number(rows!.count)
+      })
+      expect(storedRecords).toBeGreaterThan(0)
+      expect(storedRecords).toBeLessThanOrEqual(options.maximumStepRows)
+      const checkpoint = async () =>
+        await fixture.withRead(async trx => {
+          const rows = await trx(brc38PrivatePriorImportBudget)
+            .where({ slot: 1 })
+            .select('copyTable', 'afterRowId', 'records', 'logicalBytes')
+            .limit(2)
+          expect(rows).toHaveLength(1)
+          return rows[0]
+        })
+      const beforeReopen = await checkpoint(),
+        binding = fixture.store.binding?.digest
+      expect(beforeReopen.records).toBe(storedRecords)
+      await fixture.reopen()
+      expect(fixture.store.binding?.digest).toBe(binding)
+      expect(await checkpoint()).toEqual(beforeReopen)
+      const packets: number[] = []
+      await fixture.withRead(async trx => {
+        const query = (value: { sql: string; bindings: unknown[] }): void => {
+          if (!value.sql.includes('sqlite_schema')) return
+          expect(value.bindings.every(item => typeof item === 'string' || Number.isSafeInteger(item))).toBe(true)
+          packets.push(
+            16 +
+              Buffer.byteLength(value.sql) +
+              value.bindings.reduce<number>(
+                (sum, item) => sum + (typeof item === 'string' ? 5 + Buffer.byteLength(item) : 9),
+                0
+              )
+          )
+        }
+        trx.on('query', query)
+        try {
+          expect(await hasBrc38PrivatePriorImportSchema(trx)).toBe(true)
+        } finally {
+          trx.off('query', query)
+        }
+      })
+      const trigger = brc38PrivatePriorImportRows + '_delete'
+      const original = await fixture.withRead(async trx => {
+        const rows = await trx('sqlite_schema').where({ name: trigger, type: 'trigger' }).select('sql').limit(2)
+        expect(rows).toHaveLength(1)
+        expect(typeof rows[0].sql).toBe('string')
+        return rows[0].sql as string
+      })
+      const changed = original.replace(' BEGIN ', ' BEGIN SELECT 1; ')
+      expect(changed).not.toBe(original)
+      await fixture.withWriter(async trx => {
+        await trx.raw('DROP TRIGGER ??', [trigger])
+        await trx.raw(changed)
+      })
+      await fixture.withRead(async trx => {
+        await expect(hasBrc38PrivatePriorImportSchema(trx)).rejects.toThrow(
+          'Prior import custody exact definition differs'
+        )
+      })
+      await fixture.withWriter(async trx => {
+        await trx.raw('DROP TRIGGER ??', [trigger])
+        await trx.raw(original)
+      })
+      const extra = 'brc38_local_prior_import_independent_extra'
+      await fixture.withWriter(async trx => {
+        await trx.raw('CREATE TRIGGER ?? BEFORE DELETE ON ?? BEGIN SELECT 1; END', [extra, brc38PrivatePriorImportRows])
+      })
+      await fixture.withRead(async trx => {
+        await expect(hasBrc38PrivatePriorImportSchema(trx)).rejects.toThrow('Prior import custody schema differs')
+      })
+      await fixture.withWriter(async trx => {
+        await trx.raw('DROP TRIGGER ??', [extra])
+      })
+      const index = 'independent_prior_custody_index'
+      await fixture.withWriter(async trx => {
+        await trx.raw('CREATE INDEX ?? ON ??(state)', [index, brc38PrivatePriorImportRows])
+      })
+      await fixture.withRead(async trx => {
+        await expect(hasBrc38PrivatePriorImportSchema(trx)).rejects.toThrow('Prior import custody has an extra object')
+      })
+      await fixture.withWriter(async trx => {
+        await trx.raw('DROP INDEX ??', [index])
+      })
+      await fixture.withRead(async trx => {
+        expect(await hasBrc38PrivatePriorImportSchema(trx)).toBe(true)
+      })
+      // Five complete comparisons: prefix, exact definitions, full family, and
+      // each of the two original implicit primary indexes. Packet bound includes
+      // SQL, native cell and request framing under the existing 65,537-byte floor.
+      expect(packets.length).toBeGreaterThan(0)
+      expect(packets.every(bytes => bytes <= 65537)).toBe(true)
+      if (packets.length > 5 || storedRecords <= 1)
+        throw new Error(`Native prior admission unused: schema packets=${packets.length}, stored rows=${storedRecords}`)
+      fixture.check()
+    },
+    { lifetimeMs: 600000 }
   )
 }, 630000)

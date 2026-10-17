@@ -712,13 +712,21 @@ export class Brc38PrivateLocalCandidate {
         before.caughtUpRevision !== facts.generation.revision
       )
         invalid()
-      const receipt = await copyBrc38PrivatePriorImportStep(this.#store, this.#source, {
-        sourceSha256: this.#sourceSha256,
-        maximumRows: this.#options.maximumLocalRows,
-        maximumReadBytes: this.#options.maximumReadBytes,
-        expiresAt: this.#store.operationExpiresAt,
-        workingAllocation: this.#options.workingAllocation,
-        signal: this.#options.signal
+      const copy = () =>
+        copyBrc38PrivatePriorImportStep(this.#store, this.#source, {
+          sourceSha256: this.#sourceSha256,
+          maximumRows: this.#options.maximumLocalRows,
+          maximumReadBytes: this.#options.maximumReadBytes,
+          expiresAt: this.#store.operationExpiresAt,
+          workingAllocation: this.#options.workingAllocation,
+          signal: this.#options.signal
+        })
+      // Each original primitive copies at most one row or advances one family.
+      // Bound the sequence with the existing admitted row allowance; every
+      // primitive keeps its original atomic checkpoint and drains its fields.
+      let receipt = await copy()
+      await runInSeries(Array(this.#options.maximumStepRows - 1).keys(), async () => {
+        if (!receipt.complete) receipt = await copy()
       })
       const afterFacts = await Brc38NativeLocalBaselineSource.facts(this.#source),
         after = await this.#read()

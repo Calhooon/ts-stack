@@ -54,15 +54,23 @@ export async function hasBrc38PrivatePriorImportSchema(k: Knex.Transaction): Pro
     .first()) as { count: unknown } | undefined
   if (total?.count === 0) return false
   if (total?.count !== definitions.length) throw new Error('Prior import custody schema differs')
-  for (const sql of definitions) {
-    const match = /^CREATE (TABLE|TRIGGER) (\w+)/.exec(sql)!
-    const row = (await k('sqlite_schema')
-      .where({ name: match[2], type: match[1].toLowerCase() })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
-      .count({ count: '*' })
-      .first()) as { count: unknown } | undefined
-    if (row?.count !== 1) throw new Error('Prior import custody exact definition differs')
-  }
+  // Compare all fixed source definitions in one fresh SQLite query. Keep the
+  // original prefix, complete-family and implicit-primary-index checks below;
+  // the result is local to this actual transaction and is never a cached grant.
+  const exact = (await k('sqlite_schema')
+    .where(query => {
+      for (const sql of definitions) {
+        const match = /^CREATE (TABLE|TRIGGER) (\w+)/.exec(sql)!
+        void query.orWhere(part => {
+          void part
+            .where({ name: match[2], type: match[1].toLowerCase() })
+            .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
+        })
+      }
+    })
+    .count({ count: '*' })
+    .first()) as { count: unknown } | undefined
+  if (exact?.count !== definitions.length) throw new Error('Prior import custody exact definition differs')
   const all = (await k('sqlite_schema')
     .where(function () {
       void this.whereIn('tbl_name', [budget, rows, chunks]).orWhere('name', 'brc38_local_prior_import_point_guard')

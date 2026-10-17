@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Consume the existing prior-import row/operation allowance with original per-row checkpoints and field drainage. Amortize native prior-import schema comparisons while retaining complete fresh exact-definition, family/index and owner checks; preserve original limits and error behavior.
+
 - Use the admitted native COPY row budget across top-level and parent rows, with finite empty-family traversal and original per-record journal commits, source coherence, lifetime and resource guards. Add a genuine stored-row batching and physical-reopen regression while retaining all original native cases. No schema, wire, production limit or API migration; whole-programme validation remains pending.
 
 - Retain bounded catalog-only read checks for both simple counts and fresh aggregate field-schema verification, including the complete five-field aggregate inventory and one-row limit. Data-row counts remain forbidden by the original authenticated reader test.
