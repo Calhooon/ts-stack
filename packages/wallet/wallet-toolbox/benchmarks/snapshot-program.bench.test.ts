@@ -13,6 +13,7 @@ import type { KnexRemoteSnapshotSyncRpc } from '../src/storage/snapshot/KnexRemo
 import type { SnapshotSyncCheckpoint } from '../src/storage/snapshot/SnapshotSync'
 import type { SyncSessionProgress, SyncSessionResult } from '../src/storage/sync/syncSession'
 import { snapshotHttpFixture } from '../test/utils/snapshotArchiveHttpFixtures'
+import { mutateSnapshotForegroundBasket } from './snapshot-foreground-write'
 import {
   seedSnapshotMeasurement,
   snapshotMeasurementCases,
@@ -304,6 +305,133 @@ describe.each(snapshotMeasurementCases)('complete snapshot destination measureme
     300000
   )
 })
+
+test.each([0, 15])(
+  'actual foreground wallet mutations proceed during authenticated copy with %i ms fixed RPC latency',
+  async fixedRpcMs => {
+    const f = await fixture(snapshotMeasurementCases[0]),
+      dispatch = f.rpc.dispatch.bind(f.rpc),
+      basketName = 'foreground-measurement',
+      cancellation = new AbortController(),
+      samples: Array<{ startedAt: number; completedAt: number; before: number; after: number }> = []
+    let mutationQueries = 0,
+      timer: ReturnType<typeof setInterval> | undefined,
+      pending = false,
+      work: Promise<void> = Promise.resolve(),
+      failure: { cause: unknown } | undefined
+    const observeQuery = (query: { sql: string }): void => {
+      if (/^update\s+[`"]?output_baskets\b/i.test(query.sql)) mutationQueries++
+    }
+    try {
+      await f.source.findOrInsertOutputBasket(f.seeded.user.userId, basketName)
+      f.source.knex.on('query', observeQuery)
+      // The previous foreground callback admits a writer but finds an existing
+      // row. Preserve and observe that distinction before the mutating cohort.
+      await f.manager.runAsWriter(async () => {
+        await f.source.findOrInsertOutputBasket(f.seeded.user.userId, basketName)
+      })
+      expect(mutationQueries).toBe(0)
+      jest.spyOn(f.rpc, 'dispatch').mockImplementation(async (...args) => {
+        if (fixedRpcMs !== 0) await delay(fixedRpcMs)
+        return await dispatch(...args)
+      })
+      const auth = await f.manager.getAuth(),
+        began = performance.now()
+      const write = (): void => {
+        if (pending || failure !== undefined) return
+        pending = true
+        const startedAt = performance.now()
+        work = f.manager
+          .runAsWriter(async active => {
+            if (active !== f.source) throw new Error('Foreground measurement changed its actual serving provider')
+            if (samples.length >= 2048) throw new Error('Foreground mutation sample ceiling reached')
+            const changed = await mutateSnapshotForegroundBasket(f.source, f.seeded.user.userId, basketName)
+            samples.push({ startedAt, completedAt: performance.now(), before: changed.before, after: changed.after })
+          })
+          .catch(cause => {
+            failure = { cause }
+            cancellation.abort(cause)
+          })
+          .finally(() => {
+            pending = false
+          })
+      }
+      const copying = f.manager.syncToWriterResumable(auth, f.client, {
+        signal: cancellation.signal,
+        maxItems: 128,
+        maxRoughSize: 262144
+      })
+      // Ten actual writes per second keep this a finite workload. Admission
+      // starts after the background copy starts; each latency includes its queue.
+      timer = setInterval(write, 100)
+      write()
+      let result: SyncSessionResult, copyCompletedAt: number
+      try {
+        result = await copying
+        copyCompletedAt = performance.now()
+      } finally {
+        clearInterval(timer)
+        timer = undefined
+        await work
+      }
+      if (failure !== undefined) throw failure.cause
+      expect(result).toMatchObject({ status: 'completed', mode: 'paged', snapshotCheckpoint: { done: true } })
+      expect(copyCompletedAt - began).toBeLessThan(120000)
+      const concurrent = samples.filter(sample => sample.startedAt >= began && sample.completedAt <= copyCompletedAt),
+        latencies = concurrent.map(sample => sample.completedAt - sample.startedAt)
+      expect(concurrent.length).toBeGreaterThan(1)
+      expect(mutationQueries).toBe(samples.length)
+      expect(percentile(latencies, 0.95)).toBeLessThan(1500)
+      for (const sample of samples) expect(sample.after).not.toBe(sample.before)
+      const physical = await f.source
+        .knex('output_baskets')
+        .where({ userId: f.seeded.user.userId, name: basketName })
+        .first()
+      expect(physical.numberOfDesiredUTXOs).toBe(samples[samples.length - 1].after)
+      // The pinned copy may correctly contain an earlier basket version. After
+      // writers stop, an ordinary follow-up copy must converge to physical data.
+      const caughtUp = await f.manager.syncToWriterResumable(auth, f.client, {
+        maxItems: 128,
+        maxRoughSize: 262144
+      })
+      expect(caughtUp.status).toBe('completed')
+      const [basket] = await f.destination.storage.findOutputBaskets({
+        partial: { userId: f.user.userId, name: basketName }
+      })
+      expect(basket.numberOfDesiredUTXOs).toBe(physical.numberOfDesiredUTXOs)
+      expect(await f.destination.storage.countTxLabels({ partial: { userId: f.user.userId } })).toBe(
+        f.seeded.labelCount
+      )
+      const [request] = await f.destination.storage.findProvenTxReqs({ partial: { txid: f.seeded.txid } })
+      expect(JSON.parse(request.history)).toEqual(f.seeded.history)
+      expect(Buffer.from(request.rawTx)).toEqual(f.seeded.raw)
+      process.stdout.write(
+        JSON.stringify({
+          snapshotForegroundMutationMeasurement: {
+            backend: 'authenticated HTTP / ordinary SQLite WAL',
+            fixedRpcMs,
+            wallMs: copyCompletedAt - began,
+            cadenceMs: 100,
+            actualMutationQueries: mutationQueries,
+            verifiedMutations: samples.length,
+            concurrentVerifiedMutations: concurrent.length,
+            p50Ms: percentile(latencies, 0.5),
+            p95Ms: percentile(latencies, 0.95),
+            p99Ms: percentile(latencies, 0.99),
+            physicalReadbackAndQuiescedCatchup: true
+          }
+        }) + '\n'
+      )
+    } finally {
+      if (timer !== undefined) clearInterval(timer)
+      await work
+      jest.restoreAllMocks()
+      f.source.knex.off('query', observeQuery)
+      await f.close()
+    }
+  },
+  300000
+)
 
 test('snapshot cancellation joins committed acknowledgement and actual TCP reply loss retains durable progress', async () => {
   const f = await fixture(snapshotMeasurementCases[0]),
