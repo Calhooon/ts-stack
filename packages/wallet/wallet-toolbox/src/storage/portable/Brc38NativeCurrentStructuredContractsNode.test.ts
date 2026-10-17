@@ -1,6 +1,9 @@
 import { compareBrc38PrivateDerivedText } from './Brc38PrivateDerivedTextComparisonNode'
 
-import { withBrc38PrivateCurrentStructuredSource } from './Brc38PrivateCurrentStructuredSourceNode'
+import {
+  withBrc38PrivateCurrentStructuredSource,
+  withBrc38PrivateCurrentStructuredActor
+} from './Brc38PrivateCurrentStructuredSourceNode'
 import {
   readBrc38NativePackedTextDescriptorData,
   readBrc38NativePackedTextExtentData,
@@ -315,6 +318,137 @@ test('private version comparison admits each bounded native read view at its two
       observed.mockRestore()
       bytes.fill(0)
     }
+    expect(working.used).toBe(0)
+  })
+}, 90000)
+
+test('private current index source-change cannot escape the final complete source boundary', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const history = '{"notes":[]}',
+      changed = '{"notes":[],"changed":true}',
+      original = await seed(fixture, history),
+      working = new Brc38WorkingAllocation(8388608)
+    let escapedResult: unknown
+    await expect(
+      withBrc38PrivateCurrentStructuredActor(
+        fixture.store,
+        fixture.storage,
+        { table: 'provenTxReqs', field: 'history', rowId: original.requestId },
+        policy(fixture, working),
+        async source => {
+          const index = await source.openIndex()
+          try {
+            await fixture.withWriter(async trx => {
+              expect(await fixture.storage.updateProvenTxReq(original.requestId, { history: changed }, trx)).toBe(1)
+              const rows = await fixture.storage.findProvenTxReqs({
+                partial: { provenTxReqId: original.requestId },
+                trx
+              })
+              expect(rows).toHaveLength(1)
+              expect(rows[0].history).toBe(changed)
+            })
+            await index.put(0, { key: 'notes', keyOffset: 1, start: 9, end: 11 })
+            return 'provisional callback result'
+          } finally {
+            await index.close()
+          }
+        }
+      ).then(value => {
+        escapedResult = value
+        return value
+      })
+    ).rejects.toThrow('Private current structured source differs')
+    expect(escapedResult).toBeUndefined()
+    expect(working.used).toBe(0)
+  })
+}, 90000)
+
+test('private current index cancellation preserves its actual cause and drains physical work', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const original = await seed(fixture, '{"notes":[]}'),
+      working = new Brc38WorkingAllocation(8388608),
+      controller = new AbortController(),
+      reason = new Error('Independent current-index cancellation')
+    await expect(
+      withBrc38PrivateCurrentStructuredActor(
+        fixture.store,
+        fixture.storage,
+        { table: 'provenTxReqs', field: 'history', rowId: original.requestId },
+        { ...policy(fixture, working), signal: controller.signal },
+        async source => {
+          const index = await source.openIndex()
+          try {
+            controller.abort(reason)
+            await expect(index.put(0, { key: 'notes', keyOffset: 1, start: 9, end: 11 })).rejects.toBe(reason)
+          } finally {
+            await index.close()
+          }
+        }
+      )
+    ).rejects.toBe(reason)
+    expect(working.used).toBe(0)
+  })
+}, 90000)
+
+test('private current derived index work owns filesystem checks without repeated native schema traversal', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const history = '{"notes":[]}',
+      original = await seed(fixture, history),
+      working = new Brc38WorkingAllocation(8388608)
+    await fixture.withRead(async trx => {
+      await withBrc38PrivateCurrentStructuredSource(
+        fixture.storage,
+        trx,
+        { table: 'provenTxReqs', field: 'history', rowId: original.requestId },
+        policy(fixture, working),
+        async source => {
+          const bytes = await source.read(0, Buffer.byteLength(history))
+          try {
+            expect(Buffer.from(bytes).toString('utf8')).toBe(history)
+          } finally {
+            bytes.fill(0)
+          }
+          const index = await source.openIndex()
+          let nativeQueries = 0,
+            completeSchemaAnchors = 0
+          const count = (query: { sql: string; bindings?: readonly unknown[] }): void => {
+            nativeQueries++
+            if (
+              /^select sql from sqlite_schema where name = \? and type = \? limit \?$/.test(
+                query.sql.replace(/[`"]/g, '')
+              ) &&
+              query.bindings?.[0] === 'brc38_native_text_versions' &&
+              query.bindings?.[1] === 'table'
+            )
+              completeSchemaAnchors++
+          }
+          trx.on('query', count)
+          try {
+            const member = { key: 'notes', keyOffset: 1, start: 9, end: 11 }
+            await index.put(0, member)
+            await index.seal()
+            expect(await index.lookup!(0, 'notes')).toEqual({ ...member, firstKeyOffset: 1 })
+            const actual = []
+            for await (const value of index.entries(0)) actual.push(value)
+            expect(actual).toEqual([member])
+            console.info(
+              JSON.stringify({
+                diagnosticOnly: true,
+                event: 'private-index-native-query-boundaries',
+                nativeQueries,
+                completeSchemaAnchors,
+                independentMemberPassed: true
+              })
+            )
+            expect(completeSchemaAnchors).toBe(0)
+            expect(nativeQueries).toBe(0)
+          } finally {
+            trx.off('query', count)
+            await index.close()
+          }
+        }
+      )
+    })
     expect(working.used).toBe(0)
   })
 }, 90000)

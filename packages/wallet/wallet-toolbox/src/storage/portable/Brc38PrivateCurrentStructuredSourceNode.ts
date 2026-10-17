@@ -79,8 +79,8 @@ export async function withBrc38PrivateCurrentStructuredSource<T>(
 }
 
 /** Actual private producer with a drained query-only transaction per operation.
- * The source is one immutable current version: every range/index operation
- * freshly compares the same row pointer, exact source seal and native schema.
+ * The source is one immutable current version: native range reads, index
+ * issuance and final callback completion freshly compare the same row pointer, exact source seal and native schema.
  * It holds no SQL read transaction while its consumer stages derived bytes.
  * The final row/journal writer must still compare current metadata and pointers. */
 export async function withBrc38PrivateCurrentStructuredActor<T>(
@@ -256,7 +256,7 @@ async function withCurrentStructuredActor<T>(
     invalid()
   const directory = dirname(main[0].file)
   brc38PrivateStructuredPolicy(policy, directory)
-  let bindingDigest: string | undefined
+  let bindingDigest: string | undefined, physicalMaximumBytes: number | undefined
   const currentRead = async (
     trx: Knex.Transaction,
     expected?: Readonly<{ bytes: number; sha256: string }>
@@ -317,6 +317,7 @@ async function withCurrentStructuredActor<T>(
       policy.signal
     )
     bindingDigest = binding.digest
+    physicalMaximumBytes = maximumPhysicalBytes
     actor()
     if (privateNativeTransactionIdentity(trx)?.token !== original.token || !isBrc38OwnedPrivateNativeSqlite(trx))
       invalid()
@@ -326,6 +327,21 @@ async function withCurrentStructuredActor<T>(
     await withRead(async trx => await currentRead(trx, expected))
   const initial = await current(),
     expected = Object.freeze({ bytes: initial.bytes, sha256: initial.sha256 })
+  // Resource DATA from the original complete admission, not a schema verdict
+  // or source grant. Temporary index I/O reads no native bytes; it retains
+  // actual actor/lifetime and complete physical checks at both boundaries.
+  const checkIndexOperation = async (): Promise<void> => {
+    actor()
+    if (physicalMaximumBytes === undefined) invalid()
+    await measureBrc38StructuredFilesystem(
+      directory,
+      ['stage.sqlite', 'stage.sqlite-journal', 'brc38-owner.sqlite', 'brc38-owner.sqlite-journal'],
+      physicalMaximumBytes,
+      policy.maximumTemporaryIndexBytes + extra,
+      policy.signal
+    )
+    actor()
+  }
   let issued = false
   const maximumOpenIndexes = policy.maximumOpenIndexes ?? 1,
     maximumIndexBytes = Math.floor(policy.maximumTemporaryIndexBytes / maximumOpenIndexes)
@@ -403,21 +419,21 @@ async function withCurrentStructuredActor<T>(
         return Object.freeze({
           put: (object, member) =>
             owned.run(async () => {
-              await current(expected)
+              await checkIndexOperation()
               await actual.put(object, member)
-              await current(expected)
+              await checkIndexOperation()
             }),
           seal: () =>
             owned.run(async () => {
-              await current(expected)
+              await checkIndexOperation()
               await actual.seal()
-              await current(expected)
+              await checkIndexOperation()
             }),
           lookup: (object, key) =>
             owned.run(async () => {
-              await current(expected)
+              await checkIndexOperation()
               const value = await actual.lookup(object, key)
-              await current(expected)
+              await checkIndexOperation()
               return value
             }),
           entries: async function* (object) {
@@ -425,9 +441,9 @@ async function withCurrentStructuredActor<T>(
             try {
               for (;;) {
                 const value = await owned.run(async () => {
-                  await current(expected)
+                  await checkIndexOperation()
                   const value = await iterator.next()
-                  await current(expected)
+                  await checkIndexOperation()
                   return value
                 })
                 if (value.done) return
