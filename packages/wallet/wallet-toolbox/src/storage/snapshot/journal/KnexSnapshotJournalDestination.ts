@@ -1,3 +1,4 @@
+import { KnexSnapshotJournalDataContentReceipts } from './KnexSnapshotJournalDataContentReceipts'
 import type {
   SnapshotJournalWriterAdmission,
   SnapshotJournalDestinationLimits,
@@ -79,6 +80,7 @@ function invalid(): never {
  */
 export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
   #busy = false
+  private readonly root: Knex
   private constructor(
     private readonly storage: StorageKnex,
     private readonly source: SnapshotJournalReconciliationSource,
@@ -86,7 +88,9 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
     private readonly limits: SnapshotJournalDestinationLimits,
     private readonly admission: SnapshotJournalWriterAdmission,
     private readonly signal?: AbortSignal
-  ) {}
+  ) {
+    this.root = storage.knex
+  }
 
   static async begin(
     storage: StorageKnex,
@@ -116,13 +120,16 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
     )
       invalid()
     await source.verifyLive()
+    const root = storage.knex,
+      contentRevision = await source.readContentRevision?.()
+    if (storage.knex !== root) invalid()
     const begin = await admission(
       async () =>
         await source.withCommitFence(
           async () =>
             await storage.runSnapshotJournalWriter(
               async (trx, backend) => {
-                if (backend === source.receiptBinding.backend) invalid()
+                if (storage.knex !== root || backend === source.receiptBinding.backend) invalid()
                 await verifySnapshotJournalDestinationSchema(trx)
                 await readSnapshotJournalCaptureConfiguration(trx)
                 const mysql = ['mysql', 'mysql2'].includes(String(trx.client.config.client))
@@ -189,7 +196,13 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
                     snapshotJournalAssociationGeneration(previous.binding) ===
                       snapshotJournalAssociationGeneration(binding) &&
                     compareSnapshotJournalRevisions(source.receipt.floor, previous.binding.receipt.highWater) <= 0 &&
-                    compareSnapshotJournalRevisions(previous.binding.receipt.highWater, source.receipt.highWater) <= 0
+                    compareSnapshotJournalRevisions(previous.binding.receipt.highWater, source.receipt.highWater) <=
+                      0 &&
+                    (await new KnexSnapshotJournalDataContentReceipts(storage, root).destinationMatches(
+                      trx as Knex.Transaction,
+                      previous.binding,
+                      previous.checkpoint
+                    )) !== false
                   if (incremental) {
                     delete binding.bootstrap
                     binding.low = previous.binding.receipt.highWater
@@ -202,6 +215,14 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
                   (await beginSnapshotJournalDestinationWindow(trx, binding, randomBytes(32).toString('hex')))
                 if (checkpoint.sequence === 0) await beginSnapshotJournalProgress(trx, binding, checkpoint)
                 else await readSnapshotJournalProgress(trx, binding, checkpoint)
+                await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+                  trx as Knex.Transaction,
+                  binding,
+                  checkpoint,
+                  source.snapshotId,
+                  contentRevision
+                )
+                if (storage.knex !== root) invalid()
                 return { binding, checkpoint, previous: undefined, incremental: false }
               },
               undefined,
@@ -269,11 +290,19 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
               requireClean
             )
         await beginSnapshotJournalProgress(trx, begin.binding, next)
+        await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+          trx as Knex.Transaction,
+          begin.binding,
+          next,
+          source.snapshotId,
+          contentRevision
+        )
+        if (storage.knex !== root) invalid()
         return next
       })
     }
     await source.verifyLive()
-    if (checkpoint === undefined) invalid()
+    if (storage.knex !== root || checkpoint === undefined) invalid()
     return {
       destination: new KnexSnapshotJournalDestination(
         storage,
@@ -292,12 +321,15 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
   }
 
   private async physicalWriter<T>(apply: (trx: Knex) => Promise<T>, observe = false): Promise<T> {
+    if (this.storage.knex !== this.root) invalid()
     return await this.storage.runSnapshotJournalWriter(
       async (trx, backend) => {
-        if (backend !== this.binding.destinationBackend) invalid()
+        if (this.storage.knex !== this.root || backend !== this.binding.destinationBackend) invalid()
         await verifySnapshotJournalDestinationSchema(trx)
         await readSnapshotJournalCaptureConfiguration(trx)
-        return await apply(trx)
+        const result = await apply(trx)
+        if (this.storage.knex !== this.root) invalid()
+        return result
       },
       this.binding.destinationBackend,
       observe ? undefined : this.signal
@@ -387,18 +419,23 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
       // after each freshly captured current view, excluding clock-only events.
       for (const value of sources) if (await value.source.hasChangesSince(value.since)) return false
       const commit = async (): Promise<boolean> => {
-        await this.physicalWriter(
-          async trx =>
-            await selectSnapshotJournalDestinationPrimary(
-              trx,
-              this.binding,
-              expected,
-              activeStorage,
-              async (fenced, userId) => await this.storage.updateUser(userId, { activeStorage }, fenced)
-            )
-        )
-        onSelected?.(activeStorage !== this.binding.activeStorage)
-        return true
+        const selected = await this.physicalWriter(async trx => {
+          const receipts = new KnexSnapshotJournalDataContentReceipts(this.storage, this.root)
+          // Do not restamp unrelated drift as a completed copied postimage.
+          if ((await receipts.destinationMatches(trx as Knex.Transaction, this.binding, expected)) === false)
+            return false
+          await selectSnapshotJournalDestinationPrimary(
+            trx,
+            this.binding,
+            expected,
+            activeStorage,
+            async (fenced, userId) => await this.storage.updateUser(userId, { activeStorage }, fenced)
+          )
+          await receipts.recordPrimarySelection(trx as Knex.Transaction, this.binding, expected, activeStorage)
+          return true
+        })
+        if (selected) onSelected?.(activeStorage !== this.binding.activeStorage)
+        return selected
       }
       const fence = async (index: number): Promise<boolean> => {
         if (index === sources.length) return await commit()
@@ -562,7 +599,13 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
           this.limits,
           async apply => await this.writer(apply),
           async () => await this.source.verifyLive(),
-          this.signal
+          this.signal,
+          async (trx, checkpoint) =>
+            await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).complete(
+              trx,
+              this.binding,
+              checkpoint
+            )
         )
     )
   }

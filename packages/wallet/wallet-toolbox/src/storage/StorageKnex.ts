@@ -658,6 +658,35 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     )
     return await destination?.confirmContentReceipt(revision)
   }
+  /** Local comparison only. No primary is selected or authorized by this value;
+   * the actual source fence and manager queue remain caller-owned CODE. */
+  async confirmSnapshotJournalPrimaryContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: import('./snapshot/SnapshotSyncContentRevision').SnapshotSyncContentRevision,
+    activeStorage: string | null,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    if (
+      this.snapshotAdmissionStopped ||
+      options.admission === undefined ||
+      !(
+        activeStorage === null ||
+        (typeof activeStorage === 'string' &&
+          Buffer.byteLength(activeStorage) > 0 &&
+          Buffer.byteLength(activeStorage) <= 256)
+      )
+    )
+      throw new WERR_INVALID_OPERATION('Primary-aware comparison requires actual local admission')
+    const destination = await KnexSnapshotJournalDataDestination.resume(
+      this,
+      identityKey,
+      sourceStorageIdentity,
+      journalCopyLimits(),
+      options.admission
+    )
+    return await destination?.confirmContentReceipt(revision, activeStorage)
+  }
   async supportsSnapshotJournalDataSync(): Promise<boolean> {
     return await this.supportsSnapshotJournalSync()
   }

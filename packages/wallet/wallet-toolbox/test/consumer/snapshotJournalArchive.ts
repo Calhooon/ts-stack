@@ -39,3 +39,10 @@ import type { SnapshotJournalDataContentReceipt, SyncSessionResult } from '@bsv/
 export function previousJournalCopy(result: SyncSessionResult): SnapshotJournalDataContentReceipt | undefined {
   return result.noChangeJournalReceipt
 }
+
+import type { SnapshotJournalPrimaryContentProvider } from '@bsv/wallet-toolbox'
+/** The optional local comparison contract grants no remote primary operation. */
+export type LocalPrimaryComparison = Pick<
+  SnapshotJournalPrimaryContentProvider,
+  'confirmSnapshotJournalPrimaryContentReceipt'
+>

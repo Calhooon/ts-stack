@@ -1,3 +1,4 @@
+import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -210,6 +211,69 @@ export class KnexSnapshotJournalDataContentReceipts {
       invalid()
     this.current(k)
   }
+  private async primary(k: Knex.Transaction, binding: SnapshotJournalDestinationBinding) {
+    this.current(k)
+    const users: Array<{ activeStorage: unknown }> = await k('users')
+      .where({ userId: binding.destinationUserId, identityKey: binding.source.identityKey })
+      .select(k.raw('substr(activeStorage,1,257) AS activeStorage'))
+      .limit(2)
+    const mysql = ['mysql', 'mysql2'].includes(String(k.client.config.client))
+    const epochs: Array<{ epoch: unknown }> = await k('snapshot_sync_primary_epochs')
+      .where('userId', binding.destinationUserId)
+      .select(k.raw(mysql ? 'CAST(epoch AS CHAR) AS epoch' : 'CAST(epoch AS TEXT) AS epoch'))
+      .limit(2)
+    if (
+      users.length !== 1 ||
+      epochs.length > 1 ||
+      !(users[0].activeStorage === null || typeof users[0].activeStorage === 'string') ||
+      (typeof users[0].activeStorage === 'string' && Buffer.byteLength(users[0].activeStorage) > 256)
+    )
+      invalid()
+    return { activeStorage: users[0].activeStorage, primaryEpoch: snapshotJournalRevision(epochs[0]?.epoch ?? '0') }
+  }
+  /** Called only AFTER actual primary selection, in its SAME physical writer.
+   * The caller must first confirm the actual pre-selection postimage. No source
+   * stamp or financial ACK is created or changed here. */
+  async recordPrimarySelection(
+    k: Knex.Transaction,
+    binding: SnapshotJournalDestinationBinding,
+    input: SnapshotJournalDestinationCheckpoint,
+    activeStorage: string
+  ): Promise<void> {
+    this.current(k)
+    if (!(await this.supports(k))) return
+    const checkpoint = parseSnapshotJournalDataCheckpoint(input),
+      actual = await readSnapshotJournalDestinationWindow(k, binding),
+      row = await this.read(k, binding)
+    if (checkpoint.phase !== 'acknowledged' || actual === undefined || !same(actual, checkpoint)) invalid()
+    if (row === undefined) return
+    if (
+      row.complete !== 1 ||
+      row.sessionId !== checkpoint.sessionId ||
+      typeof row.checkpointJson !== 'string' ||
+      !same(parseSnapshotJournalDataCheckpoint(JSON.parse(row.checkpointJson)), checkpoint) ||
+      row.primaryEpoch !== binding.primaryEpoch ||
+      row.activeStorage !== binding.activeStorage
+    )
+      invalid()
+    const primary = await this.primary(k, binding)
+    if (primary.activeStorage !== activeStorage) invalid()
+    const destination = await readCurrentSnapshotJournalContentRevision(this.storage, k, binding.source.identityKey)
+    if (destination === undefined) return
+    if (
+      (await k(SNAPSHOT_JOURNAL_DATA_RECEIPTS)
+        .where({
+          ...this.key(binding),
+          complete: 1,
+          sessionId: checkpoint.sessionId,
+          primaryEpoch: row.primaryEpoch,
+          activeStorage: row.activeStorage
+        })
+        .update({ ...values('destination', destination), ...primary })) !== 1
+    )
+      invalid()
+    this.current(k)
+  }
   async previous(
     k: Knex.Transaction,
     binding: SnapshotJournalDestinationBinding,
@@ -228,12 +292,12 @@ export class KnexSnapshotJournalDataContentReceipts {
     )
       return undefined
     const checkpoint = parseSnapshotJournalDataCheckpoint(JSON.parse(row.checkpointJson))
-    if (
-      !same(checkpoint, actual) ||
-      row.primaryEpoch !== binding.primaryEpoch ||
-      row.activeStorage !== binding.activeStorage
-    )
-      return undefined
+    if (!same(checkpoint, actual)) return undefined
+    // This is an observation of the OLD ACK, not current primary authority.
+    // Fresh primary/postimage comparison belongs to confirmation below, so a
+    // changed primary can trigger a new bootstrap without first recapturing a
+    // known-stale incremental artifact.
+    snapshotJournalRevision(row.primaryEpoch)
     revision(row, 'destination')
     return {
       version: 1,
@@ -270,13 +334,21 @@ export class KnexSnapshotJournalDataContentReceipts {
     k: Knex.Transaction,
     binding: SnapshotJournalDestinationBinding,
     checkpoint: SnapshotJournalDestinationCheckpoint,
-    input: SnapshotSyncContentRevision
+    input: SnapshotSyncContentRevision,
+    expectedActiveStorage?: string | null
   ): Promise<Readonly<SnapshotJournalDataContentReceipt> | undefined> {
     const source = parseSnapshotSyncContentRevision(input),
       previous = await this.previous(k, binding, checkpoint)
     if (previous === undefined || !snapshotSyncContentConfirms(previous.source, source)) return undefined
     const row = await this.read(k, binding)
     if (row === undefined) invalid()
+    const primary = await this.primary(k, binding)
+    if (
+      row.primaryEpoch !== primary.primaryEpoch ||
+      row.activeStorage !== primary.activeStorage ||
+      (expectedActiveStorage !== undefined && primary.activeStorage !== expectedActiveStorage)
+    )
+      return undefined
     const oldDestination = revision(row, 'destination'),
       destination = await readCurrentSnapshotJournalContentRevision(
         this.storage,

@@ -196,3 +196,33 @@ old full-snapshot receipt or native baseline. Its live SQLite/MySQL definition
 is revalidated before use. Older installations can continue without this
 optional comparison table. Down migration verifies the exact auxiliary schema
 before dropping it; it never rolls back an acknowledged wallet merge.
+
+## Local journal quiescence and primary-aware comparison
+
+The original live SQL journal receiver now records the copied source revision
+outside destination ownership, then writes pending comparison DATA inside its
+original genuine source commit fence. Final receipt completion shares the actual
+financial ACK transaction. Local ordinary pulls use the same fresh source/target
+comparison as DATA pulls; their actual source writer fences remain intact.
+
+An unchanged local push or registered backup retains a fresh genuine current
+source. Its `withCurrentDataFence` owns only the final short actual target
+comparison, inside the real manager queue. The target independently checks its
+current profile, primary, postimage and prior completed ACK. A source write after
+capture declines reuse and the normal coordinator opens a new copy. The result
+names the previous real checkpoint and copies zero pages; no new financial ACK
+or primary selection is manufactured. Foreground operations remain available
+while the source opens, and cancellation drains that real source before stopped
+is reported. Observer errors retain their normal error channel.
+
+The existing actual primary-selection writer first verifies that the copied
+postimage has not drifted. If it has, selection declines and the manager repairs
+another window. After a real selection, the same physical writer records its
+actual new primary/postimage in the comparison record. It preserves the original
+source stamp and financial ACK. This cannot stamp unrelated target drift as
+successfully copied data.
+
+`SnapshotJournalPrimaryContentProvider` is an optional local comparison contract.
+It is not a remote primary capability or a wire grant. Actual remote primary
+handoff and verified large-payload reuse remain unfinished, and final native,
+provider, platform, performance and whole-system qualification remains required.

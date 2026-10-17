@@ -511,7 +511,7 @@ export class KnexSnapshotJournalDataDestination {
         }, true)
     )
   }
-  async confirmContentReceipt(revision: SnapshotSyncContentRevision) {
+  async confirmContentReceipt(revision: SnapshotSyncContentRevision, expectedActiveStorage?: string | null) {
     return await this.exclusive(
       async () =>
         await this.writer(async trx => {
@@ -522,7 +522,8 @@ export class KnexSnapshotJournalDataDestination {
                 trx as Knex.Transaction,
                 this.binding,
                 checkpoint,
-                revision
+                revision,
+                expectedActiveStorage
               )
         }, true)
     )

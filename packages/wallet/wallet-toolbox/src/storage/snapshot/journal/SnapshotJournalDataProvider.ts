@@ -45,6 +45,24 @@ export interface SnapshotJournalDataContentProvider extends SnapshotJournalDataP
     options?: SnapshotJournalDataOptions
   ) => Promise<Readonly<SnapshotJournalDataContentReceipt> | undefined>
 }
+/** Optional actual-local primary-aware comparison. This is not an RPC
+ * capability, primary grant or selection operation. */
+export interface SnapshotJournalPrimaryContentProvider extends SnapshotJournalDataContentProvider {
+  confirmSnapshotJournalPrimaryContentReceipt: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: SnapshotSyncContentRevision,
+    activeStorage: string | null,
+    options?: SnapshotJournalDataOptions
+  ) => Promise<Readonly<SnapshotJournalDataContentReceipt> | undefined>
+}
+export function snapshotJournalPrimaryContentProvider(value: unknown): value is SnapshotJournalPrimaryContentProvider {
+  return (
+    snapshotJournalDataContentProvider(value) &&
+    typeof (value as Partial<SnapshotJournalPrimaryContentProvider>).confirmSnapshotJournalPrimaryContentReceipt ===
+      'function'
+  )
+}
 export function snapshotJournalDataContentProvider(value: unknown): value is SnapshotJournalDataContentProvider {
   const provider = value as Partial<SnapshotJournalDataContentProvider> | null
   return (

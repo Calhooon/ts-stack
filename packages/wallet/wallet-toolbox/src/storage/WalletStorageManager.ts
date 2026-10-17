@@ -1,6 +1,7 @@
 import {
   snapshotJournalDataProvider,
   snapshotJournalDataContentProvider,
+  snapshotJournalPrimaryContentProvider,
   snapshotJournalArchiveProvider
 } from './snapshot/journal/SnapshotJournalDataProvider'
 import { snapshotJournalDataSourceBinding } from './snapshot/journal/snapshotJournalDataSourceBinding'
@@ -31,6 +32,7 @@ import type { WalletReadSnapshot } from './snapshot/WalletReadSnapshot'
 import type { RetainedReadSnapshotOptions } from './snapshot/RetainedReadSnapshot'
 import type {
   SnapshotJournalProvider,
+  SnapshotJournalWriterAdmission,
   SnapshotJournalReceiver,
   SnapshotJournalReconciliationSource,
   SnapshotJournalDestinationLimits,
@@ -1573,6 +1575,85 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
+  /** Confirm only comparison DATA. No source SQL actor is reconstructed and
+   * the returned checkpoint is the prior actual completed financial ACK. */
+  private async confirmJournalContentCopy(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    sourceStorageIdentity: string,
+    identityKey: string,
+    admission: SnapshotJournalWriterAdmission,
+    options: SyncSessionOptions
+  ): Promise<{ forceBootstrap: boolean; result?: SyncSessionResult }> {
+    const outside = snapshotJournalDataProvider(writer) && writer.journalDataCommitOutsideManager === true
+    const dispatch = async (observe = false): Promise<void> => {
+      if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+    }
+    let forceBootstrap = false
+    const observer = reader.getSnapshotSync?.()
+    if (
+      snapshotJournalDataContentProvider(writer) &&
+      (await writer.supportsSnapshotJournalDataContent()) &&
+      observer?.observeContentRevision !== undefined
+    ) {
+      await dispatch(true)
+      const prior = await writer.getSnapshotJournalDataContentReceipt(identityKey, sourceStorageIdentity, {
+        admission
+      })
+      if (options.signal?.aborted)
+        return {
+          forceBootstrap: false,
+          result: { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+        }
+      if (prior !== undefined) {
+        const observed = await observer.observeContentRevision(identityKey, snapshotSyncContentPosition(prior.source), {
+          lifetimeMs: options.snapshotLifetimeMs,
+          signal: options.signal
+        })
+        if (options.signal?.aborted)
+          return {
+            forceBootstrap: false,
+            result: { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+          }
+        if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
+          await dispatch()
+          const confirmed = await writer.confirmSnapshotJournalDataContentReceipt(
+            identityKey,
+            sourceStorageIdentity,
+            observed,
+            { admission }
+          )
+          if (confirmed !== undefined) {
+            if (
+              JSON.stringify(confirmed.checkpoint) !== JSON.stringify(prior.checkpoint) ||
+              !snapshotSyncContentConfirms(prior.source, confirmed.source)
+            )
+              throw new WERR_INVALID_OPERATION('Journal content confirmation changed its previous real ACK')
+            const result: SyncSessionResult = {
+              status: options.signal?.aborted ? 'cancelled' : 'completed',
+              mode: 'paged',
+              pages: 0,
+              inserts: 0,
+              updates: 0,
+              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint),
+              noChangeJournalReceipt: confirmed
+            }
+            options.onProgress?.({
+              ...result,
+              state: result.status,
+              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint)
+            })
+            return { forceBootstrap: false, result }
+          }
+          // Source is unchanged but the actual destination cannot confirm its
+          // postimage. Seek a new complete source, not an empty incremental ACK.
+          forceBootstrap = true
+        }
+      }
+    }
+    return { forceBootstrap }
+  }
+
   /** Explicit DATA peers keep their actual endpoint/SQL source owners. A remote
    * operation is admitted briefly, then runs outside the manager queue. */
   private async copyJournalDataWindow(
@@ -1606,60 +1687,16 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const dispatch = async (observe = false): Promise<void> => {
       if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
     }
-    let forceBootstrap = false
-    const observer = reader.getSnapshotSync?.()
-    if (
-      snapshotJournalDataContentProvider(writer) &&
-      (await writer.supportsSnapshotJournalDataContent()) &&
-      observer?.observeContentRevision !== undefined
-    ) {
-      await dispatch(true)
-      const prior = await writer.getSnapshotJournalDataContentReceipt(identityKey, readerSettings.storageIdentityKey, {
-        admission
-      })
-      if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
-      if (prior !== undefined) {
-        const observed = await observer.observeContentRevision(identityKey, snapshotSyncContentPosition(prior.source), {
-          lifetimeMs: options.snapshotLifetimeMs,
-          signal: options.signal
-        })
-        if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
-        if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
-          await dispatch()
-          const confirmed = await writer.confirmSnapshotJournalDataContentReceipt(
-            identityKey,
-            readerSettings.storageIdentityKey,
-            observed,
-            { admission }
-          )
-          if (confirmed !== undefined) {
-            if (
-              JSON.stringify(confirmed.checkpoint) !== JSON.stringify(prior.checkpoint) ||
-              !snapshotSyncContentConfirms(prior.source, confirmed.source)
-            )
-              throw new WERR_INVALID_OPERATION('Journal content confirmation changed its previous real ACK')
-            const result: SyncSessionResult = {
-              status: options.signal?.aborted ? 'cancelled' : 'completed',
-              mode: 'paged',
-              pages: 0,
-              inserts: 0,
-              updates: 0,
-              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint),
-              noChangeJournalReceipt: confirmed
-            }
-            options.onProgress?.({
-              ...result,
-              state: result.status,
-              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint)
-            })
-            return result
-          }
-          // Source is unchanged but the actual destination cannot confirm its
-          // postimage. Seek a new complete source, not an empty incremental ACK.
-          forceBootstrap = true
-        }
-      }
-    }
+    const confirmation = await this.confirmJournalContentCopy(
+      reader,
+      writer,
+      readerSettings.storageIdentityKey,
+      identityKey,
+      admission,
+      options
+    )
+    if (confirmation.result !== undefined) return confirmation.result
+    let forceBootstrap = confirmation.forceBootstrap
     await dispatch(true)
     const previous = await writer.getSnapshotJournalDataStatus(identityKey, readerSettings.storageIdentityKey, {
       admission
@@ -1883,6 +1920,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const writerSettings = await writer.makeAvailable()
     assertSyncNetwork(readerSettings, writerSettings)
     const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
+    // Push/primary callers retain actual custody until their separate current
+    // source-selection fence completes. Only a plain pull may return early.
+    if (onCustody === undefined) {
+      const confirmation = await this.confirmJournalContentCopy(
+        reader,
+        writer,
+        readerSettings.storageIdentityKey,
+        identityKey,
+        admission,
+        options
+      )
+      if (confirmation.result !== undefined) return confirmation.result
+    }
     const source = await reader.openCurrentSnapshotJournalSource(identityKey, {
       lifetimeMs: options.snapshotLifetimeMs,
       signal: options.signal
@@ -1977,6 +2027,115 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
+  /** Local unchanged pushes retain genuine current-source SQL ownership only
+   * through one actual target comparison. No network endpoint implements this
+   * local primitive, and no financial ACK or primary is synthesized. */
+  private async confirmLocalJournalPushContent(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions,
+    selection?: { generation: number; active: sdk.WalletStorageProvider }
+  ): Promise<SyncSessionResult | undefined> {
+    if (
+      !journalSource(reader) ||
+      !journalDestination(writer) ||
+      !snapshotJournalPrimaryContentProvider(writer) ||
+      !(await reader.supportsSnapshotJournalSync()) ||
+      !(await writer.supportsSnapshotJournalDataContent())
+    )
+      return undefined
+    const selected = selection ?? (await this.captureSyncSelection(options.signal))
+    if (selected === undefined || options.signal?.aborted)
+      return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    const identityKey = this._authId.identityKey,
+      settings = await reader.makeAvailable(),
+      targetSettings = await writer.makeAvailable()
+    assertSyncNetwork(settings, targetSettings)
+    const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal),
+      prior = await writer.getSnapshotJournalDataContentReceipt(identityKey, settings.storageIdentityKey, { admission })
+    if (prior === undefined) return undefined
+    let ownedSource: SnapshotJournalReconciliationSource | undefined
+    const changed = new WERR_INVALID_OPERATION('Current source changed before unchanged push confirmation')
+    let result: SyncSessionResult | undefined, failure: { error: unknown } | undefined
+    const cleanup = new Brc38CleanupScope(async () => {
+      if (ownedSource === undefined) return
+      try {
+        await closeSnapshotJournalSource(ownedSource, options.signal)
+      } catch (error) {
+        if (failure !== undefined && failure.error !== error)
+          throw new AggregateError([failure.error, error], 'Unchanged push and actual source cleanup failed', {
+            cause: failure.error
+          })
+        throw error
+      }
+    })
+    try {
+      const source = await reader.openCurrentSnapshotJournalSource(identityKey, {
+        lifetimeMs: options.snapshotLifetimeMs,
+        signal: options.signal
+      })
+      ownedSource = source
+      if (options.signal?.aborted)
+        throw new SnapshotCancelledError('Unchanged push was cancelled while opening its source')
+      if (
+        source.receiptBinding.identityKey !== identityKey ||
+        source.receiptBinding.storageIdentity !== settings.storageIdentityKey ||
+        source.receiptBinding.chain !== settings.chain
+      )
+        throw new WERR_UNAUTHORIZED()
+      const observed = await source.readContentRevision?.(snapshotSyncContentPosition(prior.source))
+      if (options.signal?.aborted)
+        throw new SnapshotCancelledError('Unchanged push was cancelled during source observation')
+      if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
+        const fencedAdmission: SnapshotJournalWriterAdmission = async operation =>
+          await admission(async () => {
+            const current = await source.withCurrentDataFence(source.receipt.highWater, operation)
+            if (!current.current) throw changed
+            return current.value
+          })
+        const confirmed = await writer.confirmSnapshotJournalPrimaryContentReceipt(
+          identityKey,
+          settings.storageIdentityKey,
+          observed,
+          source.primary.activeStorage,
+          { admission: fencedAdmission }
+        )
+        if (confirmed !== undefined) {
+          if (
+            JSON.stringify(confirmed.checkpoint) !== JSON.stringify(prior.checkpoint) ||
+            !snapshotSyncContentConfirms(prior.source, confirmed.source)
+          )
+            throw new WERR_INVALID_OPERATION('Unchanged push changed its previous actual ACK')
+          result = {
+            status: options.signal?.aborted ? 'cancelled' : 'completed',
+            mode: 'paged',
+            pages: 0,
+            inserts: 0,
+            updates: 0,
+            journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint),
+            noChangeJournalReceipt: confirmed
+          }
+        }
+      }
+    } catch (error) {
+      failure = { error }
+      if (error !== changed) {
+        if (error instanceof SnapshotCancelledError && options.signal?.aborted)
+          result = { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+        else throw error
+      }
+    } finally {
+      await cleanup.close()
+    }
+    if (result !== undefined)
+      options.onProgress?.({
+        ...result,
+        state: result.status,
+        journalCheckpoint: copyJournalCheckpoint(result.journalCheckpoint)
+      })
+    return result
+  }
+
   /** Preserve ordinary push selection propagation after the data ACK. Busy
    * foreground writers cause another incremental window, never an activation
    * from stale copied data. Every attempt releases source and manager ownership. */
@@ -1986,6 +2145,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
     options: SyncSessionOptions = {},
     selection?: { generation: number; active: sdk.WalletStorageProvider }
   ): Promise<SyncSessionResult | undefined> {
+    const unchanged = await this.confirmLocalJournalPushContent(reader, writer, options, selection)
+    if (unchanged !== undefined) return unchanged
     let pages = 0,
       inserts = 0,
       updates = 0
