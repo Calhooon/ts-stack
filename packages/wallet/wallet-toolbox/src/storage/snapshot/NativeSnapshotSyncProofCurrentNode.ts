@@ -70,22 +70,33 @@ export async function readNativeSnapshotSyncProofCurrent(
   trx: Knex.Transaction,
   userId: number,
   txid: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  canonicalFallback = false
 ): Promise<NativeSnapshotSyncProofCurrent> {
   signal?.throwIfAborted()
   integer(userId, 1)
   hex(txid)
   await verifyBrc38ImportTargetIndexes(trx)
-  const selected: Array<{ localId: unknown }> = await trx
-    .from(trx.raw('?? INDEXED BY ??', ['proven_txs', brc38ImportTargetIndexName('provenTxs', trx)]))
-    .where({ txid })
-    .select(
-      trx.raw(
-        "CASE WHEN typeof(provenTxId)='integer' AND provenTxId BETWEEN 1 AND 9007199254740991 THEN provenTxId END AS localId"
+  // Journal field receivers also meet legacy validators' canonical stores.
+  // The original full-snapshot default remains one exact indexed lookup.
+  const lookup = async (key: string): Promise<Array<{ localId: unknown }>> =>
+    await trx
+      .from(trx.raw('?? INDEXED BY ??', ['proven_txs', brc38ImportTargetIndexName('provenTxs', trx)]))
+      .where({ txid: key })
+      .select(
+        trx.raw(
+          "CASE WHEN typeof(provenTxId)='integer' AND provenTxId BETWEEN 1 AND 9007199254740991 THEN provenTxId END AS localId"
+        )
       )
-    )
-    .limit(2)
+      .limit(2)
+  let lookupTxid = txid
+  let selected = await lookup(lookupTxid)
   if (selected.length > 1) invalid()
+  if (selected.length === 0 && canonicalFallback && txid.toLowerCase() !== txid) {
+    lookupTxid = txid.toLowerCase()
+    selected = await lookup(lookupTxid)
+    if (selected.length > 1) invalid()
+  }
   const localId = selected.length === 0 ? undefined : integer(selected[0].localId, 1),
     fields = await readBrc38NativeCurrentFieldTargets(
       trx,
@@ -96,7 +107,7 @@ export async function readNativeSnapshotSyncProofCurrent(
         {
           table: 'provenTxs',
           index: 'provenTxs',
-          key: { txid },
+          key: { txid: lookupTxid },
           found: localId !== undefined,
           ...(localId === undefined ? {} : { localId })
         }
@@ -110,7 +121,7 @@ export async function readNativeSnapshotSyncProofCurrent(
   const row = nativeSnapshotSyncProofRow(field.metadata)
   if (
     row.provenTxId !== localId ||
-    row.txid !== txid ||
+    row.txid !== lookupTxid ||
     field.binaryRowId === undefined ||
     field.binaries.rawTx === undefined ||
     field.binaries.merklePath === undefined

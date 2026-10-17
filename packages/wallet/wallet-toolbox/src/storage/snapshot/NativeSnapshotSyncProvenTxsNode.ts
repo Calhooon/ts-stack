@@ -38,6 +38,8 @@ import { writeNativeSnapshotSyncRow } from './writeNativeSnapshotSyncRowNode'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 
 export interface PreparedNativeSnapshotProof {
+  /** CODE-selected lookup policy; genuine source/current/field actors remain mandatory. */
+  readonly canonicalLookup?: true
   readonly proof: Readonly<NativeSnapshotSyncProofRow>
   readonly current: NativeSnapshotSyncProofCurrent
   readonly rawTx: PreparedPackedNativeSnapshotField
@@ -441,13 +443,27 @@ export async function applyPreparedNativeSnapshotProofs(
   for (const row of rows)
     requireSameNativeSnapshotSyncProofCurrent(
       row.current,
-      await readNativeSnapshotSyncProofCurrent(storage, trx, userId, row.proof.txid, signal)
+      await readNativeSnapshotSyncProofCurrent(
+        storage,
+        trx,
+        userId,
+        row.proof.txid,
+        signal,
+        row.canonicalLookup === true
+      )
     )
   let inserts = 0,
     updates = 0
   for (const row of rows) {
     check()
-    const actual = await readNativeSnapshotSyncProofCurrent(storage, trx, userId, row.proof.txid, signal)
+    const actual = await readNativeSnapshotSyncProofCurrent(
+      storage,
+      trx,
+      userId,
+      row.proof.txid,
+      signal,
+      row.canonicalLookup === true
+    )
     requireSameNativeSnapshotSyncProofCurrent(row.current, actual)
     if (row.currentBytesEqual) {
       if (actual.row === undefined) invalid()
@@ -457,6 +473,7 @@ export async function applyPreparedNativeSnapshotProofs(
     const fields = { ...row.proof }
     if (actual.row !== undefined) {
       fields.provenTxId = actual.row.provenTxId
+      if (row.canonicalLookup === true) fields.txid = actual.row.txid
       fields.created_at = new Date(actual.row.created_at.getTime())
       fields.updated_at = new Date(
         Math.max(Date.now(), row.proof.updated_at.getTime(), actual.row.updated_at.getTime() + 1)

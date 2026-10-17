@@ -391,7 +391,8 @@ async function prepareSnapshotJournalNativeEntityMerge(
                   actual as Knex.Transaction,
                   binding.destinationUserId,
                   preparedProof.proof.txid,
-                  signal
+                  signal,
+                  true
                 )
                 requireSameNativeSnapshotSyncProofCurrent(preparedProof.current, current)
                 if (current.field.metadata !== undefined) await observeCurrent(current.field.metadata)
@@ -500,7 +501,7 @@ async function prepareJournalProofFields(
   const allowance = working.claim(8192 + 16 * 65536)
   allocations.push(allowance)
   const current = await inspect(
-    async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal)
+    async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal, true)
   )
   allowance.resize(8192 + 16 * current.field.allocationBytes)
   const prepare = async (name: 'rawTx' | 'merklePath') => {
@@ -612,11 +613,11 @@ async function prepareJournalProofFields(
   check()
   let equal =
     current.row !== undefined &&
-    current.row.txid === proof.txid &&
+    current.row.txid.toLowerCase() === proof.txid.toLowerCase() &&
     current.row.height === proof.height &&
     current.row.index === proof.index &&
-    current.row.blockHash === proof.blockHash &&
-    current.row.merkleRoot === proof.merkleRoot
+    current.row.blockHash.toLowerCase() === proof.blockHash.toLowerCase() &&
+    current.row.merkleRoot.toLowerCase() === proof.merkleRoot.toLowerCase()
   for (const name of ['rawTx', 'merklePath'] as const) {
     const existing = current.field.binaries[name],
       stage = content[name]
@@ -664,7 +665,7 @@ async function prepareJournalProofFields(
   }
   requireSameNativeSnapshotSyncProofCurrent(
     current,
-    await inspect(async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal))
+    await inspect(async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal, true))
   )
-  return Object.freeze({ proof, current, rawTx, merklePath, currentBytesEqual: equal })
+  return Object.freeze({ proof, current, rawTx, merklePath, currentBytesEqual: equal, canonicalLookup: true as const })
 }

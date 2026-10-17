@@ -511,3 +511,12 @@ must identify the same acknowledged physical row; no full-table case-fold scan
 or source metadata rewrite is introduced. A genuine SQL regression reproduces
 the former mixed-case refusal, checks both accepted spellings and rejects a
 changed physical proof key.
+
+The native journal proof reader explicitly enables the same two indexed key
+spellings during preparation and final current-row checks. Existing full-snapshot
+callers retain their exact-key default. Byte-identical, cryptographically equal
+proofs preserve their actual current row and stored spelling; a changed proof
+retains the existing physical ID and current TXID spelling. The genuine native
+roundtrips independently canonicalize their current proof in real SQL before
+opening the original uppercase source, then require one unchanged proof ID and
+no duplicate global row. These assertions are authored, not yet executed.

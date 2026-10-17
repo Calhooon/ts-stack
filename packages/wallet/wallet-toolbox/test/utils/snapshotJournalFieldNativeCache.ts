@@ -262,6 +262,31 @@ async function verifyNativeJournalFinancialFieldPromotion(
         if (table !== 'provenTxs') row.userId = user.userId
         return row
       }
+    const canonicalProofId = await input.manager.runAsWriter(async active => {
+      if (active !== input.storage) throw new Error('Actual canonical native fixture manager changed')
+      return await input.storage.runSnapshotJournalWriter(async trx => {
+        const rows: Array<{ provenTxId: number; txid: string; blockHash: string; merkleRoot: string }> = await trx(
+          'proven_txs'
+        )
+          .select('provenTxId', 'txid', 'blockHash', 'merkleRoot')
+          .limit(2)
+        expect(rows).toHaveLength(1)
+        const row = rows[0],
+          source = input.sourceData.tables.provenTxs[0]
+        if (typeof source.txid !== 'string' || row.txid.toLowerCase() !== source.txid.toLowerCase())
+          throw new Error('Independent canonical native proof fixture identifies a different transaction')
+        // Model the existing complete-row validator directly in actual SQL.
+        // No under-test lookup or prepared receipt supplies this preimage.
+        await trx('proven_txs')
+          .where('provenTxId', row.provenTxId)
+          .update({
+            txid: row.txid.toLowerCase(),
+            blockHash: row.blockHash.toLowerCase(),
+            merkleRoot: row.merkleRoot.toLowerCase()
+          })
+        return row.provenTxId
+      })
+    })
     await http.storage.knex('output_baskets').where('userId', user.userId).delete()
     await http.storage.knex('proven_txs').insert(incoming('provenTxs', ['rawTx', 'merklePath']))
     await http.storage.knex('output_baskets').insert(incoming('outputBaskets', []))
@@ -354,6 +379,10 @@ async function verifyNativeJournalFinancialFieldPromotion(
       bytes: input.expected.length,
       sha256: createHash('sha256').update(input.expected).digest('hex')
     })
+    const proofs = await input.storage.knex('proven_txs').select('provenTxId', 'txid').limit(2)
+    expect(proofs).toHaveLength(1)
+    expect(proofs[0].provenTxId).toBe(canonicalProofId)
+    expect(proofs[0].txid).toBe(String(input.sourceData.tables.provenTxs[0].txid).toLowerCase())
     expect((await input.storage.findUsers({ partial: { identityKey } }))[0].activeStorage).toBe(beforeActive)
     expect(checkpoint.phase).toBe('acknowledged')
   } catch (cause) {
