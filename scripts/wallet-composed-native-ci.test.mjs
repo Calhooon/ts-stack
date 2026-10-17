@@ -69,8 +69,13 @@ test('routing preserves all21 original cases including both identical completed 
   assert.equal(composedNativeCaseNames.length, 21)
   assert.equal(composedNativeCohorts.length, 20)
   const matrix = walletCoverageMatrix().include
-  assert.equal(matrix.length, 56)
-  assert.equal(new Set(matrix.map(value => value.id)).size, 56)
+  const originalMatrix = matrix.filter(
+    value => !['journal-field', 'archive-native-cache'].includes(value.native_pair_cohort)
+  )
+  assert.equal(originalMatrix.length, 56)
+  assert.equal(new Set(originalMatrix.map(value => value.id)).size, 56)
+  assert.equal(matrix.length, 58)
+  assert.equal(new Set(matrix.map(value => value.id)).size, 58)
   assert.deepEqual(
     matrix.filter(value => value.shard).map(value => value.shard),
     [1, 2, 3, 4]
@@ -156,10 +161,137 @@ test('all6 original authenticated native public-entry cases have mandatory bound
   }
 })
 
-test('all18 independent original pair cases have disjoint mandatory lanes', () => {
-  assert.equal(nativePairCohorts.length, 18)
-  assert.equal(nativePairCaseNames.length, 18)
-  assert.equal(new Set(nativePairCaseNames).size, 18)
+test('all20 independent pair cases, retaining the original18, have disjoint mandatory lanes', () => {
+  // Exact pre-addition baseline: no original name, pattern, count or order changes.
+  const originalPairs = [
+    {
+      id: 'proof',
+      name: 'actual native proof session retains independently constructed multichunk transaction and Merkle bytes',
+      cases: 1,
+      pattern:
+        '^actual native proof session retains independently constructed multichunk transaction and Merkle bytes$'
+    },
+    {
+      id: 'quarantine',
+      name: 'actual native target-winner merge quarantines separate previously spendable reclaim liquidity',
+      cases: 1,
+      pattern:
+        '^actual native target-winner merge quarantines separate previously spendable reclaim liquidity$'
+    },
+    {
+      id: 'rejected-proof',
+      name: 'actual occupied native proof refuses an invalid current header before destination or ACK mutation',
+      cases: 1,
+      pattern:
+        '^actual occupied native proof refuses an invalid current header before destination or ACK mutation$'
+    },
+    {
+      id: 'scalar',
+      name: 'actual native scalar session preserves original occupied basket policy and one-use durable ACK',
+      cases: 1,
+      pattern:
+        '^actual native scalar session preserves original occupied basket policy and one-use durable ACK$'
+    },
+    {
+      id: 'action-transactions',
+      name: 'actual native transactions session retains complete occupied action fields',
+      cases: 1,
+      pattern: '^actual native transactions session retains complete occupied action fields$'
+    },
+    {
+      id: 'action-outputs',
+      name: 'actual native outputs session retains complete occupied action fields',
+      cases: 1,
+      pattern: '^actual native outputs session retains complete occupied action fields$'
+    },
+    {
+      id: 'payload-certificates',
+      name: 'actual native certificates session retains full large logical payloads and parent mappings',
+      cases: 1,
+      pattern:
+        '^actual native certificates session retains full large logical payloads and parent mappings$'
+    },
+    {
+      id: 'payload-certificateFields',
+      name: 'actual native certificateFields session retains full large logical payloads and parent mappings',
+      cases: 1,
+      pattern:
+        '^actual native certificateFields session retains full large logical payloads and parent mappings$'
+    },
+    {
+      id: 'payload-commissions',
+      name: 'actual native commissions session retains full large logical payloads and parent mappings',
+      cases: 1,
+      pattern:
+        '^actual native commissions session retains full large logical payloads and parent mappings$'
+    },
+    {
+      id: 'request',
+      name: 'actual native request session retains full history, proof, notify and atomic completion',
+      cases: 1,
+      pattern:
+        '^actual native request session retains full history, proof, notify and atomic completion$'
+    },
+    {
+      id: 'packed-field',
+      name: 'actual retained source stages multichunk bytes into a fresh native pointer with rollback and content reuse',
+      cases: 1,
+      pattern:
+        '^actual retained source stages multichunk bytes into a fresh native pointer with rollback and content reuse$'
+    },
+    {
+      id: 'stale-proof',
+      name: 'a real occupied proof update invalidates previously prepared native effects',
+      cases: 1,
+      pattern: '^a real occupied proof update invalidates previously prepared native effects$'
+    },
+    {
+      id: 'stale-parent',
+      name: 'a real mapped-parent update invalidates prepared native output effects',
+      cases: 1,
+      pattern: '^a real mapped-parent update invalidates prepared native output effects$'
+    },
+    {
+      id: 'stale-certificates',
+      name: 'a real occupied certificates update refuses the old prepared payload and ACK',
+      cases: 1,
+      pattern: '^a real occupied certificates update refuses the old prepared payload and ACK$'
+    },
+    {
+      id: 'stale-certificateFields',
+      name: 'a real occupied certificateFields update refuses the old prepared payload and ACK',
+      cases: 1,
+      pattern: '^a real occupied certificateFields update refuses the old prepared payload and ACK$'
+    },
+    {
+      id: 'stale-commissions',
+      name: 'a real occupied commissions update refuses the old prepared payload and ACK',
+      cases: 1,
+      pattern: '^a real occupied commissions update refuses the old prepared payload and ACK$'
+    },
+    {
+      id: 'stale-current-request',
+      name: 'a real current request update invalidates prepared native request effects',
+      cases: 1,
+      pattern: '^a real current request update invalidates prepared native request effects$'
+    },
+    {
+      id: 'stale-current-transaction',
+      name: 'a real current transaction update invalidates prepared native request effects',
+      cases: 1,
+      pattern: '^a real current transaction update invalidates prepared native request effects$'
+    }
+  ]
+  assert.equal(originalPairs.length, 18)
+  assert.deepEqual(
+    nativePairCohorts.filter(
+      value => !['journal-field', 'archive-native-cache'].includes(value.id)
+    ),
+    originalPairs
+  )
+  assert.equal(nativePairCohorts.length, 20)
+  assert.equal(nativePairCaseNames.length, 20)
+  assert.equal(new Set(nativePairCaseNames).size, 20)
   assert.deepEqual(
     walletCoverageMatrix()
       .include.filter(value => value.native_pair_cohort)

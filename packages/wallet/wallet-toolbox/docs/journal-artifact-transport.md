@@ -84,6 +84,32 @@ cleanup. The new large fixture passed in23.88s and later exceeded its original
 30s case guard under type-reader contention; only this new complete case now has
 a60s guard. Existing tests/benchmarks, production lifetimes and limits are unchanged.
 
+## Native preparation from actual field artifacts
+
+`preparePackedNativeSnapshotArchiveField` accepts only a frame issued by the
+actual opened authenticated artifact. It obtains descriptor DATA from that
+frame's private original bytes. Copied metadata cannot enroll as a frame or a
+native producer. Actual ready-status calls precede and follow preparation; HTTP
+never runs inside a native writer.
+
+The real native writer may select an existing SEALED content version by hash and
+length, but this is only a candidate lookup. It acquires an actual prepared-field
+lifetime and independently hashes every stored byte to EOF under a fresh owned
+read-only view. Cached TEXT also decodes actual target bytes to EOF. This permits
+verified reuse without downloading content packets again. A miss retains the
+original source hash, replay hash and independently verified stored EOF. Actual
+producer/schema/expiry checks, one-use attachment, rollback consumption and
+cleanup ownership remain required; no copied seal or hash grants an attachment.
+Original snapshot and retained-journal callers retain their original source
+passes and checks.
+
+The genuine native/HTTP case checks independent bytes, pointer rollback,
+consumed actors, cold downloads and zero content downloads on verified reuse.
+It is authored and typechecked, not executed or qualified yet. Both new field/native cases now have separate mandatory CI cohorts. The explicit original18 case/name/pattern/order baseline is preserved; the complete pair union is20 cases and the complete wallet matrix is58 lanes. Source registration and47 passing routing/orchestration tests do not qualify either native case. This internal
+preparation does not supply a financial row merge, parent/proof/primary policy
+or ACK. Durable target-window integration and ordinary SQL/MySQL field cache
+promotion still require implementation.
+
 ## Authenticated field transport
 
 Full and mobile clients negotiate the distinct `snapshotJournalFieldArchive`

@@ -99,7 +99,15 @@ export const nativePairCohorts = Object.freeze(
     ...['request', 'transaction'].map(kind => [
       `stale-current-${kind}`,
       `a real current ${kind} update invalidates prepared native request effects`
-    ])
+    ]),
+    [
+      'journal-field',
+      'actual journal fields stage verified native bytes with rollback, consumed actors and content reuse'
+    ],
+    [
+      'archive-native-cache',
+      'actual authenticated field archive reuses freshly verified native content without downloading it again'
+    ]
   ].map(([id, name]) => Object.freeze({ id, name, cases: 1, pattern: `^${escapePattern(name)}$` }))
 )
 export const nativePairCaseNames = Object.freeze(

@@ -1,3 +1,5 @@
+import { preparePackedNativeSnapshotArchiveField } from '../preparePackedNativeSnapshotFieldNode'
+import { Brc38WorkingAllocation } from '../../portable/Brc38WorkingAllocation'
 import { StorageClient } from '../../remoting/StorageClient'
 import { StorageClient as StorageMobile } from '../../remoting/StorageMobile'
 import { snapshotHttpFixture, gate } from '../../../../test/utils/snapshotArchiveHttpFixtures'
@@ -313,6 +315,36 @@ test.each([StorageClient, StorageMobile])(
       await expect(archive.readFieldExtent(structuredClone(chosen.frame), chosen.index, 'rawTx', 0, 1)).rejects.toThrow(
         'actual opened artifact'
       )
+      // A real authenticated artifact/frame still cannot enroll an ordinary
+      // SQL connection as the separate native destination producer.
+      const nativeWorking = new Brc38WorkingAllocation(1048576),
+        nativePolicy = {
+          workingAllocation: nativeWorking,
+          maximumFieldBytes: raw.length,
+          maximumReadBytes: 65536,
+          expiresAt: archive.expiresAt
+        }
+      await expect(
+        preparePackedNativeSnapshotArchiveField(
+          fixture.storage,
+          archive,
+          structuredClone(chosen.frame),
+          chosen.index,
+          'rawTx',
+          nativePolicy
+        )
+      ).rejects.toThrow('actual opened artifact')
+      await expect(
+        preparePackedNativeSnapshotArchiveField(
+          fixture.storage,
+          archive,
+          chosen.frame,
+          chosen.index,
+          'rawTx',
+          nativePolicy
+        )
+      ).rejects.toThrow('original source, producer or prepared content')
+      expect(nativeWorking.used).toBe(0)
       const getter = jest.fn(() => 'rawTx')
       await expect(
         archive.readFieldExtent(chosen.frame, chosen.index, { toString: getter } as unknown as string, 0, 1)

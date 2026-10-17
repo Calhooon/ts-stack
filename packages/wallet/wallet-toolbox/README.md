@@ -1,5 +1,7 @@
 # BSV Wallet Toolbox
 
+The internal native field preparer now accepts actual issued authenticated field frames. A matching native SEALED content version is independently rehashed under its actual producer and lifetime before reuse, avoiding another payload download; a miss retains source hash/replay and stored EOF verification. Cached TEXT also decodes actual target bytes to EOF. Status I/O stays outside native writers, and copied frames or ordinary SQL connections cannot enroll as native producers. The new genuine native/HTTP rollback and reuse case is authored but unexecuted; target financial merge/ordinary-store cache integration, remote primary handoff and full qualification remain incomplete.
+
 The candidate now exposes separately negotiated authenticated journal field artifacts to full and mobile clients. The version-four offered tuple binds its actual durable reservation, nonce, deadline and lower bound; metadata reads skip payload downloads and bounded extents verify their original artifact/frame ownership and packet integrity. The source hashes and deduplicates fields, captures streamed notification identities and physically closes before READY. Existing row/version-three APIs, authentication and resource limits remain. Target-owned verified cache/semantic promotion and full remote primary handoff still require integration; whole-system qualification remains pending.
 
 Journal capture now separates large binary/TEXT metadata from <=64KiB retained-view extents and connects those extents to verified native content staging/reuse. Legacy full-row capture charges and hydrates native logical fields; exact SQL text retains leading U+FEFF. Remote field transfer/promotion and primary handoff remain incomplete, and full qualification is pending. See [candidate journal transport](docs/journal-artifact-transport.md#bounded-logical-journal-fields).
@@ -5373,6 +5375,8 @@ hash and plan hash. Missing, stale, duplicated, skipped or altered evidence fail
 These source changes do not yet qualify the full18 cases or the complete system;
 the separate original21 composed cases and six real-UTC expiry cases remain
 mandatory, and mutation inventories and scoring gates are unchanged.
+
+Two additional mandatory pairs cover retained-journal native staging and authenticated field-artifact/native cache reuse. The complete pair inventory is20 and the wallet matrix has58 lanes. An explicit original18 name/pattern/count/order baseline and original56-lane subset remain verified. All existing runtime, timeout, pin, corpus, seed and report-union gates are unchanged. The two new genuine native cases are authored and typechecked, but remain unexecuted until full qualification.
 
 Mutation targets retain both complete native functional files as explicit
 `requiredFunctionalTests` affected inputs, while their baselines execute the

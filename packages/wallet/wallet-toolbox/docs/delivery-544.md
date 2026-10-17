@@ -646,9 +646,10 @@ measured. No production API, wire, persistence, native binary, default resource
 limit or consumer migration changes. The authorized 30 percent browser allowance
 is reviewed after the full goal is achieved.
 
-The finite feature inventory is integrated and documented with no known missing
-production components. Later qualification must still cover the complete
-21-customer/18-pair/six real-UTC recovery matrix, faults and concurrency, original
+The finite source inventory is documented, but runtime assembly remains incomplete.
+Destination-owned field cache/financial semantic promotion and full remote primary
+handoff/push/backup still require implementation. After assembly, qualification
+must cover the complete21-customer/20-pair/six real-UTC recovery matrix, faults and concurrency, original
 300-case properties, all 97 mutation targets, provider/HTTP/browser/mobile and
 portable consumers, actual supported native hosts, workload/performance/headroom,
 and exact-head CI/analyzers/review. All eleven acceptance rows remain open.
