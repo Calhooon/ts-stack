@@ -219,7 +219,7 @@ export async function verifyNativeSnapshotFieldArtifactCache(
 
 /** Additional genuine financial receiver assertion inside the existing selected
  * component and mandatory pair. Original cold/hot content, pointer/rollback,
- * UTF8 and custody oracles above remain unchanged. This minimal proof/action
+ * UTF8 and custody oracles above remain unchanged. This minimal proof/action/simple-payload
  * fixture does not replace the separate complete-profile qualification. */
 async function verifyNativeJournalFinancialFieldPromotion(
   input: Readonly<{
@@ -243,7 +243,14 @@ async function verifyNativeJournalFinancialFieldPromotion(
     const user = (await http.storage.findOrInsertUser(identityKey)).user,
       beforeActive = (await input.storage.findUsers({ partial: { identityKey } }))[0].activeStorage,
       incoming = (
-        table: 'provenTxs' | 'outputBaskets' | 'transactions' | 'outputs',
+        table:
+          | 'provenTxs'
+          | 'outputBaskets'
+          | 'transactions'
+          | 'outputs'
+          | 'certificates'
+          | 'certificateFields'
+          | 'commissions',
         binaries: readonly string[]
       ): Record<string, unknown> => {
         const original = input.sourceData.tables[table][0]
@@ -277,13 +284,11 @@ async function verifyNativeJournalFinancialFieldPromotion(
           throw new Error('Independent canonical native proof fixture identifies a different transaction')
         // Model the existing complete-row validator directly in actual SQL.
         // No under-test lookup or prepared receipt supplies this preimage.
-        await trx('proven_txs')
-          .where('provenTxId', row.provenTxId)
-          .update({
-            txid: row.txid.toLowerCase(),
-            blockHash: row.blockHash.toLowerCase(),
-            merkleRoot: row.merkleRoot.toLowerCase()
-          })
+        await trx('proven_txs').where('provenTxId', row.provenTxId).update({
+          txid: row.txid.toLowerCase(),
+          blockHash: row.blockHash.toLowerCase(),
+          merkleRoot: row.merkleRoot.toLowerCase()
+        })
         return row.provenTxId
       })
     })
@@ -300,6 +305,38 @@ async function verifyNativeJournalFinancialFieldPromotion(
     output.outputDescription = expectedText
     output.updated_at = new Date(Date.now() + 1000).toISOString()
     await http.storage.knex('outputs').insert(output)
+    const certificate = incoming('certificates', []),
+      certificateField = incoming('certificateFields', []),
+      commission = incoming('commissions', ['lockingScript']),
+      simpleUpdated = new Date(Date.now() + 1000).toISOString(),
+      originalCommission = input.sourceData.tables.commissions[0]
+    certificate.subject = expectedText
+    certificate.updated_at = simpleUpdated
+    certificateField.fieldValue = expectedText
+    certificateField.updated_at = simpleUpdated
+    commission.keyOffset = 'incoming commission payload must not replace current'.repeat(2000)
+    commission.lockingScript = Buffer.from([255, 254, 253])
+    commission.satoshis = 991
+    commission.isRedeemed = true
+    commission.updated_at = simpleUpdated
+    await http.storage.knex('certificates').insert(certificate)
+    await http.storage.knex('certificate_fields').insert(certificateField)
+    await http.storage.knex('commissions').insert(commission)
+    const beforeSimple = await input.storage.runSnapshotJournalWriter(async trx => {
+      const userId = input.manager.getActiveUser().userId,
+        certificates = await trx('certificates')
+          .where({ userId, certifier: certificate.certifier, serialNumber: certificate.serialNumber })
+          .select('certificateId')
+          .limit(2),
+        commissions = await trx('commissions').where({ userId }).select('commissionId', 'transactionId').limit(2)
+      expect(certificates).toHaveLength(1)
+      expect(commissions).toHaveLength(1)
+      return {
+        certificateId: Number(certificates[0].certificateId),
+        commissionId: Number(commissions[0].commissionId),
+        transactionId: Number(commissions[0].transactionId)
+      }
+    })
     const { url } = await http.serve(),
       client = new StorageClient(http.wallet, url, { serverIdentityKey: http.serverIdentityKey }),
       archive = await client.openSnapshotJournalFieldArchive(identityKey)
@@ -383,6 +420,62 @@ async function verifyNativeJournalFinancialFieldPromotion(
     expect(proofs).toHaveLength(1)
     expect(proofs[0].provenTxId).toBe(canonicalProofId)
     expect(proofs[0].txid).toBe(String(input.sourceData.tables.provenTxs[0].txid).toLowerCase())
+    const simpleResult = await input.storage.runSnapshotJournalWriter(async trx => {
+      const userId = input.manager.getActiveUser().userId,
+        certificates = await trx('certificates')
+          .where({ userId, certifier: certificate.certifier, serialNumber: certificate.serialNumber })
+          .select('certificateId')
+          .limit(2),
+        commissions = await trx('commissions')
+          .where({ userId })
+          .select('commissionId', 'transactionId', 'satoshis', 'isRedeemed')
+          .limit(2)
+      expect(certificates).toHaveLength(1)
+      expect(commissions).toHaveLength(1)
+      expect(Number(certificates[0].certificateId)).toBe(beforeSimple.certificateId)
+      expect(Number(commissions[0].commissionId)).toBe(beforeSimple.commissionId)
+      expect(Number(commissions[0].transactionId)).toBe(beforeSimple.transactionId)
+      expect(Number(commissions[0].satoshis)).toBe(originalCommission.satoshis)
+      expect(Number(commissions[0].isRedeemed)).toBe(1)
+      const result: Record<string, { bytes: number; sha256: string }> = {}
+      const points: Array<{ name: string; table: number; key: Record<string, string | number> }> = [
+        { name: 'subject', table: 2, key: { userId, certificateId: beforeSimple.certificateId } },
+        {
+          name: 'fieldValue',
+          table: 12,
+          key: { userId, certificateId: beforeSimple.certificateId, fieldName: String(certificateField.fieldName) }
+        },
+        { name: 'keyOffset', table: 6, key: { userId, commissionId: beforeSimple.commissionId } },
+        { name: 'lockingScript', table: 6, key: { userId, commissionId: beforeSimple.commissionId } }
+      ]
+      for (const item of points) {
+        const point = await readSnapshotJournalPointFields(trx, item.table, item.key, 16777216),
+          descriptor = point?.fields[item.name]
+        if (point === undefined || descriptor === undefined)
+          throw new Error('Actual committed native simple field missing')
+        const hash = createHash('sha256')
+        for (let offset = 0; offset < descriptor.bytes; offset += 16384) {
+          const bytes = await point.readExtent(item.name, offset, Math.min(16384, descriptor.bytes - offset))
+          try {
+            hash.update(bytes)
+          } finally {
+            bytes.fill(0)
+          }
+        }
+        result[item.name] = { bytes: descriptor.bytes, sha256: hash.digest('hex') }
+      }
+      return result
+    })
+    const expectedDigest = (bytes: Uint8Array) => ({
+      bytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex')
+    })
+    expect(simpleResult.subject).toEqual(expectedDigest(Buffer.from(expectedText)))
+    expect(simpleResult.fieldValue).toEqual(expectedDigest(Buffer.from(expectedText)))
+    expect(simpleResult.keyOffset).toEqual(expectedDigest(Buffer.from(String(originalCommission.keyOffset))))
+    if (typeof originalCommission.lockingScript !== 'string')
+      throw new Error('Independent original commission script missing')
+    expect(simpleResult.lockingScript).toEqual(expectedDigest(Buffer.from(originalCommission.lockingScript, 'base64')))
     expect((await input.storage.findUsers({ partial: { identityKey } }))[0].activeStorage).toBe(beforeActive)
     expect(checkpoint.phase).toBe('acknowledged')
   } catch (cause) {

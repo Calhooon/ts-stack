@@ -1,3 +1,5 @@
+import type { Knex } from 'knex'
+import type { SyncMap } from '../schema/entities/EntityBase'
 import type { StorageKnex } from '../StorageKnex'
 import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import { Brc38WorkingAllocation, type Brc38WorkingCharge } from '../portable/Brc38WorkingAllocation'
@@ -34,9 +36,9 @@ import {
 import { writeNativeSnapshotSyncRow, type NativeSimplePayloadTable } from './writeNativeSnapshotSyncRowNode'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 
-interface PreparedRow {
+export interface PreparedNativeSnapshotSimplePayload {
   readonly incoming: NativeSimplePayloadRow
-  readonly metadata: Readonly<DetachedSnapshotSyncFieldRow>
+  readonly metadata: Readonly<Pick<DetachedSnapshotSyncFieldRow, 'fields'>>
   readonly current: NativeSimpleCurrent
   readonly stages: Readonly<Record<string, PreparedPackedNativeSnapshotField>>
   readonly inline: ReturnType<typeof prepareBrc38NativePackedTextWalletWrite>
@@ -85,7 +87,7 @@ export async function prepareNativeSnapshotSyncSimplePayload(
     allocations: Brc38WorkingCharge[] = [],
     stages: PreparedPackedNativeSnapshotField[] = [],
     failures = new Set<Brc38StagingCleanupError>(),
-    rows: PreparedRow[] = []
+    rows: PreparedNativeSnapshotSimplePayload[] = []
   let expiresAt = binding.expiresAt,
     deadline = performance.now() + expiresAt - Date.now(),
     consumed = false,
@@ -232,69 +234,16 @@ export async function prepareNativeSnapshotSyncSimplePayload(
               table,
               rows.map(row => row.metadata.fields)
             )
-            for (const row of rows) {
-              check()
-              requireSameNativeSimpleCurrent(
-                row.current,
-                await readNativeSimpleCurrent(
-                  storage,
-                  writer.transaction,
-                  writer.user.userId,
-                  row.incoming,
-                  loaded.map,
-                  signal
-                )
-              )
-            }
-            let inserts = 0,
-              updates = 0
-            for (const row of rows) {
-              check()
-              const actual = await readNativeSimpleCurrent(
-                  storage,
-                  writer.transaction,
-                  writer.user.userId,
-                  row.incoming,
-                  loaded.map,
-                  signal
-                ),
-                selected = nativeSimplePayloadMerge(actual.row, row.incoming, writer.user.userId, actual.parent)
-              if (selected === undefined) {
-                if (actual.row === undefined) invalid()
-                if (row.incoming.table === 'certificates' && actual.row.table === 'certificates')
-                  loaded.map.certificate.idMap[row.incoming.value.certificateId] = actual.row.value.certificateId
-                if (row.incoming.table === 'commissions' && actual.row.table === 'commissions')
-                  loaded.map.commission.idMap[row.incoming.value.commissionId] = actual.row.value.commissionId
-                continue
-              }
-              const fields = nativeSimplePayloadMetadata(selected, actual.row !== undefined),
-                currentId =
-                  actual.row === undefined
-                    ? undefined
-                    : table === 'certificateFields'
-                      ? actual.field.textRowId
-                      : actual.row.table === 'certificates'
-                        ? actual.row.value.certificateId
-                        : actual.row.table === 'commissions'
-                          ? actual.row.value.commissionId
-                          : invalid(),
-                retainedCommission = table === 'commissions' && actual.row !== undefined,
-                id = await writeNativeSnapshotSyncRow(
-                  storage,
-                  writer.transaction,
-                  table,
-                  fields,
-                  retainedCommission ? prepareBrc38NativePackedTextWalletWrite('commissions', {}) : row.inline,
-                  retainedCommission ? {} : row.stages,
-                  currentId
-                )
-              if (row.incoming.table === 'certificates')
-                loaded.map.certificate.idMap[row.incoming.value.certificateId] = nativeSimplePositive(id)
-              if (row.incoming.table === 'commissions')
-                loaded.map.commission.idMap[row.incoming.value.commissionId] = nativeSimplePositive(id)
-              if (actual.row === undefined) inserts++
-              else updates++
-            }
+            const { inserts, updates } = await applyPreparedNativeSnapshotSimplePayloads(
+              storage,
+              writer.transaction,
+              writer.user.userId,
+              table,
+              rows,
+              loaded.map,
+              check,
+              signal
+            )
             await loaded.persist()
             check()
             return { inserts, updates }
@@ -344,4 +293,70 @@ function selectedPageFromDetached(
     done: detached.nextTable !== expected.tableIndex,
     cursor: detached.rows.length === 0 ? expected.cursor : detached.rows[detached.rows.length - 1].cursor
   }
+}
+
+/** Shared financial effect only. The original full-snapshot or journal owner
+ * supplies its actual transaction, freshly checked maps/current rows and outer
+ * atomic receipt. Prepared fields retain their genuine one-use native issuer. */
+export async function applyPreparedNativeSnapshotSimplePayloads(
+  storage: StorageKnex,
+  trx: Knex.Transaction,
+  userId: number,
+  table: NativeSimplePayloadTable,
+  rows: readonly PreparedNativeSnapshotSimplePayload[],
+  map: SyncMap,
+  check: () => void,
+  signal?: AbortSignal
+): Promise<{ inserts: number; updates: number }> {
+  for (const row of rows) {
+    check()
+    requireSameNativeSimpleCurrent(
+      row.current,
+      await readNativeSimpleCurrent(storage, trx, userId, row.incoming, map, signal)
+    )
+  }
+  let inserts = 0,
+    updates = 0
+  for (const row of rows) {
+    check()
+    const actual = await readNativeSimpleCurrent(storage, trx, userId, row.incoming, map, signal),
+      selected = nativeSimplePayloadMerge(actual.row, row.incoming, userId, actual.parent)
+    if (selected === undefined) {
+      if (actual.row === undefined) invalid()
+      if (row.incoming.table === 'certificates' && actual.row.table === 'certificates')
+        map.certificate.idMap[row.incoming.value.certificateId] = actual.row.value.certificateId
+      if (row.incoming.table === 'commissions' && actual.row.table === 'commissions')
+        map.commission.idMap[row.incoming.value.commissionId] = actual.row.value.commissionId
+      continue
+    }
+    const fields = nativeSimplePayloadMetadata(selected, actual.row !== undefined),
+      currentId =
+        actual.row === undefined
+          ? undefined
+          : table === 'certificateFields'
+            ? actual.field.textRowId
+            : actual.row.table === 'certificates'
+              ? actual.row.value.certificateId
+              : actual.row.table === 'commissions'
+                ? actual.row.value.commissionId
+                : invalid(),
+      retainedCommission = table === 'commissions' && actual.row !== undefined,
+      id = await writeNativeSnapshotSyncRow(
+        storage,
+        trx,
+        table,
+        fields,
+        retainedCommission ? prepareBrc38NativePackedTextWalletWrite('commissions', {}) : row.inline,
+        retainedCommission ? {} : row.stages,
+        currentId
+      )
+    if (row.incoming.table === 'certificates')
+      map.certificate.idMap[row.incoming.value.certificateId] = nativeSimplePositive(id)
+    if (row.incoming.table === 'commissions')
+      map.commission.idMap[row.incoming.value.commissionId] = nativeSimplePositive(id)
+    if (actual.row === undefined) inserts++
+    else updates++
+  }
+  check()
+  return { inserts, updates }
 }

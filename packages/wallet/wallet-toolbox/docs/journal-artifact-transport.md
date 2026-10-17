@@ -150,7 +150,7 @@ Journal effects also retain the original actual identity-transition and membersh
 boundary, including inherited creation custody, missing bootstrap repair and
 postimage fingerprints. A changed frame, target window, profile, producer or
 current state refuses before financial effects. The field receiver now supplies the shared outer promotion kernel and proof
-component. Remaining request/simple-field components, complete provenance,
+component. Remaining request-field components, complete provenance,
 ordinary SQL byte cache and manager routing still need integration; this internal component alone does not
 supply a complete-window financial ACK or primary handoff. Native execution is
 pending full feature assembly.
@@ -488,7 +488,7 @@ feeds the cryptographic reader, permitting real cache reuse; source reentry
 still touches both original field descriptors through the authenticated lease.
 Prepared ownership and physical cleanup remain real and retryable on failure.
 
-The full native request/history/notification and other payload/provenance
+The full native request/history/notification and provenance
 components, ordinary SQL large-field custody, manager field integration and
 remote primary handoff remain implementation work. Unsupported field effects
 refuse without advancing their financial cursor. This component is not a claim
@@ -520,3 +520,18 @@ retains the existing physical ID and current TXID spelling. The genuine native
 roundtrips independently canonicalize their current proof in real SQL before
 opening the original uppercase source, then require one unchanged proof ID and
 no duplicate global row. These assertions are authored, not yet executed.
+
+Native journal certificates, certificate fields and commissions now use the same
+financial effect as the original full-snapshot component. Preparation reads
+current rows, generations and mapped-parent fences under the actual journal
+window, then performs source reads and genuine native field preparation outside
+the writer. The final writer repeats current checks before and during effects,
+reuses the original merge policies, and persists associations and ACK atomically.
+Existing commissions retain their current script, key offset, value and parent;
+only a newer redemption state changes. Certificate field identity remains the
+mapped physical certificate plus exact field name. No full snapshot is invented
+from archive metadata. The existing native financial assertions additionally
+cover large certificate/field UTF8 replacement and preserved commission payloads
+and physical IDs. Those assertions remain authored but unexecuted pending pinned
+native qualification. Request structured fields, complete provenance, ordinary
+SQL field storage, manager routing and remote primary recovery remain unfinished.

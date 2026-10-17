@@ -1,3 +1,16 @@
+import {
+  applyPreparedNativeSnapshotSimplePayloads,
+  type PreparedNativeSnapshotSimplePayload
+} from '../NativeSnapshotSyncSimplePayloadNode'
+import { readNativeSimpleCurrent } from '../NativeSnapshotSyncSimpleCurrentNode'
+import {
+  nativeSimplePayloadRow,
+  nativeSimplePayloadMerge,
+  nativeSimplePayloadMetadata,
+  nativeSimplePayloadFields
+} from '../NativeSnapshotSyncSimpleRows'
+import type { NativeSimplePayloadTable } from '../writeNativeSnapshotSyncRowNode'
+import { nativePackedTextSource } from '../../portable/Brc38NativePackedTextSources'
 import { inspectBrc38StreamedProofReader } from '../../portable/Brc38StreamedProof'
 import type { Brc38StreamedProofReader } from '../../portable/Brc38StreamedProof'
 import type { Brc38JsonStreamedRow } from '../../portable/Brc38JsonBinaryFields'
@@ -64,13 +77,14 @@ function changeDigest(
   receipt: SnapshotJournalDestinationStageReceipt
 ): string {
   const context = snapshotJournalDestinationStreams[receipt.streamIndex]
-  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1, 8].includes(receipt.tableId)) invalid()
+  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1, 2, 6, 8, 12].includes(receipt.tableId))
+    invalid()
   const { revision, id1, id2, exactText } = change.metadata
   return createHash('sha256')
     .update(
       encodeSnapshotJournalFieldFrame(
         {
-          table: receipt.tableId === 0 ? 'transactions' : receipt.tableId === 1 ? 'outputs' : 'provenTxs',
+          table: journalNativeEntityTable(receipt.tableId),
           changes: [change],
           examined: 1,
           metadataBytes: 0,
@@ -142,7 +156,7 @@ async function prepareSnapshotJournalNativeEntityMerge(
     changeIndex < 0 ||
     change === undefined ||
     !change.present ||
-    ![0, 1, 8].includes(frame.tableId) ||
+    ![0, 1, 2, 6, 8, 12].includes(frame.tableId) ||
     receipt.tableId !== frame.tableId ||
     snapshotJournalDestinationStreams[receipt.streamIndex]?.stream !== frame.stream ||
     digest !== frame.frameDigest ||
@@ -157,19 +171,22 @@ async function prepareSnapshotJournalNativeEntityMerge(
   )
     invalid()
   const selectedChangeDigest = changeDigest(change, receipt),
-    table = frame.tableId === 0 ? 'transactions' : frame.tableId === 1 ? 'outputs' : 'provenTxs',
+    table = journalNativeEntityTable(frame.tableId),
     payloadNames: readonly string[] =
       table === 'transactions'
         ? transactionPayloadFields
         : table === 'outputs'
           ? outputPayloadFields
-          : ['rawTx', 'merklePath']
+          : table === 'provenTxs'
+            ? ['rawTx', 'merklePath']
+            : nativeSimplePayloadFields[table]
   let closed = false,
     consumed = false,
     closing: Promise<void> | undefined,
     applying: Promise<{ inserts: number; updates: number }> | undefined,
     row: PreparedNativeSnapshotAction | undefined,
-    proofRow: PreparedNativeSnapshotProof | undefined
+    proofRow: PreparedNativeSnapshotProof | undefined,
+    simpleRow: PreparedNativeSnapshotSimplePayload | undefined
   const check = (): void => {
     signal?.throwIfAborted()
     assertRemoteSnapshotJournalFieldFrame(source, frame)
@@ -240,6 +257,8 @@ async function prepareSnapshotJournalNativeEntityMerge(
     stages.length = 0
     row = undefined
     proofRow = undefined
+    if (simpleRow !== undefined) for (const field of simpleRow.inline.fields) field.bytes.fill(0)
+    simpleRow = undefined
   }
   try {
     check()
@@ -270,6 +289,56 @@ async function prepareSnapshotJournalNativeEntityMerge(
         deadline,
         signal
       )
+    } else if (table !== 'transactions' && table !== 'outputs') {
+      if (fields.userId !== binding.source.userId) invalid()
+      const incoming = nativeSimplePayloadRow(table, fields, change.fields),
+        allowance = working.claim(8192 + 16 * 65536)
+      allocations.push(allowance)
+      const current = await inspect(async trx => {
+        await requireOriginalStage(trx)
+        const parents = await loadSnapshotJournalDestinationParents(
+          trx,
+          binding,
+          expected,
+          readSnapshotJournalEntityFrameIdentities(trx, binding, expected, receipt.digest, changeIndex),
+          limits,
+          { remaining: working.maximum - working.used }
+        )
+        return await readNativeSimpleCurrent(storage, trx, binding.destinationUserId, incoming, parents.map, signal)
+      })
+      allowance.resize(8192 + 16 * current.field.allocationBytes)
+      const selected = nativeSimplePayloadMerge(current.row, incoming, binding.destinationUserId, current.parent),
+        scalar = selected === undefined ? {} : nativeSimplePayloadMetadata(selected, current.row !== undefined),
+        inlineBytes = nativeSimplePayloadFields[table].reduce(
+          (sum, name) => sum + (typeof scalar[name] === 'string' ? Buffer.byteLength(scalar[name] as string) : 0),
+          0
+        ),
+        prepared: Record<string, PreparedPackedNativeSnapshotField> = {}
+      allocations.push(working.claim(16384 + 16 * inlineBytes))
+      simpleRow = {
+        incoming,
+        metadata: { fields },
+        current,
+        stages: prepared,
+        inline: prepareBrc38NativePackedTextWalletWrite(nativePackedTextSource(table).sql, scalar)
+      }
+      if (selected !== undefined && !(table === 'commissions' && current.row !== undefined)) {
+        for (const name of nativeSimplePayloadFields[table]) {
+          if (change.fields[name] === undefined) continue
+          check()
+          const stage = await preparePackedNativeSnapshotArchiveField(storage, source, frame, changeIndex, name, {
+            workingAllocation: working,
+            maximumFieldBytes: 1000000000,
+            maximumReadBytes: 16384,
+            expiresAt,
+            signal
+          })
+          stages.push(stage)
+          prepared[name] = stage
+          check()
+        }
+      }
+      Object.freeze(prepared)
     } else {
       if (fields.userId !== binding.source.userId) invalid()
       const action: NativeSnapshotSyncAction =
@@ -345,7 +414,7 @@ async function prepareSnapshotJournalNativeEntityMerge(
         check()
         if (
           consumed ||
-          (row === undefined && proofRow === undefined) ||
+          (row === undefined && proofRow === undefined && simpleRow === undefined) ||
           JSON.stringify(actualBinding) !== originalBinding ||
           JSON.stringify(actualState) !== originalState ||
           actualReceipt.digest !== receipt.digest ||
@@ -367,7 +436,8 @@ async function prepareSnapshotJournalNativeEntityMerge(
         const writerAllowance = working.claim(reserved),
           writerBudget = { remaining: reserved - currentReadBytes },
           prepared = row,
-          preparedProof = proofRow
+          preparedProof = proofRow,
+          preparedSimple = simpleRow
         applying = (async () => {
           await verifySnapshotJournalDestinationSchema(trx)
           await readSnapshotJournalCaptureConfiguration(trx)
@@ -401,6 +471,28 @@ async function prepareSnapshotJournalNativeEntityMerge(
                   actual as Knex.Transaction,
                   binding.destinationUserId,
                   [preparedProof],
+                  map,
+                  check,
+                  signal
+                )
+              }
+              if (table !== 'transactions' && table !== 'outputs') {
+                if (preparedSimple === undefined) invalid()
+                const current = await readNativeSimpleCurrent(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  preparedSimple.incoming,
+                  map,
+                  signal
+                )
+                if (current.field.metadata !== undefined) await observeCurrent(current.field.metadata)
+                return await applyPreparedNativeSnapshotSimplePayloads(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  table,
+                  [preparedSimple],
                   map,
                   check,
                   signal
@@ -668,4 +760,29 @@ async function prepareJournalProofFields(
     await inspect(async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal, true))
   )
   return Object.freeze({ proof, current, rawTx, merklePath, currentBytesEqual: equal, canonicalLookup: true as const })
+}
+
+export async function prepareSnapshotJournalNativeSimpleMerge(
+  ...args: Parameters<typeof prepareSnapshotJournalNativeEntityMerge>
+): Promise<Readonly<PreparedSnapshotJournalNativeAction>> {
+  if (![2, 6, 12].includes(args[3].tableId)) invalid()
+  return await prepareSnapshotJournalNativeEntityMerge(...args)
+}
+function journalNativeEntityTable(id: number): 'transactions' | 'outputs' | 'provenTxs' | NativeSimplePayloadTable {
+  switch (id) {
+    case 0:
+      return 'transactions'
+    case 1:
+      return 'outputs'
+    case 2:
+      return 'certificates'
+    case 6:
+      return 'commissions'
+    case 8:
+      return 'provenTxs'
+    case 12:
+      return 'certificateFields'
+    default:
+      return invalid()
+  }
 }
