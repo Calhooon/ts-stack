@@ -1,16 +1,5 @@
-import { createHash } from 'node:crypto'
-import { Brc38WorkingAllocation } from '../portable/Brc38WorkingAllocation'
-import { snapshotHttpFixture } from '../../../test/utils/snapshotArchiveHttpFixtures'
-import { StorageClient } from '../remoting/StorageClient'
-import type { KnexSnapshotArchiveRpc } from './archive/KnexSnapshotArchiveRpc'
-import type {
-  RemoteSnapshotJournalFieldArchive,
-  RemoteSnapshotJournalFieldFrame
-} from './journal/openRemoteSnapshotJournalFieldArchive'
-import {
-  preparePackedNativeSnapshotJournalField,
-  preparePackedNativeSnapshotArchiveField
-} from './preparePackedNativeSnapshotFieldNode'
+import { verifyNativeSnapshotFieldArtifactCache } from '../../../test/utils/snapshotJournalFieldNativeCache'
+import { preparePackedNativeSnapshotJournalField } from './preparePackedNativeSnapshotFieldNode'
 import { readSnapshotJournalCaptureConfiguration } from './journal/SnapshotJournalLifecycle'
 import { snapshotJournalRevision } from './journal/SnapshotJournalRevision'
 import { nativeTestExecutable } from '../portable/Brc38NativeTestPath'
@@ -589,169 +578,25 @@ test(
   pairCaseMilliseconds
 )
 
-// Requires both the genuine pinned native destination and actual AuthFetch HTTP.
-// Component pointer effects are not a complete financial row/checkpoint merge.
+// Both real profiles retain their original full functional setup and limits.
 test(
   'actual authenticated field archive reuses freshly verified native content without downloading it again',
   async () => {
-    await withPair('packed-field', async ({ target, source, checkpoint, proof }) => {
+    await withPair('packed-field', async ({ target, source, proof }) => {
       const rows = await target.storage.findOutputs({ partial: { userId: target.manager.getActiveUser().userId } }),
-        page = await source.fieldReader!.readMetadataPage('outputs', checkpoint.cursor, {
-          maxRows: 1,
-          maxBytes: 32768
-        }),
-        expected = Uint8Array.from(proof.tx.outputs[0].lockingScript.toBinary()),
-        expectedText = Buffer.from('\ufeffnative\u0000雪😀'.repeat(5001), 'utf8'),
-        http = await snapshotHttpFixture()
-      let archive: RemoteSnapshotJournalFieldArchive | undefined
-      const failures: unknown[] = []
+        expected = Uint8Array.from(proof.tx.outputs[0].lockingScript.toBinary())
       try {
         expect(rows).toHaveLength(1)
-        expect(page.rows).toHaveLength(1)
         await source.close()
-        await http.storage
-          .knex('outputs')
-          .where('outputId', 1)
-          .update({ lockingScript: Buffer.from(expected), outputDescription: expectedText.toString('utf8') })
-        const { server, url } = await http.serve(),
-          client = new StorageClient(http.wallet, url, { serverIdentityKey: http.serverIdentityKey }),
-          rpc = Reflect.get(server, 'snapshotArchives') as KnexSnapshotArchiveRpc,
-          original = rpc.dispatch.bind(rpc),
-          downloads: number[] = []
-        jest.spyOn(rpc, 'dispatch').mockImplementation(async (method, params, identity) => {
-          if (method === 'readSnapshotJournalFieldArchivePage')
-            downloads.push(Reflect.get(params[0] as object, 'sequence'))
-          return await original(method, params, identity)
-        })
-        archive = await client.openSnapshotJournalFieldArchive(http.identityKey)
-        if (archive === undefined) throw new Error('Actual authenticated field archive unavailable')
-        const owned = archive,
-          content = new Set<number>(
-            (
-              await http.storage
-                .knex('snapshot_archive_pages')
-                .where('tableName', 'like', 'journal-fields-content/%')
-                .select('sequence')
-            ).map(row => Number(row.sequence))
-          )
-        let identityCount = 0
-        let selected: { frame: RemoteSnapshotJournalFieldFrame; changeIndex: number } | undefined
-        for (let ordinal = 0; ordinal < owned.frameCount; ordinal++) {
-          const frame = await owned.readFrame(ordinal, (_digest, _index, values) => {
-            identityCount += values.size
-          })
-          if (frame.stream === 'scope' && frame.tableId === 1) {
-            const changeIndex = frame.page.changes.findIndex(change => change.present && change.metadata.id1 === 1)
-            if (changeIndex >= 0) selected = { frame, changeIndex }
-          }
-        }
-        expect(identityCount).toBeGreaterThan(0)
-        if (selected === undefined) throw new Error('Actual HTTP output metadata unavailable')
-        const { frame, changeIndex } = selected
-        let preparations = 0
-        await verifyPackedNativeSnapshotField({
+        await verifyNativeSnapshotFieldArtifactCache({
           storage: target.storage,
-          source,
-          cursor: page.rows[0].cursor,
-          descriptor: page.rows[0].extents.lockingScript,
           targetRowId: rows[0].outputId,
           expected,
-          expiresAt: Math.min(owned.expiresAt, target.expiresAt),
-          prepare: async policy => {
-            await expect(
-              preparePackedNativeSnapshotArchiveField(
-                target.storage,
-                owned,
-                structuredClone(frame),
-                changeIndex,
-                'lockingScript',
-                policy
-              )
-            ).rejects.toThrow('actual opened artifact')
-            const before = downloads.filter(sequence => content.has(sequence)).length,
-              prepared = await preparePackedNativeSnapshotArchiveField(
-                target.storage,
-                owned,
-                frame,
-                changeIndex,
-                'lockingScript',
-                policy
-              ),
-              count = downloads.filter(sequence => content.has(sequence)).length - before
-            try {
-              if (preparations++ === 0) expect(count).toBeGreaterThan(0)
-              else expect(count).toBe(0)
-              return prepared
-            } catch (cause) {
-              await prepared.close()
-              throw cause
-            }
-          }
+          expiresAt: target.expiresAt
         })
-        const textWorking = new Brc38WorkingAllocation(1048576),
-          textPolicy = {
-            workingAllocation: textWorking,
-            maximumFieldBytes: 262144,
-            maximumReadBytes: 4096,
-            expiresAt: Math.min(owned.expiresAt, target.expiresAt)
-          }
-        for (let pass = 0; pass < 2; pass++) {
-          const before = downloads.filter(sequence => content.has(sequence)).length,
-            prepared = await preparePackedNativeSnapshotArchiveField(
-              target.storage,
-              owned,
-              frame,
-              changeIndex,
-              'outputDescription',
-              textPolicy
-            )
-          try {
-            const count = downloads.filter(sequence => content.has(sequence)).length - before
-            if (pass === 0) expect(count).toBeGreaterThan(0)
-            else expect(count).toBe(0)
-            expect(prepared.descriptor).toEqual({
-              kind: 'utf8',
-              bytes: expectedText.length,
-              sha256: createHash('sha256').update(expectedText).digest('hex')
-            })
-            for (const offset of [0, 65530, expectedText.length - 17]) {
-              const length = Math.min(17, expectedText.length - offset),
-                bytes = await prepared.read(offset, length)
-              try {
-                expect(Buffer.from(bytes)).toEqual(expectedText.subarray(offset, offset + length))
-              } finally {
-                bytes.fill(0)
-              }
-            }
-          } finally {
-            await prepared.close()
-          }
-        }
-        expect(textWorking.used).toBe(0)
-        expect(preparations).toBe(2)
-        await owned.close()
-        await owned.closed
-        expect(await http.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
-          archives: 0,
-          reservedBytes: 0
-        })
-      } catch (cause) {
-        failures.push(cause)
       } finally {
         expected.fill(0)
-        expectedText.fill(0)
-        for (const close of [async () => await archive?.close(), async () => await http.close()]) {
-          try {
-            await close()
-          } catch (cause) {
-            failures.push(cause)
-          }
-        }
-        jest.restoreAllMocks()
       }
-      if (failures.length === 1) throw failures[0]
-      if (failures.length > 1)
-        throw new AggregateError(failures, 'Native archive field case and cleanup failed', { cause: failures[0] })
     })
   },
   pairCaseMilliseconds

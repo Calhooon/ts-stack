@@ -105,7 +105,7 @@ passes and checks.
 
 The genuine native/HTTP case checks independent bytes, pointer rollback,
 consumed actors, cold downloads and zero content downloads on verified reuse.
-It is authored and typechecked, not executed or qualified yet. Both new field/native cases now have separate mandatory CI cohorts. The explicit original18 case/name/pattern/order baseline is preserved; the complete pair union is20 cases and the complete wallet matrix is58 lanes. Source registration and47 passing routing/orchestration tests do not qualify either native case. This internal
+The shared native/HTTP oracle also runs from an appended case in the already selected `NativeSnapshotReadContractsNode.test.ts` component suite, while retaining the full two-profile functional case. Both paths are authored and typechecked, not executed or qualified yet. Both new field/native cases now have separate mandatory CI cohorts. The explicit original18 case/name/pattern/order baseline is preserved; the complete pair union is20 cases and the complete wallet matrix is58 lanes. Source registration and47 passing routing/orchestration tests do not qualify either native case. This internal
 preparation does not supply a financial row merge, parent/proof/primary policy
 or ACK. Durable target-window integration and ordinary SQL/MySQL field cache
 promotion still require implementation.
@@ -366,8 +366,8 @@ provider, platform, performance and whole-system qualification remains required.
 ## Owning mutation and browser selection
 
 The field/DATA/receipt implementation now appends coverage inputs and tests to
-ten existing mutation targets and four reviewed component selections. All97
-target identities remain (61 are wallet targets); all87 other targets are
+eleven existing mutation targets and four reviewed component selections. All97
+target identities remain (61 are wallet targets); all86 other targets are
 unchanged. A before/after check preserves every original mutation path, input,
 test and broader-universe prefix, plus every other runner/corpus/seed/threshold
 control. No campaign result is inferred from registration.

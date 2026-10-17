@@ -1,3 +1,4 @@
+import { verifyNativeSnapshotFieldArtifactCache } from '../../../test/utils/snapshotJournalFieldNativeCache'
 import { nativeTestExecutable } from '../portable/Brc38NativeTestPath'
 import { Brc38CleanupScope } from '../portable/Brc38StagingCleanupError'
 import { composedNativeFixture, withComposedNativeFixture } from '../portable/Brc38ComposedNativeFixture'
@@ -324,3 +325,49 @@ test('native portable measurement keeps foreground capacity while its dedicated 
   expect(borrowed).toBeDefined()
   expect(ownedNativeRootIdentity(borrowed!)).toBeUndefined()
 }, 390000)
+
+// This original native-catalog file is selected by the governed mutation
+// component registry. The full two-profile pair remains a separate CI case.
+test(
+  'actual native catalog component verifies authenticated binary and UTF8 cache reuse, pointer rollback and consumed actors',
+  async () => {
+    const fixture = await composedNativeFixture(
+      nativeTestExecutable(),
+      (source, incoming) => {
+        for (const data of [source, incoming]) delete data.tables.outputs[0].lockingScript
+      },
+      nativeLargeRecordFixtureLifetimeMs,
+      undefined,
+      undefined,
+      undefined,
+      { proofBytes: 131073 }
+    )
+    const failures: unknown[] = []
+    let expected: Uint8Array | undefined
+    try {
+      const rows = await fixture.storage.findOutputs({ partial: { userId: fixture.manager.getActiveUser().userId } })
+      expect(rows).toHaveLength(1)
+      expected = Uint8Array.from(fixture.proof.tx.outputs[0].lockingScript.toBinary())
+      expect(expected.length).toBeGreaterThan(65536)
+      await verifyNativeSnapshotFieldArtifactCache({
+        storage: fixture.storage,
+        targetRowId: rows[0].outputId,
+        expected,
+        expiresAt: fixture.expiresAt
+      })
+    } catch (cause) {
+      failures.push(cause)
+    } finally {
+      expected?.fill(0)
+      try {
+        await fixture.close()
+      } catch (cause) {
+        failures.push(cause)
+      }
+    }
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1)
+      throw new AggregateError(failures, 'Native cache component and physical cleanup failed', { cause: failures[0] })
+  },
+  nativeLargeRecordFixtureLifetimeMs + 30000
+)

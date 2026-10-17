@@ -217,6 +217,14 @@ const walletDataAdditions = {
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalContentRevision.test.ts',
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalLocalContent.test.ts'
     ]
+  },
+  'wallet-current-brc38-native-catalog-node': {
+    mutate: [],
+    additionalInputs: [
+      'test/utils/snapshotJournalFieldNativeCache.ts',
+      'src/storage/snapshot/preparePackedNativeSnapshotFieldNode.case.ts'
+    ],
+    tests: []
   }
 }
 

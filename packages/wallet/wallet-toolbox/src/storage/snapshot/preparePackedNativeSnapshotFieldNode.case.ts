@@ -21,8 +21,8 @@ import type { WalletReadSnapshot, WalletSnapshotCursor, WalletSnapshotFieldDescr
 export async function verifyPackedNativeSnapshotField(
   fixture: Readonly<{
     storage: StorageKnex
-    source: WalletReadSnapshot
-    cursor: WalletSnapshotCursor
+    source?: WalletReadSnapshot
+    cursor?: WalletSnapshotCursor
     descriptor: Readonly<WalletSnapshotFieldDescriptor>
     targetRowId: number
     expected: Uint8Array
@@ -59,10 +59,20 @@ export async function verifyPackedNativeSnapshotField(
       if (failed) throw cause
       return result
     },
-    prepare = async () =>
-      await (fixture.prepare === undefined
-        ? preparePackedNativeSnapshotField(storage, source, 'outputs', cursor, 'lockingScript', descriptor, policy)
-        : fixture.prepare(policy))
+    prepare = async () => {
+      if (fixture.prepare !== undefined) return await fixture.prepare(policy)
+      if (source === undefined || cursor === undefined)
+        throw new Error('Actual retained source and cursor are required for the original preparation path')
+      return await preparePackedNativeSnapshotField(
+        storage,
+        source,
+        'outputs',
+        cursor,
+        'lockingScript',
+        descriptor,
+        policy
+      )
+    }
   if (
     !(expected instanceof Uint8Array) ||
     expected.length < 65537 ||
