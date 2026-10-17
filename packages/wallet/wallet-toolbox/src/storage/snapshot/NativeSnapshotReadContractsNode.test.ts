@@ -309,7 +309,7 @@ test('native portable measurement keeps foreground capacity while its dedicated 
           if (active !== storage) throw new Error('Portable foreground writer changed its current provider')
           return await storage.findOrInsertOutputBasket(user.userId, name)
         })
-      expect(basket.outputBasketId).toBeGreaterThan(0)
+      expect(basket.basketId).toBeGreaterThan(0)
       const captured = []
       for await (const row of source.rows('outputBaskets')) captured.push(row)
       expect(captured.length).toBeGreaterThan(0)
