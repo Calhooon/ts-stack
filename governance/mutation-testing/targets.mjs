@@ -1323,7 +1323,10 @@ function currentWalletMutationTargets(repositoryRoot) {
       ],
       ...jestTarget(
         'jest.config.cjs',
-        ['<rootDir>/src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts'],
+        [
+          '<rootDir>/src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts',
+          '<rootDir>/src/storage/portable/Brc38SqlFieldSchemaBatch.test.ts'
+        ],
         {
           config: {
             moduleNameMapper: {
@@ -5421,6 +5424,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'jest.config.cjs',
         [
           '<rootDir>/src/storage/__test/WalletStorageManager.journal.test.ts',
+          '<rootDir>/src/storage/portable/Brc38NativeLocalBaselineBatchNode.test.ts',
           '<rootDir>/src/storage/snapshot/ConcurrentSnapshotArchiveSource.test.ts',
           '<rootDir>/src/storage/snapshot/ConcurrentSnapshotSyncSource.test.ts',
           '<rootDir>/src/storage/snapshot/IdbSnapshotSyncCertificateFields.test.ts',

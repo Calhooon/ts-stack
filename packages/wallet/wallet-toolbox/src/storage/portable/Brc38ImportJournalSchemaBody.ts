@@ -3,6 +3,7 @@ import { isOwnedNativeSqlite } from '../schema/ownedNativeSqliteRuntimeNode'
 import { isBrc38PublishedCopyInspection } from './Brc38PublishedProfileNode'
 import { runInSeries } from '../../utility/runInSeries'
 import { brc38NativePriorImportTables } from './Brc38NativePriorImportTables'
+import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from './Brc38SqlFieldSchemaBatch'
 
 const journalSql = `CREATE TABLE brc38_import_journal (
   importId TEXT NOT NULL PRIMARY KEY,
@@ -129,11 +130,9 @@ export async function readBrc38ImportSchemaFamily(
   )
   if (total?.count === 0 && fresh) return selected
   if (total?.count !== selected.size) differs()
-  for (const [name, expected] of selected) {
-    const query = k('main.sqlite_schema').where({ name, type: expected.type }).whereIn('tbl_name', tables)
-    if (expected.sql === null) query.whereNull('sql')
-    else query.whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [expected.sql])
-    if ((await query.count({ count: '*' }).first())?.count !== 1) differs()
+  for (const batch of brc38SqliteDefinitionBatches(selected, tables)) {
+    const actual = await readBrc38SqliteDefinitionBatch(k, batch, 'main.sqlite_schema')
+    if (actual.matches !== batch.definitions.length || actual.names !== batch.definitions.length) differs()
   }
   if (isOwnedNativeSqlite(k) !== native || isBrc38PublishedCopyInspection(k) !== copy) differs()
   return selected

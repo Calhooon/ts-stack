@@ -7,6 +7,8 @@ import {
   readBrc38NativeLocalBaselineGeneration
 } from './Brc38NativeLocalBaselineGenerationNode'
 import { snapshotJournalRevision } from '../snapshot/journal/SnapshotJournalRevision'
+import { verifySnapshotJournalDestinationSchema } from '../snapshot/journal/SnapshotJournalDestinationSchema'
+import { runInSeries } from '../../utility/runInSeries'
 
 // This actual native fixture stops before sealing or publication. Its original
 // small admission, genuine actor and concrete cleanup remain enforced.
@@ -193,4 +195,74 @@ test('native durable receipt mutations retain physical generations and rollback 
       throw stop
     })
   ).rejects.toBe(stop)
+}, 120000)
+
+test('actual native journal destination batches exact definitions and restores every rejected layout', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    await fixture.withWriter(async trx => {
+      const packets: Array<{ sql: string; bindings: unknown[] }> = []
+      const observe = (query: { sql: string; bindings?: unknown[] }): void => {
+        const bindings = query.bindings ?? []
+        if (
+          query.sql.includes('CAST(sql AS BLOB)') &&
+          typeof bindings[0] === 'string' &&
+          bindings[0].startsWith('snapshot_reconciliation_')
+        )
+          packets.push({ sql: query.sql, bindings })
+      }
+      trx.on('query', observe)
+      try {
+        await verifySnapshotJournalDestinationSchema(trx)
+      } finally {
+        trx.off('query', observe)
+      }
+      expect(packets.length).toBeGreaterThan(0)
+      expect(Math.max(...packets.map(packet => (packet.bindings.length - 1) / 3))).toBeGreaterThanOrEqual(16)
+      for (const packet of packets) {
+        const definitions = packet.bindings.slice(0, -1)
+        expect(packet.bindings.at(-1)).toBe(1)
+        expect(definitions.every(value => typeof value === 'string')).toBe(true)
+        expect(definitions.length % 3).toBe(0)
+        expect(definitions.length / 3).toBeLessThanOrEqual(32)
+        const bytes = definitions.reduce<number>((total, value) => total + Buffer.byteLength(String(value)), 0)
+        expect(bytes <= 32768 || definitions.length === 3).toBe(true)
+        expect(
+          16 +
+            Buffer.byteLength(packet.sql) +
+            packet.bindings.reduce<number>(
+              (total, value) => total + (typeof value === 'string' ? 5 + Buffer.byteLength(value) : 9),
+              0
+            )
+        ).toBeLessThanOrEqual(65537)
+      }
+      const geometry = async () => await trx.raw('PRAGMA page_count')
+      const originalGeometry = await geometry()
+      const catalogCount = async () => await trx('main.sqlite_schema').count({ count: '*' }).first()
+      const originalCount = await catalogCount()
+      await runInSeries(['missing', 'altered', 'trigger', 'index'] as const, async variant => {
+        await trx.raw('SAVEPOINT independent_destination_schema_batch')
+        try {
+          if (variant === 'missing') await trx.raw('DROP TABLE snapshot_reconciliation_windows')
+          else if (variant === 'altered')
+            await trx.raw('ALTER TABLE snapshot_reconciliation_windows ADD COLUMN independent_destination_column TEXT')
+          else if (variant === 'trigger')
+            await trx.raw(
+              'CREATE TRIGGER independent_destination_schema_trigger BEFORE UPDATE ON snapshot_reconciliation_windows BEGIN SELECT 1; END'
+            )
+          else
+            await trx.raw(
+              'CREATE INDEX independent_destination_schema_index ON snapshot_reconciliation_windows(userId)'
+            )
+          await expect(verifySnapshotJournalDestinationSchema(trx)).rejects.toThrow()
+        } finally {
+          await trx.raw('ROLLBACK TO independent_destination_schema_batch')
+          await trx.raw('RELEASE independent_destination_schema_batch')
+        }
+        await verifySnapshotJournalDestinationSchema(trx)
+        expect(await geometry()).toEqual(originalGeometry)
+        expect(await catalogCount()).toEqual(originalCount)
+      })
+    })
+    fixture.check()
+  }, 'after-journal')
 }, 120000)

@@ -1,4 +1,5 @@
 import { snapshotJournalQuotaLayout } from './SnapshotJournalNativeQuotaLayout'
+import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from '../../portable/Brc38SqlFieldSchemaBatch'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -305,15 +306,12 @@ export async function verifySnapshotJournalDestinationSchema(k: Knex): Promise<v
     actual.some(row => typeof row.name !== 'string' || expected.get(row.name)?.type !== row.type)
   )
     invalid()
-  // Compare complete definitions inside SQLite, one scalar at a time. Returning
-  // every trigger body would multiply the retained source's finite allocation.
-  for (const [name, source] of expected) {
-    const match = (await k('sqlite_schema')
-      .where({ name, type: source.type })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
-      .count({ count: '*' })
-      .first()) as { count: unknown } | undefined
-    if (Number(match?.count) !== 1) invalid()
+  // Compare every definition freshly inside SQLite in bounded scalar batches;
+  // complete SQL bodies never cross the retained view's result boundary.
+  for (const batch of brc38SqliteDefinitionBatches(expected)) {
+    const match = await readBrc38SqliteDefinitionBatch(k, batch)
+    if (Number(match.matches) !== batch.definitions.length || Number(match.names) !== batch.definitions.length)
+      invalid()
   }
   if (isOwnedNativeSqlite(k)) await verifyBrc38ImportTargetIndexes(k as Knex.Transaction)
   await verifySnapshotJournalSharedQuota(k)

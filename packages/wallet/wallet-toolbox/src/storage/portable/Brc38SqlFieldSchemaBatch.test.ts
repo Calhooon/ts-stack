@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { readBrc38SqlBinaryDescriptors } from './Brc38SqlBinaryStaging'
+import { knex } from 'knex'
+import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from './Brc38SqlFieldSchemaBatch'
+import { readBrc38ImportSchemaFamily } from './Brc38ImportJournalSchemaBody'
 
 let directory = '',
   store: KnexBrc38StagingStore | undefined
@@ -90,4 +93,90 @@ test.each([
       'CREATE TRIGGER private_binary_chunks_prefix_delete BEFORE DELETE ON private_binary_chunks BEGIN SELECT 1; END'
     )
   await expect(read()).rejects.toThrow(message)
+})
+
+test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8 bounds and fresh rollback', async () => {
+  const db = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  const expected = new Map<string, { type: string; sql: string | null }>()
+  try {
+    for (let index = 0; index < 53; index++) {
+      const name = 'brc38_batch_' + index,
+        padding = index < 33 ? '' : ' /*' + 'm'.repeat(1900) + '*/',
+        sql = `CREATE TABLE ${name}(id INTEGER PRIMARY KEY,value TEXT${padding})`
+      await db.raw(sql)
+      expected.set(name, { type: 'table', sql })
+    }
+    const longSql = 'CREATE TABLE brc38_batch_long(id INTEGER PRIMARY KEY,value TEXT /*' + '雪'.repeat(11000) + '😀*/)',
+      nullSql = 'CREATE TABLE brc38_batch_null(id TEXT PRIMARY KEY,value TEXT)'
+    await db.raw(longSql)
+    await db.raw(nullSql)
+    expected.set('brc38_batch_long', { type: 'table', sql: longSql })
+    expected.set('brc38_batch_null', { type: 'table', sql: nullSql })
+    expected.set('sqlite_autoindex_brc38_batch_null_1', { type: 'index', sql: null })
+    const tables = [...expected].filter(([, row]) => row.type === 'table').map(([name]) => name)
+    const batches = [...brc38SqliteDefinitionBatches(expected, tables)]
+    expect(batches.some(batch => batch.definitions.length === 32)).toBe(true)
+    expect(
+      batches.find(batch => batch.definitions.some(row => row.name === 'brc38_batch_long'))?.definitions
+    ).toHaveLength(1)
+    for (const batch of batches) {
+      const bytes =
+        (batch.tableNames ?? []).reduce((sum, name) => sum + Buffer.byteLength(name), 0) +
+        batch.definitions.reduce(
+          (sum, row) =>
+            sum +
+            Buffer.byteLength(row.name) +
+            Buffer.byteLength(row.type) +
+            (row.sql === null ? 0 : Buffer.byteLength(row.sql)),
+          0
+        )
+      expect(batch.definitions.length).toBeGreaterThan(0)
+      expect(batch.definitions.length).toBeLessThanOrEqual(32)
+      expect(bytes <= 32768 || batch.definitions.length === 1).toBe(true)
+    }
+    await db.transaction(async trx => {
+      for (const batch of batches) {
+        const comparison = await readBrc38SqliteDefinitionBatch(trx, batch, 'main.sqlite_schema')
+        expect(comparison).toEqual({ matches: batch.definitions.length, names: batch.definitions.length })
+      }
+      const scoped = await readBrc38SqliteDefinitionBatch(trx, {
+        ...batches[0],
+        tableNames: ['independent_unowned_table']
+      })
+      expect(scoped).toEqual({ matches: 0, names: 0 })
+      const error = 'Independent schema family differs'
+      expect(await readBrc38ImportSchemaFamily(trx, expected, ['brc38_batch_0'], error)).toEqual(expected)
+      for (const variant of ['changed', 'type', 'index'] as const) {
+        await trx.raw('SAVEPOINT independent_complete_batch_family')
+        try {
+          if (variant === 'index') await trx.raw('CREATE INDEX independent_batch_extra ON brc38_batch_5(value)')
+          else {
+            await trx.raw('DROP TABLE brc38_batch_5')
+            if (variant === 'type') await trx.raw('CREATE VIEW brc38_batch_5 AS SELECT 1 AS id')
+            else await trx.raw('CREATE TABLE brc38_batch_5(id INTEGER PRIMARY KEY,value INTEGER)')
+          }
+          await expect(readBrc38ImportSchemaFamily(trx, expected, ['brc38_batch_0'], error)).rejects.toThrow(error)
+        } finally {
+          await trx.raw('ROLLBACK TO independent_complete_batch_family')
+          await trx.raw('RELEASE independent_complete_batch_family')
+        }
+        expect(await readBrc38ImportSchemaFamily(trx, expected, ['brc38_batch_0'], error)).toEqual(expected)
+      }
+      const changedNull = new Map(expected)
+      changedNull.set('sqlite_autoindex_brc38_batch_null_1', { type: 'index', sql: '' })
+      await expect(readBrc38ImportSchemaFamily(trx, changedNull, ['brc38_batch_0'], error)).rejects.toThrow(error)
+      expect(await readBrc38ImportSchemaFamily(trx, expected, ['brc38_batch_0'], error)).toEqual(expected)
+      await expect(readBrc38SqliteDefinitionBatch(trx, { definitions: [] })).rejects.toThrow(
+        'Bounded SQLite definition comparison DATA required'
+      )
+      await expect(
+        readBrc38SqliteDefinitionBatch(trx, { definitions: [...batches[0].definitions, batches[0].definitions[0]] })
+      ).rejects.toThrow('Bounded SQLite definition comparison DATA required')
+      await expect(readBrc38SqliteDefinitionBatch(trx, batches[0], 'sqlite_master' as 'sqlite_schema')).rejects.toThrow(
+        'Bounded SQLite definition comparison DATA required'
+      )
+    })
+  } finally {
+    await db.destroy()
+  }
 })

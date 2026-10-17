@@ -14,6 +14,81 @@ interface SchemaCounts {
   readonly sealCount: number
   readonly sealMatches: number
 }
+export interface Brc38SqliteDefinitionBatch {
+  readonly definitions: readonly Readonly<{ name: string; type: string; sql: string | null }>[]
+  readonly tableNames?: readonly string[]
+}
+
+/** Fixed expected SQL DATA, never an owner or schema-admission token. Keep each
+ * dispatch within the existing 32-definition/32-KiB binding envelope. A single
+ * longer original definition retains its original individual query. */
+export function* brc38SqliteDefinitionBatches(
+  expected: ReadonlyMap<string, Readonly<{ type: string; sql: string | null }>>,
+  tableNames?: readonly string[]
+): Generator<Brc38SqliteDefinitionBatch> {
+  const encoder = new TextEncoder(),
+    tables = tableNames === undefined ? undefined : Object.freeze([...tableNames]),
+    tableBytes = tables?.reduce((total, name) => total + encoder.encode(name).byteLength, 0) ?? 0
+  let definitions: Array<Readonly<{ name: string; type: string; sql: string | null }>> = [],
+    bytes = tableBytes
+  for (const [name, source] of expected) {
+    const amount =
+      encoder.encode(name).byteLength +
+      encoder.encode(source.type).byteLength +
+      (source.sql === null ? 0 : encoder.encode(source.sql).byteLength)
+    if (definitions.length !== 0 && (definitions.length >= 32 || amount > 32768 - bytes)) {
+      yield Object.freeze({ definitions: Object.freeze(definitions), tableNames: tables })
+      definitions = []
+      bytes = tableBytes
+    }
+    definitions.push(Object.freeze({ name, type: source.type, sql: source.sql }))
+    bytes += amount
+    if (bytes > 32768) {
+      yield Object.freeze({ definitions: Object.freeze(definitions), tableNames: tables })
+      definitions = []
+      bytes = tableBytes
+    }
+  }
+  if (definitions.length !== 0) yield Object.freeze({ definitions: Object.freeze(definitions), tableNames: tables })
+}
+
+/** Fresh scalar comparisons only. Callers retain their original actual-owner,
+ * complete-family, layout, index and error checks. No verdict is cached. */
+export async function readBrc38SqliteDefinitionBatch(
+  k: Knex,
+  batch: Brc38SqliteDefinitionBatch,
+  catalog: 'sqlite_schema' | 'main.sqlite_schema' = 'sqlite_schema'
+): Promise<Readonly<{ matches: unknown; names: unknown }>> {
+  if (
+    (catalog !== 'sqlite_schema' && catalog !== 'main.sqlite_schema') ||
+    batch.definitions.length < 1 ||
+    batch.definitions.length > 32
+  )
+    throw new Error('Bounded SQLite definition comparison DATA required')
+  if (batch.definitions.length === 1) {
+    const source = batch.definitions[0],
+      query = k(catalog).where({ name: source.name, type: source.type })
+    if (batch.tableNames !== undefined) query.whereIn('tbl_name', batch.tableNames)
+    if (source.sql === null) query.whereNull('sql')
+    else query.whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
+    const row = (await query.count({ count: '*' }).first()) as { count: unknown } | undefined
+    // One exact name needs exactly one row; retain the original long-query
+    // spelling and frame size, including its NULL implicit-index comparison.
+    return Object.freeze({ matches: row?.count, names: row?.count })
+  }
+  const query = k(catalog).where(parts => {
+    for (const source of batch.definitions)
+      void parts.orWhere(part => {
+        void part.where({ name: source.name, type: source.type })
+        if (source.sql === null) part.whereNull('sql')
+        else part.whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
+      })
+  })
+  if (batch.tableNames !== undefined) query.whereIn('tbl_name', batch.tableNames)
+  const row = (await query.count({ matches: '*' }).countDistinct({ names: 'name' }).first()) as
+    { matches: unknown; names: unknown } | undefined
+  return Object.freeze({ matches: row?.matches, names: row?.names })
+}
 function exact(definitions: readonly Definition[], bindings: Array<string | number>): string {
   return definitions
     .map(value => {

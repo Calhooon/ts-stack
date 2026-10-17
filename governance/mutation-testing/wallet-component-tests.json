@@ -137,7 +137,8 @@
     "test/monitor/Monitor.test.ts"
   ],
   "wallet-current-brc38-import-journal-schema-body": [
-    "src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts"
+    "src/storage/portable/Brc38ImportJournalSchemaBody.property.test.ts",
+    "src/storage/portable/Brc38SqlFieldSchemaBatch.test.ts"
   ],
   "wallet-current-brc38-import-merge-checkpoint-node": [
     "src/storage/portable/Brc38ImportMergeCheckpointNode.property.test.ts",
@@ -708,7 +709,8 @@
     "src/storage/snapshot/journal/SnapshotJournalIdentityLedger.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.property.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.test.ts",
-    "src/storage/snapshot/journal/runSnapshotJournalReconciliation.test.ts"
+    "src/storage/snapshot/journal/runSnapshotJournalReconciliation.test.ts",
+    "src/storage/portable/Brc38NativeLocalBaselineBatchNode.test.ts"
   ],
   "wallet-current-snapshot-journal-identity-ledger": [
     "src/storage/snapshot/journal/SnapshotJournalIdentityLedger.property.test.ts",

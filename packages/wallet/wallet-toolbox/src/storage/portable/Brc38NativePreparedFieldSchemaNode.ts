@@ -6,6 +6,7 @@ import {
 } from './Brc38NativePackedSchemaNode'
 import { hasBrc38NativePackedTextSchema } from './Brc38NativePackedTextSchemaNode'
 import { isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
+import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from './Brc38SqlFieldSchemaBatch'
 
 export const nativePreparedFieldsTable = 'brc38_native_prepared_fields'
 export const brc38NativePreparedFieldsMigration = '2026-10-07-003 private native prepared field lifetimes'
@@ -81,14 +82,10 @@ export async function hasBrc38NativePreparedFieldsSchema(k: Knex.Transaction): P
   if (!compact && actualTable?.sql !== definitions[0]) invalid()
   const expected = expectedDefinitions(compact)
   if (total?.count !== expected.size) invalid()
-  for (const [name, value] of expected) {
+  for (const batch of brc38SqliteDefinitionBatches(expected)) {
     requireBrc38PackedRead(k)
-    const actual = (await k('sqlite_schema')
-      .where({ name, type: value.type })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [value.sql])
-      .count({ count: '*' })
-      .first()) as { count: unknown } | undefined
-    if (actual?.count !== 1) invalid()
+    const actual = await readBrc38SqliteDefinitionBatch(k, batch)
+    if (actual.matches !== batch.definitions.length || actual.names !== batch.definitions.length) invalid()
   }
   const primary = (await k('sqlite_schema')
     .where({ tbl_name: nativePreparedFieldsTable, type: 'index' })
