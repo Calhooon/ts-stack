@@ -1,4 +1,19 @@
 import {
+  parseSnapshotJournalArchiveReaderRequest,
+  validateSnapshotJournalArchiveReaderRequest,
+  snapshotJournalArchiveReaderRequestId,
+  type SnapshotJournalArchiveReaderRequest
+} from '../journal/SnapshotJournalArchiveReaderRequest'
+import {
+  parseSnapshotJournalArchivePosition,
+  type SnapshotJournalArchivePosition
+} from '../journal/SnapshotJournalReceiptData'
+import {
+  parseSnapshotJournalArchiveBinding,
+  type SnapshotJournalArchiveBinding
+} from '../journal/SnapshotJournalArchiveBinding'
+import { compareSnapshotJournalRevisions, snapshotJournalRevision } from '../journal/SnapshotJournalRevision'
+import {
   reserveSnapshotArchiveOwner,
   assignSnapshotArchiveOwner,
   releaseSnapshotArchiveOwner,
@@ -80,7 +95,11 @@ export class KnexSnapshotArchiveRequestStore {
     if (base.expiresAt <= (await snapshotArchiveDatabaseNow(k))) return { ...base, state: 'expired' }
     if (row.state === 'ready') {
       if (row.archiveId === null) unavailable()
-      const archive = await new KnexSnapshotArchiveStore(k).inspect(row.identityKey, row.archiveId)
+      const store = new KnexSnapshotArchiveStore(k),
+        archive =
+          this.journalRequest(row) === undefined
+            ? await store.inspect(row.identityKey, row.archiveId)
+            : await store.inspectJournal(row.identityKey, row.archiveId)
       return { ...base, state: 'ready', archiveId: archive.archiveId, digest: archive.digest }
     }
     if (row.state === 'offered' || row.state === 'claimed' || row.state === 'capturing')
@@ -92,6 +111,43 @@ export class KnexSnapshotArchiveRequestStore {
     identityKey: string,
     input: SnapshotArchiveReaderOptions
   ): Promise<{ serverTime: number; request: Readonly<SnapshotArchiveReaderRequest> } | undefined> {
+    return await this.offerReader(identityKey, input, (now, options) => {
+      const fields = {
+        version: 2 as const,
+        nonce: Utils.toHex(Random(32)),
+        notAfter: now + options.lifetimeMs,
+        maxBytes: options.maxBytes
+      }
+      return validateSnapshotArchiveReaderRequest({ ...fields, requestId: snapshotArchiveReaderRequestId(fields) }, now)
+    })
+  }
+
+  async offerJournal(
+    identityKey: string,
+    input: SnapshotArchiveReaderOptions,
+    position?: SnapshotJournalArchivePosition
+  ) {
+    const previous = parseSnapshotJournalArchivePosition(position === undefined ? null : position) ?? null
+    return await this.offerReader(identityKey, input, (now, options) => {
+      const fields = {
+        version: 3 as const,
+        nonce: Utils.toHex(Random(32)),
+        notAfter: now + options.lifetimeMs,
+        maxBytes: options.maxBytes,
+        position: previous
+      }
+      return validateSnapshotJournalArchiveReaderRequest(
+        { ...fields, requestId: snapshotJournalArchiveReaderRequestId(fields) },
+        now
+      )
+    })
+  }
+
+  private async offerReader<T extends SnapshotArchiveReaderRequest | SnapshotJournalArchiveReaderRequest>(
+    identityKey: string,
+    input: SnapshotArchiveReaderOptions,
+    mint: (now: number, options: Readonly<SnapshotArchiveReaderOptions>) => Readonly<T>
+  ): Promise<{ serverTime: number; request: Readonly<T> } | undefined> {
     identity(identityKey)
     const options = validateSnapshotArchiveReaderOptions(input)
     return await this.knex.transaction(async trx => {
@@ -112,16 +168,7 @@ export class KnexSnapshotArchiveRequestStore {
         Number(capacity.reservedBytes) + options.maxBytes > snapshotArchiveLimits.totalBytes
       )
         return undefined
-      const fields = {
-        version: 2 as const,
-        nonce: Utils.toHex(Random(32)),
-        notAfter: now + options.lifetimeMs,
-        maxBytes: options.maxBytes
-      }
-      const request = validateSnapshotArchiveReaderRequest(
-        { ...fields, requestId: snapshotArchiveReaderRequestId(fields) },
-        now
-      )
+      const request = mint(now, options)
       const row: RequestRow = {
         identityKey,
         requestId: request.requestId,
@@ -155,16 +202,22 @@ export class KnexSnapshotArchiveRequestStore {
     return await this.claimRequest(identityKey, parseSnapshotArchiveReaderRequest(input), true)
   }
 
+  async claimJournalReader(identityKey: string, input: unknown) {
+    identity(identityKey)
+    return await this.claimRequest(identityKey, parseSnapshotJournalArchiveReaderRequest(input), true)
+  }
+
   private async claimRequest(
     identityKey: string,
-    request: Readonly<SnapshotArchiveRequest | SnapshotArchiveReaderRequest>,
+    request: Readonly<SnapshotArchiveRequest | SnapshotArchiveReaderRequest | SnapshotJournalArchiveReaderRequest>,
     reader: boolean
   ): Promise<{ receipt: SnapshotArchiveRequestReceipt; owner?: SnapshotArchiveRequestOwner }> {
     const requestJson = JSON.stringify(request)
     return await this.knex.transaction(async trx => {
       const capacity = await lockSnapshotArchiveCapacity(trx)
       const now = await snapshotArchiveDatabaseNow(trx)
-      if (reader) validateSnapshotArchiveReaderRequest(request, now)
+      if (request.version === 3) validateSnapshotJournalArchiveReaderRequest(request, now)
+      else if (reader) validateSnapshotArchiveReaderRequest(request, now)
       else validateSnapshotArchiveRequest(request, now)
       const existing: RequestRow | undefined = await trx(table)
         .where({ identityKey, requestId: request.requestId })
@@ -228,12 +281,48 @@ export class KnexSnapshotArchiveRequestStore {
 
   /** The claim-to-archive assignment and accounting transition commit together. */
   async begin(owner: SnapshotArchiveRequestOwner, binding: SnapshotArchiveBinding): Promise<SnapshotArchiveWriter> {
+    if (binding.version !== 1 && binding.version !== 2) unavailable()
+    return await this.beginOwned(owner, binding)
+  }
+
+  async beginJournal(
+    owner: SnapshotArchiveRequestOwner,
+    input: SnapshotJournalArchiveBinding
+  ): Promise<SnapshotArchiveWriter> {
+    return await this.beginOwned(owner, parseSnapshotJournalArchiveBinding(input))
+  }
+
+  private async beginOwned(
+    owner: SnapshotArchiveRequestOwner,
+    binding: SnapshotArchiveBinding | SnapshotJournalArchiveBinding
+  ): Promise<SnapshotArchiveWriter> {
     const claim = { ...owner }
     return await this.knex.transaction(async trx => {
       const capacity = await lockSnapshotArchiveCapacity(trx)
       const row = await this.owned(trx, claim)
       if (row.state !== 'claimed' || row.archiveId !== null || binding.user.identityKey !== row.identityKey)
         unavailable()
+      const journal = this.journalRequest(row)
+      if ((journal !== undefined) !== (binding.version === 3)) unavailable()
+      if (binding.version === 3) {
+        if (journal === undefined || Number(row.expiresAt) > binding.journal.receipt.expiresAt) unavailable()
+        const position = journal.position,
+          same = position !== null && position.binding === binding.journal.receipt.binding
+        if (
+          same &&
+          compareSnapshotJournalRevisions(
+            snapshotJournalRevision(position.highWater),
+            binding.journal.receipt.highWater
+          ) > 0
+        )
+          unavailable()
+        const incremental =
+          same &&
+          compareSnapshotJournalRevisions(snapshotJournalRevision(position.highWater), binding.journal.receipt.floor) >=
+            0
+        if (binding.journal.bootstrap === incremental || (incremental && binding.journal.low !== position.highWater))
+          unavailable()
+      }
       const remaining = Number(row.expiresAt) - (await snapshotArchiveDatabaseNow(trx))
       if (remaining < 1) unavailable()
       await trx('snapshot_archive_capacity')
@@ -242,10 +331,13 @@ export class KnexSnapshotArchiveRequestStore {
           archives: capacity.archives - 1,
           reservedBytes: Number(capacity.reservedBytes) - Number(row.reservedBytes)
         })
-      const writer = await new KnexSnapshotArchiveStore(trx).begin(binding, {
-        maxBytes: Number(row.reservedBytes),
-        lifetimeMs: remaining
-      })
+      const archives = new KnexSnapshotArchiveStore(trx),
+        options = {
+          maxBytes: Number(row.reservedBytes),
+          lifetimeMs: remaining
+        },
+        writer =
+          binding.version === 3 ? await archives.beginJournal(binding, options) : await archives.begin(binding, options)
       await trx('snapshot_archives').where({ archiveId: writer.archiveId }).update({ expiresAt: row.expiresAt })
       await assignSnapshotArchiveOwner(trx, claim, writer.archiveId)
       await trx(table).where(claim).update({ state: 'capturing', archiveId: writer.archiveId })
@@ -259,12 +351,37 @@ export class KnexSnapshotArchiveRequestStore {
     writer: SnapshotArchiveWriter,
     page: Omit<SnapshotArchivePage, 'digest'>
   ): Promise<void> {
+    await this.appendOwned(owner, writer, page, false)
+  }
+
+  async appendJournal(
+    owner: SnapshotArchiveRequestOwner,
+    writer: SnapshotArchiveWriter,
+    page: Omit<SnapshotArchivePage, 'digest'>
+  ): Promise<void> {
+    await this.appendOwned(owner, writer, page, true)
+  }
+
+  private async appendOwned(
+    owner: SnapshotArchiveRequestOwner,
+    writer: SnapshotArchiveWriter,
+    page: Omit<SnapshotArchivePage, 'digest'>,
+    journal: boolean
+  ): Promise<void> {
     const claim = { ...owner }
     const captured = { ...writer }
-    await new KnexSnapshotArchiveStore(this.knex).append(captured, page, async trx => {
+    const archives = new KnexSnapshotArchiveStore(this.knex)
+    const authorize = async (trx: Knex) => {
       const row = await this.owned(trx, claim)
-      if (row.state !== 'capturing' || row.archiveId !== captured.archiveId) unavailable()
-    })
+      if (
+        row.state !== 'capturing' ||
+        row.archiveId !== captured.archiveId ||
+        (this.journalRequest(row) !== undefined) !== journal
+      )
+        unavailable()
+    }
+    if (journal) await archives.appendJournal(captured, page, authorize)
+    else await archives.append(captured, page, authorize)
   }
 
   /** Called only after the local source and its owned pool have physically closed. */
@@ -289,6 +406,47 @@ export class KnexSnapshotArchiveRequestStore {
       await trx(table).where(claim).update({ state: 'ready' })
       return manifest
     })
+  }
+
+  async sealJournal(owner: SnapshotArchiveRequestOwner, writer: SnapshotArchiveWriter) {
+    const claim = { ...owner },
+      captured = { ...writer }
+    return await this.knex.transaction(async trx => {
+      await lockSnapshotArchiveCapacity(trx)
+      const row = await this.owned(trx, claim)
+      if (
+        !['capturing', 'ready'].includes(row.state) ||
+        row.archiveId !== captured.archiveId ||
+        this.journalRequest(row) === undefined
+      )
+        unavailable()
+      if (await hasSnapshotArchiveOwner(trx, { identityKey: row.identityKey, requestId: row.requestId }))
+        throw new SnapshotArchiveCleanupPendingError()
+      const manifest = await new KnexSnapshotArchiveStore(trx).sealJournal(captured)
+      await trx(table).where(claim).update({ state: 'ready' })
+      return manifest
+    })
+  }
+
+  private journalRequest(row: RequestRow): Readonly<SnapshotJournalArchiveReaderRequest> | undefined {
+    const decoded: unknown = JSON.parse(row.requestJson)
+    if (
+      decoded === null ||
+      typeof decoded !== 'object' ||
+      Object.getOwnPropertyDescriptor(decoded, 'version')?.value !== 3
+    )
+      return undefined
+    const request = parseSnapshotJournalArchiveReaderRequest(decoded)
+    if (request.requestId !== row.requestId || request.notAfter !== Number(row.expiresAt)) unavailable()
+    return request
+  }
+
+  async journalStatus(identityKey: string, input: unknown): Promise<SnapshotArchiveRequestReceipt> {
+    identity(identityKey)
+    const request = parseSnapshotJournalArchiveReaderRequest(input),
+      row: RequestRow | undefined = await this.knex(table).where({ identityKey, requestId: request.requestId }).first()
+    if (row === undefined || row.requestJson !== JSON.stringify(request)) unavailable()
+    return await this.receipt(this.knex, row)
   }
 
   /** Persist a bounded terminal fence before a delayed first admission can reserve resources. */
@@ -336,6 +494,18 @@ export class KnexSnapshotArchiveRequestStore {
   async markReaderCancellation(identityKey: string, input: unknown): Promise<void> {
     identity(identityKey)
     const request = parseSnapshotArchiveReaderRequest(input)
+    await this.markReaderRequestCancellation(identityKey, request)
+  }
+
+  async markJournalReaderCancellation(identityKey: string, input: unknown): Promise<void> {
+    identity(identityKey)
+    await this.markReaderRequestCancellation(identityKey, parseSnapshotJournalArchiveReaderRequest(input))
+  }
+
+  private async markReaderRequestCancellation(
+    identityKey: string,
+    request: SnapshotArchiveReaderRequest | SnapshotJournalArchiveReaderRequest
+  ): Promise<void> {
     await this.knex.transaction(async trx => {
       await lockSnapshotArchiveCapacity(trx)
       const key = { identityKey, requestId: request.requestId }
@@ -355,10 +525,13 @@ export class KnexSnapshotArchiveRequestStore {
     if (
       decoded === null ||
       typeof decoded !== 'object' ||
-      Object.getOwnPropertyDescriptor(decoded, 'version')?.value !== 2
+      ![2, 3].includes(Object.getOwnPropertyDescriptor(decoded, 'version')?.value)
     )
       return
-    const request = parseSnapshotArchiveReaderRequest(decoded)
+    const request =
+      Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 3
+        ? parseSnapshotJournalArchiveReaderRequest(decoded)
+        : parseSnapshotArchiveReaderRequest(decoded)
     if (request.requestId !== row.requestId || request.notAfter !== Number(row.expiresAt)) unavailable()
     await k(table).where({ identityKey: row.identityKey, requestId: row.requestId, released: true }).delete()
   }

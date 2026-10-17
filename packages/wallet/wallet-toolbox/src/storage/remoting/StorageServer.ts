@@ -67,7 +67,11 @@ import {
 } from '../../utility/actionBatchPack'
 import { ACTION_BATCH_MAX_PACK_BYTES, ACTION_BATCH_MAX_PACK_ITEMS } from '../methods/actionBatchBlobs'
 import { validateSyncProofs } from './validateRpcSyncProofs'
-import { KnexSnapshotArchiveRpc } from '../snapshot/archive/KnexSnapshotArchiveRpc'
+import {
+  KnexSnapshotArchiveRpc,
+  snapshotArchiveRpcMethods,
+  type SnapshotArchiveRpcMethod
+} from '../snapshot/archive/KnexSnapshotArchiveRpc'
 import { KnexRemoteSnapshotSyncRpc } from '../snapshot/KnexRemoteSnapshotSyncRpc'
 import {
   remoteSnapshotSyncMethods,
@@ -75,12 +79,7 @@ import {
   remoteSnapshotSyncResponseBytes,
   type RemoteSnapshotSyncMethod
 } from '../snapshot/RemoteSnapshotSyncProtocol'
-import {
-  snapshotArchiveMethods,
-  snapshotArchiveRequestBytes,
-  snapshotArchiveResponseBytes,
-  type SnapshotArchiveMethod
-} from '../snapshot/archive/SnapshotArchiveProtocol'
+import { snapshotArchiveRequestBytes, snapshotArchiveResponseBytes } from '../snapshot/archive/SnapshotArchiveProtocol'
 
 const storageRpcMethods = new Set([
   'abortAction',
@@ -703,8 +702,8 @@ export class StorageServer {
     try {
       this.enforceRpcRequestBudgets(method, params)
       let dispatch: RpcDispatchResult
-      if (snapshotArchiveMethods.includes(method as SnapshotArchiveMethod)) {
-        dispatch = await this.dispatchSnapshotArchive(method as SnapshotArchiveMethod, params, req, useBinary, id)
+      if (snapshotArchiveRpcMethods.includes(method as SnapshotArchiveRpcMethod)) {
+        dispatch = await this.dispatchSnapshotArchive(method as SnapshotArchiveRpcMethod, params, req, useBinary, id)
       } else if (remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)) {
         dispatch = await this.dispatchRemoteSnapshotSync(
           method as RemoteSnapshotSyncMethod,
@@ -738,7 +737,7 @@ export class StorageServer {
       const payload = { jsonrpc: '2.0', result: result ?? null, id }
       const serialized = escapeRpcJson(stringifyJsonRpc(payload, useBinary))
       if (
-        snapshotArchiveMethods.includes(method as SnapshotArchiveMethod) &&
+        snapshotArchiveRpcMethods.includes(method as SnapshotArchiveRpcMethod) &&
         Buffer.byteLength(serialized, 'utf8') > snapshotArchiveResponseBytes
       ) {
         throw new WERR_INVALID_OPERATION('Snapshot archive response exceeds its transport limit')
@@ -1032,10 +1031,12 @@ export class StorageServer {
 
   private async snapshotArchiveSettings(): Promise<Record<string, unknown>> {
     const snapshotArchive = await this.snapshotArchives?.capabilities()
+    const snapshotJournalArchive = await this.snapshotArchives?.journalCapabilities()
     const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
     const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
     return {
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
+      ...(snapshotJournalArchive === undefined ? {} : { snapshotJournalArchive }),
       ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
       ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent })
     }
@@ -1167,7 +1168,7 @@ export class StorageServer {
   }
 
   private async dispatchSnapshotArchive(
-    method: SnapshotArchiveMethod,
+    method: SnapshotArchiveRpcMethod,
     params: unknown[],
     req: Request,
     useBinary: boolean,

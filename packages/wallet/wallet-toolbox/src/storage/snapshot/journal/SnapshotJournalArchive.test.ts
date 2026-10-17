@@ -1,50 +1,22 @@
-import { seedArchiveClosure } from '../../../../test/utils/snapshotArchiveFixtures'
-import { knex } from 'knex'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { StorageKnex } from '../../StorageKnex'
-import { StorageProvider } from '../../StorageProvider'
-import { KnexSnapshotArchiveStore } from '../archive/KnexSnapshotArchiveStore'
+import { verifySnapshotJournalArchiveDirectory } from './SnapshotJournalArchiveDirectory'
+import {
+  snapshotJournalArchiveFixture,
+  journalArchiveIdentity as identityKey,
+  journalArchiveForeign as foreignKey
+} from '../../../../test/utils/snapshotJournalArchiveFixture'
+import type { KnexSnapshotArchiveStore } from '../archive/KnexSnapshotArchiveStore'
 import { snapshotArchiveLimits } from '../archive/SnapshotArchive'
 import { captureSnapshotJournalArchiveSource } from './captureSnapshotJournalArchiveSource'
 import { decodeSnapshotJournalArchivePacket, snapshotJournalArchiveEncoding } from './SnapshotJournalArchivePacket'
 import { snapshotJournalArchiveStreams, type SnapshotJournalArchiveManifest } from './SnapshotJournalArchiveBinding'
 import * as Backend from './SnapshotJournalCaptureBackend'
-import type { SnapshotJournalReconciliationSource } from './SnapshotJournalProvider'
 import { runInSeries } from '../../../utility/runInSeries'
 
-const identityKey = '02' + '11'.repeat(32),
-  foreignKey = '03' + '22'.repeat(32)
-const fixtures: Array<{ storage: StorageKnex; directory: string }> = [],
-  sources: SnapshotJournalReconciliationSource[] = []
+const fixtures: Array<Awaited<ReturnType<typeof snapshotJournalArchiveFixture>>> = []
 async function fixture(fullClosure = false) {
-  const directory = await mkdtemp(join(tmpdir(), 'ts569-journal-archive-')),
-    storage = new StorageKnex({
-      ...StorageProvider.createStorageBaseOptions('test'),
-      knex: knex({
-        client: 'better-sqlite3',
-        connection: { filename: join(directory, 'wallet.sqlite') },
-        useNullAsDefault: true,
-        pool: { min: 0, max: 1 }
-      })
-    })
-  fixtures.push({ storage, directory })
-  await storage.knex.raw('PRAGMA journal_mode=WAL')
-  await storage.migrate('journal archive fixture', 'source')
-  await storage.makeAvailable()
-  const { user } = await storage.findOrInsertUser(identityKey),
-    { user: foreign } = await storage.findOrInsertUser(foreignKey)
-  await storage.updateUser(user.userId, { activeStorage: 'source' })
-  if (fullClosure) await seedArchiveClosure(storage, user.userId, foreign.userId)
-  const original = await storage.findOrInsertTxLabel(user.userId, 'original label')
-  await storage.findOrInsertTxLabel(foreign.userId, 'foreign label')
-  const open = async () => {
-    const source = await storage.openCurrentSnapshotJournalSource(identityKey)
-    sources.push(source)
-    return source
-  }
-  return { storage, user, original, foreign, store: new KnexSnapshotArchiveStore(storage.knex), open }
+  const value = await snapshotJournalArchiveFixture(fullClosure)
+  fixtures.push(value)
+  return value
 }
 async function packets(store: KnexSnapshotArchiveStore, manifest: SnapshotJournalArchiveManifest) {
   const directory = await store.journalDirectory(identityKey, manifest.archiveId)
@@ -70,14 +42,7 @@ async function packets(store: KnexSnapshotArchiveStore, manifest: SnapshotJourna
 }
 afterEach(async () => {
   jest.restoreAllMocks()
-  await runInSeries(sources.splice(0), async source => {
-    await source.close()
-    await source.closed
-  })
-  await runInSeries(fixtures.splice(0), async f => {
-    await f.storage.destroy()
-    await rm(f.directory, { recursive: true, force: true })
-  })
+  await runInSeries(fixtures.splice(0), fixture => fixture.close())
 })
 
 test('actual full journal capture streams fifteen sealed streams, exact identities and one profile; row archive APIs refuse it', async () => {
@@ -125,11 +90,17 @@ test('actual full journal capture streams fifteen sealed streams, exact identiti
   expect(rows.some(x => x.label === 'foreign label')).toBe(false)
   expect(rows.every(x => !Object.hasOwn(x, 'userId') || Number(x.userId) === f.user.userId)).toBe(true)
   expect(
-    entries.some(
-      x =>
-        x.packet.kind === 'identities' &&
-        [...x.packet.identities.values()].some(i => i.tableId === 3 && i.incomingId === f.original.txLabelId)
-    )
+    entries.some(entry => {
+      const groups =
+        entry.packet.kind === 'identities'
+          ? [entry.packet]
+          : entry.packet.kind === 'identity-groups'
+            ? entry.packet.groups
+            : []
+      return groups.some(group =>
+        [...group.identities.values()].some(i => i.tableId === 3 && i.incomingId === f.original.txLabelId)
+      )
+    })
   ).toBe(true)
   await expect(f.store.inspect(identityKey, manifest.archiveId)).rejects.toThrow('unavailable')
   await expect(f.store.directory(identityKey, manifest.archiveId)).rejects.toThrow('unavailable')
@@ -242,4 +213,134 @@ test('actual physical reader close must finish before ready publication; foregro
     release()
     await capture.catch(() => undefined)
   }
+})
+
+test('small prefixes coalesce within a fixed packet bound and the directory indexes real frame ordinals', async () => {
+  const f = await fixture()
+  const when = new Date('2026-01-01T00:00:00.000Z')
+  await f.storage.knex('tx_labels').insert(
+    Array.from({ length: 64 }, (_, index) => ({
+      userId: f.user.userId,
+      label: 'batched label ' + index,
+      isDeleted: false,
+      created_at: when,
+      updated_at: when
+    }))
+  )
+  const source = await f.open(),
+    observer = jest.spyOn(source, 'readArchiveDeltaPage'),
+    manifest = await captureSnapshotJournalArchiveSource(source, f.store),
+    entries = await packets(f.store, manifest)
+  expect(observer).toHaveBeenCalled()
+  expect(manifest.pages).toBeLessThan(45)
+  const verified = verifySnapshotJournalArchiveDirectory(
+    await f.store.journalDirectory(identityKey, manifest.archiveId),
+    {
+      identityKey,
+      chain: 'test',
+      sourceStorageIdentityKey: 'source',
+      sourceSchema: manifest.binding.sourceSchema,
+      archiveId: manifest.archiveId,
+      digest: manifest.digest,
+      expiresAt: manifest.expiresAt
+    },
+    Date.now()
+  )
+  expect(verified.frames).toHaveLength(entries.filter(entry => entry.packet.kind === 'frame').length)
+  for (const [ordinal, frame] of verified.frames.entries()) {
+    expect(verified.receipts[frame.sequence].packet).toBe('frame')
+    expect(frame.firstPrefix).toBe(ordinal === 0 ? 0 : verified.frames[ordinal - 1].sequence + 1)
+  }
+
+  const groups = entries.flatMap(entry => (entry.packet.kind === 'identity-groups' ? [entry.packet.groups] : []))
+  expect(groups.some(batch => batch.length > 1)).toBe(true)
+  expect(groups.every(batch => batch.reduce((count, group) => count + group.identities.size, 0) <= 128)).toBe(true)
+  expect(
+    entries
+      .flatMap(entry => (entry.packet.kind === 'frame' ? entry.packet.page.changes : []))
+      .filter(
+        change =>
+          change.present && typeof change.row.label === 'string' && change.row.label.startsWith('batched label ')
+      )
+  ).toHaveLength(64)
+})
+
+test('artifact DATA observers cannot borrow the local reentrant SQL writer fence', async () => {
+  const f = await fixture(),
+    source = await f.open(),
+    commit = jest.fn(async () => {
+      await f.storage.knex.raw('SELECT 1')
+      return 'must not run'
+    })
+  const denied: unknown[] = []
+  try {
+    if (source.readArchiveDeltaPage === undefined) throw new Error('Actual bounded artifact producer unavailable')
+    await source.readArchiveDeltaPage(
+      {
+        stream: 'scope',
+        tableId: 3,
+        low: source.receipt.floor,
+        bootstrap: true,
+        maximumRows: 8,
+        maximumBytes: 262144
+      },
+      () =>
+        source.withCommitFence(commit).then(
+          () => undefined,
+          error => {
+            denied.push(error)
+          }
+        )
+    )
+    expect(denied).toHaveLength(1)
+    expect(commit).not.toHaveBeenCalled()
+    expect(source.isOpen).toBe(true)
+  } finally {
+    await source.close()
+    await source.closed
+  }
+})
+
+test('journal directory binds exact metadata, packet kinds, source scope and all fifteen stream completions', async () => {
+  const f = await fixture(),
+    manifest = await captureSnapshotJournalArchiveSource(await f.open(), f.store),
+    directory = await f.store.journalDirectory(identityKey, manifest.archiveId),
+    expected = {
+      identityKey,
+      chain: 'test' as const,
+      sourceStorageIdentityKey: 'source',
+      sourceSchema: manifest.binding.sourceSchema,
+      archiveId: manifest.archiveId,
+      digest: manifest.digest,
+      expiresAt: manifest.expiresAt
+    }
+  expect(verifySnapshotJournalArchiveDirectory(directory, expected, Date.now()).manifest.digest).toBe(manifest.digest)
+  const mutations = [
+    (value: typeof directory) => {
+      value.bindingJson = ' ' + value.bindingJson
+    },
+    (value: typeof directory) => {
+      value.receipts[0].packet = value.receipts[0].packet === 'frame' ? 'identities' : 'frame'
+    },
+    (value: typeof directory) => {
+      value.receipts[0].stream = 'physical'
+    },
+    (value: typeof directory) => {
+      value.receipts.pop()
+      value.pages--
+    },
+    (value: typeof directory) => {
+      value.rows++
+    }
+  ]
+  for (const change of mutations) {
+    const copy = structuredClone(directory)
+    change(copy)
+    expect(() => verifySnapshotJournalArchiveDirectory(copy, expected, Date.now())).toThrow()
+  }
+  expect(() =>
+    verifySnapshotJournalArchiveDirectory(directory, { ...expected, identityKey: foreignKey }, Date.now())
+  ).toThrow()
+  expect(() => verifySnapshotJournalArchiveDirectory(directory, { ...expected, chain: 'main' }, Date.now())).toThrow()
+  expect(() => verifySnapshotJournalArchiveDirectory(directory, expected, manifest.expiresAt)).toThrow()
 })

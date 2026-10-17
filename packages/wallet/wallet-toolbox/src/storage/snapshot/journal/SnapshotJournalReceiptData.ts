@@ -127,3 +127,21 @@ export function parseSnapshotJournalReceiptData(
     expiresAt: row.expiresAt
   })
 }
+
+export interface SnapshotJournalArchivePosition {
+  binding: string
+  highWater: string
+}
+
+/** A requested lower bound is DATA. The actual producer chooses full repair
+ * when this physical/profile binding or retained interval no longer matches. */
+export function parseSnapshotJournalArchivePosition(
+  input: unknown
+): Readonly<SnapshotJournalArchivePosition & { highWater: ReturnType<typeof snapshotJournalRevision> }> | undefined {
+  if (input === null) return undefined
+  const row = snapshotJournalDataRecord(input, ['binding', 'highWater'])
+  return Object.freeze({
+    binding: snapshotJournalDataDigest(row.binding),
+    highWater: snapshotJournalRevision(row.highWater)
+  })
+}

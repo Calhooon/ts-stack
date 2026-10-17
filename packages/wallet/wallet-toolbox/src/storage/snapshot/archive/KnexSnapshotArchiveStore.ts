@@ -1,4 +1,8 @@
 import {
+  snapshotJournalArchiveStorageTable,
+  parseSnapshotJournalArchiveStorageTable
+} from '../journal/SnapshotJournalArchiveStorageTable'
+import {
   parseSnapshotJournalArchiveBinding,
   snapshotJournalArchiveStreams,
   type SnapshotJournalArchiveBinding,
@@ -14,7 +18,6 @@ import { Hash, Random, Utils } from '@bsv/sdk'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION, WERR_INVALID_PARAMETER } from '../../../sdk/WERR_errors'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
-import type { WalletSnapshotTable } from '../WalletReadSnapshot'
 import { runInSeries } from '../../../utility/runInSeries'
 import { lockSnapshotArchiveCapacity, snapshotArchiveDatabaseNow } from './SnapshotArchiveSql'
 import { snapshotArchiveEncoding, type SnapshotArchiveDirectory } from './SnapshotArchiveDirectory'
@@ -54,7 +57,7 @@ interface ArchiveRow {
 interface PageRow {
   archiveId: string
   sequence: number
-  tableName: WalletSnapshotTable
+  tableName: string
   rows: number
   done: number | boolean
   payload: Uint8Array
@@ -89,7 +92,7 @@ function validDate(value: Date): boolean {
 }
 
 function hash(bytes: Uint8Array): string {
-  return Utils.toHex(Hash.sha256(Array.from(bytes)))
+  return Utils.toHex(Hash.sha256(bytes))
 }
 
 function unavailable(): WERR_INVALID_OPERATION {
@@ -288,9 +291,15 @@ export class KnexSnapshotArchiveStore {
         const prior: PageRow | undefined = await trx('snapshot_archive_pages')
           .where({ archiveId: row.archiveId, sequence: input.sequence })
           .first()
+        const priorTable =
+          prior === undefined
+            ? undefined
+            : journal
+              ? parseSnapshotJournalArchiveStorageTable(prior.tableName).table
+              : prior.tableName
         if (
           prior?.digest !== digest ||
-          prior.tableName !== input.table ||
+          priorTable !== input.table ||
           prior.rows !== input.rows ||
           Boolean(prior.done) !== input.done
         )
@@ -298,6 +307,7 @@ export class KnexSnapshotArchiveStore {
         return
       }
       if (row.state !== 'building' || input.sequence !== row.nextSequence) throw unavailable()
+      let storedTable: string = input.table
       if (journal) {
         const binding = parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
           stream = snapshotJournalArchiveStreams[row.tableIndex]
@@ -312,6 +322,7 @@ export class KnexSnapshotArchiveStore {
           input.done !== (packet.kind === 'frame' && packet.page.complete)
         )
           throw unavailable()
+        storedTable = snapshotJournalArchiveStorageTable(packet.kind === 'frame' ? 'frame' : 'identities', stream)
       } else if (input.table !== snapshotArchiveTables[row.tableIndex]) throw unavailable()
       const usedBytes = Number(row.usedBytes) + input.bytes.length + snapshotArchiveLimits.pageCharge
       if (usedBytes > Number(row.reservedBytes))
@@ -319,14 +330,14 @@ export class KnexSnapshotArchiveStore {
       await trx('snapshot_archive_pages').insert({
         archiveId: row.archiveId,
         sequence: input.sequence,
-        tableName: input.table,
+        tableName: storedTable,
         rows: input.rows,
         done: input.done,
         digest,
         payload: Buffer.from(input.bytes)
       })
       const receipt = new TextEncoder().encode(
-        JSON.stringify([row.digest, input.sequence, input.table, input.rows, input.done, digest])
+        JSON.stringify([row.digest, input.sequence, storedTable, input.rows, input.done, digest])
       )
       await trx('snapshot_archives')
         .where({ archiveId: row.archiveId })
@@ -454,13 +465,19 @@ export class KnexSnapshotArchiveStore {
       rows: Number(header.rows),
       digest: header.digest,
       bindingJson: header.binding,
-      receipts: pages.map(page => ({
-        sequence: page.sequence,
-        table: page.tableName,
-        rows: page.rows,
-        done: Boolean(page.done),
-        digest: page.digest
-      }))
+      receipts: pages.map(page => {
+        const packet = journal ? parseSnapshotJournalArchiveStorageTable(page.tableName) : undefined,
+          table = packet?.table ?? snapshotArchiveTables.find(table => table === page.tableName)
+        if (table === undefined) throw unavailable()
+        return {
+          sequence: page.sequence,
+          table,
+          rows: page.rows,
+          done: Boolean(page.done),
+          digest: page.digest,
+          ...(packet === undefined ? {} : { packet: packet.packet, stream: packet.stream, tableId: packet.tableId })
+        }
+      })
     }
   }
 
@@ -486,9 +503,13 @@ export class KnexSnapshotArchiveStore {
     if (hash(page.payload) !== page.digest) throw unavailable()
     // Release/expiry during I/O cannot return a newly stale page.
     await this.ready(identityKey, archiveId, journal)
+    const table = journal
+      ? parseSnapshotJournalArchiveStorageTable(page.tableName).table
+      : snapshotArchiveTables.find(table => table === page.tableName)
+    if (table === undefined) throw unavailable()
     return {
       sequence,
-      table: page.tableName,
+      table,
       rows: page.rows,
       done: Boolean(page.done),
       digest: page.digest,

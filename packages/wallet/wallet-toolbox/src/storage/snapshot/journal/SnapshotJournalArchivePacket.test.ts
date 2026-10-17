@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   encodeSnapshotJournalArchiveFrame,
   encodeSnapshotJournalArchiveIdentities,
+  encodeSnapshotJournalArchiveIdentityGroups,
   decodeSnapshotJournalArchivePacket
 } from './SnapshotJournalArchivePacket'
 import {
@@ -155,4 +156,27 @@ test('framing, context, high-water and digest failures refuse before an artifact
   const impossible = new Uint8Array(4)
   new DataView(impossible.buffer).setUint32(0, 0xffffffff)
   expect(() => decodeSnapshotJournalArchivePacket(impossible, context, high)).toThrow()
+})
+
+test('grouped prefixes preserve change boundaries and exact maps within one fixed128-identity packet', () => {
+  const groups = Array.from({ length: 8 }, (_, changeIndex) => ({
+      changeIndex,
+      identities: new Map([['3:4', identity()]])
+    })),
+    encoded = encodeSnapshotJournalArchiveIdentityGroups(context, '88'.repeat(32), groups, high),
+    decoded = decodeSnapshotJournalArchivePacket(encoded, context, high)
+  if (decoded.kind !== 'identity-groups') throw new Error('Expected actual identity group packet')
+  expect(decoded.groups.map(group => ({ changeIndex: group.changeIndex, identities: [...group.identities] }))).toEqual(
+    groups.map(group => ({ changeIndex: group.changeIndex, identities: [...group.identities] }))
+  )
+  const tooMany = Array.from({ length: 2 }, (_, changeIndex) => ({
+    changeIndex,
+    identities: new Map(
+      Array.from({ length: 65 }, (_, index) => {
+        const value = { ...identity(), incomingId: index + 1 }
+        return ['3:' + value.incomingId, value] as const
+      })
+    )
+  }))
+  expect(() => encodeSnapshotJournalArchiveIdentityGroups(context, '88'.repeat(32), tooMany, high)).toThrow('bound')
 })

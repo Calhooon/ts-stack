@@ -35,7 +35,13 @@ export type SnapshotJournalArchivePacket =
       changeIndex: number
       identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
     }
+  | { kind: 'identity-groups'; frameDigest: string; groups: ReadonlyArray<SnapshotJournalArchiveIdentityGroup> }
   | { kind: 'frame'; frameDigest: string; page: SnapshotJournalDeltaPage }
+
+export interface SnapshotJournalArchiveIdentityGroup {
+  readonly changeIndex: number
+  readonly identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+}
 
 function invalid(): never {
   throw new TypeError('Invalid snapshot journal archive packet DATA')
@@ -154,6 +160,37 @@ export function encodeSnapshotJournalArchiveIdentities(
   return envelope({ version: 1, kind: 'identities', ...bound, frameDigest, changeIndex, identities })
 }
 
+/** Bounded groups coalesce small callbacks without materializing a wallet map.
+ * A large notification batch still flushes at128identities/oneMiB. */
+export function encodeSnapshotJournalArchiveIdentityGroups(
+  inputContext: SnapshotJournalDeltaFrameContext,
+  inputDigest: string,
+  input: readonly SnapshotJournalArchiveIdentityGroup[],
+  highWater: SnapshotJournalRevision
+): Uint8Array {
+  const bound = context(inputContext),
+    frameDigest = snapshotJournalDataDigest(inputDigest),
+    high = snapshotJournalRevision(highWater)
+  let count = 0
+  const groups = array(input, 128).map(raw => {
+    const group = snapshotJournalDataRecord(raw, ['changeIndex', 'identities']),
+      changeIndex = integer(group.changeIndex, 0, 255),
+      map = group.identities,
+      size = Object.getOwnPropertyDescriptor(Map.prototype, 'size')?.get
+    if (!(map instanceof Map) || size === undefined) invalid()
+    count += size.call(map)
+    if (count > 128) throw new SnapshotResourceLimitError('Journal identity group bound reached')
+    const entries: Array<[string, SnapshotJournalSourceIdentity]> = Array.from(Map.prototype.entries.call(map)),
+      identities = entries.map(([key, value]) => {
+        const owned = identity(value, high)
+        if (key !== owned.tableId + ':' + owned.incomingId) invalid()
+        return owned
+      })
+    return { changeIndex, identities }
+  })
+  return envelope({ version: 1, kind: 'identity-groups', ...bound, frameDigest, groups })
+}
+
 export function encodeSnapshotJournalArchiveFrame(
   inputContext: SnapshotJournalDeltaFrameContext,
   page: SnapshotJournalDeltaPage
@@ -188,7 +225,7 @@ export function decodeSnapshotJournalArchivePacket(
       'stream',
       'tableId',
       'frameDigest',
-      ...(kind === 'identities' ? ['changeIndex', 'identities'] : [])
+      ...(kind === 'identities' ? ['changeIndex', 'identities'] : kind === 'identity-groups' ? ['groups'] : [])
     ]),
     frameDigest = snapshotJournalDataDigest(row.frameDigest)
   if (row.version !== 1 || row.stream !== bound.stream || row.tableId !== bound.tableId) invalid()
@@ -203,6 +240,24 @@ export function decodeSnapshotJournalArchivePacket(
       identities.set(key, owned)
     }
     return { kind, frameDigest, changeIndex, identities }
+  }
+  if (kind === 'identity-groups') {
+    if (bytes.byteLength !== 4 + length) invalid()
+    let count = 0
+    const groups = array(row.groups, 128).map(raw => {
+      const group = snapshotJournalDataRecord(raw, ['changeIndex', 'identities']),
+        changeIndex = integer(group.changeIndex, 0, 255),
+        identities = new Map<string, SnapshotJournalSourceIdentity>()
+      for (const item of array(group.identities, 128)) {
+        if (++count > 128) invalid()
+        const owned = identity(item, high),
+          key = owned.tableId + ':' + owned.incomingId
+        if (identities.has(key)) invalid()
+        identities.set(key, owned)
+      }
+      return Object.freeze({ changeIndex, identities })
+    })
+    return { kind, frameDigest, groups: Object.freeze(groups) }
   }
   if (kind !== 'frame') invalid()
   const frame = bytes.subarray(4 + length)

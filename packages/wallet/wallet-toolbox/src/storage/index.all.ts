@@ -166,3 +166,7 @@ export type {
 export { Brc38NativeRecoveryTemporaryQuota } from './portable/Brc38NativeRecoveryScratchNode'
 
 export type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from './snapshot/SnapshotSyncContentRevision'
+
+export type { RemoteSnapshotJournalArchive } from './snapshot/journal/openRemoteSnapshotJournalArchive'
+export type { SnapshotJournalArchivePosition } from './snapshot/journal/SnapshotJournalReceiptData'
+export type { SnapshotJournalArchiveCapabilities } from './snapshot/journal/SnapshotJournalArchiveProtocol'

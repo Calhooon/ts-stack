@@ -1,3 +1,12 @@
+import type { WalletReadSnapshotOptions } from '../snapshot/WalletReadSnapshot'
+import {
+  validateSnapshotJournalArchiveCapabilities,
+  type SnapshotJournalArchiveCapabilities,
+  type SnapshotJournalArchiveMethod
+} from '../snapshot/journal/SnapshotJournalArchiveProtocol'
+import { SnapshotJournalArchiveTransport } from '../snapshot/journal/SnapshotJournalArchiveTransport'
+import { openRemoteSnapshotJournalArchive } from '../snapshot/journal/openRemoteSnapshotJournalArchive'
+import type { SnapshotJournalArchivePosition } from '../snapshot/journal/SnapshotJournalReceiptData'
 import {
   validateRemoteSnapshotSyncContentCapabilities,
   type RemoteSnapshotSyncContentCapabilities
@@ -144,6 +153,7 @@ type RemoteStorageSettings = TableSettings & {
   syncCheckpointVersion?: 1
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
+  snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
   snapshotArchiveReaderVersion?: 1
   snapshotSyncDestination?: RemoteSnapshotSyncCapabilities
   snapshotSyncContent?: RemoteSnapshotSyncContentCapabilities
@@ -303,6 +313,10 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
+  if (properties.snapshotJournalArchive != null) {
+    validateSnapshotJournalArchiveCapabilities(properties.snapshotJournalArchive.value)
+    if (properties.snapshotArchive == null) throw new Error('Wallet storage returned invalid settings.')
+  }
   if (properties.snapshotSyncContent != null)
     validateRemoteSnapshotSyncContentCapabilities(properties.snapshotSyncContent.value)
   if (properties.snapshotSyncDestination != null)
@@ -422,8 +436,31 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     )
   }
 
+  /** Opens an authenticated immutable journal artifact; this is not a live SQL source. */
+  async openSnapshotJournalArchive(
+    identityKey: string,
+    position?: SnapshotJournalArchivePosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const settings = await this.makeAvailable()
+    if (
+      !this.snapshotArchivesEnabled ||
+      this.snapshotSource === undefined ||
+      settings.snapshotJournalArchive === undefined
+    )
+      return undefined
+    const transport = new SnapshotJournalArchiveTransport(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      this.snapshotSource.identityKey,
+      this.snapshotSource.chain,
+      settings.snapshotJournalArchive
+    )
+    return await openRemoteSnapshotJournalArchive(transport, position, options)
+  }
+
   private async snapshotRpcCall(
-    method: SnapshotArchiveMethod | RemoteSnapshotSyncMethod,
+    method: SnapshotArchiveMethod | SnapshotJournalArchiveMethod | RemoteSnapshotSyncMethod,
     params: unknown[],
     signal?: AbortSignal
   ): Promise<unknown> {

@@ -40,6 +40,17 @@ export interface SnapshotJournalReconciliationSource extends SnapshotJournalSour
     commit: () => Promise<T>
   ) => Promise<SnapshotJournalCurrentDataResult<T>>
   hasChangesSince: (since: SnapshotJournalRevision) => Promise<boolean>
+  /** Optional artifact producer hook. Pure bounded DATA collection may finish
+   * synchronously; a returned promise must represent the real prefix flush.
+   * The original asynchronous local writer callback contract stays unchanged. */
+  readArchiveDeltaPage?: (
+    request: SnapshotJournalDeltaRequest,
+    captureIdentities: (
+      frameDigest: string,
+      changeIndex: number,
+      identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+    ) => void | Promise<void>
+  ) => Promise<{ page: SnapshotJournalDeltaPage; frameDigest: string }>
   readDeltaPage: (
     request: SnapshotJournalDeltaRequest,
     captureIdentities: (

@@ -16,20 +16,20 @@ import {
 } from './SnapshotJournalArchiveBinding'
 import {
   encodeSnapshotJournalArchiveFrame,
+  decodeSnapshotJournalArchivePacket,
   encodeSnapshotJournalArchiveIdentities,
+  encodeSnapshotJournalArchiveIdentityGroups,
+  type SnapshotJournalArchiveIdentityGroup,
   snapshotJournalArchiveEncoding
 } from './SnapshotJournalArchivePacket'
 import { encodeSnapshotJournalDeltaFrame } from './SnapshotJournalDeltaFrame'
-import { snapshotJournalDataDigest, snapshotJournalDataRecord } from './SnapshotJournalReceiptData'
+import { parseSnapshotJournalArchivePosition, type SnapshotJournalArchivePosition } from './SnapshotJournalReceiptData'
+export type { SnapshotJournalArchivePosition } from './SnapshotJournalReceiptData'
 
-export interface SnapshotJournalArchivePosition {
-  binding: string
-  highWater: string
-}
 export type SnapshotJournalArchiveCaptureStore = Pick<
   KnexSnapshotArchiveStore,
-  'beginJournal' | 'appendJournal' | 'sealJournal' | 'close'
->
+  'beginJournal' | 'appendJournal' | 'sealJournal'
+> & { close: (identityKey: string, archiveId: string, error?: unknown) => Promise<void> }
 
 /** Capture actual immutable DATA while retaining the genuine pinned source and
  * its archive guard. No SQL actor/fence is reconstructed from the output. Every
@@ -47,14 +47,7 @@ export async function captureSnapshotJournalArchiveSource(
     if (options.signal?.aborted) throw new SnapshotCancelledError('Journal archive capture cancelled')
   }
   try {
-    const input = position === undefined ? undefined : snapshotJournalDataRecord(position, ['binding', 'highWater']),
-      previous =
-        input === undefined
-          ? undefined
-          : {
-              binding: snapshotJournalDataDigest(input.binding),
-              highWater: snapshotJournalRevision(input.highWater)
-            }
+    const previous = parseSnapshotJournalArchivePosition(position === undefined ? null : position)
     active()
     await source.verifyLive()
     if (
@@ -104,16 +97,17 @@ export async function captureSnapshotJournalArchiveSource(
         complete = false
       while (!complete) {
         active()
-        const captured = await source.readDeltaPage(
-          {
-            ...context,
-            low,
-            ...(incremental ? {} : { bootstrap: true as const }),
-            after,
-            maximumRows: 8,
-            maximumBytes: 262144
-          },
-          async (digest, changeIndex, identities) => {
+        const request = {
+          ...context,
+          low,
+          ...(incremental ? {} : { bootstrap: true as const }),
+          after,
+          maximumRows: 8,
+          maximumBytes: 262144
+        }
+        let captured: Awaited<ReturnType<SnapshotJournalReconciliationSource['readDeltaPage']>>
+        if (source.readArchiveDeltaPage === undefined) {
+          captured = await source.readDeltaPage(request, async (digest, changeIndex, identities) => {
             await append(
               stream.table,
               encodeSnapshotJournalArchiveIdentities(
@@ -126,8 +120,55 @@ export async function captureSnapshotJournalArchiveSource(
               0,
               false
             )
+          })
+        } else {
+          let groups: SnapshotJournalArchiveIdentityGroup[] = [],
+            encoded: Uint8Array | undefined,
+            groupDigest: string | undefined
+          const flush = (): Promise<void> => {
+            if (encoded === undefined) throw new TypeError('No actual journal identity prefix to flush')
+            const bytes = encoded
+            return append(stream.table, bytes, 0, false).then(() => {
+              groups = []
+              encoded = undefined
+            })
           }
-        )
+          captured = await source.readArchiveDeltaPage(request, (digest, changeIndex, identities) => {
+            if (groupDigest !== undefined && groupDigest !== digest)
+              throw new TypeError('Journal frame digest changed within prefixes')
+            groupDigest = digest
+            const group: SnapshotJournalArchiveIdentityGroup = { changeIndex, identities }
+            try {
+              const candidate = [...groups, group],
+                next = encodeSnapshotJournalArchiveIdentityGroups(
+                  context,
+                  digest,
+                  candidate,
+                  binding.journal.receipt.highWater
+                )
+              // Own every bounded map/cell before returning to the producer.
+              const owned = decodeSnapshotJournalArchivePacket(next, context, binding.journal.receipt.highWater)
+              if (owned.kind !== 'identity-groups') throw new TypeError('Expected bounded journal identity groups')
+              groups = [...owned.groups]
+              encoded = next
+            } catch (error) {
+              if (!(error instanceof SnapshotResourceLimitError) || groups.length === 0) throw error
+              return flush().then(() => {
+                const next = encodeSnapshotJournalArchiveIdentityGroups(
+                    context,
+                    digest,
+                    [group],
+                    binding.journal.receipt.highWater
+                  ),
+                  owned = decodeSnapshotJournalArchivePacket(next, context, binding.journal.receipt.highWater)
+                if (owned.kind !== 'identity-groups') throw new TypeError('Expected bounded journal identity groups')
+                groups = [...owned.groups]
+                encoded = next
+              })
+            }
+          })
+          if (encoded !== undefined) await flush()
+        }
         active()
         const frame = encodeSnapshotJournalDeltaFrame(captured.page, context)
         if (toHex(sha256(frame)) !== captured.frameDigest) throw new TypeError('Captured journal frame digest changed')
@@ -174,7 +215,7 @@ export async function captureSnapshotJournalArchiveSource(
   }
   if (writer !== undefined) {
     try {
-      await store.close(source.user.identityKey, writer.archiveId)
+      await store.close(source.user.identityKey, writer.archiveId, failure.error)
     } catch (error) {
       throw new AggregateError([failure.error, error], 'Journal archive failure and staged cleanup failed', {
         cause: failure.error

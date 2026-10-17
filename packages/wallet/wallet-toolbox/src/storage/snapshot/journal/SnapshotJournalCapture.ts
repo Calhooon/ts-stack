@@ -14,8 +14,12 @@ import {
 import type { SnapshotArchiveRequestOwner } from '../archive/SnapshotArchiveRequest'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { createOwnedNativeReadDatabase, ownedNativeRootIdentity } from '../../schema/ownedNativeSqliteConnectionsNode'
-import type { SnapshotJournalReconciliationSource } from './SnapshotJournalProvider'
-import type { SnapshotJournalDeltaPage, SnapshotJournalPosition } from './SnapshotJournalTypes'
+import type { SnapshotJournalReconciliationSource, SnapshotJournalDeltaRequest } from './SnapshotJournalProvider'
+import type {
+  SnapshotJournalDeltaPage,
+  SnapshotJournalPosition,
+  SnapshotJournalSourceIdentity
+} from './SnapshotJournalTypes'
 export type {
   SnapshotJournalSource,
   SnapshotJournalDeltaRequest,
@@ -546,6 +550,90 @@ export function retainSnapshotJournalCapture(
       archiveSource = createKnexSnapshotArchiveSource(storage, view, captured.header)
     let reading = false
     let identityWriter = false
+    const readDeltaPage = async (
+      input: SnapshotJournalDeltaRequest,
+      captureIdentities: (
+        frameDigest: string,
+        changeIndex: number,
+        identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+      ) => void | Promise<void>,
+      kind: 'local-writer' | 'artifact-data'
+    ): Promise<{ page: SnapshotJournalDeltaPage; frameDigest: string }> => {
+      if (reading || typeof captureIdentities !== 'function') return invalid()
+      const request = { ...input, ...(input.after === undefined ? {} : { after: { ...input.after } }) }
+      if (request.bootstrap !== undefined && request.bootstrap !== true) return invalid()
+      reading = true
+      try {
+        return await view.read(async token => {
+          await owned.verifyLive()
+          const trx = storage!.toDb(token)
+          const header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
+          const indexes = {
+            profile: header.profileIndexes,
+            relation: header.relationIndexes,
+            certificate: header.certificateIndexes,
+            global: header.globalIndexes
+          }
+          // The full physical scans cover both shared global tables with
+          // current profile membership. Replaying their older scope events
+          // in a full scan would mislabel current payloads with old revisions.
+          const fullGlobalScope =
+            request.bootstrap === true && request.stream === 'scope' && (request.tableId === 8 || request.tableId === 9)
+          const page: SnapshotJournalDeltaPage = fullGlobalScope
+            ? {
+                table: request.tableId === 8 ? 'provenTxs' : 'provenTxReqs',
+                changes: [],
+                examined: 0,
+                payloadBytes: 0,
+                complete: true
+              }
+            : await readSnapshotJournalDeltaPage(
+                trx,
+                {
+                  ...(request.bootstrap === true ? { bootstrap: true as const } : {}),
+                  stream: request.stream,
+                  tableId: request.tableId,
+                  userId: owned.binding.userId,
+                  floor: owned.receipt.floor,
+                  low: snapshotJournalRevision(request.low),
+                  high: owned.receipt.highWater,
+                  after: request.after,
+                  limit: request.maximumRows
+                },
+                request.maximumBytes,
+                indexes
+              )
+          const frame = encodeSnapshotJournalDeltaFrame(page, { stream: request.stream, tableId: request.tableId })
+          const frameDigest = createHash('sha256').update(frame).digest('hex')
+          // Provenance stays in its staged raw frame; it is not promoted.
+          if (request.tableId !== 7) {
+            for (let index = 0; index < page.changes.length; index++) {
+              for await (const identities of readSnapshotJournalRowSourceIdentities(
+                trx,
+                owned.binding.userId,
+                owned.receipt.highWater,
+                request.tableId,
+                page.changes[index],
+                indexes
+              )) {
+                if (!view.isOpen) return invalid()
+                identityWriter = kind === 'local-writer'
+                try {
+                  const pending = captureIdentities(frameDigest, index, identities)
+                  if (pending !== undefined) await pending
+                } finally {
+                  identityWriter = false
+                }
+              }
+            }
+          }
+          await owned.verifyLive()
+          return { page, frameDigest }
+        })
+      } finally {
+        reading = false
+      }
+    }
     const source: SnapshotJournalReconciliationSource = {
       ...archiveSource,
       get sourceStorage() {
@@ -687,83 +775,8 @@ export function retainSnapshotJournalCapture(
           reading = false
         }
       },
-      readDeltaPage: async (input, captureIdentities) => {
-        if (reading || typeof captureIdentities !== 'function') return invalid()
-        const request = { ...input, ...(input.after === undefined ? {} : { after: { ...input.after } }) }
-        if (request.bootstrap !== undefined && request.bootstrap !== true) return invalid()
-        reading = true
-        try {
-          return await view.read(async token => {
-            await owned.verifyLive()
-            const trx = storage!.toDb(token)
-            const header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
-            const indexes = {
-              profile: header.profileIndexes,
-              relation: header.relationIndexes,
-              certificate: header.certificateIndexes,
-              global: header.globalIndexes
-            }
-            // The full physical scans cover both shared global tables with
-            // current profile membership. Replaying their older scope events
-            // in a full scan would mislabel current payloads with old revisions.
-            const fullGlobalScope =
-              request.bootstrap === true &&
-              request.stream === 'scope' &&
-              (request.tableId === 8 || request.tableId === 9)
-            const page: SnapshotJournalDeltaPage = fullGlobalScope
-              ? {
-                  table: request.tableId === 8 ? 'provenTxs' : 'provenTxReqs',
-                  changes: [],
-                  examined: 0,
-                  payloadBytes: 0,
-                  complete: true
-                }
-              : await readSnapshotJournalDeltaPage(
-                  trx,
-                  {
-                    ...(request.bootstrap === true ? { bootstrap: true as const } : {}),
-                    stream: request.stream,
-                    tableId: request.tableId,
-                    userId: owned.binding.userId,
-                    floor: owned.receipt.floor,
-                    low: snapshotJournalRevision(request.low),
-                    high: owned.receipt.highWater,
-                    after: request.after,
-                    limit: request.maximumRows
-                  },
-                  request.maximumBytes,
-                  indexes
-                )
-            const frame = encodeSnapshotJournalDeltaFrame(page, { stream: request.stream, tableId: request.tableId })
-            const frameDigest = createHash('sha256').update(frame).digest('hex')
-            // Provenance stays in its staged raw frame; it is not promoted.
-            if (request.tableId !== 7) {
-              for (let index = 0; index < page.changes.length; index++) {
-                for await (const identities of readSnapshotJournalRowSourceIdentities(
-                  trx,
-                  owned.binding.userId,
-                  owned.receipt.highWater,
-                  request.tableId,
-                  page.changes[index],
-                  indexes
-                )) {
-                  if (!view.isOpen) return invalid()
-                  identityWriter = true
-                  try {
-                    await captureIdentities(frameDigest, index, identities)
-                  } finally {
-                    identityWriter = false
-                  }
-                }
-              }
-            }
-            await owned.verifyLive()
-            return { page, frameDigest }
-          })
-        } finally {
-          reading = false
-        }
-      }
+      readArchiveDeltaPage: (input, captureIdentities) => readDeltaPage(input, captureIdentities, 'artifact-data'),
+      readDeltaPage: (input, captureIdentities) => readDeltaPage(input, captureIdentities, 'local-writer')
     }
     return source
   })
