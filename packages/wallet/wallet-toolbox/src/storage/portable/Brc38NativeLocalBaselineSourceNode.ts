@@ -53,6 +53,7 @@ import {
 } from './Brc38NativeLocalBaselineTables'
 import {
   readBrc38NativeLocalBaselineGeneration,
+  readBrc38NativeLocalBaselineGenerationData,
   readBrc38NativeLocalBaselineChanges,
   readBrc38NativeLocalBaselineTombstones,
   readBrc38NativeLocalBaselinePhysical,
@@ -640,7 +641,14 @@ export class Brc38NativeLocalBaselineSource {
   }
   async #currentGeneration(): Promise<void> {
     this.#assert()
-    const current = await readBrc38NativeLocalBaselineGeneration(this.#trx)
+    // The current-source factory verifies this exact query-only snapshot
+    // before issuing the facade. Its private transaction never escapes; read
+    // and validate the actual clock on each operation within that same view.
+    // Retired reads, new views and mutable transactions retain full verification.
+    const current =
+      this.#retired === undefined
+        ? await readBrc38NativeLocalBaselineGenerationData(this.#trx)
+        : await readBrc38NativeLocalBaselineGeneration(this.#trx)
     if (!current.complete || !current.enabled || JSON.stringify(current) !== JSON.stringify(this.#generation)) invalid()
     this.#assert()
   }

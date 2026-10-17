@@ -65,11 +65,15 @@ export interface Brc38PrivateLocalCandidateJournal {
 export async function hasBrc38PrivateLocalCandidateJournal(k: Knex.Transaction): Promise<boolean> {
   actual(k)
   const total = (await k('sqlite_schema')
-    .whereRaw('substr(name,1,?)=?', [prefix.length, prefix])
+    .where(query => {
+      void query.whereRaw('substr(name,1,?)=?', [prefix.length, prefix]).orWhereIn('tbl_name', [state, points])
+    })
     .count({ count: '*' })
     .first()) as { count: unknown } | undefined
   if (total?.count === 0) return false
-  if (total?.count !== definitions.length) invalid()
+  // Include every attached object, regardless of its name. The nine exact
+  // definitions and the single implicit point index below account for all ten.
+  if (total?.count !== definitions.length + 1) invalid()
   // All nine fixed definitions fit the original native frame floor together.
   // Compare exact bytes freshly in this view; retain both counts so duplicate
   // names cannot replace an absent original definition. No verdict is cached.

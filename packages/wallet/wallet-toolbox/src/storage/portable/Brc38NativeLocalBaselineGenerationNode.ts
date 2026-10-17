@@ -340,6 +340,17 @@ export async function readBrc38NativeLocalBaselineGeneration(
 ): Promise<Readonly<Brc38NativeLocalBaselineGeneration>> {
   actual(k)
   if (!(await hasBrc38NativeLocalBaselineGenerationSchema(k))) invalid()
+  return await readBrc38NativeLocalBaselineGenerationData(k)
+}
+/** @internal Fresh clock DATA only, never schema/source/primary admission.
+ * The full reader above verifies every schema on each call. The scoped source
+ * facade may use this reader only inside its already authenticated, retained,
+ * query-only snapshot; its private transaction never escapes that facade. New
+ * snapshots and every mutable transaction still require the full verifier. */
+export async function readBrc38NativeLocalBaselineGenerationData(
+  k: Knex.Transaction
+): Promise<Readonly<Brc38NativeLocalBaselineGeneration>> {
+  actual(k)
   const values = (await k(clock)
     .where({ slot: 1 })
     .select(

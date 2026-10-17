@@ -1,3 +1,4 @@
+import { runInSeries } from '../../utility/runInSeries'
 import type { Knex } from 'knex'
 import {
   installBrc38PrivateLocalCandidateJournal,
@@ -37,6 +38,36 @@ export async function verifyBrc38PrivateLocalCandidateJournal(controller: Actual
       initial.copyTable === 0 &&
       initial.afterRowId === null
   )
+  await runInSeries(['trigger', 'index'] as const, async kind => {
+    await controller.withWriter(async trx => {
+      await trx.raw('SAVEPOINT independent_candidate_catalog_admission')
+      try {
+        if (kind === 'trigger')
+          await trx.raw('CREATE TRIGGER independent_candidate_catalog_noop BEFORE DELETE ON ?? BEGIN SELECT 1; END', [
+            state
+          ])
+        else await trx.raw('CREATE INDEX independent_candidate_catalog_index ON ??(epoch)', [state])
+        let rejected = false
+        try {
+          await hasBrc38PrivateLocalCandidateJournal(trx)
+        } catch (error_) {
+          requireCase(
+            error_ instanceof Error &&
+              error_.message ===
+                'Private local candidate journal differs from its actual owner, exact schema or original progress'
+          )
+          rejected = true
+        }
+        requireCase(rejected)
+      } finally {
+        await trx.raw('ROLLBACK TO independent_candidate_catalog_admission')
+        await trx.raw('RELEASE independent_candidate_catalog_admission')
+      }
+      requireCase(await hasBrc38PrivateLocalCandidateJournal(trx))
+    })
+    const restored = await controller.withRead(async trx => await readBrc38PrivateLocalCandidateJournal(trx))
+    requireCase(JSON.stringify(restored) === JSON.stringify(initial))
+  })
   let refused = false
   try {
     await controller.withWriter(async trx => {
