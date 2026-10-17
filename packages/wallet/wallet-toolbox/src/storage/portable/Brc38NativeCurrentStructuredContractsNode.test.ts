@@ -286,7 +286,7 @@ test('private version comparison admits each bounded native read view at its two
     const count = (query: { sql: string; bindings?: readonly unknown[] }): void => {
         if (
           /^select sql from sqlite_schema where name = \? and type = \? limit \?$/.test(
-            query.sql.replace(/[`\"]/g, '')
+            query.sql.replace(/[`"]/g, '')
           ) &&
           query.bindings?.[0] === 'brc38_native_text_versions' &&
           query.bindings?.[1] === 'table'
