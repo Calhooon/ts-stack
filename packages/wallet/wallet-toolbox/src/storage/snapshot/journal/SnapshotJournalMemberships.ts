@@ -315,7 +315,8 @@ export async function updateSnapshotJournalMembership(
   inserted: boolean,
   limits: SnapshotJournalMembershipLimits,
   allocation: SnapshotJournalAllocationBudget,
-  preimage?: { fingerprint: string; generation: string; inheritedCreated?: true }
+  preimage?: { fingerprint: string; generation: string; inheritedCreated?: true },
+  missingBootstrapLocalId?: number
 ): Promise<void> {
   const mysql = remote(k),
     key = sourceKey(binding, tableId, change)
@@ -399,10 +400,23 @@ export async function updateSnapshotJournalMembership(
               ? 1
               : 0
       }
+      // The caller proved the old self's natural key AND primary key absent
+      // before this actual insertion, in this same physical writer. Preserve
+      // old membership through normal retirement; same-revision drift remains
+      // an error for every other path and for an occupied/reused primary key.
+      const repairedMissingSelf =
+        binding.bootstrap === true &&
+        inserted &&
+        preimage === undefined &&
+        missingBootstrapLocalId !== undefined &&
+        previous?.id1 === missingBootstrapLocalId &&
+        previous.id2 === 0 &&
+        previous.exactText === ''
       if (
         previous !== undefined &&
         currentGeneration &&
         previous.revision === revision &&
+        !repairedMissingSelf &&
         (!sameTarget ||
           previous.fingerprint !== next.fingerprint ||
           previous.generation !== next.generation ||

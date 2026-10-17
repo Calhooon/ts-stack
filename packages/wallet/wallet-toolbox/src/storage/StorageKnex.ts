@@ -1,3 +1,4 @@
+import { KnexSnapshotJournalDataContentReceipts } from './snapshot/journal/KnexSnapshotJournalDataContentReceipts'
 import { KnexSnapshotJournalDataDestination } from './snapshot/journal/KnexSnapshotJournalDataDestination'
 import type { SnapshotJournalDataOptions } from './snapshot/journal/SnapshotJournalDataProvider'
 import type { SnapshotJournalDataStatus } from './snapshot/journal/SnapshotJournalDataProtocol'
@@ -621,6 +622,42 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     )
   }
 
+  async supportsSnapshotJournalDataContent(): Promise<boolean> {
+    return await new KnexSnapshotJournalDataContentReceipts(this).supports()
+  }
+  async getSnapshotJournalDataContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal DATA receipt observation requires actual admission')
+    const destination = await KnexSnapshotJournalDataDestination.resume(
+      this,
+      identityKey,
+      sourceStorageIdentity,
+      journalCopyLimits(),
+      options.admission
+    )
+    return await destination?.previousContentReceipt()
+  }
+  async confirmSnapshotJournalDataContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: import('./snapshot/SnapshotSyncContentRevision').SnapshotSyncContentRevision,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal DATA receipt confirmation requires actual admission')
+    const destination = await KnexSnapshotJournalDataDestination.resume(
+      this,
+      identityKey,
+      sourceStorageIdentity,
+      journalCopyLimits(),
+      options.admission
+    )
+    return await destination?.confirmContentReceipt(revision)
+  }
   async supportsSnapshotJournalDataSync(): Promise<boolean> {
     return await this.supportsSnapshotJournalSync()
   }

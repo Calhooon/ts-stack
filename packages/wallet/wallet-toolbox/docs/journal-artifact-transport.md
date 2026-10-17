@@ -4,8 +4,8 @@ The unpublished #569 implementation now has a distinct immutable journal artifac
 producer, SQL storage, durable offered requests and authenticated HTTP source
 transport for full and mobile clients. A destination-owned DATA receiver and explicit coordinator are now assembled
 in source; their authenticated integration is still under focused feedback.
-Ordinary manager integration, verified large-payload reuse and full remote
-primary reconciliation remain required. This component alone
+Ordinary manager pulls and the direct local-source DATA coordinator are integrated.
+Verified large-payload reuse and full remote primary reconciliation remain required. This component alone
 does not complete #544 or establish production readiness.
 
 A version-three binding identifies `wallet-journal-packets/1`. It records the
@@ -135,11 +135,10 @@ awaits the real transfer release and exposes a retryable cleanup owner on failur
 an independently admitted local or authenticated remote DATA destination. It uses
 frame ordinals, sends bounded prefixes, and recovers uncertain replies from the
 destination's actual status. The existing coordinator retains real source cleanup
-and cancellation/progress semantics. This explicit candidate does not yet wire
-ordinary manager copies or remote primary selection; those remain implementation
-work, and full system qualification is still pending.
+and cancellation/progress semantics. The ordinary manager pull path uses this coordinator. Remote primary selection
+remains implementation work, and full system qualification is still pending.
 
-## Ordinary manager integration in progress
+## Ordinary manager integration
 
 SQL providers now expose DATA receiver negotiation, actual stored status and
 manager-admitted receiver opening. Full/mobile clients expose the corresponding
@@ -161,5 +160,39 @@ artifact store. The existing local-to-local journal path is preserved.
 Ordinary pushes retain their existing safe primary-propagation path while full
 remote primary cutover is unfinished. The explicit DATA coordinator does not
 activate a primary. These additions remain under focused feedback, not full
-feature/system qualification. Verified large-field reuse, DATA no-change receipt
-integration and complete remote primary coordination still require source work.
+feature/system qualification. Verified large-field reuse and complete remote primary coordination still require
+source work. The DATA no-change contract below remains subject to final system qualification.
+
+## Confirmed unchanged DATA copies
+
+The separately negotiated `snapshotJournalDataContent` capability supports a
+previous actual completed journal checkpoint. A producer binds its content
+revision from the same retained source used for its artifact or direct DATA
+stream. The destination records pending comparison DATA during BEGIN, and
+completes that record in the same physical SQL transaction as the final financial
+journal ACK. It independently reads its actual postimage there. A lost completion
+reply is recovered from actual SQL custody.
+
+A later manager pull first obtains that completed receipt, physically drains a
+fresh source metadata observation, then asks the destination to compare its
+current postimage inside its actual admitted writer. Only matching source and
+destination revisions return `SyncSessionResult.noChangeJournalReceipt`. The
+result reports zero pages/inserts/updates and names the **previous** actual
+journal checkpoint. The observation still owns and drains a real bounded source;
+no new artifact or financial ACK is created. Cancellation, auth, root, schema,
+profile and primary checks remain active.
+
+If the source matches but the destination has drifted, the manager requests a
+new complete bootstrap rather than acknowledging an empty incremental window.
+A genuinely missing self row can be recreated only after both its semantic key
+and old primary key are proved absent in the same physical writer. Its original
+association and membership pass through the existing charged retirement path.
+A reused/occupied primary key still refuses and retains its current row. Parent
+identities retain their original strict verification.
+
+The additive `2026-10-17-002 add journal DATA copy receipts` migration owns
+`snapshot_sync_journal_data_receipts`; it does not change the financial schema,
+old full-snapshot receipt or native baseline. Its live SQLite/MySQL definition
+is revalidated before use. Older installations can continue without this
+optional comparison table. Down migration verifies the exact auxiliary schema
+before dropping it; it never rolls back an acknowledged wallet merge.

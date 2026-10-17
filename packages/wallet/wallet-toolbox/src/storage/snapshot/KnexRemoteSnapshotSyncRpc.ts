@@ -105,6 +105,11 @@ export class KnexRemoteSnapshotSyncRpc {
     if ((await this.capabilities()) === undefined) return undefined
     return await this.journalData.capabilities()
   }
+  async journalDataContentCapabilities() {
+    this.current()
+    if ((await this.capabilities()) === undefined) return undefined
+    return await this.journalData.contentCapabilities()
+  }
   async contentCapabilities() {
     this.current()
     if ((await this.capabilities()) === undefined) return undefined

@@ -1,3 +1,4 @@
+import { SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION } from '../../schema/snapshotJournalDataReceiptMigration'
 import { SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION } from '../../schema/snapshotSyncReceiptMigration'
 import { WERR_INVALID_PARAMETER } from '../../../sdk/WERR_errors'
 import { KnexMigrations } from '../../schema/KnexMigrations'
@@ -725,7 +726,10 @@ test('the auxiliary migration is registered after the durable sync schema', asyn
   expect(registered.indexOf(SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION)).toBeGreaterThan(
     registered.indexOf('2026-10-13-001 coordinate wallet receipt ownership')
   )
-  expect(await migrations.getLatestMigration()).toBe(SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION)
+  expect(registered.indexOf(SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION)).toBeGreaterThan(
+    registered.indexOf(SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION)
+  )
+  expect(await migrations.getLatestMigration()).toBe(SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION)
 })
 
 test('MySQL DDL accommodates the declared metadata and page byte ceilings', async () => {

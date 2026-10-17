@@ -1,52 +1,13 @@
-import { knex } from 'knex'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { StorageKnex } from '../../StorageKnex'
-import { StorageProvider } from '../../StorageProvider'
-import { WalletStorageManager } from '../../WalletStorageManager'
+import { KnexSnapshotArchiveStore } from '../archive/KnexSnapshotArchiveStore'
+import { snapshotJournalDataManagerFixture as fixture } from '../../../../test/utils/snapshotJournalDataManagerFixture'
 import { StorageClient } from '../../remoting/StorageClient'
 import { StorageClient as StorageMobile } from '../../remoting/StorageMobile'
-import { snapshotHttpFixture } from '../../../../test/utils/snapshotArchiveHttpFixtures'
 import { journalCopyLimits } from './SnapshotJournalCopyLimits'
 import { snapshotJournalDataSourceBinding } from './snapshotJournalDataSourceBinding'
 import { runSnapshotJournalSourceDataReconciliation } from './runSnapshotJournalSourceDataReconciliation'
 import type { SnapshotJournalReconciliationSource } from './SnapshotJournalProvider'
 import type { SnapshotJournalReconciliationProgress } from './runSnapshotJournalReconciliation'
 
-async function fixture() {
-  const remote = await snapshotHttpFixture(true, false, 'test', 'remote-journal-data'),
-    directory = await mkdtemp(join(tmpdir(), 'manager-journal-data-'))
-  const storage = new StorageKnex({
-    ...StorageProvider.createStorageBaseOptions('test'),
-    knex: knex({
-      client: 'better-sqlite3',
-      connection: { filename: join(directory, 'local.sqlite') },
-      useNullAsDefault: true,
-      pool: { min: 0, max: 1 }
-    })
-  })
-  const close = async () => {
-    const results = await Promise.allSettled([remote.close(), storage.destroy()])
-    await rm(directory, { recursive: true, force: true })
-    const errors = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
-    if (errors.length) throw new AggregateError(errors, 'Actual manager DATA fixture cleanup failed')
-  }
-  try {
-    await storage.knex.raw('PRAGMA journal_mode=WAL')
-    await storage.migrate('local journal DATA', 'local-journal-data')
-    await storage.makeAvailable()
-    await storage.findOrInsertUser(remote.identityKey)
-    const manager = new WalletStorageManager(remote.identityKey, storage)
-    await manager.makeAvailable()
-    await manager.setActive('local-journal-data')
-    const served = await remote.serve()
-    return { remote, storage, manager, served, close }
-  } catch (error) {
-    await close()
-    throw error
-  }
-}
 afterEach(() => jest.restoreAllMocks())
 const composedCaseMs = 90000
 
@@ -59,7 +20,7 @@ test.each([StorageClient, StorageMobile])(
       const first = await f.remote.storage.findOrInsertTxLabel(remoteUser.userId, 'manager remote original')
       const client = new Client(f.remote.wallet, f.served.url, { serverIdentityKey: f.remote.serverIdentityKey })
       const legacy = jest.spyOn(f.storage, 'processSyncChunk'),
-        open = jest.spyOn(f.remote.storage, 'openSnapshotSyncContentSource')
+        open = jest.spyOn(KnexSnapshotArchiveStore.prototype, 'beginJournal')
       const initial = await f.manager.syncFromReaderResumable(f.remote.identityKey, client)
       expect(initial).toMatchObject({
         status: 'completed',
@@ -83,7 +44,7 @@ test.each([StorageClient, StorageMobile])(
       await f.storage.updateUser(user.userId, { activeStorage: 'local-journal-data' })
       const repaired = await f.manager.syncFromReaderResumable(f.remote.identityKey, client)
       expect(repaired).toMatchObject({ status: 'completed', journalCheckpoint: { phase: 'acknowledged' } })
-      expect(open).toHaveBeenCalledTimes(4)
+      expect(open).toHaveBeenCalledTimes(3)
       expect(await f.storage.findTxLabels({ partial: { label: 'manager remote next' } })).toHaveLength(1)
       expect((await f.storage.findOrInsertUser(f.remote.identityKey)).user.activeStorage).toBe('local-journal-data')
       expect(await f.remote.storage.knex('snapshot_archive_owners')).toHaveLength(0)
@@ -98,18 +59,18 @@ test.each([StorageClient, StorageMobile])(
   composedCaseMs
 )
 
-test(
+test.each([StorageClient, StorageMobile])(
   'a genuine retained local source streams to the authenticated DATA endpoint without constructing a remote SQL fence',
-  async () => {
+  async Client => {
     const f = await fixture()
     let source: SnapshotJournalReconciliationSource | undefined
     try {
       const { user } = await f.storage.findOrInsertUser(f.remote.identityKey)
       await f.storage.findOrInsertTxLabel(user.userId, 'direct retained source DATA')
-      const client = new StorageClient(f.remote.wallet, f.served.url, { serverIdentityKey: f.remote.serverIdentityKey })
+      const client = new Client(f.remote.wallet, f.served.url, { serverIdentityKey: f.remote.serverIdentityKey })
       source = await f.storage.openCurrentSnapshotJournalSource(f.remote.identityKey)
       const actual = source,
-        binding = snapshotJournalDataSourceBinding(actual)
+        binding = snapshotJournalDataSourceBinding(actual, undefined, false, await actual.readContentRevision?.())
       const fence = jest.spyOn(actual, 'withCommitFence'),
         currentFence = jest.spyOn(actual, 'withCurrentDataFence')
       let last: SnapshotJournalReconciliationProgress | undefined
@@ -131,6 +92,17 @@ test(
       expect(currentFence).not.toHaveBeenCalled()
       expect(actual.isOpen).toBe(false)
       await actual.closed
+      const previous = await client.getSnapshotJournalDataContentReceipt(f.remote.identityKey, 'local-journal-data')
+      expect(previous?.checkpoint).toEqual(last?.checkpoint)
+      const observed = await f.storage.observeSnapshotSyncContentRevision(f.remote.identityKey)
+      if (observed === undefined) throw new Error('Actual source observation is required')
+      expect(
+        await client.confirmSnapshotJournalDataContentReceipt(f.remote.identityKey, 'local-journal-data', observed)
+      ).toEqual({ ...previous, source: observed })
+      await f.remote.storage.knex('tx_labels').where('label', 'direct retained source DATA').delete()
+      expect(
+        await client.confirmSnapshotJournalDataContentReceipt(f.remote.identityKey, 'local-journal-data', observed)
+      ).toBeUndefined()
     } finally {
       await source?.close()
       await f.close()

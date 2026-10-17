@@ -1036,12 +1036,16 @@ export class StorageServer {
     const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
     const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
     const snapshotJournalData = await this.remoteSnapshotSync?.journalDataCapabilities()
+    const snapshotJournalDataContent = await this.remoteSnapshotSync?.journalDataContentCapabilities()
     return {
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
-      ...(snapshotJournalArchive === undefined ? {} : { snapshotJournalArchive }),
+      ...(snapshotJournalArchive === undefined
+        ? {}
+        : { snapshotJournalArchive, snapshotJournalArchiveContentVersion: 1 }),
       ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
       ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent }),
-      ...(snapshotJournalData === undefined ? {} : { snapshotJournalData })
+      ...(snapshotJournalData === undefined ? {} : { snapshotJournalData }),
+      ...(snapshotJournalDataContent === undefined ? {} : { snapshotJournalDataContent })
     }
   }
 

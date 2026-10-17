@@ -1,5 +1,6 @@
 import {
   snapshotJournalDataProvider,
+  snapshotJournalDataContentProvider,
   snapshotJournalArchiveProvider
 } from './snapshot/journal/SnapshotJournalDataProvider'
 import { snapshotJournalDataSourceBinding } from './snapshot/journal/snapshotJournalDataSourceBinding'
@@ -13,7 +14,11 @@ import {
 } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
 import { runSnapshotJournalSourceDataReconciliation } from './snapshot/journal/runSnapshotJournalSourceDataReconciliation'
 import type { RemoteSnapshotJournalArchive } from './snapshot/journal/openRemoteSnapshotJournalArchive'
-import { parseSnapshotSyncContentRevision, snapshotSyncContentPosition } from './snapshot/SnapshotSyncContentRevision'
+import {
+  parseSnapshotSyncContentRevision,
+  snapshotSyncContentPosition,
+  snapshotSyncContentConfirms
+} from './snapshot/SnapshotSyncContentRevision'
 import { Brc38CleanupScope } from './portable/Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
 import type { StorageIdb } from './StorageIdb'
@@ -1601,12 +1606,65 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const dispatch = async (observe = false): Promise<void> => {
       if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
     }
+    let forceBootstrap = false
+    const observer = reader.getSnapshotSync?.()
+    if (
+      snapshotJournalDataContentProvider(writer) &&
+      (await writer.supportsSnapshotJournalDataContent()) &&
+      observer?.observeContentRevision !== undefined
+    ) {
+      await dispatch(true)
+      const prior = await writer.getSnapshotJournalDataContentReceipt(identityKey, readerSettings.storageIdentityKey, {
+        admission
+      })
+      if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+      if (prior !== undefined) {
+        const observed = await observer.observeContentRevision(identityKey, snapshotSyncContentPosition(prior.source), {
+          lifetimeMs: options.snapshotLifetimeMs,
+          signal: options.signal
+        })
+        if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+        if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
+          await dispatch()
+          const confirmed = await writer.confirmSnapshotJournalDataContentReceipt(
+            identityKey,
+            readerSettings.storageIdentityKey,
+            observed,
+            { admission }
+          )
+          if (confirmed !== undefined) {
+            if (
+              JSON.stringify(confirmed.checkpoint) !== JSON.stringify(prior.checkpoint) ||
+              !snapshotSyncContentConfirms(prior.source, confirmed.source)
+            )
+              throw new WERR_INVALID_OPERATION('Journal content confirmation changed its previous real ACK')
+            const result: SyncSessionResult = {
+              status: options.signal?.aborted ? 'cancelled' : 'completed',
+              mode: 'paged',
+              pages: 0,
+              inserts: 0,
+              updates: 0,
+              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint),
+              noChangeJournalReceipt: confirmed
+            }
+            options.onProgress?.({
+              ...result,
+              state: result.status,
+              journalCheckpoint: copyJournalCheckpoint(confirmed.checkpoint)
+            })
+            return result
+          }
+          // Source is unchanged but the actual destination cannot confirm its
+          // postimage. Seek a new complete source, not an empty incremental ACK.
+          forceBootstrap = true
+        }
+      }
+    }
     await dispatch(true)
     const previous = await writer.getSnapshotJournalDataStatus(identityKey, readerSettings.storageIdentityKey, {
       admission
     })
     const limits = journalCopyLimits(options.maxItems, options.maxRoughSize)
-    let forceBootstrap = false
     for (let attempt = 0; attempt < 2; attempt++) {
       let source: SnapshotJournalReconciliationSource | RemoteSnapshotJournalArchive | undefined
       let admissionRefusal: SnapshotJournalDataBootstrapRequiredError | undefined
@@ -1644,7 +1702,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
         const sourceBinding =
           'manifest' in source
             ? source.manifest.binding
-            : snapshotJournalDataSourceBinding(source, previous, forceBootstrap)
+            : snapshotJournalDataSourceBinding(source, previous, forceBootstrap, await source.readContentRevision?.())
         const open = async (): Promise<SnapshotJournalDataDestination> => {
           await dispatch()
           let destination: SnapshotJournalDataDestination | undefined

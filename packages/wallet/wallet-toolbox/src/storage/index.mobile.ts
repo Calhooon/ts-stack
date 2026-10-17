@@ -100,3 +100,5 @@ export type {
 
 export { runSnapshotJournalSourceDataReconciliation } from './snapshot/journal/runSnapshotJournalSourceDataReconciliation'
 export type { SnapshotJournalDataOptions } from './snapshot/journal/SnapshotJournalDataProvider'
+
+export type { SnapshotJournalDataContentReceipt } from './snapshot/journal/SnapshotJournalDataContentReceipt'

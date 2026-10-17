@@ -1,3 +1,4 @@
+import type { SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import type { SnapshotJournalReconciliationSource } from './SnapshotJournalProvider'
 import type { SnapshotJournalDataStatus } from './SnapshotJournalDataProtocol'
 import { compareSnapshotJournalRevisions, snapshotJournalRevision } from './SnapshotJournalRevision'
@@ -9,7 +10,8 @@ import { snapshotJournalArchiveEncoding } from './SnapshotJournalArchivePacket'
 export function snapshotJournalDataSourceBinding(
   source: SnapshotJournalReconciliationSource,
   previous?: SnapshotJournalDataStatus,
-  forceBootstrap = false
+  forceBootstrap = false,
+  contentRevision?: SnapshotSyncContentRevision
 ): SnapshotJournalArchiveBinding {
   const receipt = source.receipt,
     position = previous?.checkpoint.phase === 'acknowledged' ? previous.binding.receipt : undefined
@@ -29,7 +31,8 @@ export function snapshotJournalDataSourceBinding(
       receipt,
       low: incremental ? position.highWater : snapshotJournalRevision('0'),
       bootstrap: !incremental,
-      primary: source.primary
+      primary: source.primary,
+      ...(contentRevision === undefined ? {} : { contentRevision })
     }
   })
 }

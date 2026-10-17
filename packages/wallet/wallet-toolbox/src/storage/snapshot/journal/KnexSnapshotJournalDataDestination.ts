@@ -1,3 +1,5 @@
+import { KnexSnapshotJournalDataContentReceipts } from './KnexSnapshotJournalDataContentReceipts'
+import type { SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import { validateSyncProofs } from '../../remoting/validateRpcSyncProofs'
 import type { TableProvenTx } from '../../schema/tables'
@@ -149,10 +151,29 @@ export class KnexSnapshotJournalDataDestination {
             if (
               previous !== undefined &&
               !previous.retired &&
+              previous.checkpoint.phase === 'acknowledged' &&
+              !source.journal.bootstrap &&
+              (await new KnexSnapshotJournalDataContentReceipts(storage, root).destinationMatches(
+                trx as Knex.Transaction,
+                previous.binding,
+                previous.checkpoint
+              )) === false
+            )
+              throw new SnapshotJournalDataBootstrapRequiredError()
+            if (
+              previous !== undefined &&
+              !previous.retired &&
               JSON.stringify(previous.binding) === JSON.stringify(binding)
             ) {
               const checkpoint = await readSnapshotJournalDestinationWindow(trx, binding)
               if (checkpoint === undefined) invalid()
+              await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+                trx as Knex.Transaction,
+                binding,
+                checkpoint,
+                source.snapshotId,
+                source.journal.contentRevision
+              )
               return { binding, checkpoint, previous: undefined, incremental: false }
             }
             if (previous !== undefined) {
@@ -183,12 +204,20 @@ export class KnexSnapshotJournalDataDestination {
               randomBytes(32).toString('hex')
             )
             await beginSnapshotJournalProgress(trx, binding, checkpoint)
+            await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+              trx as Knex.Transaction,
+              binding,
+              checkpoint,
+              source.snapshotId,
+              source.journal.contentRevision
+            )
             return { binding, checkpoint, previous: undefined, incremental: false }
           },
           undefined,
           signal
         )
     )
+    if (storage.knex !== root) invalid()
     const destination = new KnexSnapshotJournalDataDestination(
       storage,
       Object.freeze({
@@ -239,6 +268,13 @@ export class KnexSnapshotJournalDataDestination {
               requireClean
             )
         await beginSnapshotJournalProgress(trx, begin.binding, next)
+        await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+          trx as Knex.Transaction,
+          begin.binding,
+          next,
+          source.snapshotId,
+          source.journal.contentRevision
+        )
         return next
       })
     }
@@ -296,6 +332,7 @@ export class KnexSnapshotJournalDataDestination {
         }),
       'observe'
     )
+    if (storage.knex !== root) invalid()
     return binding === undefined
       ? undefined
       : new KnexSnapshotJournalDataDestination(
@@ -329,7 +366,10 @@ export class KnexSnapshotJournalDataDestination {
             if (backend !== this.binding.destinationBackend) invalid()
             await verifySnapshotJournalDestinationSchema(trx)
             await readSnapshotJournalCaptureConfiguration(trx)
-            return await apply(trx)
+            this.current()
+            const result = await apply(trx)
+            this.current()
+            return result
           },
           this.binding.destinationBackend,
           observe ? undefined : this.signal
@@ -446,8 +486,45 @@ export class KnexSnapshotJournalDataDestination {
           this.limits,
           async apply => await this.writer(apply),
           async () => await this.verifyCurrent(),
-          this.signal
+          this.signal,
+          async (trx, checkpoint) =>
+            await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).complete(
+              trx,
+              this.binding,
+              checkpoint
+            )
         )
+    )
+  }
+  async previousContentReceipt() {
+    return await this.exclusive(
+      async () =>
+        await this.writer(async trx => {
+          const checkpoint = await readSnapshotJournalDestinationWindow(trx, this.binding)
+          return checkpoint === undefined
+            ? undefined
+            : await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).previous(
+                trx as Knex.Transaction,
+                this.binding,
+                checkpoint
+              )
+        }, true)
+    )
+  }
+  async confirmContentReceipt(revision: SnapshotSyncContentRevision) {
+    return await this.exclusive(
+      async () =>
+        await this.writer(async trx => {
+          const checkpoint = await readSnapshotJournalDestinationWindow(trx, this.binding)
+          return checkpoint === undefined
+            ? undefined
+            : await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).confirm(
+                trx as Knex.Transaction,
+                this.binding,
+                checkpoint,
+                revision
+              )
+        }, true)
     )
   }
   async cleanup(expected: SnapshotJournalDestinationCheckpoint) {

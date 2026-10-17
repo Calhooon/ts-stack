@@ -328,6 +328,7 @@ export class SnapshotJournalPreparedEntityMerge {
         (change.metadata.generation !== undefined && self.generation !== change.metadata.generation)
       )
         invalid()
+      let missingBootstrapLocalId: number | undefined
       return await applySnapshotJournalIdentityTransition(
         fenced,
         binding,
@@ -361,10 +362,25 @@ export class SnapshotJournalPreparedEntityMerge {
             result.inserts === 1,
             limits,
             this.budget,
-            preimage
+            preimage,
+            missingBootstrapLocalId
           )
           return { assignments: new Map([[key, localId]]), result }
-        }
+        },
+        binding.bootstrap === true
+          ? async (trx, _reference, association) => {
+              const present = await verifySnapshotJournalDestinationIdentity(
+                trx,
+                binding.destinationUserId,
+                self,
+                association,
+                map,
+                true
+              )
+              if (!present) missingBootstrapLocalId = association.localId
+              return present
+            }
+          : undefined
       )
     })
   }

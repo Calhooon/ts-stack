@@ -13,10 +13,12 @@ import {
   SNAPSHOT_SQLITE_INDEX_MIGRATION,
   SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
   INTERNALIZE_RECEIPT_MIGRATION,
-  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
+  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION
 } from '../schema/KnexMigrations'
 
 const selectedMigrations = [
+  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION,
   SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
   SNAPSHOT_PROFILE_INDEX_MIGRATION,
   SNAPSHOT_RELATION_INDEX_MIGRATION,
@@ -112,7 +114,8 @@ describe('private native migration configuration preserves canonical schema and 
         'output_tags',
         'commissions',
         'sync_states',
-        'snapshot_sync_content_receipts'
+        'snapshot_sync_content_receipts',
+        'snapshot_sync_journal_data_receipts'
       ],
       async table => {
         expect(await next.knex(table)).toEqual(await previous.knex(table))

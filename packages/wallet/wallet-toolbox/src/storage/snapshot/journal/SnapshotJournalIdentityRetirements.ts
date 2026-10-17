@@ -95,7 +95,12 @@ export async function applySnapshotJournalIdentityTransition<T>(
     trx: Knex,
     associations: ReadonlyMap<string, SnapshotJournalIdentityAssociation>,
     previous: ReadonlyMap<string, SnapshotJournalIdentityAssociation>
-  ) => Promise<{ assignments: ReadonlyMap<string, number>; result: T }>
+  ) => Promise<{ assignments: ReadonlyMap<string, number>; result: T }>,
+  validateAssociation?: (
+    trx: Knex,
+    reference: SnapshotJournalIdentityReference,
+    association: SnapshotJournalIdentityAssociation
+  ) => Promise<boolean>
 ): Promise<T> {
   const remote = mysql(k)
   if (
@@ -121,10 +126,17 @@ export async function applySnapshotJournalIdentityTransition<T>(
   const maximumMappings = integer(inputLimits.maximumMappings, 1, inputLimits.version === 2 ? 2147483647 : 4096)
   const maximumPendingAssociations = integer(inputLimits.maximumPendingAssociations, 1, 4096)
   return await withSnapshotJournalDestinationWindowFence(k, binding, checkpoint, async trx => {
-    const identity = await prepareSnapshotJournalIdentityLedger(trx, binding, checkpoint, references, {
-      maximumMappings,
-      ...(inputLimits.version === undefined ? {} : { version: inputLimits.version })
-    })
+    const identity = await prepareSnapshotJournalIdentityLedger(
+      trx,
+      binding,
+      checkpoint,
+      references,
+      {
+        maximumMappings,
+        ...(inputLimits.version === undefined ? {} : { version: inputLimits.version })
+      },
+      validateAssociation
+    )
     const scope = { userId: binding.destinationUserId, lineage: identity.lineage }
     const rows: Array<Record<string, unknown>> = await trx(budgets)
       .select(

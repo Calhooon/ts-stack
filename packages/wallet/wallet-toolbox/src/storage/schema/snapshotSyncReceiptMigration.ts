@@ -27,6 +27,39 @@ const columns = [
   ['complete', 'tinyint', false]
 ] as const
 
+export interface SnapshotComparisonReceiptSchema {
+  readonly table: string
+  readonly foreignKey: string
+  readonly columns: ReadonlyArray<readonly [string, string, boolean]>
+}
+/** Static expected CODE definitions, never a cached verdict about live SQL. */
+export function snapshotComparisonReceiptSchema(
+  table: string,
+  foreignKey: string,
+  input: ReadonlyArray<readonly [string, string, boolean]>
+): Readonly<SnapshotComparisonReceiptSchema> {
+  const name = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+  if (
+    !name.test(table) ||
+    !name.test(foreignKey) ||
+    input.length < 1 ||
+    input.length > 32 ||
+    new Set(input.map(row => row[0])).size !== input.length
+  )
+    invalid()
+  const columns = input.map(([key, type, nullable]) => {
+    if (!name.test(key) || !/^(?:int|tinyint|varchar\([1-9]\d{0,3}\))$/.test(type) || typeof nullable !== 'boolean')
+      invalid()
+    return Object.freeze([key, type, nullable] as const)
+  })
+  return Object.freeze({ table, foreignKey, columns: Object.freeze(columns) })
+}
+export const snapshotSyncContentReceiptSchema = snapshotComparisonReceiptSchema(
+  SNAPSHOT_SYNC_CONTENT_RECEIPTS,
+  foreignKey,
+  columns
+)
+
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Snapshot content receipt schema is incomplete or changed')
 }
@@ -41,6 +74,11 @@ function mysql(k: Knex): boolean {
 /** Only optional comparison/completion DATA. Existing wallet tables and the
  * version-one durable merge/checkpoint schema are never rewritten. */
 export function snapshotSyncContentReceiptDdl(k: Knex): string {
+  return snapshotComparisonReceiptDdl(k, snapshotSyncContentReceiptSchema)
+}
+
+export function snapshotComparisonReceiptDdl(k: Knex, specification: SnapshotComparisonReceiptSchema): string {
+  const { table, foreignKey, columns } = specification
   const remote = mysql(k)
   const fields = columns.map(([name, type, nullable]) => {
     const declared = remote
@@ -60,7 +98,7 @@ export function snapshotSyncContentReceiptDdl(k: Knex): string {
     return name + ' ' + declared + (nullable ? ' NULL' : ' NOT NULL') + check
   })
   return (
-    `CREATE TABLE ${SNAPSHOT_SYNC_CONTENT_RECEIPTS}(${fields.join(',')},PRIMARY KEY(userId,sourceKey),CONSTRAINT ${foreignKey} FOREIGN KEY(userId) REFERENCES users(userId) ON DELETE CASCADE)` +
+    `CREATE TABLE ${table}(${fields.join(',')},PRIMARY KEY(userId,sourceKey),CONSTRAINT ${foreignKey} FOREIGN KEY(userId) REFERENCES users(userId) ON DELETE CASCADE)` +
     (remote ? ' ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin ROW_FORMAT=DYNAMIC' : '')
   )
 }
@@ -68,25 +106,33 @@ export function snapshotSyncContentReceiptDdl(k: Knex): string {
 /** Repeat against actual current objects; neither a migration stamp nor a
  * previous successful probe is schema or backend authority. */
 export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<void> {
+  await verifySnapshotComparisonReceiptSchema(k, snapshotSyncContentReceiptSchema)
+}
+
+export async function verifySnapshotComparisonReceiptSchema(
+  k: Knex,
+  specification: SnapshotComparisonReceiptSchema
+): Promise<void> {
+  const { table: tableName, foreignKey, columns } = specification
   if (!mysql(k)) {
     const shadows = await k('sqlite_temp_master')
       .where(function () {
-        void this.where('name', SNAPSHOT_SYNC_CONTENT_RECEIPTS).orWhere('tbl_name', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+        void this.where('name', tableName).orWhere('tbl_name', tableName)
       })
       .select('name')
       .limit(1)
     if (shadows.length !== 0) invalid()
     const objects: Array<{ name: string; type: string; sql: string | null }> = await k('sqlite_master')
-      .where('tbl_name', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+      .where('tbl_name', tableName)
       .select('name', 'type', 'sql')
       .limit(3)
     const table = objects.find(row => row.type === 'table'),
       index = objects.find(row => row.type === 'index')
     if (
       objects.length !== 2 ||
-      table?.name !== SNAPSHOT_SYNC_CONTENT_RECEIPTS ||
-      table.sql !== snapshotSyncContentReceiptDdl(k) ||
-      index?.name !== 'sqlite_autoindex_' + SNAPSHOT_SYNC_CONTENT_RECEIPTS + '_1' ||
+      table?.name !== tableName ||
+      table.sql !== snapshotComparisonReceiptDdl(k, specification) ||
+      index?.name !== 'sqlite_autoindex_' + tableName + '_1' ||
       index.sql !== null
     )
       invalid()
@@ -94,7 +140,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
   }
   const tables: Array<Record<string, unknown>> = await k('information_schema.TABLES')
     .whereRaw('TABLE_SCHEMA=DATABASE()')
-    .where('TABLE_NAME', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('TABLE_NAME', tableName)
     .select('TABLE_TYPE', 'ENGINE', 'TABLE_COLLATION', 'ROW_FORMAT')
     .limit(2)
   if (
@@ -107,7 +153,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     invalid()
   const actual: Array<Record<string, unknown>> = await k('information_schema.COLUMNS')
     .whereRaw('TABLE_SCHEMA=DATABASE()')
-    .where('TABLE_NAME', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('TABLE_NAME', tableName)
     .select(
       'COLUMN_NAME',
       'COLUMN_TYPE',
@@ -143,7 +189,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     'information_schema.TABLE_CONSTRAINTS'
   )
     .whereRaw('TABLE_SCHEMA=DATABASE()')
-    .where('TABLE_NAME', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('TABLE_NAME', tableName)
     .select('CONSTRAINT_NAME', 'CONSTRAINT_TYPE')
     .limit(3)
   if (
@@ -154,7 +200,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     invalid()
   const indexes: Array<Record<string, unknown>> = await k('information_schema.STATISTICS')
     .whereRaw('TABLE_SCHEMA=DATABASE()')
-    .where('TABLE_NAME', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('TABLE_NAME', tableName)
     .select(
       'INDEX_NAME',
       'COLUMN_NAME',
@@ -187,7 +233,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     invalid()
   const references: Array<Record<string, unknown>> = await k('information_schema.KEY_COLUMN_USAGE')
     .whereRaw('TABLE_SCHEMA=DATABASE()')
-    .where('TABLE_NAME', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('TABLE_NAME', tableName)
     .whereNotNull('REFERENCED_TABLE_NAME')
     .select(
       'CONSTRAINT_NAME',
@@ -212,7 +258,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     'information_schema.REFERENTIAL_CONSTRAINTS'
   )
     .whereRaw('CONSTRAINT_SCHEMA=DATABASE()')
-    .where({ TABLE_NAME: SNAPSHOT_SYNC_CONTENT_RECEIPTS, CONSTRAINT_NAME: foreignKey })
+    .where({ TABLE_NAME: tableName, CONSTRAINT_NAME: foreignKey })
     .select('DELETE_RULE', 'UPDATE_RULE')
     .limit(2)
   if (
@@ -223,7 +269,7 @@ export async function verifySnapshotSyncContentReceiptSchema(k: Knex): Promise<v
     invalid()
   const triggers = await k('information_schema.TRIGGERS')
     .whereRaw('TRIGGER_SCHEMA=DATABASE()')
-    .where('EVENT_OBJECT_TABLE', SNAPSHOT_SYNC_CONTENT_RECEIPTS)
+    .where('EVENT_OBJECT_TABLE', tableName)
     .select('TRIGGER_NAME')
     .limit(1)
   if (triggers.length !== 0) invalid()

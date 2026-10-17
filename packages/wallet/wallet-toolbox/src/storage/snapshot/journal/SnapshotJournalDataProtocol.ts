@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { sha256 } from '@bsv/sdk/primitives/Hash'
 import { toHex } from '@bsv/sdk/primitives/utils'
 import {
@@ -20,6 +21,8 @@ import { snapshotJournalRevision, compareSnapshotJournalRevisions } from './Snap
 import type { SnapshotJournalDestinationBinding, SnapshotJournalDestinationCheckpoint } from './SnapshotJournalTypes'
 
 export const snapshotJournalDataMethods = Object.freeze([
+  'getSnapshotJournalDataContentReceipt',
+  'confirmSnapshotJournalDataContentReceipt',
   'beginSnapshotJournalData',
   'getSnapshotJournalDataStatus',
   'stageSnapshotJournalDataPacket',
@@ -44,6 +47,13 @@ export const snapshotJournalDataCapabilities = Object.freeze({
   partBytes: remoteSnapshotSyncPartBytes,
   maxIoMs: 30000
 })
+export const snapshotJournalDataContentCapabilities = Object.freeze({ version: 1 as const })
+export function validateSnapshotJournalDataContentCapabilities(
+  input: unknown
+): typeof snapshotJournalDataContentCapabilities {
+  if (snapshotJournalDataRecord(input, ['version']).version !== 1) invalid()
+  return snapshotJournalDataContentCapabilities
+}
 export type SnapshotJournalDataCapabilities = typeof snapshotJournalDataCapabilities
 function invalid(): never {
   throw new TypeError('Invalid authenticated journal destination DATA')
@@ -205,6 +215,7 @@ export type SnapshotJournalDataInput = {
   sourceStorageIdentity: string
   source?: SnapshotJournalArchiveBinding
   checkpoint?: SnapshotJournalDestinationCheckpoint
+  revision?: Readonly<SnapshotSyncContentRevision>
   packet?: Uint8Array
   transferId?: string
   digest?: string
@@ -232,18 +243,25 @@ export function parseSnapshotJournalDataInput(
       ? ['source']
       : [
           'sourceStorageIdentity',
-          ...(method === 'getSnapshotJournalDataStatus' || method === 'releaseSnapshotJournalDataTransfer'
+          ...([
+            'getSnapshotJournalDataStatus',
+            'getSnapshotJournalDataContentReceipt',
+            'confirmSnapshotJournalDataContentReceipt',
+            'releaseSnapshotJournalDataTransfer'
+          ].includes(method)
             ? []
             : ['checkpoint']),
-          ...(method === 'stageSnapshotJournalDataPacket'
-            ? ['packet']
-            : method === 'beginSnapshotJournalDataTransfer'
-              ? ['digest', 'totalBytes']
-              : method === 'writeSnapshotJournalDataTransferPart'
-                ? ['transferId', 'offset', 'bytes']
-                : method === 'stageSnapshotJournalDataTransfer' || method === 'releaseSnapshotJournalDataTransfer'
-                  ? ['transferId']
-                  : [])
+          ...(method === 'confirmSnapshotJournalDataContentReceipt'
+            ? ['revision']
+            : method === 'stageSnapshotJournalDataPacket'
+              ? ['packet']
+              : method === 'beginSnapshotJournalDataTransfer'
+                ? ['digest', 'totalBytes']
+                : method === 'writeSnapshotJournalDataTransferPart'
+                  ? ['transferId', 'offset', 'bytes']
+                  : method === 'stageSnapshotJournalDataTransfer' || method === 'releaseSnapshotJournalDataTransfer'
+                    ? ['transferId']
+                    : [])
         ]
   const row = snapshotJournalDataRecord(parameter.value, ['version', 'identityKey', ...fields])
   if (row.version !== 1 || row.identityKey !== authenticatedIdentity) invalid()
@@ -262,6 +280,8 @@ export function parseSnapshotJournalDataInput(
     identityKey: authenticatedIdentity,
     sourceStorageIdentity: remoteSnapshotStorageKey(row.sourceStorageIdentity)
   }
+  if (method === 'confirmSnapshotJournalDataContentReceipt')
+    result.revision = parseSnapshotSyncContentRevision(row.revision)
   if (Object.hasOwn(row, 'checkpoint')) result.checkpoint = parseSnapshotJournalDataCheckpoint(row.checkpoint)
   if (Object.hasOwn(row, 'transferId')) result.transferId = snapshotJournalDataDigest(row.transferId)
   if (method === 'stageSnapshotJournalDataPacket') {

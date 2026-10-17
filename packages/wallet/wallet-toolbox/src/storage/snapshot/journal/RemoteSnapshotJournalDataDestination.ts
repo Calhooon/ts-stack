@@ -1,3 +1,5 @@
+import { parseSnapshotJournalDataContentReceipt } from './SnapshotJournalDataContentReceipt'
+import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import { retrySnapshotArchiveOperation } from '../archive/SnapshotArchiveTransportFailure'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -93,6 +95,34 @@ export class RemoteSnapshotJournalDataDestination {
     return value === null
       ? undefined
       : parseSnapshotJournalDataStatus(value, identityKey, sourceStorageIdentity, destinationStorageIdentity)
+  }
+
+  static async contentReceipt(
+    rpc: SnapshotJournalDataRpcCall,
+    identityKey: string,
+    sourceStorageIdentity: string,
+    destinationStorageIdentity: string,
+    revision?: SnapshotSyncContentRevision
+  ) {
+    const value = await this.request(
+      rpc,
+      revision === undefined ? 'getSnapshotJournalDataContentReceipt' : 'confirmSnapshotJournalDataContentReceipt',
+      {
+        version: 1,
+        identityKey,
+        sourceStorageIdentity,
+        ...(revision === undefined ? {} : { revision: parseSnapshotSyncContentRevision(revision) })
+      }
+    )
+    if (value === null) return undefined
+    const receipt = parseSnapshotJournalDataContentReceipt(value)
+    if (
+      receipt.identityKey !== identityKey ||
+      receipt.sourceStorageIdentity !== sourceStorageIdentity ||
+      receipt.destinationStorageIdentity !== destinationStorageIdentity
+    )
+      throw new TypeError('Journal DATA receipt changed its authenticated endpoint/profile')
+    return receipt
   }
 
   private static async request(

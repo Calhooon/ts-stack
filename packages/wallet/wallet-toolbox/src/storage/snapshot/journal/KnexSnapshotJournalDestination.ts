@@ -579,7 +579,8 @@ export async function promoteSnapshotJournalData(
   limits: SnapshotJournalDestinationLimits,
   writer: <T>(apply: (trx: Knex) => Promise<T>) => Promise<T>,
   verifyCurrent: () => Promise<void>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onAcknowledged?: (trx: Knex.Transaction, checkpoint: SnapshotJournalDestinationCheckpoint) => Promise<void>
 ): Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number; inserts: number; updates: number }> {
   signal?.throwIfAborted()
   await verifyCurrent()
@@ -680,6 +681,8 @@ export async function promoteSnapshotJournalData(
       }
     )
     await advanceSnapshotJournalProgress(trx, binding, expected, committed.checkpoint, { inserts, updates })
+    if (committed.checkpoint.phase === 'acknowledged' && onAcknowledged !== undefined)
+      await onAcknowledged(trx as Knex.Transaction, committed.checkpoint)
     return committed
   })
   await verifyCurrent()

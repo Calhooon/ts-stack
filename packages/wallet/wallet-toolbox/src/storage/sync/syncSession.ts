@@ -1,3 +1,4 @@
+import type { SnapshotJournalDataContentReceipt } from '../snapshot/journal/SnapshotJournalDataContentReceipt'
 import type { SnapshotSyncContentReceipt } from '../snapshot/SnapshotSync'
 import type { SnapshotSyncCheckpoint } from '../snapshot/SnapshotSync'
 import type { SnapshotJournalDestinationCheckpoint } from '../snapshot/journal/SnapshotJournalTypes'
@@ -40,6 +41,7 @@ export interface SyncSessionProgress {
   snapshotCheckpoint?: SnapshotSyncCheckpoint
   /** Prior completed DATA re-confirmed with fresh source/destination checks. */
   noChangeReceipt?: SnapshotSyncContentReceipt
+  noChangeJournalReceipt?: Readonly<SnapshotJournalDataContentReceipt>
   journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
   readMs?: number
@@ -61,6 +63,7 @@ export interface SyncSessionResult {
   snapshotCheckpoint?: SnapshotSyncCheckpoint
   /** Prior completed DATA re-confirmed with fresh source/destination checks. */
   noChangeReceipt?: SnapshotSyncContentReceipt
+  noChangeJournalReceipt?: Readonly<SnapshotJournalDataContentReceipt>
   journalCheckpoint?: SnapshotJournalDestinationCheckpoint
   checkpoint?: SyncCheckpoint
 }

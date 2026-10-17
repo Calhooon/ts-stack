@@ -1,3 +1,4 @@
+import { KnexSnapshotJournalDataContentReceipts } from './KnexSnapshotJournalDataContentReceipts'
 import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
@@ -11,6 +12,7 @@ import { verifySnapshotJournalDestinationSchema } from './SnapshotJournalDestina
 import { snapshotJournalArchivePacketBytes } from './SnapshotJournalArchivePacket'
 import {
   snapshotJournalDataCapabilities,
+  snapshotJournalDataContentCapabilities,
   isSnapshotJournalDataMethod,
   parseSnapshotJournalDataInput,
   parseSnapshotJournalDataCheckpoint,
@@ -67,6 +69,15 @@ export class KnexSnapshotJournalDataRpc {
     if ((await this.root('sync_transfers').where('slot', 0).select('slot').limit(2)).length !== 1) return undefined
     this.current()
     return snapshotJournalDataCapabilities
+  }
+  async contentCapabilities() {
+    if (
+      (await this.capabilities()) === undefined ||
+      !(await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).supports())
+    )
+      return undefined
+    this.current()
+    return snapshotJournalDataContentCapabilities
   }
   dispatch(method: SnapshotJournalDataMethod, params: unknown[], identityKey: string): Promise<unknown> {
     this.current()
@@ -140,7 +151,12 @@ export class KnexSnapshotJournalDataRpc {
     }
     current()
     if (destination === undefined) {
-      if (method === 'getSnapshotJournalDataStatus') return null
+      if (
+        method === 'getSnapshotJournalDataStatus' ||
+        method === 'getSnapshotJournalDataContentReceipt' ||
+        method === 'confirmSnapshotJournalDataContentReceipt'
+      )
+        return null
       throw new WERR_INVALID_OPERATION('Journal DATA has no actual destination window')
     }
     const status = async (): Promise<SnapshotJournalDataStatus> => {
@@ -149,6 +165,16 @@ export class KnexSnapshotJournalDataRpc {
       return { version: 1, binding: destination.binding, ...actual }
     }
     if (method === 'beginSnapshotJournalData' || method === 'getSnapshotJournalDataStatus') return await status()
+    if (method === 'getSnapshotJournalDataContentReceipt') {
+      const result = await destination.previousContentReceipt()
+      current()
+      return result ?? null
+    }
+    if (method === 'confirmSnapshotJournalDataContentReceipt') {
+      const result = await destination.confirmContentReceipt(input.revision!)
+      current()
+      return result ?? null
+    }
     const expected = input.checkpoint
     if (expected === undefined) throw new WERR_INVALID_OPERATION('Journal DATA operation has no checkpoint')
     const actual = await destination.status()

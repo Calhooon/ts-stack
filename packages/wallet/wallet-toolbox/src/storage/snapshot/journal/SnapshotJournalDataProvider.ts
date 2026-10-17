@@ -1,3 +1,5 @@
+import type { SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
+import type { SnapshotJournalDataContentReceipt } from './SnapshotJournalDataContentReceipt'
 import type {
   SnapshotJournalWriterAdmission,
   SnapshotJournalDestinationLimits,
@@ -29,8 +31,32 @@ export interface SnapshotJournalDataProvider {
     options?: SnapshotJournalDataOptions
   ) => Promise<SnapshotJournalDataDestination | undefined>
 }
+export interface SnapshotJournalDataContentProvider extends SnapshotJournalDataProvider {
+  supportsSnapshotJournalDataContent: () => Promise<boolean>
+  getSnapshotJournalDataContentReceipt: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options?: SnapshotJournalDataOptions
+  ) => Promise<Readonly<SnapshotJournalDataContentReceipt> | undefined>
+  confirmSnapshotJournalDataContentReceipt: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: SnapshotSyncContentRevision,
+    options?: SnapshotJournalDataOptions
+  ) => Promise<Readonly<SnapshotJournalDataContentReceipt> | undefined>
+}
+export function snapshotJournalDataContentProvider(value: unknown): value is SnapshotJournalDataContentProvider {
+  const provider = value as Partial<SnapshotJournalDataContentProvider> | null
+  return (
+    provider != null &&
+    typeof provider.supportsSnapshotJournalDataContent === 'function' &&
+    typeof provider.getSnapshotJournalDataContentReceipt === 'function' &&
+    typeof provider.confirmSnapshotJournalDataContentReceipt === 'function'
+  )
+}
 export interface SnapshotJournalArchiveProvider {
   supportsSnapshotJournalArchive: () => Promise<boolean>
+  supportsSnapshotJournalArchiveContent?: () => Promise<boolean>
   openSnapshotJournalArchive: (
     identityKey: string,
     position?: SnapshotJournalArchivePosition,

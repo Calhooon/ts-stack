@@ -1,3 +1,7 @@
+import {
+  validateSnapshotJournalDataContentCapabilities,
+  snapshotJournalDataContentCapabilities
+} from '../snapshot/journal/SnapshotJournalDataProtocol'
 import type { SnapshotJournalDataOptions } from '../snapshot/journal/SnapshotJournalDataProvider'
 import type { SnapshotJournalDataStatus } from '../snapshot/journal/SnapshotJournalDataProtocol'
 import { RemoteSnapshotJournalDataDestination } from '../snapshot/journal/RemoteSnapshotJournalDataDestination'
@@ -164,7 +168,9 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
+  snapshotJournalArchiveContentVersion?: 1
   snapshotJournalData?: SnapshotJournalDataCapabilities
+  snapshotJournalDataContent?: typeof snapshotJournalDataContentCapabilities
   snapshotArchiveReaderVersion?: 1
   snapshotSyncDestination?: RemoteSnapshotSyncCapabilities
   snapshotSyncContent?: RemoteSnapshotSyncContentCapabilities
@@ -324,6 +330,13 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
+  if (
+    properties.snapshotJournalArchiveContentVersion != null &&
+    (properties.snapshotJournalArchiveContentVersion.value !== 1 || properties.snapshotJournalArchive == null)
+  )
+    throw new Error('Wallet storage returned invalid journal content settings.')
+  if (properties.snapshotJournalDataContent != null)
+    validateSnapshotJournalDataContentCapabilities(properties.snapshotJournalDataContent.value)
   if (properties.snapshotJournalData != null)
     validateSnapshotJournalDataCapabilities(properties.snapshotJournalData.value)
   if (properties.snapshotJournalArchive != null) {
@@ -476,6 +489,37 @@ export abstract class StorageClientBase implements WalletStorageProvider {
 
   async supportsSnapshotJournalArchive(): Promise<boolean> {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalArchive !== undefined
+  }
+  async supportsSnapshotJournalArchiveContent(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalArchiveContentVersion === 1
+  }
+  async supportsSnapshotJournalDataContent(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalDataContent !== undefined
+  }
+  async getSnapshotJournalDataContentReceipt(identityKey: string, sourceStorageIdentity: string) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalDataContent === undefined) return undefined
+    return await RemoteSnapshotJournalDataDestination.contentReceipt(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey)
+    )
+  }
+  async confirmSnapshotJournalDataContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: import('../snapshot/SnapshotSyncContentRevision').SnapshotSyncContentRevision
+  ) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalDataContent === undefined) return undefined
+    return await RemoteSnapshotJournalDataDestination.contentReceipt(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey),
+      revision
+    )
   }
   async supportsSnapshotJournalDataSync(): Promise<boolean> {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalData !== undefined

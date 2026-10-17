@@ -1,3 +1,4 @@
+import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import type { TableSettings, TableUser } from '../../schema/tables'
 import {
   parseSnapshotJournalReceiptBindingData,
@@ -28,6 +29,7 @@ export interface SnapshotJournalArchiveBinding {
     low: SnapshotJournalRevision
     bootstrap: boolean
     primary: Readonly<{ epoch: SnapshotJournalRevision; activeStorage: string | null }>
+    contentRevision?: Readonly<SnapshotSyncContentRevision>
   }
 }
 export interface SnapshotJournalArchiveManifest {
@@ -70,9 +72,20 @@ export function parseSnapshotJournalArchiveBinding(input: unknown): SnapshotJour
     'journal'
   ])
   if (row.version !== 3 || row.encoding !== snapshotJournalArchiveEncoding) invalid()
-  const journal = snapshotJournalDataRecord(row.journal, ['source', 'receipt', 'low', 'bootstrap', 'primary']),
+  const journal = snapshotJournalDataRecord(row.journal, [
+      'source',
+      'receipt',
+      'low',
+      'bootstrap',
+      'primary',
+      ...(row.journal !== null && typeof row.journal === 'object' && Object.hasOwn(row.journal, 'contentRevision')
+        ? ['contentRevision']
+        : [])
+    ]),
     source = parseSnapshotJournalReceiptBindingData(journal.source),
     receipt = parseSnapshotJournalReceiptData(journal.receipt, source),
+    contentRevision =
+      journal.contentRevision === undefined ? undefined : parseSnapshotSyncContentRevision(journal.contentRevision),
     primary = snapshotJournalDataRecord(journal.primary, ['epoch', 'activeStorage']),
     low = snapshotJournalRevision(journal.low),
     epoch = snapshotJournalRevision(primary.epoch),
@@ -110,6 +123,13 @@ export function parseSnapshotJournalArchiveBinding(input: unknown): SnapshotJour
     (user.activeStorage ?? null) !== primary.activeStorage
   )
     invalid()
+  if (
+    contentRevision !== undefined &&
+    (contentRevision.binding !== receipt.binding ||
+      contentRevision.highWater !== receipt.highWater ||
+      contentRevision.floor !== receipt.floor)
+  )
+    invalid()
   const activeStorage = primary.activeStorage === null ? null : snapshotJournalDataText(primary.activeStorage, 256)
   return {
     version: 3,
@@ -137,7 +157,8 @@ export function parseSnapshotJournalArchiveBinding(input: unknown): SnapshotJour
       receipt,
       low,
       bootstrap: journal.bootstrap,
-      primary: Object.freeze({ epoch, activeStorage })
+      primary: Object.freeze({ epoch, activeStorage }),
+      ...(contentRevision === undefined ? {} : { contentRevision })
     }
   }
 }

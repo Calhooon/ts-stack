@@ -32,3 +32,10 @@ import type { SnapshotJournalDataDestination } from '@bsv/wallet-toolbox'
 export function copyJournal(archive: RemoteSnapshotJournalArchive, destination: SnapshotJournalDataDestination) {
   return runSnapshotJournalArchiveReconciliation(archive, async () => destination)
 }
+
+import type { SnapshotJournalDataContentReceipt, SyncSessionResult } from '@bsv/wallet-toolbox'
+
+/** A confirmed no-change result names its previous real journal ACK. */
+export function previousJournalCopy(result: SyncSessionResult): SnapshotJournalDataContentReceipt | undefined {
+  return result.noChangeJournalReceipt
+}

@@ -17,7 +17,7 @@ import {
   snapshotJournalIndexedEntityQuery,
   type SnapshotJournalAllocationBudget
 } from './SnapshotJournalNativeRows'
-import type { Brc38ImportTargetIndex } from '../../portable/Brc38ImportTargetIndexes'
+import { brc38ImportTargetIndexes, type Brc38ImportTargetIndex } from '../../portable/Brc38ImportTargetIndexes'
 
 export const snapshotJournalIdentityEntities: Readonly<Record<SnapshotJournalIdentityTable, keyof SyncMap>> = {
   0: 'transaction',
@@ -61,8 +61,9 @@ export async function verifySnapshotJournalDestinationIdentity(
   userId: number,
   reference: SnapshotJournalCapturedIdentity,
   association: SnapshotJournalIdentityAssociation,
-  map: SyncMap
-): Promise<void> {
+  map: SyncMap,
+  allowAbsentBootstrapSelf = false
+): Promise<boolean> {
   if (
     !k.isTransaction ||
     association.generation !== reference.generation ||
@@ -148,7 +149,17 @@ export async function verifySnapshotJournalDestinationIdentity(
       )
     )
       invalid()
-    return
+    return true
+  }
+  // A complete bootstrap can repair a genuinely absent self row. Natural-key
+  // absence alone is insufficient: an occupied old primary key must still
+  // refuse, including a reused ID belonging to another profile. This is a
+  // current physical query in the same writer, never a serialized verdict.
+  if (allowAbsentBootstrapSelf && !reference.required && candidates.length > 0) {
+    const [table] = brc38ImportTargetIndexes[candidates[0].index]
+    const query = k(table).where(ids[reference.tableId], association.localId).select(ids[reference.tableId]).limit(1)
+    if (remote) query.forUpdate().noWait()
+    if ((await query).length === 0) return false
   }
   invalid()
 }

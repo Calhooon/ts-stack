@@ -60,6 +60,7 @@ export async function captureSnapshotJournalArchiveSource(
         previous.binding === source.receipt.binding &&
         compareSnapshotJournalRevisions(previous.highWater, source.receipt.floor) >= 0,
       low = incremental ? previous.highWater : snapshotJournalRevision('0'),
+      contentRevision = await source.readContentRevision?.(),
       binding = parseSnapshotJournalArchiveBinding({
         version: 3,
         encoding: snapshotJournalArchiveEncoding,
@@ -72,7 +73,8 @@ export async function captureSnapshotJournalArchiveSource(
           receipt: source.receipt,
           low,
           bootstrap: !incremental,
-          primary: source.primary
+          primary: source.primary,
+          ...(contentRevision === undefined ? {} : { contentRevision })
         }
       })
     // The immutable source receipt is never extended to fit archive admission.

@@ -142,7 +142,12 @@ export async function prepareSnapshotJournalIdentityLedger(
   input: SnapshotJournalDestinationBinding,
   expected: SnapshotJournalDestinationCheckpoint,
   inputReferences: readonly SnapshotJournalIdentityReference[],
-  inputLimits: SnapshotJournalIdentityLimits
+  inputLimits: SnapshotJournalIdentityLimits,
+  validateAssociation?: (
+    trx: Knex,
+    reference: SnapshotJournalIdentityReference,
+    association: SnapshotJournalIdentityAssociation
+  ) => Promise<boolean>
 ): Promise<{
   lineage: string
   associations: ReadonlyMap<string, SnapshotJournalIdentityAssociation>
@@ -266,7 +271,12 @@ export async function prepareSnapshotJournalIdentityLedger(
           invalid()
         stored.set(key(reference), association)
         storedGenerations.set(key(reference), generation)
-        if (currentGeneration && same(association, reference)) associations.set(key(reference), { ...association })
+        if (
+          currentGeneration &&
+          same(association, reference) &&
+          (validateAssociation === undefined || (await validateAssociation(k, reference, { ...association })))
+        )
+          associations.set(key(reference), { ...association })
         else previous.set(key(reference), { ...association })
       }
     }

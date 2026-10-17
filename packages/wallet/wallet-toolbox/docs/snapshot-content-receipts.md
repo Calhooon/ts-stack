@@ -2,8 +2,8 @@
 
 This unpublished #569 component adds content comparison to the full, client and
 mobile snapshot adapters. It does not establish complete #544 delivery or
-production readiness. Remote incremental journal/tombstone transport, the
-remaining platform integration and full-system qualification remain required.
+production readiness. The separate journal DATA path is described in [journal-artifact-transport.md](journal-artifact-transport.md).
+Large-payload and remote primary integration plus full-system qualification remain required.
 
 The full, browser and mobile package entries export the type-only
 `SnapshotSyncContentPosition`, `SnapshotSyncContentRevision` and
