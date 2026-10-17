@@ -285,7 +285,12 @@ test('journal mutation registration retains its complete source, canonical tests
     'src/storage/snapshot/journal/SnapshotJournalCollection.ts',
     'src/storage/snapshot/journal/SnapshotJournalMaintenance.ts',
     'src/storage/snapshot/journal/SnapshotJournalMaintenanceFence.ts',
-    'src/storage/snapshot/journal/SnapshotJournalMaintenanceTask.ts'
+    'src/storage/snapshot/journal/SnapshotJournalMaintenanceTask.ts',
+    'src/storage/snapshot/journal/SnapshotJournalContentRevision.ts',
+    'src/storage/snapshot/journal/SnapshotJournalCurrentContentRevision.ts',
+    'src/storage/snapshot/journal/SnapshotJournalReceiptData.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldReferences.ts',
+    'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts'
   ])
   assert.deepEqual(target.additionalInputs, [
     'test/fixtures/snapshotJournal/mysql-generation-ddl-fixture.json',
@@ -321,11 +326,18 @@ test('journal mutation registration retains its complete source, canonical tests
     'test/storage/snapshotJournalMaintenanceMysqlRr.cjs',
     'test/storage/snapshotJournalSqliteCrash.cjs',
     'test/storage/runSnapshotJournalMysql.cjs',
-    'test/storage/snapshotArchiveDocker.cjs'
+    'test/storage/snapshotArchiveDocker.cjs',
+    'test/utils/snapshotJournalArchiveFixture.ts',
+    'test/utils/snapshotJournalDataManagerFixture.ts',
+    'test/utils/snapshotArchiveHttpFixtures.ts',
+    'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
   ])
   assert.equal(target.runnerOptions.maxTestRunnerReuse, 8)
   assert.deepEqual(target.runnerOptions.jest.config.testMatch, [
-    '<rootDir>/src/storage/snapshot/journal/*.test.ts'
+    '<rootDir>/src/storage/snapshot/journal/*.test.ts',
+    '<rootDir>/src/storage/schema/snapshotSyncReceiptMigration.test.ts',
+    '<rootDir>/src/storage/snapshot/journal/SnapshotJournalLocalContent.test.ts'
   ])
   for (const input of target.additionalInputs)
     assert.ok(
@@ -643,8 +655,20 @@ test('native component bridge delegates all original browser cases without repla
     match[1],
     match[2]
   ])
-  assert.equal(original.length, 60)
-  assert.equal(new Set(original.map(([, source]) => source)).size, 19)
+  const baseline = original.filter(([id]) => id !== 'verifyPackedIdbSnapshotContentReceipts')
+  assert.equal(baseline.length, 60)
+  assert.equal(new Set(baseline.map(([, source]) => source)).size, 19)
+  assert.deepEqual(
+    original.filter(([id]) => id === 'verifyPackedIdbSnapshotContentReceipts'),
+    [
+      [
+        'verifyPackedIdbSnapshotContentReceipts',
+        'src/storage/snapshot/IdbSnapshotSyncContent.browser.case.ts'
+      ]
+    ]
+  )
+  assert.equal(original.length, 61)
+  assert.equal(new Set(original.map(([, source]) => source)).size, 20)
   assert.deepEqual(selected, original)
   assert.match(wrapper, /await runPortableBrowserCase\(id\)/)
   assert.match(wrapper, /completeCatalogueRun\)\.toBe\(false\)/)

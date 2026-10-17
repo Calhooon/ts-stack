@@ -362,3 +362,20 @@ successfully copied data.
 It is not a remote primary capability or a wire grant. Actual remote primary
 handoff and verified large-payload reuse remain unfinished, and final native,
 provider, platform, performance and whole-system qualification remains required.
+
+## Owning mutation and browser selection
+
+The field/DATA/receipt implementation now appends coverage inputs and tests to
+ten existing mutation targets and four reviewed component selections. All97
+target identities remain (61 are wallet targets); all87 other targets are
+unchanged. A before/after check preserves every original mutation path, input,
+test and broader-universe prefix, plus every other runner/corpus/seed/threshold
+control. No campaign result is inferred from registration.
+
+The browser bridge preserves its original60 cases/19 source files and separately
+requires the packed-IDB content-receipt case, bringing the inventory to61 cases
+and20 files. All22 routing tests pass. Actual native/HTTP field-cache effects
+still require genuine component/functional execution and original mutation
+coverage/score gates; copied actors and ordinary SQL connections cannot stand in
+for the native producer. Later runtime components must extend their owning
+registrations too before final qualification.

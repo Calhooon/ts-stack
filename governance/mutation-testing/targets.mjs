@@ -1,6 +1,225 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+// Additive #544 DATA/field coverage; existing identities and controls remain.
+const walletDataAdditions = {
+  'wallet-snapshot-journal': {
+    mutate: [
+      'src/storage/snapshot/journal/SnapshotJournalContentRevision.ts',
+      'src/storage/snapshot/journal/SnapshotJournalCurrentContentRevision.ts',
+      'src/storage/snapshot/journal/SnapshotJournalReceiptData.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldReferences.ts',
+      'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts'
+    ],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/schema/snapshotSyncReceiptMigration.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalLocalContent.test.ts'
+    ]
+  },
+  'wallet-snapshot-archive': {
+    mutate: [
+      'src/storage/snapshot/journal/SnapshotJournalArchiveBinding.ts',
+      'src/storage/snapshot/journal/SnapshotJournalArchivePacket.ts',
+      'src/storage/snapshot/journal/SnapshotJournalArchiveStorageTable.ts',
+      'src/storage/snapshot/journal/captureSnapshotJournalArchiveSource.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldReferences.ts',
+      'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts'
+    ],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts'
+    ]
+  },
+  'wallet-snapshot-remote-directory': {
+    mutate: ['src/storage/snapshot/journal/SnapshotJournalArchiveDirectory.ts'],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts'
+    ]
+  },
+  'wallet-snapshot-remote-service': {
+    mutate: ['src/storage/snapshot/journal/SnapshotJournalArchiveReaderRequest.ts'],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts'
+    ]
+  },
+  'wallet-snapshot-remote-http': {
+    mutate: [
+      'src/storage/snapshot/RemoteSnapshotSyncContentProtocol.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalDataRpc.ts',
+      'src/storage/snapshot/journal/RemoteSnapshotJournalDataDestination.ts',
+      'src/storage/snapshot/journal/SnapshotJournalArchiveProtocol.ts',
+      'src/storage/snapshot/journal/SnapshotJournalArchiveTransport.ts',
+      'src/storage/snapshot/journal/SnapshotJournalDataProtocol.ts',
+      'src/storage/snapshot/journal/openRemoteSnapshotJournalArchive.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldArchiveProtocol.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldArchiveTransport.ts',
+      'src/storage/snapshot/journal/openRemoteSnapshotJournalFieldArchive.ts'
+    ],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts'
+    ]
+  },
+  'wallet-snapshot-sync': {
+    mutate: [
+      'src/storage/schema/snapshotSyncReceiptMigration.ts',
+      'src/storage/snapshot/KnexSnapshotSyncContentReceipts.ts',
+      'src/storage/snapshot/PackedIdbSnapshotContentRevision.ts',
+      'src/storage/snapshot/SnapshotSyncContentRevision.ts'
+    ],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/schema/snapshotSyncReceiptMigration.test.ts',
+      '<rootDir>/src/storage/snapshot/KnexSnapshotSyncContentReceipts.test.ts',
+      '<rootDir>/src/storage/snapshot/IdbSnapshotSyncContent.test.ts',
+      '<rootDir>/src/storage/snapshot/RemoteSnapshotSyncContent.test.ts'
+    ]
+  },
+  'wallet-current-snapshot-journal-destination-window': {
+    mutate: [
+      'src/storage/schema/snapshotJournalDataReceiptMigration.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalDataContentReceipts.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.ts',
+      'src/storage/snapshot/journal/SnapshotJournalDataBootstrapRequiredError.ts',
+      'src/storage/snapshot/journal/SnapshotJournalDataContentReceipt.ts',
+      'src/storage/snapshot/journal/SnapshotJournalDataProvider.ts',
+      'src/storage/snapshot/journal/runSnapshotJournalArchiveReconciliation.ts',
+      'src/storage/snapshot/journal/runSnapshotJournalSourceDataReconciliation.ts',
+      'src/storage/snapshot/journal/snapshotJournalDataSourceBinding.ts'
+    ],
+    additionalInputs: [
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalDataManager.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalDataNoChange.test.ts',
+      '<rootDir>/src/storage/schema/snapshotJournalDataReceiptMigration.test.ts'
+    ]
+  },
+  'wallet-current-snapshot-journal-delta-frame': {
+    mutate: [],
+    additionalInputs: [
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+    ],
+    tests: ['<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts']
+  },
+  'wallet-current-snapshot-journal-delta-page': {
+    mutate: [],
+    additionalInputs: [
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts'
+    ]
+  },
+  'wallet-current-snapshot-journal-source-identities': {
+    mutate: [
+      'src/storage/snapshot/journal/SnapshotJournalFieldReferences.ts',
+      'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts'
+    ],
+    additionalInputs: [
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'test/utils/snapshotJournalArchiveFixture.ts',
+      'test/utils/snapshotJournalDataManagerFixture.ts',
+      'test/utils/snapshotArchiveHttpFixtures.ts',
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+    ],
+    tests: [
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalContentRevision.test.ts',
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalLocalContent.test.ts'
+    ]
+  }
+}
+
 function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker, endMarker) {
   const lines = readFileSync(resolve(repositoryRoot, packageDirectory, filePath), 'utf8').split(
     '\n'
@@ -6412,6 +6631,24 @@ function currentWalletMutationTargets(repositoryRoot) {
       )
     }
   }
+  // Extend the exact allowed universe before applying the reviewed selection.
+  for (const [name, additions] of Object.entries(walletDataAdditions)) {
+    if (!name.startsWith('wallet-current-')) continue
+    const target = targets[name]
+    target.componentTestUniverse = [
+      ...new Set([
+        ...(target.componentTestUniverse ??
+          target.runnerOptions.jest.config.testMatch.map(file => file.replace(/^<rootDir>\//, ''))),
+        ...(target.mutate.some(file => file.includes('Idb') || file.includes('Browser'))
+          ? [nativeBrowserComponentTest]
+          : []),
+        ...(target.mutate.includes('src/utility/BrowserArgon2idWorker.ts')
+          ? [nativeBrowserWorkerTest]
+          : []),
+        ...additions.tests.map(file => file.replace(/^<rootDir>\//, ''))
+      ])
+    ]
+  }
   applyWalletComponentTests(
     targets,
     JSON.parse(readFileSync(resolve(repositoryRoot, walletComponentSelectionPath), 'utf8'))
@@ -7813,6 +8050,28 @@ export function buildMutationTargets(repositoryRoot) {
         ['<rootDir>/test/cbor.property.test.ts', '<rootDir>/test/cbor.test.ts'],
         { esm: true }
       )
+    }
+  }
+  // Append ownership after original target construction; never replace a
+  // runner, original path/corpus or configuration shared with another target.
+  for (const [name, additions] of Object.entries(walletDataAdditions)) {
+    const target = targets[name]
+    target.mutate = [...new Set([...target.mutate, ...additions.mutate])]
+    target.additionalInputs = [
+      ...new Set([...(target.additionalInputs ?? []), ...additions.additionalInputs])
+    ]
+    if (!name.startsWith('wallet-current-')) {
+      const original = target.runnerOptions.jest.config
+      target.runnerOptions = {
+        ...target.runnerOptions,
+        jest: {
+          ...target.runnerOptions.jest,
+          config: {
+            ...original,
+            testMatch: [...new Set([...original.testMatch, ...additions.tests])]
+          }
+        }
+      }
     }
   }
   for (const target of Object.values(targets)) {

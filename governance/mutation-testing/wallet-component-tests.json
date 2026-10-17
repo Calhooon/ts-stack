@@ -679,7 +679,8 @@
     "src/storage/snapshot/journal/SnapshotJournalDeltaFrame.property.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalDeltaFrame.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalDestinationStage.property.test.ts",
-    "src/storage/snapshot/journal/SnapshotJournalDestinationStage.test.ts"
+    "src/storage/snapshot/journal/SnapshotJournalDestinationStage.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts"
   ],
   "wallet-current-snapshot-journal-delta-page": [
     "src/storage/snapshot/journal/SnapshotJournal.property.test.ts",
@@ -691,7 +692,9 @@
     "src/storage/snapshot/journal/SnapshotJournalDestinationStage.property.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalDestinationStage.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalMysqlBootstrap.test.ts",
-    "src/storage/sync/snapshotSyncPage.test.ts"
+    "src/storage/sync/snapshotSyncPage.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts"
   ],
   "wallet-current-snapshot-journal-destination-stage": [
     "src/storage/portable/Brc38NativeBrowserComponents.test.cjs",
@@ -710,7 +713,11 @@
     "src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.property.test.ts",
     "src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.test.ts",
     "src/storage/snapshot/journal/runSnapshotJournalReconciliation.test.ts",
-    "src/storage/portable/Brc38NativeLocalBaselineBatchNode.test.ts"
+    "src/storage/portable/Brc38NativeLocalBaselineBatchNode.test.ts",
+    "src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalDataManager.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalDataNoChange.test.ts",
+    "src/storage/schema/snapshotJournalDataReceiptMigration.test.ts"
   ],
   "wallet-current-snapshot-journal-identity-ledger": [
     "src/storage/snapshot/journal/SnapshotJournalIdentityLedger.property.test.ts",
@@ -890,7 +897,14 @@
     "test/storage/idb/reviewStatus.test.ts",
     "test/storage/idb/transactionAbort.test.ts",
     "test/storage/idb/update.test.ts",
-    "test/storage/processAction.test.ts"
+    "test/storage/processAction.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchiveService.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalFieldArchiveHttp.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalContentRevision.test.ts",
+    "src/storage/snapshot/journal/SnapshotJournalLocalContent.test.ts"
   ],
   "wallet-current-storage-access-queue": [
     "client/test/block-header-api.test.ts",
