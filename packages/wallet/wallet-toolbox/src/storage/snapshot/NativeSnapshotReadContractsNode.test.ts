@@ -351,6 +351,8 @@ test(
       expect(expected.length).toBeGreaterThan(65536)
       await verifyNativeSnapshotFieldArtifactCache({
         storage: fixture.storage,
+        manager: fixture.manager,
+        sourceData: fixture.sourceData,
         targetRowId: rows[0].outputId,
         expected,
         expiresAt: fixture.expiresAt

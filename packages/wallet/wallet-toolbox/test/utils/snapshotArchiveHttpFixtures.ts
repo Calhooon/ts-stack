@@ -55,10 +55,11 @@ export async function snapshotHttpFixture(
   snapshotSync = true,
   seedClosure = true,
   chain: Chain = 'test',
-  storageIdentityKey = 'http-snapshot-source'
+  storageIdentityKey = 'http-snapshot-source',
+  authenticationKey?: PrivateKey
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'snapshot-http-'))
-  const key = PrivateKey.fromRandom()
+  const key = authenticationKey ?? PrivateKey.fromRandom()
   const identityKey = key.toPublicKey().toString()
   const wallet = snapshotAuthenticationWallet(key, chain)
   const serverKey = PrivateKey.fromRandom()

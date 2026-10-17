@@ -1,3 +1,7 @@
+import { Brc38StagingCleanupError } from '../../portable/Brc38StagingCleanupError'
+import type { SnapshotJournalDelta } from './SnapshotJournalTypes'
+import type { SnapshotJournalDestinationStageReceipt } from './SnapshotJournalDestinationStage'
+import type { SnapshotJournalPromotionCursor } from './SnapshotJournalDestinationPromotion'
 import { KnexSnapshotJournalDataContentReceipts } from './KnexSnapshotJournalDataContentReceipts'
 import type {
   SnapshotJournalWriterAdmission,
@@ -626,109 +630,226 @@ export async function promoteSnapshotJournalData(
   signal?: AbortSignal,
   onAcknowledged?: (trx: Knex.Transaction, checkpoint: SnapshotJournalDestinationCheckpoint) => Promise<void>
 ): Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number; inserts: number; updates: number }> {
-  signal?.throwIfAborted()
-  await verifyCurrent()
-  const observed = await writer(
-    async trx =>
-      await withSnapshotJournalDestinationWindowFence(trx, binding, expected, async fenced => {
-        // Old numeric associations are custody data only. Drain them between
-        // pages without deleting native rows before all dependency withdrawals.
-        await cleanupSnapshotJournalRetirements(
-          fenced,
+  return await promoteSnapshotJournalChanges(
+    binding,
+    expected,
+    limits,
+    writer,
+    verifyCurrent,
+    {
+      readPage: readSnapshotJournalDestinationPromotionPage,
+      batch: promoteSnapshotJournalDestinationBatch,
+      prepare: async (change, receipt, index) => {
+        const effect = await SnapshotJournalPreparedEntityMerge.prepare(
+          storage,
           binding,
-          expected,
-          32,
-          { remaining: limits.maximumAllocationBytes },
-          true
+          change,
+          receipt,
+          index,
+          limits.maximumAllocationBytes,
+          signal
         )
         return {
-          cursor: await readSnapshotJournalPromotionCursor(fenced, binding, expected),
-          frame: await readSnapshotJournalDestinationPromotionPage(fenced, binding, expected)
+          apply: async (trx, actualBinding, state, actualChange, actualReceipt, actualIndex) =>
+            await effect.apply(trx, actualBinding, state, actualChange, actualReceipt, actualIndex, limits)
         }
-      })
-  )
-  const prepared = new Map<number, SnapshotJournalPreparedEntityMerge>()
-  const start = observed.cursor?.nextChange ?? 0
-  const end = Math.min(start + limits.maximumChanges, observed.frame?.page.changes.length ?? 0)
-  if (observed.frame !== undefined) {
-    for (let i = start; i < end; i++) {
-      signal?.throwIfAborted()
-      const change = observed.frame.page.changes[i]
-      if (change.present)
-        prepared.set(
-          i,
-          await SnapshotJournalPreparedEntityMerge.prepare(
-            storage,
-            binding,
-            change,
-            observed.frame.receipt,
-            i,
-            limits.maximumAllocationBytes,
-            signal
-          )
-        )
-    }
-  }
-  await verifyCurrent()
-  let inserts = 0,
-    updates = 0
-  const result = await writer(async trx => {
-    const committed = await promoteSnapshotJournalDestinationBatch(
-      trx,
-      binding,
-      expected,
-      observed.cursor,
-      limits.maximumChanges,
-      async (fenced, change, receipt, index) => {
-        signal?.throwIfAborted()
-        if (observed.frame === undefined || receipt.digest !== observed.frame.receipt.digest) invalid()
-        if (!change.present) {
-          if (prepared.has(index)) invalid()
-          await withdrawSnapshotJournalEntity(fenced, binding, expected, receipt.tableId, change, limits, {
-            remaining: limits.maximumAllocationBytes
-          })
-        } else {
-          const entity = prepared.get(index)
-          if (entity === undefined) invalid()
-          const merged = await entity.apply(fenced, binding, expected, change, receipt, index, limits)
-          inserts += merged.inserts
-          updates += merged.updates
-        }
-      },
-      async fenced => {
-        if (binding.bootstrap === true && !(await cleanupUnseenSnapshotJournalProvenance(fenced, binding, expected)))
-          return false
-        if (
-          binding.bootstrap === true &&
-          !(
-            await withdrawUnseenSnapshotJournalMemberships(
-              fenced,
-              binding,
-              expected,
-              limits,
-              { remaining: limits.maximumAllocationBytes },
-              32
-            )
-          ).complete
-        )
-          return false
-        if (
-          binding.bootstrap === true &&
-          !(await withdrawUnseenSnapshotJournalIdentityMappings(fenced, binding, expected))
-        )
-          return false
-        return (
-          await cleanupSnapshotJournalRetirements(fenced, binding, expected, 32, {
-            remaining: limits.maximumAllocationBytes
-          })
-        ).complete
       }
+    },
+    signal,
+    onAcknowledged
+  )
+}
+
+export interface SnapshotJournalPreparedPromotionEffect<C> {
+  apply: (
+    trx: Knex,
+    binding: SnapshotJournalDestinationBinding,
+    expected: SnapshotJournalDestinationCheckpoint,
+    change: C,
+    receipt: SnapshotJournalDestinationStageReceipt,
+    index: number
+  ) => Promise<{ inserts: number; updates: number }>
+  /** Only genuine owned preparation has cleanup. Complete row effects omit it. */
+  close?: () => Promise<void>
+}
+export interface SnapshotJournalPromotionOperations<C> {
+  readPage: (
+    trx: Knex,
+    binding: SnapshotJournalDestinationBinding,
+    expected: SnapshotJournalDestinationCheckpoint
+  ) => Promise<{ receipt: SnapshotJournalDestinationStageReceipt; page: { changes: readonly C[] } } | undefined>
+  prepare: (
+    change: C,
+    receipt: SnapshotJournalDestinationStageReceipt,
+    index: number
+  ) => Promise<SnapshotJournalPreparedPromotionEffect<C>>
+  batch: (
+    trx: Knex,
+    binding: SnapshotJournalDestinationBinding,
+    expected: SnapshotJournalDestinationCheckpoint,
+    cursor: SnapshotJournalPromotionCursor | undefined,
+    maximumChanges: number,
+    apply: (trx: Knex, change: C, receipt: SnapshotJournalDestinationStageReceipt, index: number) => Promise<void>,
+    finish: (trx: Knex) => Promise<boolean>
+  ) => Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number }>
+}
+
+/** Actual shared cleanup/withdrawal/cursor/ACK kernel. Encoding-specific code
+ * supplies a real persisted page reader and fully prepared semantic effects.
+ * Preparation and physical cleanup occur outside each short target writer. */
+export async function promoteSnapshotJournalChanges<C extends SnapshotJournalDelta>(
+  binding: Readonly<SnapshotJournalDestinationBinding>,
+  expected: SnapshotJournalDestinationCheckpoint,
+  limits: SnapshotJournalDestinationLimits,
+  writer: <T>(apply: (trx: Knex) => Promise<T>) => Promise<T>,
+  verifyCurrent: () => Promise<void>,
+  operations: SnapshotJournalPromotionOperations<C>,
+  signal?: AbortSignal,
+  onAcknowledged?: (trx: Knex.Transaction, checkpoint: SnapshotJournalDestinationCheckpoint) => Promise<void>
+): Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number; inserts: number; updates: number }> {
+  const prepared = new Map<number, SnapshotJournalPreparedPromotionEffect<C>>()
+  const pendingCleanup = new Set<SnapshotJournalPreparedPromotionEffect<C>>()
+  const cleanup = async (): Promise<void> => {
+    const failures: unknown[] = []
+    for (const effect of pendingCleanup) {
+      try {
+        await effect.close!()
+        pendingCleanup.delete(effect)
+      } catch (cause) {
+        failures.push(cause)
+      }
+    }
+    if (failures.length)
+      throw new Brc38StagingCleanupError(
+        failures,
+        'Journal promotion retains actual prepared effects until drained',
+        cleanup
+      )
+  }
+  const execute = async (): Promise<{
+    checkpoint: SnapshotJournalDestinationCheckpoint
+    applied: number
+    inserts: number
+    updates: number
+  }> => {
+    signal?.throwIfAborted()
+    await verifyCurrent()
+    const observed = await writer(
+      async trx =>
+        await withSnapshotJournalDestinationWindowFence(trx, binding, expected, async fenced => {
+          // Old numeric associations are custody data only. Drain them between
+          // pages without deleting native rows before all dependency withdrawals.
+          await cleanupSnapshotJournalRetirements(
+            fenced,
+            binding,
+            expected,
+            32,
+            { remaining: limits.maximumAllocationBytes },
+            true
+          )
+          return {
+            cursor: await readSnapshotJournalPromotionCursor(fenced, binding, expected),
+            frame: await operations.readPage(fenced, binding, expected)
+          }
+        })
     )
-    await advanceSnapshotJournalProgress(trx, binding, expected, committed.checkpoint, { inserts, updates })
-    if (committed.checkpoint.phase === 'acknowledged' && onAcknowledged !== undefined)
-      await onAcknowledged(trx as Knex.Transaction, committed.checkpoint)
-    return committed
-  })
-  await verifyCurrent()
-  return { checkpoint: result.checkpoint, applied: result.applied, inserts, updates }
+    const start = observed.cursor?.nextChange ?? 0
+    const end = Math.min(start + limits.maximumChanges, observed.frame?.page.changes.length ?? 0)
+    if (observed.frame !== undefined) {
+      for (let i = start; i < end; i++) {
+        signal?.throwIfAborted()
+        const change = observed.frame.page.changes[i]
+        if (change.present) {
+          const effect = await operations.prepare(change, observed.frame.receipt, i)
+          prepared.set(i, effect)
+          if (effect.close !== undefined) pendingCleanup.add(effect)
+        }
+      }
+    }
+    await verifyCurrent()
+    let inserts = 0,
+      updates = 0
+    const result = await writer(async trx => {
+      const committed = await operations.batch(
+        trx,
+        binding,
+        expected,
+        observed.cursor,
+        limits.maximumChanges,
+        async (fenced, change, receipt, index) => {
+          signal?.throwIfAborted()
+          if (observed.frame === undefined || receipt.digest !== observed.frame.receipt.digest) invalid()
+          if (!change.present) {
+            if (prepared.has(index)) invalid()
+            await withdrawSnapshotJournalEntity(fenced, binding, expected, receipt.tableId, change, limits, {
+              remaining: limits.maximumAllocationBytes
+            })
+          } else {
+            const entity = prepared.get(index)
+            if (entity === undefined) invalid()
+            const merged = await entity.apply(fenced, binding, expected, change, receipt, index)
+            inserts += merged.inserts
+            updates += merged.updates
+          }
+        },
+        async fenced => {
+          if (binding.bootstrap === true && !(await cleanupUnseenSnapshotJournalProvenance(fenced, binding, expected)))
+            return false
+          if (
+            binding.bootstrap === true &&
+            !(
+              await withdrawUnseenSnapshotJournalMemberships(
+                fenced,
+                binding,
+                expected,
+                limits,
+                { remaining: limits.maximumAllocationBytes },
+                32
+              )
+            ).complete
+          )
+            return false
+          if (
+            binding.bootstrap === true &&
+            !(await withdrawUnseenSnapshotJournalIdentityMappings(fenced, binding, expected))
+          )
+            return false
+          return (
+            await cleanupSnapshotJournalRetirements(fenced, binding, expected, 32, {
+              remaining: limits.maximumAllocationBytes
+            })
+          ).complete
+        }
+      )
+      await advanceSnapshotJournalProgress(trx, binding, expected, committed.checkpoint, { inserts, updates })
+      if (committed.checkpoint.phase === 'acknowledged' && onAcknowledged !== undefined)
+        await onAcknowledged(trx as Knex.Transaction, committed.checkpoint)
+      return committed
+    })
+    await verifyCurrent()
+    return { checkpoint: result.checkpoint, applied: result.applied, inserts, updates }
+  }
+  let primaryFailed = false
+  let primaryFailure: unknown
+  let result: Awaited<ReturnType<typeof execute>> | undefined
+  try {
+    result = await execute()
+  } catch (cause) {
+    primaryFailed = true
+    primaryFailure = cause
+  }
+  try {
+    if (pendingCleanup.size > 0) await cleanup()
+  } catch (cause) {
+    if (primaryFailed)
+      throw new Brc38StagingCleanupError(
+        [primaryFailure, cause],
+        'Journal promotion and actual preparation cleanup failed',
+        cleanup
+      )
+    throw cause
+  }
+  if (primaryFailed) throw primaryFailure
+  if (result === undefined) invalid()
+  return result
 }

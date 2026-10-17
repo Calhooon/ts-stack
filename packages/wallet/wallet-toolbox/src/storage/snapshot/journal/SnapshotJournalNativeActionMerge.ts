@@ -1,3 +1,13 @@
+import { inspectBrc38StreamedProofReader } from '../../portable/Brc38StreamedProof'
+import type { Brc38StreamedProofReader } from '../../portable/Brc38StreamedProof'
+import type { Brc38JsonStreamedRow } from '../../portable/Brc38JsonBinaryFields'
+import { applyPreparedNativeSnapshotProofs, type PreparedNativeSnapshotProof } from '../NativeSnapshotSyncProvenTxsNode'
+import {
+  nativeSnapshotSyncProofRow,
+  readNativeSnapshotSyncProofCurrent,
+  requireSameNativeSnapshotSyncProofCurrent,
+  readNativeSnapshotSyncProofCurrentExtent
+} from '../NativeSnapshotSyncProofCurrentNode'
 import type { SnapshotJournalDestinationBinding, SnapshotJournalDestinationCheckpoint } from './SnapshotJournalTypes'
 import { readSnapshotJournalDestinationFieldPromotionPage } from './SnapshotJournalDestinationStage'
 import { requireSnapshotJournalCapturedFrame } from './SnapshotJournalCapturedIdentities'
@@ -54,13 +64,13 @@ function changeDigest(
   receipt: SnapshotJournalDestinationStageReceipt
 ): string {
   const context = snapshotJournalDestinationStreams[receipt.streamIndex]
-  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1].includes(receipt.tableId)) invalid()
+  if (context?.tableId !== receipt.tableId || !change.present || ![0, 1, 8].includes(receipt.tableId)) invalid()
   const { revision, id1, id2, exactText } = change.metadata
   return createHash('sha256')
     .update(
       encodeSnapshotJournalFieldFrame(
         {
-          table: receipt.tableId === 0 ? 'transactions' : 'outputs',
+          table: receipt.tableId === 0 ? 'transactions' : receipt.tableId === 1 ? 'outputs' : 'provenTxs',
           changes: [change],
           examined: 1,
           metadataBytes: 0,
@@ -92,7 +102,7 @@ export interface PreparedSnapshotJournalNativeAction {
  * original action kernel and actual identity/membership boundary run in the
  * final writer, including mapped parents, current generations, BRC177 quarantine
  * and one-use native attachments. No complete snapshot/session is fabricated. */
-export async function prepareSnapshotJournalNativeActionMerge(
+async function prepareSnapshotJournalNativeEntityMerge(
   storage: StorageKnex,
   binding: SnapshotJournalDestinationBinding,
   expected: SnapshotJournalDestinationCheckpoint,
@@ -132,7 +142,7 @@ export async function prepareSnapshotJournalNativeActionMerge(
     changeIndex < 0 ||
     change === undefined ||
     !change.present ||
-    ![0, 1].includes(frame.tableId) ||
+    ![0, 1, 8].includes(frame.tableId) ||
     receipt.tableId !== frame.tableId ||
     snapshotJournalDestinationStreams[receipt.streamIndex]?.stream !== frame.stream ||
     digest !== frame.frameDigest ||
@@ -147,13 +157,19 @@ export async function prepareSnapshotJournalNativeActionMerge(
   )
     invalid()
   const selectedChangeDigest = changeDigest(change, receipt),
-    table = frame.tableId === 0 ? 'transactions' : 'outputs',
-    payloadNames: readonly string[] = table === 'transactions' ? transactionPayloadFields : outputPayloadFields
+    table = frame.tableId === 0 ? 'transactions' : frame.tableId === 1 ? 'outputs' : 'provenTxs',
+    payloadNames: readonly string[] =
+      table === 'transactions'
+        ? transactionPayloadFields
+        : table === 'outputs'
+          ? outputPayloadFields
+          : ['rawTx', 'merklePath']
   let closed = false,
     consumed = false,
     closing: Promise<void> | undefined,
     applying: Promise<{ inserts: number; updates: number }> | undefined,
-    row: PreparedNativeSnapshotAction | undefined
+    row: PreparedNativeSnapshotAction | undefined,
+    proofRow: PreparedNativeSnapshotProof | undefined
   const check = (): void => {
     signal?.throwIfAborted()
     assertRemoteSnapshotJournalFieldFrame(source, frame)
@@ -223,6 +239,7 @@ export async function prepareSnapshotJournalNativeActionMerge(
     allocations.length = 0
     stages.length = 0
     row = undefined
+    proofRow = undefined
   }
   try {
     check()
@@ -231,66 +248,90 @@ export async function prepareSnapshotJournalNativeActionMerge(
       before = budget.remaining,
       fields = normalizeSnapshotJournalNativeRow(storage, table, change.row, budget)
     allocations.push(working.claim(before - budget.remaining))
-    if (fields.userId !== binding.source.userId) invalid()
-    const action: NativeSnapshotSyncAction =
-      table === 'transactions'
-        ? { table, row: snapshotSyncTransactionMetadata(fields, change.fields) }
-        : { table, row: snapshotSyncOutputMetadata(fields, change.fields) }
-    const currentAllowance = working.claim(16384 + 16 * 65536)
-    allocations.push(currentAllowance)
-    const current = await inspect(async trx => {
-      await requireOriginalStage(trx)
-      const parentsBudget = { remaining: working.maximum - working.used },
-        parents = await loadSnapshotJournalDestinationParents(
-          trx,
-          binding,
-          expected,
-          readSnapshotJournalEntityFrameIdentities(trx, binding, expected, receipt.digest, changeIndex),
-          limits,
-          parentsBudget
-        )
-      return await readNativeSnapshotSyncActionCurrent(
+    if (table === 'provenTxs') {
+      proofRow = await prepareJournalProofFields(
         storage,
-        trx,
         binding.destinationUserId,
-        action,
-        parents.map,
+        fields,
+        change,
+        source,
+        frame,
+        changeIndex,
+        working,
+        allocations,
+        stages,
+        check,
+        async operation =>
+          await inspect(async trx => {
+            await requireOriginalStage(trx)
+            return await operation(trx)
+          }),
+        expiresAt,
+        deadline,
         signal
       )
-    })
-    currentAllowance.resize(16384 + 16 * current.field.allocationBytes)
-    const inlineText: Record<string, string> = {},
-      rowStages: Record<string, PreparedPackedNativeSnapshotField> = {}
-    let inlineBytes = 0
-    for (const name of payloadNames) {
-      const cell: unknown = Reflect.get(action.row, name)
-      if (typeof cell === 'string') {
-        inlineText[name] = cell
-        inlineBytes += Buffer.byteLength(cell)
-      }
-    }
-    allocations.push(working.claim(16384 + 16 * inlineBytes))
-    row = {
-      action,
-      metadata: { fields },
-      current,
-      inline: prepareBrc38NativePackedTextWalletWrite(table, inlineText),
-      stages: rowStages
-    }
-    for (const name of payloadNames)
-      if (change.fields[name] !== undefined) {
-        const stage = await preparePackedNativeSnapshotArchiveField(storage, source, frame, changeIndex, name, {
-          workingAllocation: working,
-          maximumFieldBytes: 1000000000,
-          maximumReadBytes: 16384,
-          expiresAt,
+    } else {
+      if (fields.userId !== binding.source.userId) invalid()
+      const action: NativeSnapshotSyncAction =
+        table === 'transactions'
+          ? { table, row: snapshotSyncTransactionMetadata(fields, change.fields) }
+          : { table, row: snapshotSyncOutputMetadata(fields, change.fields) }
+      const currentAllowance = working.claim(16384 + 16 * 65536)
+      allocations.push(currentAllowance)
+      const current = await inspect(async trx => {
+        await requireOriginalStage(trx)
+        const parentsBudget = { remaining: working.maximum - working.used },
+          parents = await loadSnapshotJournalDestinationParents(
+            trx,
+            binding,
+            expected,
+            readSnapshotJournalEntityFrameIdentities(trx, binding, expected, receipt.digest, changeIndex),
+            limits,
+            parentsBudget
+          )
+        return await readNativeSnapshotSyncActionCurrent(
+          storage,
+          trx,
+          binding.destinationUserId,
+          action,
+          parents.map,
           signal
-        })
-        stages.push(stage)
-        rowStages[name] = stage
-        check()
+        )
+      })
+      currentAllowance.resize(16384 + 16 * current.field.allocationBytes)
+      const inlineText: Record<string, string> = {},
+        rowStages: Record<string, PreparedPackedNativeSnapshotField> = {}
+      let inlineBytes = 0
+      for (const name of payloadNames) {
+        const cell: unknown = Reflect.get(action.row, name)
+        if (typeof cell === 'string') {
+          inlineText[name] = cell
+          inlineBytes += Buffer.byteLength(cell)
+        }
       }
-    Object.freeze(rowStages)
+      allocations.push(working.claim(16384 + 16 * inlineBytes))
+      row = {
+        action,
+        metadata: { fields },
+        current,
+        inline: prepareBrc38NativePackedTextWalletWrite(table, inlineText),
+        stages: rowStages
+      }
+      for (const name of payloadNames)
+        if (change.fields[name] !== undefined) {
+          const stage = await preparePackedNativeSnapshotArchiveField(storage, source, frame, changeIndex, name, {
+            workingAllocation: working,
+            maximumFieldBytes: 1000000000,
+            maximumReadBytes: 16384,
+            expiresAt,
+            signal
+          })
+          stages.push(stage)
+          rowStages[name] = stage
+          check()
+        }
+      Object.freeze(rowStages)
+    }
     check()
     return Object.freeze({
       apply: async (
@@ -304,7 +345,7 @@ export async function prepareSnapshotJournalNativeActionMerge(
         check()
         if (
           consumed ||
-          row === undefined ||
+          (row === undefined && proofRow === undefined) ||
           JSON.stringify(actualBinding) !== originalBinding ||
           JSON.stringify(actualState) !== originalState ||
           actualReceipt.digest !== receipt.digest ||
@@ -325,7 +366,8 @@ export async function prepareSnapshotJournalNativeActionMerge(
         if (reserved < currentReadBytes) invalid()
         const writerAllowance = working.claim(reserved),
           writerBudget = { remaining: reserved - currentReadBytes },
-          prepared = row
+          prepared = row,
+          preparedProof = proofRow
         applying = (async () => {
           await verifySnapshotJournalDestinationSchema(trx)
           await readSnapshotJournalCaptureConfiguration(trx)
@@ -342,6 +384,28 @@ export async function prepareSnapshotJournalNativeActionMerge(
             writerBudget,
             async (actual, map, observeCurrent) => {
               check()
+              if (table === 'provenTxs') {
+                if (preparedProof === undefined) invalid()
+                const current = await readNativeSnapshotSyncProofCurrent(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  preparedProof.proof.txid,
+                  signal
+                )
+                requireSameNativeSnapshotSyncProofCurrent(preparedProof.current, current)
+                if (current.field.metadata !== undefined) await observeCurrent(current.field.metadata)
+                return await applyPreparedNativeSnapshotProofs(
+                  storage,
+                  actual as Knex.Transaction,
+                  binding.destinationUserId,
+                  [preparedProof],
+                  map,
+                  check,
+                  signal
+                )
+              }
+              if (prepared === undefined) invalid()
               const current = await readNativeSnapshotSyncActionCurrent(
                 storage,
                 actual as Knex.Transaction,
@@ -394,4 +458,213 @@ export async function prepareSnapshotJournalNativeActionMerge(
     }
     throw cause
   }
+}
+
+export async function prepareSnapshotJournalNativeActionMerge(
+  ...args: Parameters<typeof prepareSnapshotJournalNativeEntityMerge>
+): Promise<Readonly<PreparedSnapshotJournalNativeAction>> {
+  if (![0, 1].includes(args[3].tableId)) invalid()
+  return await prepareSnapshotJournalNativeEntityMerge(...args)
+}
+export async function prepareSnapshotJournalNativeProofMerge(
+  ...args: Parameters<typeof prepareSnapshotJournalNativeEntityMerge>
+): Promise<Readonly<PreparedSnapshotJournalNativeAction>> {
+  if (args[3].tableId !== 8) invalid()
+  return await prepareSnapshotJournalNativeEntityMerge(...args)
+}
+
+async function prepareJournalProofFields(
+  storage: StorageKnex,
+  userId: number,
+  fields: Record<string, unknown>,
+  change: Extract<SnapshotJournalHashedFieldDelta, { present: true }>,
+  source: RemoteSnapshotJournalFieldArchive,
+  frame: RemoteSnapshotJournalFieldFrame,
+  changeIndex: number,
+  working: Brc38WorkingAllocation,
+  allocations: Brc38WorkingCharge[],
+  stages: PreparedPackedNativeSnapshotField[],
+  check: () => void,
+  inspect: <T>(operation: (trx: Knex.Transaction) => Promise<T>) => Promise<T>,
+  expiresAt: number,
+  deadline: number,
+  signal?: AbortSignal
+): Promise<PreparedNativeSnapshotProof> {
+  const proof = nativeSnapshotSyncProofRow(fields)
+  if (
+    Object.keys(change.fields).some(name => !['rawTx', 'merklePath'].includes(name)) ||
+    change.fields.rawTx?.kind !== 'binary' ||
+    change.fields.merklePath?.kind !== 'binary'
+  )
+    invalid()
+  const allowance = working.claim(8192 + 16 * 65536)
+  allocations.push(allowance)
+  const current = await inspect(
+    async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal)
+  )
+  allowance.resize(8192 + 16 * current.field.allocationBytes)
+  const prepare = async (name: 'rawTx' | 'merklePath') => {
+    check()
+    const stage = await preparePackedNativeSnapshotArchiveField(storage, source, frame, changeIndex, name, {
+      workingAllocation: working,
+      maximumFieldBytes: 1000000000,
+      maximumReadBytes: 16384,
+      expiresAt,
+      signal
+    })
+    stages.push(stage)
+    check()
+    return stage
+  }
+  const rawTx = await prepare('rawTx'),
+    merklePath = await prepare('merklePath'),
+    content = { rawTx, merklePath },
+    portable: Brc38JsonStreamedRow = Object.freeze({
+      fields: Object.freeze({
+        txid: proof.txid,
+        blockHash: proof.blockHash,
+        merkleRoot: proof.merkleRoot,
+        height: proof.height,
+        index: proof.index
+      }),
+      binaries: Object.freeze({
+        rawTx: Object.freeze({
+          field: 'rawTx',
+          encoding: 'base64' as const,
+          bytes: rawTx.descriptor.bytes,
+          sha256: rawTx.descriptor.sha256
+        }),
+        merklePath: Object.freeze({
+          field: 'merklePath',
+          encoding: 'base64' as const,
+          bytes: merklePath.descriptor.bytes,
+          sha256: merklePath.descriptor.sha256
+        })
+      })
+    })
+  const reader: Brc38StreamedProofReader = Object.freeze({
+    row: async (table: 'provenTxs', index: number) => {
+      check()
+      if (table !== 'provenTxs' || index !== 0) invalid()
+      for (const name of ['rawTx', 'merklePath'] as const) {
+        const bytes = await source.readFieldExtent(frame, changeIndex, name, 0, 0)
+        try {
+          check()
+          if (bytes.length !== 0) invalid()
+        } finally {
+          bytes.fill(0)
+        }
+      }
+      return portable
+    },
+    chunks: async function* (
+      table: 'provenTxs',
+      index: number,
+      field: import('../../portable/Brc38JsonBinaryFields').Brc38JsonStreamedField
+    ) {
+      check()
+      if (table !== 'provenTxs' || index !== 0 || (field.field !== 'rawTx' && field.field !== 'merklePath')) invalid()
+      const original = portable.binaries[field.field],
+        stage = content[field.field]
+      if (field.encoding !== original.encoding || field.bytes !== original.bytes || field.sha256 !== original.sha256)
+        invalid()
+      const reservation = working.claim(4096 + 16 * 65536)
+      try {
+        for (let offset = 0; offset < field.bytes;) {
+          check()
+          const length = Math.min(16384, field.bytes - offset),
+            bytes = await stage.read(offset, length)
+          try {
+            check()
+            if (bytes.length !== length) invalid()
+            yield bytes
+            check()
+            offset += length
+          } finally {
+            bytes.fill(0)
+          }
+        }
+      } finally {
+        reservation.close()
+      }
+    }
+  })
+  // Unlike local full-snapshot trust, authenticated journal DATA always retains
+  // the complete incoming raw/Merkle/current active-header validation policy.
+  await inspectBrc38StreamedProofReader(
+    reader,
+    storage,
+    0,
+    {
+      maximumRawBytes: 1000000000,
+      maximumChunks: 100000,
+      maximumMerkleBytes: 1048576,
+      maximumDecodedMerkleBytes: 4194304,
+      maximumChunkBytes: 16384,
+      workingAllocation: working,
+      maximumNetworkMilliseconds: 30000,
+      cleanupMilliseconds: 30000,
+      signal
+    },
+    expiresAt,
+    deadline
+  )
+  check()
+  let equal =
+    current.row !== undefined &&
+    current.row.txid === proof.txid &&
+    current.row.height === proof.height &&
+    current.row.index === proof.index &&
+    current.row.blockHash === proof.blockHash &&
+    current.row.merkleRoot === proof.merkleRoot
+  for (const name of ['rawTx', 'merklePath'] as const) {
+    const existing = current.field.binaries[name],
+      stage = content[name]
+    if (
+      existing === undefined ||
+      existing.bytes !== stage.descriptor.bytes ||
+      existing.sha256 !== stage.descriptor.sha256
+    )
+      equal = false
+    if (!equal) continue
+    const reservation = working.claim(8192 + 32 * 65536)
+    try {
+      for (let offset = 0; offset < stage.descriptor.bytes;) {
+        check()
+        const length = Math.min(16384, stage.descriptor.bytes - offset),
+          incoming = await stage.read(offset, length)
+        let previous: Uint8Array | undefined
+        try {
+          previous = await inspect(
+            async trx =>
+              await readNativeSnapshotSyncProofCurrentExtent(
+                storage,
+                trx,
+                userId,
+                current,
+                name,
+                offset,
+                length,
+                signal
+              )
+          )
+          check()
+          if (incoming.length !== length || previous.length !== length) invalid()
+          for (let at = 0; at < length; at++) if (incoming[at] !== previous[at]) equal = false
+          offset += length
+        } finally {
+          incoming.fill(0)
+          previous?.fill(0)
+        }
+        if (!equal) break
+      }
+    } finally {
+      reservation.close()
+    }
+  }
+  requireSameNativeSnapshotSyncProofCurrent(
+    current,
+    await inspect(async trx => await readNativeSnapshotSyncProofCurrent(storage, trx, userId, proof.txid, signal))
+  )
+  return Object.freeze({ proof, current, rawTx, merklePath, currentBytesEqual: equal })
 }

@@ -483,6 +483,9 @@ test('actual field intake retains large-field descriptors, resumes its own windo
       'actual opened artifact'
     )
     expect((await begun.destination.status()).checkpoint).toEqual(begun.checkpoint)
+    expect(
+      await f.target.knex('snapshot_reconciliation_captured_identities').where('sessionId', begun.checkpoint.sessionId)
+    ).toHaveLength(0)
     const next = await begun.destination.stageArchiveFrame(begun.checkpoint, actual)
     expect(next.sequence).toBe(1)
     expect(next.phase).toBe('intake')
@@ -514,6 +517,147 @@ test('actual field intake retains large-field descriptors, resumes its own windo
     expect((await resumed.status()).checkpoint).toEqual(next)
   } finally {
     bytes.fill(0)
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('actual field receiver commits complete semantic rows and recovers a lost final financial ACK without replaying the merge', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
+  const f = await fixture()
+  let archive: RemoteSnapshotJournalFieldArchive | undefined
+  let dropReply = true
+  let lost = false
+  const admission = async <T>(operation: () => Promise<T>) =>
+    await f.admission(async () => {
+      const result = await operation()
+      if (
+        dropReply &&
+        result !== null &&
+        typeof result === 'object' &&
+        Reflect.get(result, 'checkpoint') !== null &&
+        typeof Reflect.get(result, 'checkpoint') === 'object' &&
+        Reflect.get(Reflect.get(result, 'checkpoint') as object, 'phase') === 'acknowledged'
+      ) {
+        dropReply = false
+        throw new Error('Independent field final reply lost after actual SQL commit')
+      }
+      return result
+    })
+  try {
+    const incoming = await f.source.storage.findOrInsertTxLabel(
+      (await f.source.storage.findOrInsertUser(f.source.identityKey)).user.userId,
+      'field semantic label'
+    )
+    const local = await f.target.findOrInsertTxLabel(f.manager.getActiveUser().userId, 'retained local field label')
+    archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual authenticated field artifact unavailable')
+    const begun = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      admission
+    )
+    let state = begun.checkpoint
+    for (let index = 0; index < archive.frameCount; index++)
+      state = await begun.destination.stageArchiveFrame(state, archive)
+    expect(state.phase).toBe('promoting')
+    expect(await f.target.findTxLabels({ partial: { label: 'field semantic label' } })).toHaveLength(0)
+    const deadline = performance.now() + 10000
+    while (state.phase !== 'acknowledged') {
+      if (performance.now() >= deadline)
+        throw new Error('Actual field semantic promotion exceeded its original bounded fixture phase')
+      try {
+        state = (await begun.destination.promote(state, archive)).checkpoint
+      } catch (cause) {
+        if (!(cause instanceof Error) || cause.message !== 'Independent field final reply lost after actual SQL commit')
+          throw cause
+        lost = true
+        break
+      }
+    }
+    expect(lost).toBe(true)
+    const restored = await KnexSnapshotJournalFieldDestination.resume(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding.sourceStorage.storageIdentityKey,
+      journalCopyLimits(),
+      admission
+    )
+    if (restored === undefined) throw new Error('Actual durable field receiver unavailable after lost reply')
+    expect((await restored.status()).checkpoint.phase).toBe('acknowledged')
+    const copied = await f.target.findTxLabels({ partial: { label: 'field semantic label' } })
+    expect(copied).toHaveLength(1)
+    expect(copied[0].txLabelId).not.toBe(incoming.txLabelId)
+    expect(await f.target.findTxLabels({ partial: { txLabelId: local.txLabelId } })).toHaveLength(1)
+    const mappings = await f.target
+      .knex('snapshot_reconciliation_identity_maps')
+      .where({ incomingId: incoming.txLabelId, tableId: 3 })
+    expect(mappings).toHaveLength(1)
+    expect(mappings[0].localId).toBe(copied[0].txLabelId)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(1)
+    expect((await f.target.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe('journal-data-target')
+  } finally {
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('actual field promotion refuses changed captured identity DATA and resumes after exact restoration', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
+  const f = await fixture()
+  let archive: RemoteSnapshotJournalFieldArchive | undefined
+  try {
+    const label = await f.source.storage.findOrInsertTxLabel(
+      (await f.source.storage.findOrInsertUser(f.source.identityKey)).user.userId,
+      'authenticated field identity'
+    )
+    archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual authenticated identity fixture unavailable')
+    const begun = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    let state = begun.checkpoint
+    for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+      state = await begun.destination.stageArchiveFrame(state, archive)
+    const key = { sessionId: state.sessionId, tableId: 3, incomingId: label.txLabelId },
+      captured = await f.target.knex('snapshot_reconciliation_captured_identities').where(key).select('naturalIdentity')
+    expect(captured).toHaveLength(1)
+    const original = captured[0].naturalIdentity
+    await f.target
+      .knex('snapshot_reconciliation_captured_identities')
+      .where(key)
+      .update({ naturalIdentity: original === 'a'.repeat(64) ? 'b'.repeat(64) : 'a'.repeat(64) })
+    let refused = false
+    const deadline = performance.now() + 10000
+    while (!refused && state.phase !== 'acknowledged') {
+      if (performance.now() >= deadline) throw new Error('Actual identity refusal exceeded its bounded fixture phase')
+      try {
+        state = (await begun.destination.promote(state, archive)).checkpoint
+      } catch (cause) {
+        expect(cause).toBeInstanceOf(Error)
+        expect((cause as Error).message).toContain('captured journal identity')
+        refused = true
+      }
+    }
+    expect(refused).toBe(true)
+    expect((await begun.destination.status()).checkpoint).toEqual(state)
+    expect(await f.target.findTxLabels({ partial: { label: 'authenticated field identity' } })).toHaveLength(0)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
+    await f.target.knex('snapshot_reconciliation_captured_identities').where(key).update({ naturalIdentity: original })
+    while (state.phase !== 'acknowledged') {
+      if (performance.now() >= deadline)
+        throw new Error('Actual restored field promotion exceeded its bounded fixture phase')
+      state = (await begun.destination.promote(state, archive)).checkpoint
+    }
+    expect(await f.target.findTxLabels({ partial: { label: 'authenticated field identity' } })).toHaveLength(1)
+    expect((await begun.destination.status()).checkpoint).toEqual(state)
+  } finally {
     await archive?.close()
     await f.close()
   }

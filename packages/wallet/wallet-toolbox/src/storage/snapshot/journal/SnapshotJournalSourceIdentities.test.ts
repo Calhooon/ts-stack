@@ -1,3 +1,6 @@
+import { createSyncMap } from '../../schema/entities/EntityBase'
+import { brc38ImportTargetIndexName } from '../../portable/Brc38ImportTargetIndexes'
+import { verifySnapshotJournalDestinationIdentity } from './SnapshotJournalDestinationIdentities'
 import { knex, type Knex } from 'knex'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -265,4 +268,56 @@ test('global identities require retained profile membership and domain-separate 
   expect(actual.get('8:11')?.naturalIdentity).not.toBe(actual.get('9:12')?.naturalIdentity)
   await db('snapshot_global_keys_v2').where({ tableId: 1, userId: 1, rowId: 11 }).update({ refs: 0 })
   await expect(read([{ tableId: 8, incomingId: 11 }])).rejects.toThrow('pinned journal natural identity')
+})
+
+test('actual indexed proof identity preserves captured mixed-case spelling in source and destination', async () => {
+  const txid = 'aBcD'.repeat(16)
+  await live(8, 23, { txid })
+  await db.raw('CREATE INDEX ?? ON proven_txs(txid)', [brc38ImportTargetIndexName('provenTxs', db)])
+  const reference = (await read([{ tableId: 8, incomingId: 23 }])).get('8:23')
+  if (reference === undefined) throw new Error('Actual captured global proof identity missing')
+  expect(reference.naturalKey).toEqual({ tableId: 8, txid })
+  const verified = await db.transaction(
+    async trx =>
+      await verifySnapshotJournalDestinationIdentity(
+        trx,
+        1,
+        reference,
+        { generation: reference.generation, naturalIdentity: reference.naturalIdentity, localId: 23 },
+        createSyncMap()
+      )
+  )
+  expect(verified).toBe(true)
+  expect((await db('proven_txs').where('provenTxId', 23).first('txid')).txid).toBe(txid)
+  // The original complete-row validator legitimately writes canonical hex.
+  // Preserve that path too, without changing the captured source spelling.
+  await db('proven_txs').where('provenTxId', 23).update({ txid: txid.toLowerCase() })
+  expect(
+    await db.transaction(
+      async trx =>
+        await verifySnapshotJournalDestinationIdentity(
+          trx,
+          1,
+          reference,
+          { generation: reference.generation, naturalIdentity: reference.naturalIdentity, localId: 23 },
+          createSyncMap()
+        )
+    )
+  ).toBe(true)
+  expect(reference.naturalKey).toEqual({ tableId: 8, txid })
+  await db('proven_txs')
+    .where('provenTxId', 23)
+    .update({ txid: 'f'.repeat(64) })
+  await expect(
+    db.transaction(
+      async trx =>
+        await verifySnapshotJournalDestinationIdentity(
+          trx,
+          1,
+          reference,
+          { generation: reference.generation, naturalIdentity: reference.naturalIdentity, localId: 23 },
+          createSyncMap()
+        )
+    )
+  ).rejects.toThrow('no longer identifies')
 })

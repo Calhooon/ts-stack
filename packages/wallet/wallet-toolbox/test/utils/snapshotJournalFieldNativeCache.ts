@@ -1,3 +1,9 @@
+import { readSnapshotJournalPointFields } from '../../src/storage/snapshot/journal/SnapshotJournalFieldSql'
+import { PrivateKey } from '@bsv/sdk'
+import type { BRC38WalletData } from '../../src/storage/portable/index'
+import type { WalletStorageManager } from '../../src/storage/WalletStorageManager'
+import { KnexSnapshotJournalFieldDestination } from '../../src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination'
+import { journalCopyLimits } from '../../src/storage/snapshot/journal/SnapshotJournalCopyLimits'
 import { readSnapshotJournalNativeOwnedRow } from '../../src/storage/snapshot/journal/SnapshotJournalNativeRows'
 import { createHash } from 'node:crypto'
 import { Brc38WorkingAllocation } from '../../src/storage/portable/Brc38WorkingAllocation'
@@ -18,6 +24,8 @@ import { verifyPackedNativeSnapshotField } from '../../src/storage/snapshot/prep
 export async function verifyNativeSnapshotFieldArtifactCache(
   input: Readonly<{
     storage: StorageKnex
+    manager: WalletStorageManager
+    sourceData: Readonly<BRC38WalletData>
     targetRowId: number
     expected: Uint8Array
     expiresAt: number
@@ -189,6 +197,7 @@ export async function verifyNativeSnapshotFieldArtifactCache(
       archives: 0,
       reservedBytes: 0
     })
+    await verifyNativeJournalFinancialFieldPromotion(input)
   } catch (cause) {
     failures.push(cause)
   } finally {
@@ -206,4 +215,159 @@ export async function verifyNativeSnapshotFieldArtifactCache(
   if (failures.length === 1) throw failures[0]
   if (failures.length > 1)
     throw new AggregateError(failures, 'Native archive field case and cleanup failed', { cause: failures[0] })
+}
+
+/** Additional genuine financial receiver assertion inside the existing selected
+ * component and mandatory pair. Original cold/hot content, pointer/rollback,
+ * UTF8 and custody oracles above remain unchanged. This minimal proof/action
+ * fixture does not replace the separate complete-profile qualification. */
+async function verifyNativeJournalFinancialFieldPromotion(
+  input: Readonly<{
+    storage: StorageKnex
+    manager: WalletStorageManager
+    sourceData: Readonly<BRC38WalletData>
+    targetRowId: number
+    expected: Uint8Array
+    expiresAt: number
+  }>
+): Promise<void> {
+  const key = new PrivateKey(1),
+    identityKey = key.toPublicKey().toString(),
+    expectedText = '\ufeffjournal financial\u0000雪😀'.repeat(5001)
+  if (identityKey !== input.manager.getActiveUser().identityKey || input.sourceData.user.identityKey !== identityKey)
+    throw new Error('Independent native fixture identity differs from its genuine authenticated field source')
+  const http = await snapshotHttpFixture(true, false, input.storage.chain, 'http-field-financial-source', key),
+    closes: Array<() => Promise<void>> = [async () => await http.close()],
+    failures: unknown[] = []
+  try {
+    const user = (await http.storage.findOrInsertUser(identityKey)).user,
+      beforeActive = (await input.storage.findUsers({ partial: { identityKey } }))[0].activeStorage,
+      incoming = (
+        table: 'provenTxs' | 'outputBaskets' | 'transactions' | 'outputs',
+        binaries: readonly string[]
+      ): Record<string, unknown> => {
+        const original = input.sourceData.tables[table][0]
+        if (original === undefined) throw new Error('Independent financial fixture is missing ' + table)
+        const row: Record<string, unknown> = { ...original }
+        for (const [name, value] of Object.entries(row)) {
+          if (value === undefined) delete row[name]
+          else if (binaries.includes(name)) {
+            if (typeof value !== 'string') throw new Error('Independent fixture binary is not canonical base64')
+            const bytes = Buffer.from(value, 'base64')
+            if (bytes.toString('base64') !== value) throw new Error('Independent fixture binary spelling differs')
+            row[name] = bytes
+          } else if (value !== null && !['string', 'number', 'boolean'].includes(typeof value))
+            throw new Error('Independent small financial fixture unexpectedly contains structured payload')
+        }
+        if (table !== 'provenTxs') row.userId = user.userId
+        return row
+      }
+    await http.storage.knex('output_baskets').where('userId', user.userId).delete()
+    await http.storage.knex('proven_txs').insert(incoming('provenTxs', ['rawTx', 'merklePath']))
+    await http.storage.knex('output_baskets').insert(incoming('outputBaskets', []))
+    const transaction = incoming('transactions', ['rawTx', 'inputBEEF', 'noSendExpiryReclaimRawTx']),
+      proof = input.sourceData.tables.provenTxs[0]
+    if (typeof proof.rawTx !== 'string') throw new Error('Independent proven transaction bytes missing')
+    transaction.rawTx = Buffer.from(proof.rawTx, 'base64')
+    await http.storage.knex('transactions').insert(transaction)
+    const output = incoming('outputs', ['lockingScript'])
+    output.lockingScript = Buffer.from(input.expected)
+    output.outputDescription = expectedText
+    output.updated_at = new Date(Date.now() + 1000).toISOString()
+    await http.storage.knex('outputs').insert(output)
+    const { url } = await http.serve(),
+      client = new StorageClient(http.wallet, url, { serverIdentityKey: http.serverIdentityKey }),
+      archive = await client.openSnapshotJournalFieldArchive(identityKey)
+    if (archive === undefined) throw new Error('Genuine financial field archive unavailable')
+    closes.unshift(async () => {
+      await archive.close()
+      await archive.closed
+    })
+    const admission = async <T>(operation: () => Promise<T>) =>
+        await input.manager.runAsWriter(async active => {
+          if (active !== input.storage) throw new Error('Genuine native financial target manager changed')
+          return await operation()
+        }),
+      begun = await KnexSnapshotJournalFieldDestination.begin(
+        input.storage,
+        identityKey,
+        archive.manifest.binding,
+        journalCopyLimits(),
+        admission
+      )
+    let checkpoint = begun.checkpoint
+    for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+      checkpoint = await begun.destination.stageArchiveFrame(checkpoint, archive)
+    expect(checkpoint.phase).toBe('promoting')
+    while (checkpoint.phase !== 'acknowledged') {
+      if (Date.now() >= Math.min(input.expiresAt, archive.expiresAt))
+        throw new Error('Genuine financial field case reached its actual original owner deadline')
+      checkpoint = (await begun.destination.promote(checkpoint, archive)).checkpoint
+    }
+    const resumed = await KnexSnapshotJournalFieldDestination.resume(
+      input.storage,
+      identityKey,
+      archive.manifest.binding.sourceStorage.storageIdentityKey,
+      journalCopyLimits(),
+      admission
+    )
+    if (resumed === undefined) throw new Error('Actual native committed field window missing')
+    expect((await resumed.status()).checkpoint).toEqual(checkpoint)
+    const measured = await input.storage.runSnapshotJournalWriter(async trx => {
+      const userId = input.manager.getActiveUser().userId,
+        custody = await readSnapshotJournalNativeOwnedRow(
+          trx,
+          1,
+          userId,
+          { id1: input.targetRowId, id2: 0, exactText: '' },
+          { remaining: 16777216 }
+        ),
+        point = await readSnapshotJournalPointFields(trx, 1, { outputId: input.targetRowId, userId }, 16777216)
+      if (custody === undefined || point === undefined)
+        throw new Error('Actual committed native financial output missing')
+      const result: Record<string, { kind: string; bytes: number; sha256: string }> = {}
+      for (const name of ['lockingScript', 'outputDescription']) {
+        const descriptor = point.fields[name]
+        if (descriptor === undefined) throw new Error('Actual native financial field missing')
+        const hash = createHash('sha256')
+        for (let offset = 0; offset < descriptor.bytes; offset += 16384) {
+          const bytes = await point.readExtent(name, offset, Math.min(16384, descriptor.bytes - offset))
+          try {
+            hash.update(bytes)
+          } finally {
+            bytes.fill(0)
+          }
+        }
+        const sha256 = hash.digest('hex')
+        if (descriptor.sha256 !== undefined) expect(descriptor.sha256).toBe(sha256)
+        result[name] = { kind: descriptor.kind, bytes: descriptor.bytes, sha256 }
+      }
+      return result
+    })
+    expect(measured.outputDescription).toEqual({
+      kind: 'utf8',
+      bytes: Buffer.byteLength(expectedText),
+      sha256: createHash('sha256').update(expectedText).digest('hex')
+    })
+    expect(measured.lockingScript).toEqual({
+      kind: 'binary',
+      bytes: input.expected.length,
+      sha256: createHash('sha256').update(input.expected).digest('hex')
+    })
+    expect((await input.storage.findUsers({ partial: { identityKey } }))[0].activeStorage).toBe(beforeActive)
+    expect(checkpoint.phase).toBe('acknowledged')
+  } catch (cause) {
+    failures.push(cause)
+  }
+  for (const close of closes)
+    try {
+      await close()
+    } catch (cause) {
+      failures.push(cause)
+    }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'Genuine native journal financial case and cleanup failed', {
+      cause: failures[0]
+    })
 }

@@ -1,3 +1,5 @@
+import type { Knex } from 'knex'
+import type { SyncMap } from '../schema/entities/EntityBase'
 import type { StorageKnex } from '../StorageKnex'
 import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import { Brc38WorkingAllocation, type Brc38WorkingCharge } from '../portable/Brc38WorkingAllocation'
@@ -35,7 +37,14 @@ import { snapshotSyncSmallText } from './SnapshotSyncSmallText'
 import { writeNativeSnapshotSyncRow } from './writeNativeSnapshotSyncRowNode'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 
-interface PreparedRow {
+export interface PreparedNativeSnapshotProof {
+  readonly proof: Readonly<NativeSnapshotSyncProofRow>
+  readonly current: NativeSnapshotSyncProofCurrent
+  readonly rawTx: PreparedPackedNativeSnapshotField
+  readonly merklePath: PreparedPackedNativeSnapshotField
+  readonly currentBytesEqual: boolean
+}
+interface PreparedRow extends PreparedNativeSnapshotProof {
   readonly metadata: Readonly<DetachedSnapshotSyncFieldRow>
   readonly proof: Readonly<NativeSnapshotSyncProofRow>
   readonly extents: Readonly<Record<string, Readonly<WalletSnapshotFieldDescriptor>>>
@@ -370,61 +379,18 @@ export async function prepareNativeSnapshotSyncProvenTxs(
             'provenTxs',
             rows.map(row => row.metadata.fields)
           )
-          for (const row of rows)
-            requireSameNativeSnapshotSyncProofCurrent(
-              row.current,
-              await readNativeSnapshotSyncProofCurrent(
-                storage,
-                writer.transaction,
-                writer.user.userId,
-                row.proof.txid,
-                signal
-              )
-            )
-          let inserts = 0,
-            updates = 0
-          for (const row of rows) {
-            check()
-            const actual = await readNativeSnapshotSyncProofCurrent(
-              storage,
-              writer.transaction,
-              writer.user.userId,
-              row.proof.txid,
-              signal
-            )
-            requireSameNativeSnapshotSyncProofCurrent(row.current, actual)
-            if (row.currentBytesEqual) {
-              if (actual.row === undefined) invalid()
-              loaded.map.provenTx.idMap[row.proof.provenTxId] = actual.row.provenTxId
-              continue
-            }
-            const fields = { ...row.proof }
-            if (actual.row !== undefined) {
-              fields.provenTxId = actual.row.provenTxId
-              fields.created_at = new Date(actual.row.created_at.getTime())
-              fields.updated_at = new Date(
-                Math.max(Date.now(), row.proof.updated_at.getTime(), actual.row.updated_at.getTime() + 1)
-              )
-            }
-            const id = await writeNativeSnapshotSyncRow(
-              storage,
-              writer.transaction,
-              'provenTxs',
-              fields,
-              { row: {}, fields: [] },
-              { rawTx: row.rawTx, merklePath: row.merklePath },
-              actual.row?.provenTxId
-            )
-            if (actual.row !== undefined && id !== actual.row.provenTxId) invalid()
-            loaded.map.provenTx.idMap[row.proof.provenTxId] = id
-            await invalidatePreparedSyncProofs(storage, writer.transaction)
-            check()
-            if (actual.row === undefined) inserts++
-            else updates++
-          }
+          const result = await applyPreparedNativeSnapshotProofs(
+            storage,
+            writer.transaction,
+            writer.user.userId,
+            rows,
+            loaded.map,
+            check,
+            signal
+          )
           await loaded.persist()
           check()
-          return { inserts, updates }
+          return result
         })
         try {
           const result = await applying
@@ -459,4 +425,58 @@ export async function prepareNativeSnapshotSyncProvenTxs(
     }
     throw cause
   }
+}
+
+/** Original native proof row/current/pointer/ID-map effect only. The caller
+ * retains its genuine source preparation and actual outer session/window ACK. */
+export async function applyPreparedNativeSnapshotProofs(
+  storage: StorageKnex,
+  trx: Knex.Transaction,
+  userId: number,
+  rows: readonly PreparedNativeSnapshotProof[],
+  map: SyncMap,
+  check: () => void,
+  signal?: AbortSignal
+): Promise<{ inserts: number; updates: number }> {
+  for (const row of rows)
+    requireSameNativeSnapshotSyncProofCurrent(
+      row.current,
+      await readNativeSnapshotSyncProofCurrent(storage, trx, userId, row.proof.txid, signal)
+    )
+  let inserts = 0,
+    updates = 0
+  for (const row of rows) {
+    check()
+    const actual = await readNativeSnapshotSyncProofCurrent(storage, trx, userId, row.proof.txid, signal)
+    requireSameNativeSnapshotSyncProofCurrent(row.current, actual)
+    if (row.currentBytesEqual) {
+      if (actual.row === undefined) invalid()
+      map.provenTx.idMap[row.proof.provenTxId] = actual.row.provenTxId
+      continue
+    }
+    const fields = { ...row.proof }
+    if (actual.row !== undefined) {
+      fields.provenTxId = actual.row.provenTxId
+      fields.created_at = new Date(actual.row.created_at.getTime())
+      fields.updated_at = new Date(
+        Math.max(Date.now(), row.proof.updated_at.getTime(), actual.row.updated_at.getTime() + 1)
+      )
+    }
+    const id = await writeNativeSnapshotSyncRow(
+      storage,
+      trx,
+      'provenTxs',
+      fields,
+      { row: {}, fields: [] },
+      { rawTx: row.rawTx, merklePath: row.merklePath },
+      actual.row?.provenTxId
+    )
+    if (actual.row !== undefined && id !== actual.row.provenTxId) invalid()
+    map.provenTx.idMap[row.proof.provenTxId] = id
+    await invalidatePreparedSyncProofs(storage, trx)
+    check()
+    if (actual.row === undefined) inserts++
+    else updates++
+  }
+  return { inserts, updates }
 }

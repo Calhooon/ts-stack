@@ -590,6 +590,8 @@ test(
         await source.close()
         await verifyNativeSnapshotFieldArtifactCache({
           storage: target.storage,
+          manager: target.manager,
+          sourceData: target.sourceData,
           targetRowId: rows[0].outputId,
           expected,
           expiresAt: target.expiresAt

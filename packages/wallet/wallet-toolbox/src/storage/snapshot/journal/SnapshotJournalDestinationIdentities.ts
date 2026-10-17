@@ -104,7 +104,12 @@ export async function verifySnapshotJournalDestinationIdentity(
       candidates.push({ index: 'commissions', key: { userId, transactionId: parent(map, natural.transactionId) } })
       break
     case 8:
-      candidates.push({ index: 'provenTxs', key: { txid: natural.txid.toLowerCase() } })
+      // Native field writes preserve captured spelling; the legacy proof
+      // validator canonicalizes new/replacement rows. Both are exact indexed
+      // keys, while the acknowledged physical ID still has to match.
+      candidates.push({ index: 'provenTxs', key: { txid: natural.txid } })
+      if (natural.txid.toLowerCase() !== natural.txid)
+        candidates.push({ index: 'provenTxs', key: { txid: natural.txid.toLowerCase() } })
       break
     case 9:
       candidates.push({ index: 'provenTxReqs', key: { txid: natural.txid } })
@@ -115,6 +120,10 @@ export async function verifySnapshotJournalDestinationIdentity(
     const id = ids[reference.tableId]
     const query = snapshotJournalIndexedEntityQuery(k, candidate.index, candidate.key)
     if (remote) query.forUpdate().noWait()
+    if (reference.tableId === 8)
+      query.whereRaw(remote ? 'CAST(txid AS BINARY)=CAST(? AS BINARY)' : 'CAST(txid AS BLOB)=CAST(? AS BLOB)', [
+        candidate.key.txid
+      ])
     query.select(
       k.raw(
         remote

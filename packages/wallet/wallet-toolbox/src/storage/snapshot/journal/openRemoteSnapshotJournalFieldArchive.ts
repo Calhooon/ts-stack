@@ -59,13 +59,22 @@ interface IssuedFrame {
   readonly tableId: number
 }
 const issued = new WeakMap<RemoteSnapshotJournalFieldFrame, IssuedFrame>()
+const opened = new WeakSet<RemoteSnapshotJournalFieldArchive>()
+/** Actual opened archive membership before any target prefix is persisted.
+ * An archive-shaped DATA object cannot enroll an intake callback. */
+export function assertRemoteSnapshotJournalFieldArchive(owner: RemoteSnapshotJournalFieldArchive): void {
+  if (!opened.has(owner) || !owner.isOpen)
+    throw new WERR_INVALID_OPERATION('Field archive differs from its actual opened artifact')
+}
+
 /** Concrete actual artifact/frame membership only. This cannot enroll an SQL
  * source, writer, commit fence, activation or financial acknowledgement. */
 export function assertRemoteSnapshotJournalFieldFrame(
   owner: RemoteSnapshotJournalFieldArchive,
   frame: RemoteSnapshotJournalFieldFrame
 ): void {
-  if (issued.get(frame)?.owner !== owner || !owner.isOpen)
+  assertRemoteSnapshotJournalFieldArchive(owner)
+  if (issued.get(frame)?.owner !== owner)
     throw new WERR_INVALID_OPERATION('Field frame differs from its actual opened artifact')
 }
 
@@ -342,6 +351,7 @@ export async function openRemoteSnapshotJournalFieldArchive(
         })
     })
     fresh()
+    opened.add(owner)
     return owner
   } catch (error) {
     try {

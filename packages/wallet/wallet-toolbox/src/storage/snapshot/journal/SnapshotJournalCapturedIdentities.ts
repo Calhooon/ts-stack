@@ -407,3 +407,51 @@ export async function readSnapshotJournalCapturedIdentities(
     return { ...reference, naturalKey: key }
   })
 }
+
+/** Reentry compares the genuine authenticated archive prefix against the
+ * original sealed target capture. Bounded point reads retain no whole-frame
+ * notification map and do not accept new identities during promotion. */
+export async function verifySnapshotJournalCapturedIdentityPrefix(
+  k: Knex,
+  binding: SnapshotJournalDestinationBinding,
+  state: SnapshotJournalDestinationCheckpoint,
+  inputFrameDigest: string,
+  inputChangeIndex: number,
+  identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+): Promise<void> {
+  const remote = transaction(k),
+    frameDigest = digest(inputFrameDigest),
+    changeIndex = integer(inputChangeIndex, 0, 255)
+  if (state.phase !== 'promoting' || !(identities instanceof Map) || identities.size > 128) invalid()
+  await withSnapshotJournalDestinationWindowFence(k, binding, state, async trx => {
+    const selected = { ...scope(binding, state), frameDigest }
+    const frame: Array<Record<string, unknown>> = await trx(frames)
+      .where(selected)
+      .select(boundedNumber(trx, 'sealed', 1, remote), boundedNumber(trx, 'changes', 256, remote))
+      .limit(2)
+    if (frame.length !== 1 || integer(frame[0].sealed, 0, 1) !== 1 || changeIndex >= integer(frame[0].changes, 0, 256))
+      invalid()
+    for (const [key, value] of identities) {
+      const expected = owned(value, binding.receipt.highWater),
+        naturalKeyJson = JSON.stringify(naturalKey(value.naturalKey, expected.tableId))
+      if (key !== expected.tableId + ':' + expected.incomingId) invalid()
+      const rows: Array<Record<string, unknown>> = await trx(table)
+        .where({ ...selected, changeIndex, tableId: expected.tableId, incomingId: expected.incomingId })
+        .select(
+          boundedText(trx, 'generation', 19, remote),
+          boundedText(trx, 'naturalIdentity', 64, remote),
+          boundedText(trx, 'naturalKeyJson', naturalKeyBytes, remote),
+          boundedNumber(trx, 'required', 1, remote)
+        )
+        .limit(2)
+      if (
+        rows.length !== 1 ||
+        rows[0].generation !== expected.generation ||
+        rows[0].naturalIdentity !== expected.naturalIdentity ||
+        rows[0].naturalKeyJson !== naturalKeyJson ||
+        integer(rows[0].required, 0, 1) !== Number(expected.required)
+      )
+        invalid()
+    }
+  })
+}

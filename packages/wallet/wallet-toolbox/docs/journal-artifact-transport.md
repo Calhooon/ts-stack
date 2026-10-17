@@ -56,7 +56,7 @@ and independently rehashes that replay. A mismatch cannot publish its metadata
 frame or READY. The directory binds each content packet's frame/change/field,
 kind, whole-content hash, offset and length into the exact archive chain. Its SQL
 index query reads at most4KiB of each content header rather than the full payload.
-This lets a future receiving cache locate required chunks and skip already
+This lets the native receiving cache locate required chunks and skip already
 verified content; an index or hash cannot authorize cached bytes or an ACK.
 
 Identity capture rereads and compares the actual small-cell page in the same
@@ -149,9 +149,9 @@ merge policy, BRC177 reclaim quarantine and genuine one-use native attachments.
 Journal effects also retain the original actual identity-transition and membership
 boundary, including inherited creation custody, missing bootstrap repair and
 postimage fingerprints. A changed frame, target window, profile, producer or
-current state refuses before financial effects. The complete outer receiver,
-remaining proof/request/simple-field components, ordinary SQL byte cache and
-manager routing still need integration; this internal component alone does not
+current state refuses before financial effects. The field receiver now supplies the shared outer promotion kernel and proof
+component. Remaining request/simple-field components, complete provenance,
+ordinary SQL byte cache and manager routing still need integration; this internal component alone does not
 supply a complete-window financial ACK or primary handoff. Native execution is
 pending full feature assembly.
 
@@ -470,3 +470,44 @@ provenance currently refuses until complete verified byte custody is available;
 no cursor advances over omitted provenance. The complete field promoter, other
 field semantic merges, remote primary handoff and full-system qualification
 remain unfinished.
+
+Field promotion now shares the original row receiver's bounded retirement,
+withdrawal, bootstrap cleanup, durable partial cursor and final acknowledgement
+kernel. Complete fieldless rows use the original semantic merge only after an
+explicit empty-descriptor check; no missing payload is treated as a complete
+row. Genuine issued archive ownership is checked before any intake prefix is
+persisted, and promotion compares reopened authenticated identity prefixes with
+the original sealed target capture through bounded indexed point reads.
+
+Native transaction/output effects use actual prepared field attachments. Native
+proof effects retain complete streamed transaction framing/hash, SDK Merkle and
+current active-header validation outside the target writer, followed by fresh
+actual current-generation checks and the original native proof write/map and
+proof-artifact invalidation inside the atomic writer. Verified prepared content
+feeds the cryptographic reader, permitting real cache reuse; source reentry
+still touches both original field descriptors through the authenticated lease.
+Prepared ownership and physical cleanup remain real and retryable on failure.
+
+The full native request/history/notification and other payload/provenance
+components, ordinary SQL large-field custody, manager field integration and
+remote primary handoff remain implementation work. Unsupported field effects
+refuse without advancing their financial cursor. This component is not a claim
+of complete field support or final-system qualification.
+
+Focused host receiver regressions cover complete semantic row application, ID
+remapping, an independently lost reply after the actual final SQL commit, durable
+ACK recovery, captured-identity tampering before financial effects and successful
+resume after exact restoration. The existing selected native cache component
+and complete functional pair additionally author a genuine authenticated
+proof/action roundtrip with independently expected large binary/UTF8 bytes and
+unchanged primary selection. Those new native financial assertions still require
+pinned execution; their original cache, rollback, reuse, case/cohort and lifetime
+controls remain intact.
+
+Proof association verification accepts the exact captured TXID spelling used by
+native field effects and the lowercase spelling produced by the existing
+complete-row proof validator. Each is a bounded byte-exact indexed lookup and
+must identify the same acknowledged physical row; no full-table case-fold scan
+or source metadata rewrite is introduced. A genuine SQL regression reproduces
+the former mixed-case refusal, checks both accepted spellings and rejects a
+changed physical proof key.

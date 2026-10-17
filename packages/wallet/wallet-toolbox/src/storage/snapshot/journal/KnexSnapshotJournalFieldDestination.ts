@@ -1,3 +1,15 @@
+import type { Knex } from 'knex'
+import type { SnapshotJournalDelta } from './SnapshotJournalTypes'
+import { SnapshotJournalPreparedEntityMerge } from './SnapshotJournalEntityMerge'
+import { promoteSnapshotJournalChanges } from './KnexSnapshotJournalDestination'
+import { promoteSnapshotJournalDestinationFieldBatch } from './SnapshotJournalDestinationPromotion'
+import { readSnapshotJournalDestinationFieldPromotionPage } from './SnapshotJournalDestinationStage'
+import { verifySnapshotJournalCapturedIdentityPrefix } from './SnapshotJournalCapturedIdentities'
+import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
+import {
+  prepareSnapshotJournalNativeActionMerge,
+  prepareSnapshotJournalNativeProofMerge
+} from './SnapshotJournalNativeActionMerge'
 import { createHash } from 'node:crypto'
 import type { StorageKnex } from '../../StorageKnex'
 import { WERR_INVALID_OPERATION, WERR_UNAUTHORIZED } from '../../../sdk/WERR_errors'
@@ -24,6 +36,7 @@ import { advanceSnapshotJournalProgress } from './SnapshotJournalProgress'
 import { encodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
 import { applySnapshotJournalProvenancePage } from './SnapshotJournalProvenance'
 import {
+  assertRemoteSnapshotJournalFieldArchive,
   assertRemoteSnapshotJournalFieldFrame,
   type RemoteSnapshotJournalFieldArchive
 } from './openRemoteSnapshotJournalFieldArchive'
@@ -83,6 +96,8 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
     expected = { ...expected, ...(expected.after === undefined ? {} : { after: { ...expected.after } }) }
     return await this.exclusive(async () => {
       this.signal?.throwIfAborted()
+      if (!archive.isOpen) invalid()
+      assertRemoteSnapshotJournalFieldArchive(archive)
       const stream = snapshotJournalDestinationStreams[expected.streamIndex],
         source = parseSnapshotJournalFieldArchiveBinding(archive.manifest.binding)
       if (source.user.identityKey !== this.binding.source.identityKey)
@@ -197,6 +212,147 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
         })
         return committed.checkpoint
       })
+    })
+  }
+
+  async promote(expected: SnapshotJournalDestinationCheckpoint, archive: RemoteSnapshotJournalFieldArchive) {
+    expected = { ...expected, ...(expected.after === undefined ? {} : { after: { ...expected.after } }) }
+    return await this.exclusive(async () => {
+      assertRemoteSnapshotJournalFieldArchive(archive)
+      const source = parseSnapshotJournalFieldArchiveBinding(archive.manifest.binding),
+        expiresAt = Math.min(archive.expiresAt, this.binding.receipt.expiresAt),
+        deadline = performance.now() + expiresAt - Date.now()
+      const verify = async (): Promise<void> => {
+        this.signal?.throwIfAborted()
+        assertRemoteSnapshotJournalFieldArchive(archive)
+        if (
+          expected.phase !== 'promoting' ||
+          Date.now() >= expiresAt ||
+          performance.now() >= deadline ||
+          source.user.identityKey !== this.binding.source.identityKey ||
+          snapshotJournalReceiptBinding(source.journal.source) !== snapshotJournalReceiptBinding(this.binding.source) ||
+          JSON.stringify(source.journal.receipt) !== JSON.stringify(this.binding.receipt) ||
+          source.journal.low !== this.binding.low ||
+          source.journal.bootstrap !== (this.binding.bootstrap === true)
+        )
+          invalid()
+        await this.verifyCurrent()
+      }
+      return await promoteSnapshotJournalChanges<SnapshotJournalHashedFieldDelta>(
+        this.binding,
+        expected,
+        this.limits,
+        async apply => await this.writer(apply),
+        verify,
+        {
+          readPage: readSnapshotJournalDestinationFieldPromotionPage,
+          batch: promoteSnapshotJournalDestinationFieldBatch,
+          prepare: async (change, receipt, index) => {
+            await verify()
+            const frame = await archive.readFrame(
+              receipt.sequence - 1,
+              async (digest, changeIndex, identities) =>
+                await this.writer(
+                  async trx =>
+                    await verifySnapshotJournalCapturedIdentityPrefix(
+                      trx,
+                      this.binding,
+                      expected,
+                      digest,
+                      changeIndex,
+                      identities
+                    )
+                )
+            )
+            assertRemoteSnapshotJournalFieldFrame(archive, frame)
+            const encoded = encodeSnapshotJournalFieldFrame(frame.page, {
+              stream: frame.stream,
+              tableId: frame.tableId
+            })
+            if (
+              receipt.digest !== frame.frameDigest ||
+              receipt.tableId !== frame.tableId ||
+              encoded.length !== receipt.bytes ||
+              createHash('sha256').update(encoded).digest('hex') !== receipt.digest ||
+              index >= frame.page.changes.length ||
+              JSON.stringify(frame.page.changes[index]) !== JSON.stringify(change)
+            )
+              invalid()
+            if (!change.present) invalid()
+            if (Object.keys(change.fields).length === 0) {
+              const complete: SnapshotJournalDelta = {
+                  metadata: change.metadata,
+                  present: true,
+                  row: { ...change.row }
+                },
+                effect = await SnapshotJournalPreparedEntityMerge.prepare(
+                  this.storage,
+                  this.binding,
+                  complete,
+                  receipt,
+                  index,
+                  this.limits.maximumAllocationBytes,
+                  this.signal
+                )
+              return {
+                apply: async (trx, binding, state, actualChange, actualReceipt, actualIndex) => {
+                  if (!actualChange.present || Object.keys(actualChange.fields).length !== 0) invalid()
+                  const actualComplete: SnapshotJournalDelta = {
+                    metadata: actualChange.metadata,
+                    present: true,
+                    row: { ...actualChange.row }
+                  }
+                  return await effect.apply(
+                    trx,
+                    binding,
+                    state,
+                    actualComplete,
+                    actualReceipt,
+                    actualIndex,
+                    this.limits
+                  )
+                }
+              }
+            }
+            if ([0, 1].includes(receipt.tableId))
+              return await prepareSnapshotJournalNativeActionMerge(
+                this.storage,
+                this.binding,
+                expected,
+                receipt,
+                index,
+                archive,
+                frame,
+                this.limits,
+                this.admission,
+                this.signal
+              )
+            if (receipt.tableId === 8)
+              return await prepareSnapshotJournalNativeProofMerge(
+                this.storage,
+                this.binding,
+                expected,
+                receipt,
+                index,
+                archive,
+                frame,
+                this.limits,
+                this.admission,
+                this.signal
+              )
+            throw new WERR_INVALID_OPERATION(
+              'Journal field semantic component is not yet completely implemented for this entity'
+            )
+          }
+        },
+        this.signal,
+        async (trx, checkpoint) =>
+          await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).complete(
+            trx as Knex.Transaction,
+            this.binding,
+            checkpoint
+          )
+      )
     })
   }
 }
