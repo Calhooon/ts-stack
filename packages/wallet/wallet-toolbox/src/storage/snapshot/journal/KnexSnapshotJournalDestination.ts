@@ -553,119 +553,135 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
   async promote(
     expected: SnapshotJournalDestinationCheckpoint
   ): Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number; inserts: number; updates: number }> {
-    return await this.exclusive(async () => {
-      this.signal?.throwIfAborted()
-      await this.source.verifyLive()
-      const observed = await this.writer(
-        async trx =>
-          await withSnapshotJournalDestinationWindowFence(trx, this.binding, expected, async fenced => {
-            // Old numeric associations are custody data only. Drain them between
-            // pages without deleting native rows before all dependency withdrawals.
-            await cleanupSnapshotJournalRetirements(
-              fenced,
-              this.binding,
-              expected,
-              32,
-              { remaining: this.limits.maximumAllocationBytes },
-              true
-            )
-            return {
-              cursor: await readSnapshotJournalPromotionCursor(fenced, this.binding, expected),
-              frame: await readSnapshotJournalDestinationPromotionPage(fenced, this.binding, expected)
-            }
-          })
-      )
-      const prepared = new Map<number, SnapshotJournalPreparedEntityMerge>()
-      const start = observed.cursor?.nextChange ?? 0
-      const end = Math.min(start + this.limits.maximumChanges, observed.frame?.page.changes.length ?? 0)
-      if (observed.frame !== undefined) {
-        for (let i = start; i < end; i++) {
-          this.signal?.throwIfAborted()
-          const change = observed.frame.page.changes[i]
-          if (change.present)
-            prepared.set(
-              i,
-              await SnapshotJournalPreparedEntityMerge.prepare(
-                this.storage,
-                this.binding,
-                change,
-                observed.frame.receipt,
-                i,
-                this.limits.maximumAllocationBytes,
-                this.signal
-              )
-            )
-        }
-      }
-      await this.source.verifyLive()
-      let inserts = 0,
-        updates = 0
-      const result = await this.writer(async trx => {
-        const committed = await promoteSnapshotJournalDestinationBatch(
-          trx,
+    return await this.exclusive(
+      async () =>
+        await promoteSnapshotJournalData(
+          this.storage,
           this.binding,
           expected,
-          observed.cursor,
-          this.limits.maximumChanges,
-          async (fenced, change, receipt, index) => {
-            this.signal?.throwIfAborted()
-            if (observed.frame === undefined || receipt.digest !== observed.frame.receipt.digest) invalid()
-            if (!change.present) {
-              if (prepared.has(index)) invalid()
-              await withdrawSnapshotJournalEntity(
-                fenced,
-                this.binding,
-                expected,
-                receipt.tableId,
-                change,
-                this.limits,
-                { remaining: this.limits.maximumAllocationBytes }
-              )
-            } else {
-              const entity = prepared.get(index)
-              if (entity === undefined) invalid()
-              const merged = await entity.apply(fenced, this.binding, expected, change, receipt, index, this.limits)
-              inserts += merged.inserts
-              updates += merged.updates
-            }
-          },
-          async fenced => {
-            if (
-              this.binding.bootstrap === true &&
-              !(await cleanupUnseenSnapshotJournalProvenance(fenced, this.binding, expected))
-            )
-              return false
-            if (
-              this.binding.bootstrap === true &&
-              !(
-                await withdrawUnseenSnapshotJournalMemberships(
-                  fenced,
-                  this.binding,
-                  expected,
-                  this.limits,
-                  { remaining: this.limits.maximumAllocationBytes },
-                  32
-                )
-              ).complete
-            )
-              return false
-            if (
-              this.binding.bootstrap === true &&
-              !(await withdrawUnseenSnapshotJournalIdentityMappings(fenced, this.binding, expected))
-            )
-              return false
-            return (
-              await cleanupSnapshotJournalRetirements(fenced, this.binding, expected, 32, {
-                remaining: this.limits.maximumAllocationBytes
-              })
-            ).complete
-          }
+          this.limits,
+          async apply => await this.writer(apply),
+          async () => await this.source.verifyLive(),
+          this.signal
         )
-        await advanceSnapshotJournalProgress(trx, this.binding, expected, committed.checkpoint, { inserts, updates })
-        return committed
-      })
-      await this.source.verifyLive()
-      return { checkpoint: result.checkpoint, applied: result.applied, inserts, updates }
-    })
+    )
   }
+}
+
+/** Shared semantic target operation. Actual authenticated target admission and
+ * physical writer ownership remain with the concrete caller. This helper never
+ * constructs a source actor/fence from DATA. Proof preparation stays outside
+ * each short writer; candidate-bound decisions and ACKs remain atomic. */
+export async function promoteSnapshotJournalData(
+  storage: StorageKnex,
+  binding: Readonly<SnapshotJournalDestinationBinding>,
+  expected: SnapshotJournalDestinationCheckpoint,
+  limits: SnapshotJournalDestinationLimits,
+  writer: <T>(apply: (trx: Knex) => Promise<T>) => Promise<T>,
+  verifyCurrent: () => Promise<void>,
+  signal?: AbortSignal
+): Promise<{ checkpoint: SnapshotJournalDestinationCheckpoint; applied: number; inserts: number; updates: number }> {
+  signal?.throwIfAborted()
+  await verifyCurrent()
+  const observed = await writer(
+    async trx =>
+      await withSnapshotJournalDestinationWindowFence(trx, binding, expected, async fenced => {
+        // Old numeric associations are custody data only. Drain them between
+        // pages without deleting native rows before all dependency withdrawals.
+        await cleanupSnapshotJournalRetirements(
+          fenced,
+          binding,
+          expected,
+          32,
+          { remaining: limits.maximumAllocationBytes },
+          true
+        )
+        return {
+          cursor: await readSnapshotJournalPromotionCursor(fenced, binding, expected),
+          frame: await readSnapshotJournalDestinationPromotionPage(fenced, binding, expected)
+        }
+      })
+  )
+  const prepared = new Map<number, SnapshotJournalPreparedEntityMerge>()
+  const start = observed.cursor?.nextChange ?? 0
+  const end = Math.min(start + limits.maximumChanges, observed.frame?.page.changes.length ?? 0)
+  if (observed.frame !== undefined) {
+    for (let i = start; i < end; i++) {
+      signal?.throwIfAborted()
+      const change = observed.frame.page.changes[i]
+      if (change.present)
+        prepared.set(
+          i,
+          await SnapshotJournalPreparedEntityMerge.prepare(
+            storage,
+            binding,
+            change,
+            observed.frame.receipt,
+            i,
+            limits.maximumAllocationBytes,
+            signal
+          )
+        )
+    }
+  }
+  await verifyCurrent()
+  let inserts = 0,
+    updates = 0
+  const result = await writer(async trx => {
+    const committed = await promoteSnapshotJournalDestinationBatch(
+      trx,
+      binding,
+      expected,
+      observed.cursor,
+      limits.maximumChanges,
+      async (fenced, change, receipt, index) => {
+        signal?.throwIfAborted()
+        if (observed.frame === undefined || receipt.digest !== observed.frame.receipt.digest) invalid()
+        if (!change.present) {
+          if (prepared.has(index)) invalid()
+          await withdrawSnapshotJournalEntity(fenced, binding, expected, receipt.tableId, change, limits, {
+            remaining: limits.maximumAllocationBytes
+          })
+        } else {
+          const entity = prepared.get(index)
+          if (entity === undefined) invalid()
+          const merged = await entity.apply(fenced, binding, expected, change, receipt, index, limits)
+          inserts += merged.inserts
+          updates += merged.updates
+        }
+      },
+      async fenced => {
+        if (binding.bootstrap === true && !(await cleanupUnseenSnapshotJournalProvenance(fenced, binding, expected)))
+          return false
+        if (
+          binding.bootstrap === true &&
+          !(
+            await withdrawUnseenSnapshotJournalMemberships(
+              fenced,
+              binding,
+              expected,
+              limits,
+              { remaining: limits.maximumAllocationBytes },
+              32
+            )
+          ).complete
+        )
+          return false
+        if (
+          binding.bootstrap === true &&
+          !(await withdrawUnseenSnapshotJournalIdentityMappings(fenced, binding, expected))
+        )
+          return false
+        return (
+          await cleanupSnapshotJournalRetirements(fenced, binding, expected, 32, {
+            remaining: limits.maximumAllocationBytes
+          })
+        ).complete
+      }
+    )
+    await advanceSnapshotJournalProgress(trx, binding, expected, committed.checkpoint, { inserts, updates })
+    return committed
+  })
+  await verifyCurrent()
+  return { checkpoint: result.checkpoint, applied: result.applied, inserts, updates }
 }

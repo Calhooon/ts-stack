@@ -72,13 +72,12 @@ import {
   snapshotArchiveRpcMethods,
   type SnapshotArchiveRpcMethod
 } from '../snapshot/archive/KnexSnapshotArchiveRpc'
-import { KnexRemoteSnapshotSyncRpc } from '../snapshot/KnexRemoteSnapshotSyncRpc'
 import {
-  remoteSnapshotSyncMethods,
-  remoteSnapshotSyncRequestBytes,
-  remoteSnapshotSyncResponseBytes,
-  type RemoteSnapshotSyncMethod
-} from '../snapshot/RemoteSnapshotSyncProtocol'
+  KnexRemoteSnapshotSyncRpc,
+  remoteSnapshotDestinationRpcMethods,
+  type RemoteSnapshotDestinationRpcMethod
+} from '../snapshot/KnexRemoteSnapshotSyncRpc'
+import { remoteSnapshotSyncRequestBytes, remoteSnapshotSyncResponseBytes } from '../snapshot/RemoteSnapshotSyncProtocol'
 import { snapshotArchiveRequestBytes, snapshotArchiveResponseBytes } from '../snapshot/archive/SnapshotArchiveProtocol'
 
 const storageRpcMethods = new Set([
@@ -679,7 +678,9 @@ export class StorageServer {
     // Compact decoding mutates nested request values. Measure the encoded
     // envelope before decoding; serializing decoded byte buffers would create
     // number-key JSON amplification and reject legitimate bounded parts.
-    const snapshotRequestBytes = remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)
+    const snapshotRequestBytes = remoteSnapshotDestinationRpcMethods.includes(
+      method as RemoteSnapshotDestinationRpcMethod
+    )
       ? Buffer.byteLength(JSON.stringify(req.body), 'utf8')
       : undefined
     if (snapshotRequestBytes !== undefined && snapshotRequestBytes > remoteSnapshotSyncRequestBytes)
@@ -704,9 +705,9 @@ export class StorageServer {
       let dispatch: RpcDispatchResult
       if (snapshotArchiveRpcMethods.includes(method as SnapshotArchiveRpcMethod)) {
         dispatch = await this.dispatchSnapshotArchive(method as SnapshotArchiveRpcMethod, params, req, useBinary, id)
-      } else if (remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)) {
+      } else if (remoteSnapshotDestinationRpcMethods.includes(method as RemoteSnapshotDestinationRpcMethod)) {
         dispatch = await this.dispatchRemoteSnapshotSync(
-          method as RemoteSnapshotSyncMethod,
+          method as RemoteSnapshotDestinationRpcMethod,
           params,
           req,
           useBinary,
@@ -743,7 +744,7 @@ export class StorageServer {
         throw new WERR_INVALID_OPERATION('Snapshot archive response exceeds its transport limit')
       }
       if (
-        remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) &&
+        remoteSnapshotDestinationRpcMethods.includes(method as RemoteSnapshotDestinationRpcMethod) &&
         Buffer.byteLength(serialized, 'utf8') > remoteSnapshotSyncResponseBytes
       )
         throw new WERR_INVALID_OPERATION('Remote snapshot destination response exceeds its transport limit')
@@ -1034,11 +1035,13 @@ export class StorageServer {
     const snapshotJournalArchive = await this.snapshotArchives?.journalCapabilities()
     const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
     const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
+    const snapshotJournalData = await this.remoteSnapshotSync?.journalDataCapabilities()
     return {
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
       ...(snapshotJournalArchive === undefined ? {} : { snapshotJournalArchive }),
       ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
-      ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent })
+      ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent }),
+      ...(snapshotJournalData === undefined ? {} : { snapshotJournalData })
     }
   }
 
@@ -1144,7 +1147,7 @@ export class StorageServer {
   }
 
   private async dispatchRemoteSnapshotSync(
-    method: RemoteSnapshotSyncMethod,
+    method: RemoteSnapshotDestinationRpcMethod,
     params: unknown[],
     req: Request,
     useBinary: boolean,

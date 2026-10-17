@@ -25,3 +25,10 @@ export async function inspectJournal(
     await archive.close()
   }
 }
+
+import { runSnapshotJournalArchiveReconciliation } from '@bsv/wallet-toolbox'
+import type { SnapshotJournalDataDestination } from '@bsv/wallet-toolbox'
+
+export function copyJournal(archive: RemoteSnapshotJournalArchive, destination: SnapshotJournalDataDestination) {
+  return runSnapshotJournalArchiveReconciliation(archive, async () => destination)
+}

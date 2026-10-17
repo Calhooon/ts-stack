@@ -2,7 +2,7 @@ import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
 import type { WalletReadSnapshotOptions } from '../WalletReadSnapshot'
 import { snapshotArchiveLimits } from '../archive/SnapshotArchive'
-import { OwnedRemoteSnapshotLease } from '../archive/OwnedRemoteSnapshotLease'
+import { OwnedRemoteSnapshotLease } from '../archive/RemoteSnapshotLease'
 import { RemoteSnapshotOpeningCleanupError } from '../archive/openRemoteSnapshot'
 import {
   parseSnapshotJournalArchiveReaderRequest,

@@ -51,7 +51,12 @@ async function closeFixtureListener(server: StorageServer): Promise<void> {
   })
 }
 
-export async function snapshotHttpFixture(snapshotSync = true, seedClosure = true, chain: Chain = 'test') {
+export async function snapshotHttpFixture(
+  snapshotSync = true,
+  seedClosure = true,
+  chain: Chain = 'test',
+  storageIdentityKey = 'http-snapshot-source'
+) {
   const directory = await mkdtemp(join(tmpdir(), 'snapshot-http-'))
   const key = PrivateKey.fromRandom()
   const identityKey = key.toPublicKey().toString()
@@ -106,7 +111,7 @@ export async function snapshotHttpFixture(snapshotSync = true, seedClosure = tru
   }
   try {
     await storage.knex.raw('PRAGMA journal_mode = WAL')
-    await storage.migrate('HTTP snapshot source', 'http-snapshot-source')
+    await storage.migrate('HTTP snapshot source', storageIdentityKey)
     await storage.makeAvailable()
     const { user } = await storage.findOrInsertUser(identityKey)
     const { user: other } = await storage.findOrInsertUser(PrivateKey.fromRandom().toPublicKey().toString())

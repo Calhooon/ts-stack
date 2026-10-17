@@ -2,8 +2,10 @@
 
 The unpublished #569 implementation now has a distinct immutable journal artifact
 producer, SQL storage, durable offered requests and authenticated HTTP source
-transport for full and mobile clients. Destination receiver integration, payload
-reuse and remote primary reconciliation are still required. This component alone
+transport for full and mobile clients. A destination-owned DATA receiver and explicit coordinator are now assembled
+in source; their authenticated integration is still under focused feedback.
+Ordinary manager integration, verified large-payload reuse and full remote
+primary reconciliation remain required. This component alone
 does not complete #544 or establish production readiness.
 
 A version-three binding identifies `wallet-journal-packets/1`. It records the
@@ -99,3 +101,40 @@ tombstones, same-frame retries, detached metadata, unissued/foreign refusal,
 disable negotiation, packet corruption and cancellation with a held consumer.
 Host feedback is advisory; the full
 remote, native/MySQL, platform, performance and system program remains open.
+
+## Candidate destination DATA protocol
+
+The separate `snapshotJournalData` advertisement permits actual authenticated
+`openSnapshotJournalDataDestination(identityKey, sourceBinding, signal?)` admission.
+The server resolves its current physical backend, schema, user, network, primary
+epoch and durable window itself. A replacement controller recovers the binding
+and checkpoint from SQL; it never deserializes an actor or trusts a supplied
+schema verdict. New source scopes are bounded to eight per profile. Source primary
+coordinates remain provenance DATA and cannot activate the destination.
+
+A bounded packet may stage identity prefixes without advancing intake. A complete
+frame seals their digest/index associations and commits original provenance,
+staging, progress and the intake ACK atomically. The receiver refuses a row with
+a different source profile. Actual proof frames pass the existing RPC active-chain
+policy outside the target writer; semantic promotion independently prepares and
+binds the real candidate before applying it. A refreshed proof verdict never
+rewrites an integrity-bound source frame or becomes a serialized grant. The local
+live-source receiver retains its original SQL fences while sharing this same
+semantic promotion code, including withdrawal, lineage, retirement and cleanup.
+
+Packets above the existing512KiB inline bound use the existing durable transfer
+store in262KiB parts, with a one-MiB journal-packet bound. The original one-MiB
+request,16KiB response and30s per-I/O deadlines remain. At most eight destination
+operations run per controller, including the original row/content namespace.
+A real provider queue owns short DATA target operations; neither HTTP nor proof
+work runs inside that queue's physical writer. Transfer cache DATA is checked
+against actual destination custody and cannot replace a financial ACK. Cleanup
+awaits the real transfer release and exposes a retryable cleanup owner on failure.
+
+`runSnapshotJournalArchiveReconciliation` connects a verified immutable source to
+an independently admitted local or authenticated remote DATA destination. It uses
+frame ordinals, sends bounded prefixes, and recovers uncertain replies from the
+destination's actual status. The existing coordinator retains real source cleanup
+and cancellation/progress semantics. This explicit candidate does not yet wire
+ordinary manager copies or remote primary selection; those remain implementation
+work, and full system qualification is still pending.

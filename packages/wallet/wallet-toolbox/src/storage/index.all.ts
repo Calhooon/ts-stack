@@ -170,3 +170,11 @@ export type { SnapshotSyncContentPosition, SnapshotSyncContentRevision } from '.
 export type { RemoteSnapshotJournalArchive } from './snapshot/journal/openRemoteSnapshotJournalArchive'
 export type { SnapshotJournalArchivePosition } from './snapshot/journal/SnapshotJournalReceiptData'
 export type { SnapshotJournalArchiveCapabilities } from './snapshot/journal/SnapshotJournalArchiveProtocol'
+
+export { runSnapshotJournalArchiveReconciliation } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+export type { SnapshotJournalDataDestination } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+export type { RemoteSnapshotJournalDataDestination } from './snapshot/journal/RemoteSnapshotJournalDataDestination'
+export type {
+  SnapshotJournalDataCapabilities,
+  SnapshotJournalDataStatus
+} from './snapshot/journal/SnapshotJournalDataProtocol'

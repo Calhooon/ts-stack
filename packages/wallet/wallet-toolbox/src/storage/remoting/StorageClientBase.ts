@@ -1,3 +1,11 @@
+import { RemoteSnapshotJournalDataDestination } from '../snapshot/journal/RemoteSnapshotJournalDataDestination'
+import {
+  isSnapshotJournalDataMethod,
+  validateSnapshotJournalDataCapabilities,
+  type SnapshotJournalDataCapabilities,
+  type SnapshotJournalDataMethod
+} from '../snapshot/journal/SnapshotJournalDataProtocol'
+import type { SnapshotJournalArchiveBinding } from '../snapshot/journal/SnapshotJournalArchiveBinding'
 import type { WalletReadSnapshotOptions } from '../snapshot/WalletReadSnapshot'
 import {
   validateSnapshotJournalArchiveCapabilities,
@@ -154,6 +162,7 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
+  snapshotJournalData?: SnapshotJournalDataCapabilities
   snapshotArchiveReaderVersion?: 1
   snapshotSyncDestination?: RemoteSnapshotSyncCapabilities
   snapshotSyncContent?: RemoteSnapshotSyncContentCapabilities
@@ -313,6 +322,8 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     throw new Error('Wallet storage returned invalid settings.')
   }
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
+  if (properties.snapshotJournalData != null)
+    validateSnapshotJournalDataCapabilities(properties.snapshotJournalData.value)
   if (properties.snapshotJournalArchive != null) {
     validateSnapshotJournalArchiveCapabilities(properties.snapshotJournalArchive.value)
     if (properties.snapshotArchive == null) throw new Error('Wallet storage returned invalid settings.')
@@ -459,13 +470,33 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return await openRemoteSnapshotJournalArchive(transport, position, options)
   }
 
+  /** Actual authenticated destination admission; no local source fence is serialized. */
+  async openSnapshotJournalDataDestination(
+    identityKey: string,
+    source: SnapshotJournalArchiveBinding,
+    signal?: AbortSignal
+  ): Promise<RemoteSnapshotJournalDataDestination | undefined> {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalData === undefined) return undefined
+    if (source.sourceStorage.chain !== settings.chain)
+      throw new WERR_INVALID_OPERATION('Journal source and destination networks differ')
+    return await RemoteSnapshotJournalDataDestination.open(
+      (method, params, requestSignal) => this.snapshotRpcCall(method, params, requestSignal),
+      identityKey,
+      normalizeStorageIdentityKey(settings.storageIdentityKey),
+      source,
+      signal
+    )
+  }
+
   private async snapshotRpcCall(
-    method: SnapshotArchiveMethod | SnapshotJournalArchiveMethod | RemoteSnapshotSyncMethod,
+    method: SnapshotArchiveMethod | SnapshotJournalArchiveMethod | RemoteSnapshotSyncMethod | SnapshotJournalDataMethod,
     params: unknown[],
     signal?: AbortSignal
   ): Promise<unknown> {
     const id = this.nextRequestId()
-    const remoteDestination = remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod)
+    const remoteDestination =
+      remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) || isSnapshotJournalDataMethod(method)
     const body = stringifyJsonRpc({ jsonrpc: '2.0', method, params, id }, true)
     if (
       new TextEncoder().encode(body).length >
