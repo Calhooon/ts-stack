@@ -1,3 +1,4 @@
+import { runInSeries } from '../../utility/runInSeries'
 import { readBrc38PrivateMergeProgram, prepareBrc38PrivateMergeProgram } from './Brc38PrivateMergeProgramNode'
 import {
   brc38PrivateMergeRecoveryTable,
@@ -1090,6 +1091,41 @@ export class Brc38PrivateLocalCandidate {
       return receipt
     })
   }
+  /** Consume the admitted row budget against this one coherent source view.
+   * Every row/family advance keeps its original atomic journal checks; empty
+   * families cannot consume an unbounded control loop. Parent copies share the
+   * same row allowance, and row/field lifetimes still drain before the next. */
+  async #copyPage(before: Readonly<Brc38PrivateLocalCandidateJournal>, allowance: { rows: number }): Promise<void> {
+    let current = before,
+      stopped = false
+    const maximumOperations = tableCount + this.#options.maximumStepRows
+    function* operations(): Generator<void> {
+      for (let operation = 0; operation < maximumOperations; operation++) {
+        if (stopped || current.phase !== 'COPY' || allowance.rows === 0) return
+        yield
+      }
+    }
+    await runInSeries(operations(), async () => {
+      this.#check()
+      const table = brc38NativeLocalBaselineTables[current.copyTable],
+        page = await Brc38NativeLocalBaselineSource.ownedPage(this.#source, table, current.afterRowId, 1)
+      if (page.length === 0)
+        await this.#advance(current, {
+          copyTable: current.copyTable + 1,
+          afterRowId: null,
+          ...(current.copyTable === tableCount - 1 ? { phase: 'DELTA' } : {})
+        })
+      else {
+        const result = await this.#copy(table, page[0], current, { afterRowId: page[0] }, allowance)
+        if (result !== 'COPIED') {
+          if (result === 'REBUILD') await this.#startRebuild(current)
+          stopped = true
+          return
+        }
+      }
+      current = await this.#read()
+    })
+  }
   step(): Promise<Readonly<Brc38PrivateLocalCandidateProgress>> {
     return this.#io.run(async () => {
       this.#check()
@@ -1114,18 +1150,8 @@ export class Brc38PrivateLocalCandidate {
         )
           invalid()
         if (current.phase === 'CLEAR') await this.#clear(current)
-        else if (current.phase === 'COPY') {
-          const table = brc38NativeLocalBaselineTables[current.copyTable],
-            page = await Brc38NativeLocalBaselineSource.ownedPage(this.#source, table, current.afterRowId, 1)
-          if (page.length === 0)
-            await this.#advance(current, {
-              copyTable: current.copyTable + 1,
-              afterRowId: null,
-              ...(current.copyTable === tableCount - 1 ? { phase: 'DELTA' } : {})
-            })
-          else if ((await this.#copy(table, page[0], current, { afterRowId: page[0] }, allowance)) === 'REBUILD')
-            await this.#startRebuild(current)
-        } else {
+        else if (current.phase === 'COPY') await this.#copyPage(current, allowance)
+        else {
           if (
             (current.phase === 'RECOVERY' && BigInt(high) > BigInt(current.caughtUpRevision)) ||
             (current.phase === 'DELTA' &&

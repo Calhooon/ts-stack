@@ -1,3 +1,6 @@
+import { Brc38PrivateLocalCandidate } from './Brc38PrivateLocalCandidateNode'
+import { brc38PrivateLocalCandidateStateTable } from './Brc38PrivateLocalCandidateJournalNode'
+import { runInSeries } from '../../utility/runInSeries'
 import type { Knex } from 'knex'
 import {
   withBrc38NativeCandidateContractFixture,
@@ -253,3 +256,98 @@ test(
   },
   nativeCandidateRebuildCaseTimeoutMs
 )
+
+test('native COPY uses its admitted batch budget and resumes the exact stored checkpoint', async () => {
+  await withBrc38NativeCandidateContractFixture(
+    async fixture => {
+      const maximumStepRows = 4,
+        options = { ...fixture.options, maximumStepRows },
+        expectedLabels = fixture.initial.tx_labels.length
+      expect(
+        fixture.initial.tx_labels.filter(row => String(row.metadata.label).startsWith('batch-budget-'))
+      ).toHaveLength(19)
+      let done = false,
+        priorLabels = 0,
+        observedLabelBatch = false
+      const advance = async (): Promise<void> => {
+        const progress = await fixture.withSource(
+          async source =>
+            await Brc38PrivateLocalCandidate.with(
+              fixture.store,
+              source,
+              options,
+              async candidate => await candidate.step()
+            )
+        )
+        expect(progress.copiedRows).toBeGreaterThanOrEqual(0)
+        expect(progress.copiedRows).toBeLessThanOrEqual(maximumStepRows)
+        const labels = await fixture.withRead(async trx => await trx('tx_labels').select('txLabelId', 'label'))
+        const added = labels.length - priorLabels
+        expect(added).toBeGreaterThanOrEqual(0)
+        expect(added).toBeLessThanOrEqual(maximumStepRows)
+        observedLabelBatch ||= added > 1
+        priorLabels = labels.length
+        // Independent scalar source rows have no unresolved parent dependency.
+        // Their actual postimages must demonstrate batching, not only a report.
+        if (labels.length === expectedLabels) expect(observedLabelBatch).toBe(true)
+        done = progress.recoveryRequired && progress.garbageComplete
+        fixture.check()
+      }
+      await advance()
+      const checkpoint = async () =>
+        await fixture.withRead(async trx => {
+          const rows = await trx(brc38PrivateLocalCandidateStateTable)
+            .where({ slot: 1 })
+            .select('phase', 'copyTable', 'afterRowId', 'records')
+            .limit(2)
+          expect(rows).toHaveLength(1)
+          return rows[0]
+        })
+      const before = await checkpoint(),
+        binding = fixture.store.binding?.digest
+      expect(before.phase).toBe('COPY')
+      await fixture.reopen()
+      expect(fixture.store.binding?.digest).toBe(binding)
+      expect(await checkpoint()).toEqual(before)
+      await runInSeries(Array(256).keys(), async () => {
+        if (!done) await advance()
+      })
+      expect(done).toBe(true)
+      expect(observedLabelBatch).toBe(true)
+      const actual = await fixture.readCandidate()
+      try {
+        expect(actual).toEqual(fixture.initial)
+      } finally {
+        wipeIndependentNativeInventory(actual)
+      }
+    },
+    {
+      lifetimeMs: 600000,
+      prepareSource: async source => {
+        await source.manager.runAsStorageProvider(async active => {
+          expect(active).toBe(source.storage)
+          await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(source.storage, async writer => {
+            const when = new Date('2026-10-08T00:00:00.000Z'),
+              userId = source.manager.getActiveUser().userId
+            await runInSeries(Array(19).keys(), async index => {
+              const txLabelId = 2000 + index
+              expect(
+                await source.storage.insertTxLabel(
+                  {
+                    txLabelId,
+                    userId,
+                    created_at: when,
+                    updated_at: when,
+                    label: `batch-budget-${String(index).padStart(2, '0')}`,
+                    isDeleted: index % 3 === 0
+                  },
+                  writer
+                )
+              ).toBe(txLabelId)
+            })
+          })
+        })
+      }
+    }
+  )
+}, 630000)

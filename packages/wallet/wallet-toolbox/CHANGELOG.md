@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Use the admitted native COPY row budget across top-level and parent rows, with finite empty-family traversal and original per-record journal commits, source coherence, lifetime and resource guards. Add a genuine stored-row batching and physical-reopen regression while retaining all original native cases. No schema, wire, production limit or API migration; whole-programme validation remains pending.
+
 - Retain bounded catalog-only read checks for both simple counts and fresh aggregate field-schema verification, including the complete five-field aggregate inventory and one-row limit. Data-row counts remain forbidden by the original authenticated reader test.
 
 - Apply measured provisional Metro15percent and Hermes25percent artifact allowances with retained baselines, exact job/source, owner and post-goal review/removal metadata. Preserve namespace, source maps/licenses, compiler settings and native/production/runtime/negative limits; no platform or physical-device proof is inferred. Give the compiler image a non-root fallback while retaining its existing explicit caller UID/GID.
