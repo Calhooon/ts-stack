@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto'
 import type { StorageKnex } from '../../StorageKnex'
 import { WERR_INVALID_OPERATION, WERR_UNAUTHORIZED } from '../../../sdk/WERR_errors'
 import type { SnapshotJournalDestinationLimits, SnapshotJournalWriterAdmission } from './SnapshotJournalProvider'
-import type { SnapshotJournalDestinationCheckpoint, SnapshotJournalDeltaPage } from './SnapshotJournalTypes'
+import type { SnapshotJournalDestinationCheckpoint } from './SnapshotJournalTypes'
 import {
   parseSnapshotJournalFieldArchiveBinding,
   type SnapshotJournalFieldArchiveBinding
@@ -36,7 +36,7 @@ import {
 import { stageSnapshotJournalDestinationFieldPage } from './SnapshotJournalDestinationStage'
 import { advanceSnapshotJournalProgress } from './SnapshotJournalProgress'
 import { encodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
-import { applySnapshotJournalProvenancePage } from './SnapshotJournalProvenance'
+import { PreparedSnapshotJournalFieldProvenance } from './SnapshotJournalProvenance'
 import {
   assertRemoteSnapshotJournalFieldArchive,
   assertRemoteSnapshotJournalFieldFrame,
@@ -152,68 +152,67 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
         if (change.present && Object.hasOwn(change.row, 'userId') && change.row.userId !== this.binding.source.userId)
           throw new WERR_UNAUTHORIZED('Journal field row belongs to a different source profile')
       }
-      // The original provenance path accepts complete rows. Do not silently
-      // discard a sync-state field or acknowledge metadata as full provenance.
-      let provenance: SnapshotJournalDeltaPage | undefined
-      if (stream.tableId === 7) {
-        if (frame.page.changes.some(change => change.present && Object.keys(change.fields).length > 0))
-          throw new WERR_INVALID_OPERATION('Deferred journal provenance requires complete verified field custody')
-        provenance = {
-          table: frame.page.table,
-          changes: frame.page.changes.map(change =>
-            change.present
-              ? { metadata: change.metadata, present: true as const, row: change.row }
-              : { metadata: change.metadata, present: false as const }
-          ),
-          examined: frame.page.examined,
-          payloadBytes: frame.page.metadataBytes,
-          complete: frame.page.complete,
-          ...(frame.page.after === undefined ? {} : { after: frame.page.after })
-        }
-      }
-      await this.verifyCurrent()
-      return await this.writer(async trx => {
-        this.signal?.throwIfAborted()
-        assertRemoteSnapshotJournalFieldFrame(archive, frame)
-        // A resumed controller must agree with the actual artifact's pending
-        // content record; copied JSON cannot restamp a different session.
-        await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).pending(
-          trx as import('knex').Knex.Transaction,
-          this.binding,
-          expected,
-          source.snapshotId,
-          source.journal.contentRevision
-        )
-        await sealSnapshotJournalCapturedFrame(
-          trx,
-          this.binding,
-          expected,
-          frame.frameDigest,
-          frame.page.changes.length
-        )
-        await requireSnapshotJournalCapturedFrame(
-          trx,
-          this.binding,
-          expected,
-          frame.frameDigest,
-          frame.page.changes.length
-        )
-        if (provenance !== undefined)
-          await applySnapshotJournalProvenancePage(trx, this.binding, expected, provenance, this.limits)
-        const committed = await stageSnapshotJournalDestinationFieldPage(
-          trx,
-          this.binding,
-          expected,
-          frame.page,
-          this.limits
-        )
-        await advanceSnapshotJournalProgress(trx, this.binding, expected, committed.checkpoint, {
-          pages: 1,
-          examined: committed.result.examined,
-          payloadBytes: committed.result.bytes
+      // Prepare actual bytes outside the final writer. Partial custody can
+      // resume, while metadata links and the intake cursor commit together.
+      const provenance =
+        stream.tableId === 7
+          ? await PreparedSnapshotJournalFieldProvenance.prepare(
+              this.storage,
+              this.binding,
+              expected,
+              archive,
+              frame,
+              this.limits,
+              this.admission,
+              this.signal
+            )
+          : undefined
+      try {
+        await this.verifyCurrent()
+        return await this.writer(async trx => {
+          this.signal?.throwIfAborted()
+          assertRemoteSnapshotJournalFieldFrame(archive, frame)
+          // A resumed controller must agree with the actual artifact's pending
+          // content record; copied JSON cannot restamp a different session.
+          await new KnexSnapshotJournalDataContentReceipts(this.storage, this.root).pending(
+            trx as import('knex').Knex.Transaction,
+            this.binding,
+            expected,
+            source.snapshotId,
+            source.journal.contentRevision
+          )
+          await sealSnapshotJournalCapturedFrame(
+            trx,
+            this.binding,
+            expected,
+            frame.frameDigest,
+            frame.page.changes.length
+          )
+          await requireSnapshotJournalCapturedFrame(
+            trx,
+            this.binding,
+            expected,
+            frame.frameDigest,
+            frame.page.changes.length
+          )
+          if (provenance !== undefined) await provenance.apply(trx)
+          const committed = await stageSnapshotJournalDestinationFieldPage(
+            trx,
+            this.binding,
+            expected,
+            frame.page,
+            this.limits
+          )
+          await advanceSnapshotJournalProgress(trx, this.binding, expected, committed.checkpoint, {
+            pages: 1,
+            examined: committed.result.examined,
+            payloadBytes: committed.result.bytes
+          })
+          return committed.checkpoint
         })
-        return committed.checkpoint
-      })
+      } finally {
+        provenance?.close()
+      }
     })
   }
 

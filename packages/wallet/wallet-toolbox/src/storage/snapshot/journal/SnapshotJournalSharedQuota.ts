@@ -1,3 +1,4 @@
+import { snapshotJournalFieldCacheNames, snapshotJournalFieldCacheTriggers } from './SnapshotJournalNativePayload'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -18,6 +19,7 @@ export interface SnapshotJournalQuotaTrigger {
   name: string
   table: string
   event: 'INSERT' | 'UPDATE' | 'DELETE'
+  timing?: 'BEFORE' | 'AFTER'
   body: string
   sql: string
 }
@@ -132,6 +134,8 @@ function quotaTriggers(ddl: readonly string[], mysql: boolean, native: boolean):
       result.push({ name, table, event, body, sql: statement })
     }
   }
+  if (ddl.some(sql => sql.startsWith('CREATE TABLE ' + snapshotJournalFieldCacheNames.versions + '(')))
+    result.push(...snapshotJournalFieldCacheTriggers(mysql))
   return result
 }
 export async function verifySnapshotJournalSharedQuota(k: Knex): Promise<void> {
@@ -230,7 +234,7 @@ export async function verifySnapshotJournalQuotaMysqlTriggers(
             row.TRIGGER_NAME === value.name &&
             row.EVENT_OBJECT_TABLE === value.table &&
             row.EVENT_MANIPULATION === value.event &&
-            row.ACTION_TIMING === 'AFTER' &&
+            row.ACTION_TIMING === (value.timing ?? 'AFTER') &&
             row.ACTION_STATEMENT === value.body &&
             row.SQL_MODE === context.sqlMode &&
             row.CHARACTER_SET_CLIENT === context.charset &&

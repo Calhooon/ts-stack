@@ -1,3 +1,4 @@
+import { snapshotJournalFieldCacheTriggers, snapshotJournalFieldCacheNames } from './SnapshotJournalNativePayload'
 import type { Knex } from 'knex'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -14,7 +15,12 @@ import { nativeQuotaDispatchDdl, nativeQuotaDispatchTriggers } from './SnapshotJ
 export async function snapshotJournalQuotaLayout(k: Knex, ddl: readonly string[]) {
   const historical = snapshotJournalSharedQuotaTriggers(k, ddl)
   if (!isOwnedNativeSqlite(k)) return { ddl, triggers: historical, dispatch: [] as readonly string[] }
-  const reduced = nativeQuotaDispatchTriggers(ddl)
+  const reduced = [
+    ...nativeQuotaDispatchTriggers(ddl),
+    ...(ddl.some(sql => sql.startsWith('CREATE TABLE ' + snapshotJournalFieldCacheNames.versions + '('))
+      ? snapshotJournalFieldCacheTriggers(false)
+      : [])
+  ]
   const expected = (sql: readonly string[]) =>
     new Map(
       sql.map(value => {

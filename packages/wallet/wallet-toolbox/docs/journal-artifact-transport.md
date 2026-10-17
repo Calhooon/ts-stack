@@ -569,3 +569,42 @@ copied-owner refusal, a committed captured-reference away-and-back event after
 preparation, no request effect/cursor advance on refusal, and genuine resume.
 These new native assertions remain unexecuted. Full provenance, ordinary SQL
 field storage, manager routing and remote primary recovery remain unfinished.
+
+An additive field-custody migration installs source-owned auxiliary budgets,
+version headers and bounded BLOB chunks for complete sync-state provenance.
+It retains the original aggregate byte/row limits, packet limits and working
+allocation ceiling. Full field capacity stays reserved until its last physical
+chunk and header are deleted. Header and byte mutations advance an SQL event
+revision, including a byte change followed by exact restoration.
+
+The field receiver now verifies the genuine authenticated archive/frame,
+source profile and target window, hashes every source field and independently
+rehashes the stored bytes to EOF. Resumed sealed custody is rehashed; a stored
+completion bit is never a verification verdict. Each source extent is fetched
+outside target SQL/manager writer admission. Short writers check the actual
+physical root, schema and window; real savepoints inherit only their actual
+parent's live operation grant. Copies and completed handles cannot acquire it.
+The final writer atomically links verified versions, records canonical
+provenance metadata, and advances intake. Source operational state is retained
+separately from wallet financial columns and primary activation.
+
+`readSnapshotJournalFieldProvenancePage` returns explicit small cells and field
+descriptors. `SnapshotJournalProvenanceFieldReader.open` independently rehashes
+acknowledged bytes in short views, then permits bounded extents under the same
+actual profile, backend, metadata and byte revision. These durable reads survive
+archive closure and expiry; they are not a `WalletReadSnapshot`, SQL source or
+primary actor. The original complete-row provenance reader remains strict and
+refuses field envelopes. A raw/field format transition at the same source
+revision requires equality of the original cells and content descriptors.
+Tombstones, replacement scans and raw replacements retire prior field links;
+bounded acknowledged/retired-window cleanup physically removes unlinked
+custody before releasing reservations. Linked acknowledged bytes survive GC.
+
+The forward SQLite migration also repairs signed sync-state membership guards,
+drains live receipts before changing observers, preserves other table key
+rules, and rotates the source epoch atomically. Exact historical observer
+families remain supported. Tombstone collection preserves signed and zero
+sync-state keys. MySQL signed observer parity, ordinary financial field effects,
+manager field routing and remote primary recovery still need implementation
+and full runtime qualification. Host regressions are development evidence;
+they do not establish pinned native, MySQL, device or whole-system qualification.

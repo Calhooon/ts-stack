@@ -38,7 +38,12 @@ function object(value: unknown): value is object {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 function integer(value: unknown, minimum: number, maximum = Number.MAX_SAFE_INTEGER, stored = false): number {
-  if (stored && typeof value === 'string' && /^(0|[1-9]\d{0,15})$/.test(value)) value = Number(value)
+  if (
+    stored &&
+    typeof value === 'string' &&
+    (minimum < 0 ? /^(?:0|-?[1-9]\d{0,15})$/ : /^(0|[1-9]\d{0,15})$/).test(value)
+  )
+    value = Number(value)
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) return invalid()
   return value
 }
@@ -53,9 +58,10 @@ function text(value: unknown): string {
 }
 function key(value: SnapshotJournalCollectionKey, stream: 'scope' | 'physical'): SnapshotJournalCollectionKey {
   if (!object(value)) return invalid()
+  const tableId = integer(value.tableId, 0, 12)
   const result: SnapshotJournalCollectionKey = {
-    tableId: integer(value.tableId, 0, 12),
-    id1: integer(value.id1, 1),
+    tableId,
+    id1: integer(value.id1, tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1),
     id2: integer(value.id2, 0),
     exactText: text(value.exactText)
   }
@@ -178,16 +184,17 @@ interface Metadata {
 function metadata(row: Record<string, unknown>, stream: 'scope' | 'physical', sqlite: boolean): Metadata {
   if (sqlite && row.keyType !== 'text') return invalid()
   if (![0, 1, false, true].includes(row.present as number | boolean)) return invalid()
-  const position = key(
-    {
-      tableId: integer(row.tableId, 0, 12, true),
-      userId: stream === 'scope' ? integer(row.userId, 1, Number.MAX_SAFE_INTEGER, true) : undefined,
-      id1: integer(row.id1, 1, Number.MAX_SAFE_INTEGER, true),
-      id2: integer(row.id2, 0, Number.MAX_SAFE_INTEGER, true),
-      exactText: text(row.exactBytes)
-    },
-    stream
-  )
+  const tableId = integer(row.tableId, 0, 12, true),
+    position = key(
+      {
+        tableId,
+        userId: stream === 'scope' ? integer(row.userId, 1, Number.MAX_SAFE_INTEGER, true) : undefined,
+        id1: integer(row.id1, tableId === 7 ? -Number.MAX_SAFE_INTEGER : 1, Number.MAX_SAFE_INTEGER, true),
+        id2: integer(row.id2, 0, Number.MAX_SAFE_INTEGER, true),
+        exactText: text(row.exactBytes)
+      },
+      stream
+    )
   const revision = snapshotJournalRevision(row.revisionText)
   if (revision === '0') return invalid()
   if (stream === 'physical') {

@@ -1,3 +1,4 @@
+import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../schema/snapshotSqlMigration'
 import { brc38NativeLocalPackedLayoutMigration } from './Brc38NativeLocalPackedLayout'
 import { isOwnedPrivateNativeSqlite } from '../schema/privateNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
@@ -19,6 +20,7 @@ type PrivateMigrationSource = Omit<Knex.MigrationSource<string>, 'getMigration'>
 }
 
 const transactional = new Set([
+  SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION,
   SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION,
   SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
   SNAPSHOT_PROFILE_INDEX_MIGRATION,

@@ -6,6 +6,10 @@ import {
   type SnapshotJournalDestinationCheckpoint
 } from './SnapshotJournalDestinationWindow'
 import { verifySnapshotJournalDestinationSchema } from './SnapshotJournalDestinationSchema'
+import {
+  hasSnapshotJournalProvenanceCustody,
+  cleanupSnapshotJournalProvenanceCustody
+} from './SnapshotJournalProvenance'
 
 const tables: ReadonlyArray<readonly [string, readonly string[]]> = [
   ['snapshot_reconciliation_captured_identities', ['frameDigest', 'changeIndex', 'tableId', 'incomingId']],
@@ -33,6 +37,7 @@ export async function requireSnapshotJournalWindowClean(
   state: SnapshotJournalDestinationCheckpoint
 ): Promise<void> {
   if (!k.isTransaction) invalid()
+  if (await hasSnapshotJournalProvenanceCustody(k, binding, state)) invalid()
   const { binding: ignored, ...selected } = scope(binding, state)
   void ignored
   for (const [table] of tables) {
@@ -71,7 +76,8 @@ export async function cleanupSnapshotJournalWindowCustody(
     const selected = scope(binding, state)
     const { binding: ignored, ...base } = selected
     void ignored
-    let removed = 0
+    const provenance = await cleanupSnapshotJournalProvenanceCustody(trx, binding, state, Math.min(33, maximumRows))
+    let removed = provenance.removed
     for (const [table, keys] of tables) {
       if (removed === maximumRows) break
       const fields = keys.map(field =>
@@ -122,7 +128,7 @@ export async function cleanupSnapshotJournalWindowCustody(
         removed++
       }
     }
-    let complete = true
+    let complete = provenance.complete
     for (const [table] of tables) {
       if ((await trx(table).where(base).select(trx.raw('1 AS occupied')).limit(1)).length) {
         complete = false

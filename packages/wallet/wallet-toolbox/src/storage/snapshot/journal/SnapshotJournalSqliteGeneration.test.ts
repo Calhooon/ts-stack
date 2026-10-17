@@ -8,6 +8,7 @@ import {
   installSnapshotJournalSqliteGeneration,
   readSnapshotJournalSqliteGeneration,
   completeSnapshotJournalSqliteGeneration,
+  migrateSnapshotJournalSqliteSignedProvenance,
   readBoundedSnapshotJournalSqliteSchema,
   SNAPSHOT_JOURNAL_SQLITE_GENERATION as metadata
 } from './SnapshotJournalSqliteGeneration'
@@ -102,6 +103,62 @@ async function finish(k: Knex) {
   for (let page = 0; page < 80; page++) if ((await copySnapshotJournalBootstrapPage(k, 1000000)).complete) return
   throw new Error('bootstrap did not finish')
 }
+
+test('forward signed provenance guards drain receipts, roll back atomically and retain negative and zero source keys', async () => {
+  const { k, source } = await fixture()
+  try {
+    await installSnapshotJournalSqliteGeneration(k, ceiling, journalReceiptPolicy)
+    await finish(k)
+    const before = await completeSnapshotJournalSqliteGeneration(k, journalReceiptPolicy),
+      original = await k('sqlite_master')
+        .where({ type: 'trigger', name: 'snapshot_journal_scope_0_INSERT' })
+        .first('sql')
+    await k('snapshot_journal_receipts').insert({
+      requestId: 'd'.repeat(64),
+      binding: 'a'.repeat(64),
+      highWater: '1',
+      floor: '0',
+      expiresAt: Date.now() + 60000
+    })
+    await expect(k.transaction(async trx => await migrateSnapshotJournalSqliteSignedProvenance(trx))).rejects.toThrow(
+      'Drain live journal captures'
+    )
+    expect(await readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)).toEqual(before)
+    await k('snapshot_journal_receipts').delete()
+    const rollback = new Error('Independent signed source migration rollback')
+    await expect(
+      k.transaction(async trx => {
+        await migrateSnapshotJournalSqliteSignedProvenance(trx)
+        expect(
+          (await trx('sqlite_master').where({ type: 'trigger', name: 'snapshot_journal_scope_0_INSERT' }).first('sql'))
+            .sql
+        ).toContain('snapshotTableId=7')
+        throw rollback
+      })
+    ).rejects.toBe(rollback)
+    expect(
+      await k('sqlite_master').where({ type: 'trigger', name: 'snapshot_journal_scope_0_INSERT' }).first('sql')
+    ).toEqual(original)
+    expect(await readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)).toEqual(before)
+    await k.transaction(async trx => await migrateSnapshotJournalSqliteSignedProvenance(trx))
+    const current = await readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)
+    expect(current).toMatchObject({ source: before.source, complete: true, enabled: true })
+    expect(current.epoch).not.toBe(before.epoch)
+    const row = await k('sync_states').first()
+    for (const syncStateId of [-Number.MAX_SAFE_INTEGER, -7, 0]) {
+      await k('sync_states').insert({ ...row, syncStateId, refNum: 'signed-migration-' + syncStateId })
+      await k('sync_states').where('syncStateId', syncStateId).update({ errorLocal: 'independent update' })
+      expect(await k('snapshot_journal_clock').first('enabled', 'reason')).toEqual({ enabled: 1, reason: null })
+      await k('sync_states').where('syncStateId', syncStateId).delete()
+      expect(await k('snapshot_journal_scope').where({ tableId: 7, id1: syncStateId }).first('present')).toEqual({
+        present: 0
+      })
+    }
+    expect((await readSnapshotJournalSqliteGeneration(k, journalReceiptPolicy)).enabled).toBe(true)
+  } finally {
+    await source.destroy()
+  }
+})
 
 test('atomic installation resumes its epoch and publishes only completed durable bootstrap', async () => {
   const { k, source } = await fixture()

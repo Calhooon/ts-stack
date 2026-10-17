@@ -11,6 +11,7 @@ import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import {
   collectSnapshotJournalTombstones,
   snapshotJournalCollectionQuery,
+  snapshotJournalCollectionRequest,
   type SnapshotJournalCollectionRequest
 } from './SnapshotJournalCollection'
 
@@ -63,6 +64,39 @@ const scope = (id1: number, present: number, revision = 10) => ({
   revision,
   present
 })
+
+test.each(['scope', 'physical'] as const)(
+  'signed provenance %s collection retains zero and resumes after deleted negative positions',
+  async stream => {
+    const ids = [-Number.MAX_SAFE_INTEGER, -7, 0, 7],
+      input = request(stream, 1)
+    for (const id1 of ids)
+      await k('snapshot_journal_' + stream).insert({
+        tableId: 7,
+        ...(stream === 'scope' ? { userId: 1 } : { generation: 1 }),
+        id1,
+        id2: 0,
+        exactText: '',
+        revision: 10,
+        present: 0
+      })
+    let after: import('./SnapshotJournalCollection').SnapshotJournalCollectionCursor | undefined
+    for (const id1 of ids) {
+      const step = await k.transaction(
+        async trx =>
+          await collectSnapshotJournalTombstones(trx, { ...input, ...(after === undefined ? {} : { after }) })
+      )
+      expect(step).toMatchObject({ removed: 1, examined: 1, complete: false, after: { key: { tableId: 7, id1 } } })
+      after = step!.after
+    }
+    expect(
+      await k.transaction(async trx => await collectSnapshotJournalTombstones(trx, { ...input, after }))
+    ).toMatchObject({ examined: 0, removed: 0, complete: true })
+    expect(() =>
+      snapshotJournalCollectionRequest({ ...input, after: { ...after!, key: { ...after!.key, tableId: 0, id1: -7 } } })
+    ).toThrow()
+  }
+)
 
 test('the bound counts live rows; later tombstones require another primary-key page', async () => {
   const rows = Array.from({ length: 300 }, (_, i) => scope(i + 1, Number(i < 260), i >= 290 ? 60 : 10))

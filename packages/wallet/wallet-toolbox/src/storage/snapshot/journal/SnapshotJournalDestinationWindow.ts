@@ -376,7 +376,9 @@ export async function withSnapshotJournalDestinationWindowFence<T>(
   const binding = ownBinding(input)
   const prior = ownState(expected, binding)
   if (prior.phase === 'acknowledged' || typeof apply !== 'function') return invalid()
-  return await k.transaction(async trx => {
+  return await (
+    require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+  ).withSnapshotJournalOwnedSavepoint(k, async trx => {
     await fence(trx, binding.value)
     if (JSON.stringify(await read(trx, binding)) !== JSON.stringify(prior)) return invalid()
     const result = await apply(trx)
@@ -457,7 +459,9 @@ export async function withSnapshotJournalWindowCustodyFence<T>(
   const binding = ownBinding(input),
     prior = ownState(expected, binding)
   if (typeof cleanup !== 'function') return invalid()
-  return await k.transaction(async trx => {
+  return await (
+    require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+  ).withSnapshotJournalOwnedSavepoint(k, async trx => {
     await fence(trx, binding.value, true)
     if (JSON.stringify(await read(trx, binding, true)) !== JSON.stringify(prior)) return invalid()
     if (
@@ -588,7 +592,9 @@ export async function replaceSnapshotJournalDestinationWindow(
     typeof requireClean !== 'function'
   )
     return invalid()
-  return await k.transaction(async trx => {
+  return await (
+    require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+  ).withSnapshotJournalOwnedSavepoint(k, async trx => {
     await fence(trx, next.value)
     if (JSON.stringify(await read(trx, previous, true)) !== JSON.stringify(prior)) return invalid()
     await requireClean(trx)

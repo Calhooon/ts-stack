@@ -1,3 +1,4 @@
+import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../schema/snapshotSqlMigration'
 import { knex } from 'knex'
 import {
   nativeSnapshotJournalMappingDdl,
@@ -26,6 +27,7 @@ import {
 } from '../schema/KnexMigrations'
 
 const selectedMigrations = [
+  SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION,
   SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION,
   SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
   SNAPSHOT_PROFILE_INDEX_MIGRATION,

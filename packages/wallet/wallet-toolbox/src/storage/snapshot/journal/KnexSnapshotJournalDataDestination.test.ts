@@ -4,7 +4,11 @@ import {
   retireSnapshotJournalDestinationWindow,
   replaceSnapshotJournalDestinationWindow
 } from './SnapshotJournalDestinationWindow'
-import { cleanupSnapshotJournalWindowCustody, requireSnapshotJournalWindowClean } from './SnapshotJournalWindowCleanup'
+import {
+  cleanupSnapshotJournalWindowCustody,
+  cleanupSnapshotJournalAcknowledgedWindow,
+  requireSnapshotJournalWindowClean
+} from './SnapshotJournalWindowCleanup'
 import * as RpcProofs from '../../remoting/validateRpcSyncProofs'
 import { knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -17,6 +21,12 @@ import { WalletStorageManager } from '../../WalletStorageManager'
 import { snapshotHttpFixture } from '../../../../test/utils/snapshotArchiveHttpFixtures'
 import { KnexSnapshotJournalDataDestination } from './KnexSnapshotJournalDataDestination'
 import { journalCopyLimits } from './SnapshotJournalCopyLimits'
+import { createHash } from 'node:crypto'
+import {
+  SnapshotJournalProvenanceFieldReader,
+  readSnapshotJournalFieldProvenancePage,
+  readSnapshotJournalProvenancePage
+} from './SnapshotJournalProvenance'
 import { snapshotJournalDestinationStreams } from './SnapshotJournalDestinationWindow'
 import {
   encodeSnapshotJournalArchiveFrame,
@@ -603,6 +613,279 @@ test('actual field receiver commits complete semantic rows and recovers a lost f
     await f.close()
   }
 })
+
+test('actual field provenance retains complete UTF8 bytes after archive closure and refuses changed stored-byte revisions', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
+  const f = await fixture()
+  const captureModule = await import('./captureSnapshotJournalFieldArchiveSource'),
+    actualCapture = captureModule.captureSnapshotJournalFieldArchiveSource,
+    captureErrors: unknown[] = [],
+    captureSpy = jest
+      .spyOn(captureModule, 'captureSnapshotJournalFieldArchiveSource')
+      .mockImplementation(async (...args) => {
+        try {
+          return await actualCapture(...args)
+        } catch (cause) {
+          captureErrors.push(cause)
+          throw cause
+        }
+      })
+  const actualOpen = f.source.storage.openSnapshotSyncContentSource.bind(f.source.storage),
+    openSpy = jest.spyOn(f.source.storage, 'openSnapshotSyncContentSource').mockImplementation(async (...args) => {
+      try {
+        return await actualOpen(...args)
+      } catch (cause) {
+        captureErrors.push(cause)
+        throw cause
+      }
+    })
+  let archive: RemoteSnapshotJournalFieldArchive | undefined,
+    reader: SnapshotJournalProvenanceFieldReader | undefined,
+    restoreWriter = () => undefined as void
+  const text = 'independent provenance 雪\u0000' + '🧾'.repeat(9000),
+    bytes = Buffer.from(text, 'utf8'),
+    incomingId = -7
+  try {
+    const user = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user,
+      timestamp = { created_at: Date.now(), updated_at: Date.now() }
+    await f.source.storage.knex('sync_states').insert({
+      ...timestamp,
+      syncStateId: incomingId,
+      userId: user.userId,
+      storageIdentityKey: 'independent-source-peer',
+      storageName: 'source peer',
+      refNum: 'independent-field-provenance',
+      status: 'unknown',
+      init: 1,
+      syncMap: text,
+      errorLocal: '',
+      errorOther: null
+    })
+    const before = await f.target.knex('sync_states').orderBy('syncStateId')
+    expect(await f.source.storage.knex('snapshot_journal_clock').first('enabled', 'reason')).toEqual({
+      enabled: 1,
+      reason: null
+    })
+    await (await import('./SnapshotJournalLifecycle')).readSnapshotJournalCaptureConfiguration(f.source.storage.knex)
+    const rawArchive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (rawArchive === undefined) throw new Error('Actual original complete-row archive unavailable')
+    try {
+      const raw = await KnexSnapshotJournalDataDestination.begin(
+        f.target,
+        f.source.identityKey,
+        rawArchive.manifest.binding,
+        journalCopyLimits(),
+        f.admission
+      )
+      const rawState = await copy(rawArchive, raw.destination, raw.checkpoint)
+      const original = await f.admission(
+        async () =>
+          await f.target.runSnapshotJournalWriter(
+            async trx => await readSnapshotJournalProvenancePage(trx, raw.destination.binding, rawState),
+            raw.destination.binding.destinationBackend
+          )
+      )
+      expect(original.rows[0].raw.syncMap).toBe(text)
+    } finally {
+      await rawArchive.close()
+      await rawArchive.closed
+    }
+    try {
+      archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey)
+    } catch (cause) {
+      throw new AggregateError([cause, ...captureErrors], 'Actual provenance artifact capture failed')
+    }
+    if (archive === undefined) throw new Error('Actual authenticated field artifact unavailable')
+    const begun = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    const actualWriter = f.target.runSnapshotJournalWriter.bind(f.target),
+      rollback = new Error('Independent provenance final writer rollback')
+    let rolledBack = false
+    const writerSpy = jest.spyOn(f.target, 'runSnapshotJournalWriter').mockImplementation(
+      async <T>(
+        operation: (trx: import('knex').Knex, backend: string) => Promise<T>,
+        expectedBackend?: string,
+        signal?: AbortSignal
+      ): Promise<T> =>
+        await actualWriter(
+          async (trx, backend) => {
+            const result = await operation(trx, backend)
+            if (
+              !rolledBack &&
+              result !== null &&
+              typeof result === 'object' &&
+              Reflect.get(result, 'phase') === 'intake' &&
+              Reflect.get(result, 'streamIndex') === 8
+            ) {
+              rolledBack = true
+              throw rollback
+            }
+            return result
+          },
+          expectedBackend,
+          signal
+        )
+    )
+    restoreWriter = () => writerSpy.mockRestore()
+    let state = begun.checkpoint
+    for (let ordinal = 0; ordinal < archive.frameCount; ordinal++) {
+      if (state.streamIndex === 7) {
+        await expect(begun.destination.stageArchiveFrame(state, archive)).rejects.toBe(rollback)
+        expect((await begun.destination.status()).checkpoint).toEqual(state)
+        expect(await f.target.knex('snapshot_reconciliation_pf_versions').select('state', 'linked')).toEqual([
+          { state: 'SEALED', linked: 0 },
+          { state: 'SEALED', linked: 0 }
+        ])
+        expect((await f.target.knex('snapshot_reconciliation_pf_budgets').first()).reserved).toBe(bytes.length)
+      }
+      state = await begun.destination.stageArchiveFrame(state, archive)
+    }
+    expect(rolledBack).toBe(true)
+    while (state.phase !== 'acknowledged') state = (await begun.destination.promote(state, archive)).checkpoint
+    await archive.close()
+    await archive.closed
+    expect(await f.target.knex('sync_states').orderBy('syncStateId')).toEqual(before)
+    const read = async <T>(operation: (trx: import('knex').Knex) => Promise<T>) =>
+      await f.admission(
+        async () =>
+          await f.target.runSnapshotJournalWriter(
+            async trx => await operation(trx),
+            begun.destination.binding.destinationBackend
+          )
+      )
+    await expect(
+      read(async trx => await readSnapshotJournalProvenancePage(trx, begun.destination.binding, state))
+    ).rejects.toThrow()
+    const page = await read(
+      async trx => await readSnapshotJournalFieldProvenancePage(trx, begun.destination.binding, state)
+    )
+    expect(page.rows).toHaveLength(1)
+    expect(page.rows[0]).toMatchObject({
+      incomingId,
+      small: { syncStateId: incomingId, userId: user.userId, errorOther: null },
+      fields: {
+        syncMap: { kind: 'utf8', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') },
+        errorLocal: { bytes: 0 }
+      }
+    })
+    expect(Object.hasOwn(page.rows[0].small, 'syncMap')).toBe(false)
+    reader = await SnapshotJournalProvenanceFieldReader.open(
+      f.target,
+      begun.destination.binding,
+      state,
+      incomingId,
+      'syncMap',
+      f.admission
+    )
+    const result = Buffer.alloc(bytes.length)
+    try {
+      for (let offset = 0; offset < bytes.length; offset += 16001) {
+        const chunk = await reader.read(offset, Math.min(16001, bytes.length - offset))
+        try {
+          result.set(chunk, offset)
+        } finally {
+          chunk.fill(0)
+        }
+      }
+      expect(result).toEqual(bytes)
+      expect(await reader.read(bytes.length, 0)).toHaveLength(0)
+      await expect(reader.read(0, 16385)).rejects.toThrow()
+      await expect(reader.read.call({} as SnapshotJournalProvenanceFieldReader, 0, 1)).rejects.toThrow()
+    } finally {
+      result.fill(0)
+    }
+    const header = await f.target
+        .knex('snapshot_reconciliation_pf_versions')
+        .where({ incomingId, fieldName: 'syncMap', linked: 1 })
+        .first(),
+      original = await f.target
+        .knex('snapshot_reconciliation_pf_chunks')
+        .where({ versionId: header.versionId, byteOffset: 0 })
+        .first(),
+      changed = Buffer.from(original.payload)
+    changed[0] ^= 1
+    await f.target
+      .knex('snapshot_reconciliation_pf_chunks')
+      .where({ versionId: header.versionId, byteOffset: 0 })
+      .update({ payload: changed, sha256: createHash('sha256').update(changed).digest('hex') })
+    await expect(reader.read(0, 1)).rejects.toThrow()
+    await expect(
+      SnapshotJournalProvenanceFieldReader.open(
+        f.target,
+        begun.destination.binding,
+        state,
+        incomingId,
+        'syncMap',
+        f.admission
+      )
+    ).rejects.toThrow()
+    await f.target
+      .knex('snapshot_reconciliation_pf_chunks')
+      .where({ versionId: header.versionId, byteOffset: 0 })
+      .update({ payload: original.payload, sha256: original.sha256 })
+    await expect(reader.read(0, 1)).rejects.toThrow()
+    reader.close()
+    reader = await SnapshotJournalProvenanceFieldReader.open(
+      f.target,
+      begun.destination.binding,
+      state,
+      incomingId,
+      'syncMap',
+      f.admission
+    )
+    expect(await reader.read(16380, 32)).toEqual(bytes.subarray(16380, 16412))
+    let cleanup = await begun.destination.cleanup(state)
+    while (!cleanup.complete) cleanup = await begun.destination.cleanup(state)
+    expect((await f.target.knex('snapshot_reconciliation_pf_budgets').first()).reserved).toBe(bytes.length)
+    expect(await reader.read(0, 4)).toEqual(bytes.subarray(0, 4))
+    const previous = archive.manifest.binding.journal.receipt
+    await f.source.storage.knex('sync_states').where('syncStateId', incomingId).delete()
+    archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey, {
+      binding: previous.binding,
+      highWater: previous.highWater
+    })
+    if (archive === undefined) throw new Error('Actual incremental provenance artifact unavailable')
+    const next = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    let nextState = next.checkpoint
+    await expect(reader.read(0, 1)).rejects.toThrow()
+    for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+      nextState = await next.destination.stageArchiveFrame(nextState, archive)
+    while (nextState.phase !== 'acknowledged')
+      nextState = (await next.destination.promote(nextState, archive)).checkpoint
+    const bounded = await read(
+      async trx => await cleanupSnapshotJournalAcknowledgedWindow(trx, next.destination.binding, nextState, 1)
+    )
+    expect(bounded.removed).toBeLessThanOrEqual(1)
+    if (await f.target.knex('snapshot_reconciliation_pf_versions').where('versionId', header.versionId).first())
+      expect((await f.target.knex('snapshot_reconciliation_pf_budgets').first()).reserved).toBe(bytes.length)
+    cleanup = await next.destination.cleanup(nextState)
+    while (!cleanup.complete) cleanup = await next.destination.cleanup(nextState)
+    expect((await f.target.knex('snapshot_reconciliation_pf_budgets').first()).reserved).toBe(0)
+    expect(await f.target.knex('snapshot_reconciliation_pf_versions')).toHaveLength(0)
+    expect(await f.target.knex('snapshot_reconciliation_pf_chunks')).toHaveLength(0)
+    original.payload.fill(0)
+    changed.fill(0)
+  } finally {
+    captureSpy.mockRestore()
+    openSpy.mockRestore()
+    restoreWriter()
+    reader?.close()
+    bytes.fill(0)
+    await archive?.close()
+    await f.close()
+  }
+}, 90000)
 
 test('actual field promotion refuses changed captured identity DATA and resumes after exact restoration', async () => {
   const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')

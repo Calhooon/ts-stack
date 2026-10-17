@@ -7,6 +7,7 @@ import {
   type SnapshotJournalReceiptPolicy
 } from './SnapshotJournalReceipt'
 import type { Knex } from 'knex'
+import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../../schema/snapshotSqlMigration'
 import { createHash, randomUUID } from 'node:crypto'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -315,7 +316,25 @@ async function nativeJournalLayout(
   }
   return invalid()
 }
-async function plan(k: Knex, config?: Knex.MigratorConfig): Promise<Plan> {
+/** Additive authored variant. Historical observer bytes remain accepted only
+ * as their complete original family; all non-provenance key guards are exact. */
+function signedProvenanceDefinitions(definitions: readonly string[]): string[] {
+  return definitions.map(sql => {
+    if (/^CREATE TRIGGER snapshot_journal_scope_0_(?:INSERT|UPDATE|DELETE) /.test(sql))
+      return sql.replace(
+        /(NEW|OLD)\.snapshotRowId BETWEEN 1 AND 9007199254740991/g,
+        (_match, prefix: string) =>
+          `${prefix}.snapshotRowId BETWEEN CASE WHEN ${prefix}.snapshotTableId=7 THEN -9007199254740991 ELSE 1 END AND 9007199254740991`
+      )
+    if (sql.startsWith('CREATE TRIGGER snapshot_journal_member_apply '))
+      return sql.replace(
+        'NEW.id1 BETWEEN 1 AND 9007199254740991',
+        'NEW.id1 BETWEEN CASE WHEN NEW.tableId=7 THEN -9007199254740991 ELSE 1 END AND 9007199254740991'
+      )
+    return sql
+  })
+}
+async function plan(k: Knex, config?: Knex.MigratorConfig, forceSigned = false): Promise<Plan> {
   if (!local(k) || (await readGenerationIndexState(k, config)) !== 'v2') return invalid()
   const layout = await nativeJournalLayout(k),
     compact = layout !== 'original',
@@ -348,9 +367,33 @@ async function plan(k: Knex, config?: Knex.MigratorConfig): Promise<Plan> {
     ...(shared ? SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL : []),
     ...(compact ? snapshotJournalSharedClockObserverSql(observers, events, projectedSources) : observers)
   ]
-  const ddl = positional
+  const historicalDdl = positional
     ? await snapshotJournalNativePointerDefinitions(k, snapshotJournalPositionalEventSql(originalDdl))
     : originalDdl
+  const signedDdl = positional
+      ? await snapshotJournalNativePointerDefinitions(
+          k,
+          snapshotJournalPositionalEventSql(signedProvenanceDefinitions(originalDdl))
+        )
+      : signedProvenanceDefinitions(originalDdl),
+    probeName = events ? 'snapshot_journal_member_apply' : 'snapshot_journal_scope_0_INSERT',
+    probe = (await k('main.sqlite_schema')
+      .where({ type: 'trigger', name: probeName })
+      .select(k.raw('CASE WHEN length(CAST(sql AS BLOB))<=16384 THEN sql ELSE NULL END AS sql'))
+      .first()) as { sql: unknown } | undefined,
+    signedProbe = signedDdl.find(sql => sql.startsWith(`CREATE TRIGGER ${probeName} `)),
+    registered: Array<{ name: string }> =
+      probe === undefined
+        ? await k(config?.tableName ?? k.client.config.migrations?.tableName ?? 'knex_migrations')
+            .where('name', SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION)
+            .select('name')
+            .limit(2)
+        : [],
+    ddl =
+      forceSigned || (probe !== undefined && probe.sql === signedProbe) || registered.length === 1
+        ? signedDdl
+        : historicalDdl
+  if (registered.length > 1) return invalid()
   const objects = ddl.map(sql => {
     const match = /^CREATE (TABLE|INDEX|TRIGGER|VIEW) (snapshot_journal_\w+)/.exec(sql)
     if (!match) return invalid()
@@ -615,6 +658,56 @@ export async function migrateSnapshotJournalSqliteSourceAddition(
   )
     return invalid()
   await validate(k, next, policy)
+}
+
+/** Forward-only key compatibility repair. Drain receipts, validate the entire
+ * old family, replace only the authored membership guards, rotate the source
+ * epoch and validate the complete new family in the same physical writer. */
+export async function migrateSnapshotJournalSqliteSignedProvenance(
+  k: Knex,
+  config?: Knex.MigratorConfig
+): Promise<void> {
+  if (!k.isTransaction || !local(k)) return invalid()
+  if (!(await k.schema.hasTable(SNAPSHOT_JOURNAL_SQLITE_GENERATION))) return
+  const policies: Array<{ receiptLimit: unknown; receiptLifetimeMs: unknown }> = await k('snapshot_journal_retention')
+    .where('id', 1)
+    .select('receiptLimit', 'receiptLifetimeMs')
+    .limit(2)
+  if (policies.length !== 1) return invalid()
+  const policy = snapshotJournalReceiptPolicy({
+      receiptLimit: Number(policies[0].receiptLimit),
+      receiptLifetimeMs: Number(policies[0].receiptLifetimeMs)
+    }),
+    oldPlan = await plan(k, config),
+    before = await validate(k, oldPlan, policy),
+    next = await plan(k, config, true)
+  if (!before.enabled || !before.complete) return invalid()
+  if (JSON.stringify(oldPlan.objects) === JSON.stringify(next.objects)) return
+  const now = await snapshotArchiveDatabaseNow(k)
+  if ((await k('snapshot_journal_receipts').where('expiresAt', '>', now).select('requestId').limit(1)).length)
+    throw new WERR_INVALID_OPERATION('Drain live journal captures before changing signed provenance observers')
+  if (oldPlan.objects.length !== next.objects.length) return invalid()
+  for (const object of next.objects) {
+    const previous = oldPlan.objects.find(value => value.name === object.name)
+    if (previous === undefined || previous.type !== object.type) return invalid()
+    if (previous.sql === object.sql) continue
+    if (
+      object.type !== 'trigger' ||
+      !/^(?:snapshot_journal_member_apply|snapshot_journal_scope_0_(?:INSERT|UPDATE|DELETE))$/.test(object.name)
+    )
+      return invalid()
+    await k.raw('DROP TRIGGER "' + object.name + '"')
+    await k.raw(object.sql)
+  }
+  const installed = await plan(k, config)
+  if (JSON.stringify(installed) !== JSON.stringify(next)) return invalid()
+  if (
+    (await k(SNAPSHOT_JOURNAL_SQLITE_GENERATION)
+      .where({ id: 1, source: before.source, epoch: before.epoch })
+      .update({ source: installed.source, epoch: randomUUID() })) !== 1
+  )
+    return invalid()
+  await validate(k, installed, policy)
 }
 
 /** Atomic completion cannot be inferred from a caller's last-page acknowledgement. */

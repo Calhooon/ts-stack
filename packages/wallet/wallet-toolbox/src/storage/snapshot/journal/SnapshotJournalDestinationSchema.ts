@@ -1,3 +1,4 @@
+import { snapshotJournalFieldCacheDdl } from './SnapshotJournalNativePayload'
 import { snapshotJournalQuotaLayout } from './SnapshotJournalNativeQuotaLayout'
 import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from '../../portable/Brc38SqlFieldSchemaBatch'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
@@ -35,6 +36,7 @@ import {
   assertSnapshotJournalOrdinaryDataDeletion
 } from './SnapshotJournalNativeDestinationSchema'
 
+export { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../../schema/snapshotSqlMigration'
 export const SNAPSHOT_JOURNAL_DESTINATION_MIGRATION = '2026-10-06-001 add journal reconciliation destination'
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Journal destination schema differs from its owned migration')
@@ -55,6 +57,7 @@ function definitions(k: Knex): string[] {
     ...snapshotJournalIdentityRetirementsDdl(k),
     ...snapshotJournalMembershipDdl(k),
     ...snapshotJournalProvenanceDdl(k),
+    ...snapshotJournalFieldCacheDdl(k),
     snapshotJournalProgressDdl(k),
     ...(dialect(k) ? [SNAPSHOT_JOURNAL_MYSQL_SOURCE_UPGRADE_DDL] : [])
   ]

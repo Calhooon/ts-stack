@@ -10,6 +10,43 @@ import {
 } from './SnapshotJournalCaptureBackend'
 import { SnapshotJournalConnectionCleanupError } from './SnapshotJournalConnections'
 
+const activeWriters = new WeakMap<Knex, { root: Knex; backend: string }>()
+/** Live CODE-issued actual writer only. A copied transaction, configured path,
+ * backend string or persisted row cannot acquire this operation-scoped grant. */
+export function requireSnapshotJournalOwnedWriter(trx: Knex, root: Knex, backend: string): void {
+  const actual = activeWriters.get(trx)
+  if (!trx.isTransaction || actual?.root !== root || actual.backend !== backend)
+    throw new WERR_INVALID_OPERATION('Actual current journal writer operation required')
+}
+/** Inspect an already admitted operation; this cannot register a transaction. */
+export function currentSnapshotJournalOwnedWriter(trx: Knex): Readonly<{ root: Knex; backend: string }> {
+  const actual = activeWriters.get(trx)
+  if (actual === undefined) throw new WERR_INVALID_OPERATION('Actual current journal writer operation required')
+  requireSnapshotJournalOwnedWriter(trx, actual.root, actual.backend)
+  return Object.freeze({ ...actual })
+}
+/** Propagate only through a real child created by the actual parent's Knex
+ * transaction API. There is deliberately no API to enroll a supplied child. */
+export async function withSnapshotJournalOwnedSavepoint<T>(
+  parent: Knex,
+  operation: (child: Knex) => Promise<T>
+): Promise<T> {
+  const actual = activeWriters.get(parent)
+  if (actual !== undefined) requireSnapshotJournalOwnedWriter(parent, actual.root, actual.backend)
+  return await parent.transaction(async child => {
+    if (actual !== undefined) {
+      requireSnapshotJournalOwnedWriter(parent, actual.root, actual.backend)
+      if (!child.isTransaction) throw new WERR_INVALID_OPERATION('Actual child journal transaction required')
+      activeWriters.set(child, actual)
+    }
+    try {
+      return await operation(child)
+    } finally {
+      activeWriters.delete(child)
+    }
+  })
+}
+
 /** One fresh native writer per admitted bounded destination operation. SQLite
  * file identity is observed before opening, and the ACTUAL native connection is
  * checked before and after its transaction. No old pooled handle or configured
@@ -57,7 +94,13 @@ export async function withSnapshotJournalOwnedWriter<T>(
     trx = await k.transaction({ connection })
     void trx.executionPromise.catch(() => undefined)
     assertActive()
-    const value = await apply(trx, backend)
+    if (actualNativeRoot !== undefined) activeWriters.set(trx, { root: actualNativeRoot, backend })
+    let value: T
+    try {
+      value = await apply(trx, backend)
+    } finally {
+      activeWriters.delete(trx)
+    }
     assertActive()
     if ((await bindSnapshotJournalDestinationBackend(k, connection, expected)) !== backend)
       throw new WERR_INVALID_OPERATION('Destination physical backend changed during journal write')

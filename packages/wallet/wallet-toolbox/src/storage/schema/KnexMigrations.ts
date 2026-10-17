@@ -1,3 +1,5 @@
+import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from './snapshotSqlMigration'
+import { migrateSnapshotJournalSqliteSignedProvenance } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import {
   addSnapshotJournalDataReceiptSchema,
   removeSnapshotJournalDataReceiptSchema,
@@ -282,6 +284,24 @@ export class KnexMigrations implements MigrationSource<string> {
         throw new WERR_NOT_IMPLEMENTED(
           'Journal reconciliation schema requires a forward migration; preserve wallet and recovery data'
         )
+      })
+    }
+
+    migrations[SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION] = {
+      config: { transaction: false },
+      up: forSnapshotSqlDialect(async knex => {
+        if (String(knex.client.config.client).includes('mysql')) await addSnapshotJournalDestinationSchema(knex)
+        else if (knex.isTransaction) {
+          await addSnapshotJournalDestinationSchema(knex)
+          await migrateSnapshotJournalSqliteSignedProvenance(knex)
+        } else
+          await knex.transaction(async trx => {
+            await addSnapshotJournalDestinationSchema(trx)
+            await migrateSnapshotJournalSqliteSignedProvenance(trx)
+          })
+      }),
+      down: forSnapshotSqlDialect(async () => {
+        throw new WERR_NOT_IMPLEMENTED('Journal field custody requires forward recovery; preserve provenance bytes')
       })
     }
 
