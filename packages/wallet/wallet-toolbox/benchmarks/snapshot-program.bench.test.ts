@@ -330,7 +330,8 @@ test.each([0, 15])(
       await f.manager.runAsWriter(async () => {
         await f.source.findOrInsertOutputBasket(f.seeded.user.userId, basketName)
       })
-      expect(mutationQueries).toBe(0)
+      const lookupMutationQueries = mutationQueries
+      expect(lookupMutationQueries).toBe(0)
       jest.spyOn(f.rpc, 'dispatch').mockImplementation(async (...args) => {
         if (fixedRpcMs !== 0) await delay(fixedRpcMs)
         return await dispatch(...args)
@@ -345,7 +346,9 @@ test.each([0, 15])(
           .runAsWriter(async active => {
             if (active !== f.source) throw new Error('Foreground measurement changed its actual serving provider')
             if (samples.length >= 2048) throw new Error('Foreground mutation sample ceiling reached')
-            const changed = await mutateSnapshotForegroundBasket(f.source, f.seeded.user.userId, basketName)
+            return await mutateSnapshotForegroundBasket(f.source, f.seeded.user.userId, basketName)
+          })
+          .then(changed => {
             samples.push({ startedAt, completedAt: performance.now(), before: changed.before, after: changed.after })
           })
           .catch(cause => {
@@ -378,8 +381,9 @@ test.each([0, 15])(
       expect(result).toMatchObject({ status: 'completed', mode: 'paged', snapshotCheckpoint: { done: true } })
       expect(copyCompletedAt - began).toBeLessThan(120000)
       const concurrent = samples.filter(sample => sample.startedAt >= began && sample.completedAt <= copyCompletedAt),
-        latencies = concurrent.map(sample => sample.completedAt - sample.startedAt)
+        latencies = samples.map(sample => sample.completedAt - sample.startedAt)
       expect(concurrent.length).toBeGreaterThan(1)
+      expect(samples.every(sample => sample.startedAt >= began && sample.startedAt <= copyCompletedAt)).toBe(true)
       expect(mutationQueries).toBe(samples.length)
       expect(percentile(latencies, 0.95)).toBeLessThan(1500)
       for (const sample of samples) expect(sample.after).not.toBe(sample.before)
@@ -413,8 +417,12 @@ test.each([0, 15])(
             wallMs: copyCompletedAt - began,
             cadenceMs: 100,
             actualMutationQueries: mutationQueries,
+            lookupMutationQueries,
             verifiedMutations: samples.length,
             concurrentVerifiedMutations: concurrent.length,
+            latencySamples: latencies.length,
+            completionsAfterCopy: samples.length - concurrent.length,
+            writeLatenciesMs: latencies,
             p50Ms: percentile(latencies, 0.5),
             p95Ms: percentile(latencies, 0.95),
             p99Ms: percentile(latencies, 0.99),
