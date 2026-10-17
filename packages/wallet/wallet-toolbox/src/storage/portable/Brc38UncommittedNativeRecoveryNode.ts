@@ -92,9 +92,9 @@ export async function recoverUncommittedBrc38NativeSource(
         if (profile !== undefined) {
           try {
             await profile.close()
-          } catch (failure) {
+          } catch (error_) {
             throw new Brc38StagingCleanupError(
-              [cause, failure],
+              [cause, error_],
               'Uncommitted native recovery retains its actual reopened owner',
               async () => await profile!.close()
             )

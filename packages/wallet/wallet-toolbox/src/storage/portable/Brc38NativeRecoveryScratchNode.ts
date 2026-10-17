@@ -299,9 +299,9 @@ export class Brc38NativeRecoveryScratchNode {
       }
       try {
         await cleanupOriginal()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Native recovery scratch retains cleanup and capacity',
           cleanupOriginal
         )

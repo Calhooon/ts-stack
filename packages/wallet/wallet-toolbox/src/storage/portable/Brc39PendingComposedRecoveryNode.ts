@@ -212,9 +212,9 @@ export async function recoverPendingBrc39ComposedNativeImport(
       }
     try {
       await drain()
-    } catch (cleanupFailure) {
+    } catch (error_) {
       failure = new Brc38StagingCleanupError(
-        [cause, cleanupFailure],
+        [cause, error_],
         'Pending encrypted composition retains unreturned target or private cleanup',
         async () => {
           await closeUnreturned()

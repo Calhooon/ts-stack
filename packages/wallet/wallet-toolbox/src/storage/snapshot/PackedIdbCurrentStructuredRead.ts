@@ -229,9 +229,9 @@ export class PackedIdbCurrentStructuredRead {
     } catch (cause) {
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Occupied field acquisition retains its actual snapshot and allocation',
           cleanup
         )
@@ -415,10 +415,10 @@ export class PackedIdbCurrentStructuredRead {
     } catch (cause) {
       try {
         await release()
-      } catch (failure) {
+      } catch (error_) {
         this.#acquisitions.add(release)
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Occupied field retains its actual acquired index and reservation',
           release
         )

@@ -187,9 +187,9 @@ export class DeviceBackupController {
           }
           try {
             await cleanup()
-          } catch (failure) {
+          } catch (error_) {
             this.retainedCleanup = new Brc38StagingCleanupError(
-              [cause, failure],
+              [cause, error_],
               'Device backup retains actual preference write settlement',
               cleanup
             )
@@ -285,15 +285,15 @@ export class DeviceBackupController {
         }
         try {
           await drain()
-        } catch (failure) {
+        } catch (error_) {
           const retry = async () => {
             if (cause instanceof Brc38StagingCleanupError) await cause.retryCleanup()
-            if (failure instanceof Brc38StagingCleanupError) await failure.retryCleanup()
+            if (error_ instanceof Brc38StagingCleanupError) await error_.retryCleanup()
             if (!destinationCloseAttempted) await this.closeOwnedDestination(profile, writer)
             this.retainedCleanup = undefined
           }
           this.retainedCleanup = new Brc38StagingCleanupError(
-            failed ? [cause, failure] : [failure],
+            failed ? [cause, error_] : [error_],
             'Device backup retains actual destination provider cleanup',
             retry
           )
@@ -379,9 +379,9 @@ export class DeviceBackupController {
       if (refused) throw cause
       try {
         await cleanup()
-      } catch (cleanupFailure) {
+      } catch (error_) {
         this.retainedCleanup = new Brc38StagingCleanupError(
-          [cause, cleanupFailure],
+          [cause, error_],
           'Device backup retains actual destination factory settlement and cleanup',
           cleanup
         )

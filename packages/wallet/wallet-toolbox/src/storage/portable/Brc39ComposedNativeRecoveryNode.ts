@@ -180,9 +180,9 @@ export async function recoverBrc39ComposedNativeImport(
       const retained = manager
       try {
         await target.closeNamedRecoveryManager(targetImportId, binding.digest, retained)
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Named composed restart retains unreturned target cleanup',
           async () => await target.closeNamedRecoveryManager(targetImportId, binding.digest, retained)
         )

@@ -249,15 +249,15 @@ export class KnexSnapshotSyncDestination {
         check()
         return true
       })
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     try {
       await database.destroy()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [cause] : []), failure],
+        [...(failed ? [cause] : []), error_],
         'Native field negotiation retains its actual read pool',
         async () => {
           await database.destroy()
@@ -467,15 +467,15 @@ export class KnexSnapshotSyncDestination {
         requireLiveSource(row.expiresAt, 'session admission')
         return outcome
       })
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     try {
       await database.destroy()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [cause] : []), failure],
+        [...(failed ? [cause] : []), error_],
         'Native field session retains its actual read-only pool',
         async () => {
           await database.destroy()

@@ -20,8 +20,8 @@ export async function openDeviceBackupLifecycle(
   } catch (cause) {
     try {
       await controller.close()
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Device backup initialization and cleanup failed')
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Device backup initialization and cleanup failed')
     }
     throw cause
   }

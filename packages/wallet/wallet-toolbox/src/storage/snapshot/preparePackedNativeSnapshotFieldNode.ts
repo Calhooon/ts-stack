@@ -402,16 +402,16 @@ async function prepareNativeSnapshotContent(
         if (actual !== sha256 || JSON.stringify(await version(trx, sha256)) !== JSON.stringify(before)) invalid()
         return before
       })
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     try {
       await database.destroy()
       readDatabase = undefined
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [cause] : []), failure],
+        [...(failed ? [cause] : []), error_],
         'Native field retains its actual read-only pool',
         async () => {
           await database.destroy()
@@ -705,22 +705,22 @@ async function prepareNativeSnapshotContent(
               await lifetime!.check(trx, policy.signal)
               if (JSON.stringify(await version(trx, sha256)) !== JSON.stringify(before)) invalid()
               return result
-            } catch (failure) {
+            } catch (error_) {
               result.fill(0)
-              throw failure
+              throw error_
             }
           })
-        } catch (failure) {
+        } catch (error_) {
           failed = true
-          cause = failure
+          cause = error_
         }
         try {
           await database.destroy()
           readDatabase = undefined
-        } catch (failure) {
+        } catch (error_) {
           output?.fill(0)
           throw new Brc38StagingCleanupError(
-            [...(failed ? [cause] : []), failure],
+            [...(failed ? [cause] : []), error_],
             'Native issued stage retains its actual extent read pool',
             async () => {
               await database.destroy()
@@ -736,9 +736,9 @@ async function prepareNativeSnapshotContent(
           check()
           if (output === undefined) invalid()
           return output
-        } catch (failure) {
+        } catch (error_) {
           output?.fill(0)
-          throw failure
+          throw error_
         }
       })()
       reading = operation
@@ -760,9 +760,9 @@ async function prepareNativeSnapshotContent(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Native source field retains staged content, physical read lease and working allowance',
         cleanup
       )

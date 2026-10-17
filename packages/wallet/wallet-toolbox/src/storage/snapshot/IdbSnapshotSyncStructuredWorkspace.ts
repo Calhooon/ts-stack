@@ -94,9 +94,9 @@ export class IdbSnapshotSyncStructuredWorkspace {
       }
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Structured workspace acquisition retains its actual lease',
           cleanup
         )
@@ -262,9 +262,9 @@ export class IdbSnapshotSyncStructuredWorkspace {
     } catch (cause) {
       try {
         await release()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Structured index acquisition retains its original allocation and actual cleanup',
           release
         )

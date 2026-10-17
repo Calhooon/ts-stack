@@ -161,8 +161,8 @@ async function prepareOwnedWorkerAssets(root) {
   } catch (cause) {
     try {
       await cleanupOwnedWorkerAssets(root)
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Worker asset preparation retains its original cleanup owner')
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Worker asset preparation retains its original cleanup owner')
     }
     throw cause
   }

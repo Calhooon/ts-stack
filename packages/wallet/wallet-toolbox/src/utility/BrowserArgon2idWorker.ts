@@ -223,9 +223,9 @@ export class BrowserArgon2idWorkerBackend implements AsyncArgon2idBackend {
     this.#ready = false
     try {
       this.#stop()
-    } catch (failure) {
+    } catch (error_) {
       this.#retained = new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser KDF retains original Worker termination',
         async () => {
           this.#stop()

@@ -240,9 +240,9 @@ export async function cutoverBrc38ComposedNativeProfile(
     if (pending.transition !== undefined) {
       try {
         await pending.transition
-      } catch (failure) {
-        if (failure !== cause)
-          throw new AggregateError([cause, failure], 'Composed cutover and retained transition both failed')
+      } catch (error_) {
+        if (error_ !== cause)
+          throw new AggregateError([cause, error_], 'Composed cutover and retained transition both failed')
       }
     }
     throw cause

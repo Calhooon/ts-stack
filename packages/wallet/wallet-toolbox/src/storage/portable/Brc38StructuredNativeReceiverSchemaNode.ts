@@ -86,8 +86,8 @@ export async function installBrc38StructuredNativeReceiverSchema(k: Knex.Transac
     try {
       await k.raw('ROLLBACK TO brc38_structured_native_schema')
       await k.raw('RELEASE brc38_structured_native_schema')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Structured receiver schema rollback failed')
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Structured receiver schema rollback failed')
     }
     throw cause
   }

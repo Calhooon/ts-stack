@@ -34,8 +34,8 @@ Object.defineProperty(globalThis, 'argon2idCoverageCase', {
         for (const close of [() => worker.terminate(), () => channel.port1.close(), () => channel.port2.close()]) {
           try {
             close()
-          } catch (failure) {
-            failures.push(failure)
+          } catch (error_) {
+            failures.push(error_)
           }
         }
         throw new AggregateError(failures, 'Native worker bootstrap retains original failure')

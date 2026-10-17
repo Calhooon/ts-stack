@@ -186,10 +186,10 @@ async function controller(root, target, fixed) {
   // A rejected original close retains a concrete retry, never a guessed PID.
   try {
     await owner.closePinnedNativeExecutable(file)
-  } catch (cleanup) {
+  } catch (error_) {
     retainedWorker = true
-    throw new NativeCandidateBuildCleanupError(failure, cleanup, async () => {
-      await cleanup.retryCleanup()
+    throw new NativeCandidateBuildCleanupError(failure, error_, async () => {
+      await error_.retryCleanup()
     })
   }
   if (operationFailed) throw failure
@@ -341,8 +341,8 @@ async function buildBrc38WindowsCandidates(options) {
     }
     try {
       await cleanup()
-    } catch (failure) {
-      throw new NativeCandidateBuildCleanupError(cause, failure, cleanup)
+    } catch (error_) {
+      throw new NativeCandidateBuildCleanupError(cause, error_, cleanup)
     }
     throw cause
   }

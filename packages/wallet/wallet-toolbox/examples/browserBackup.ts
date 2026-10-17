@@ -42,9 +42,9 @@ export async function exportBrowserBackup(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser export example retains original backend cleanup',
         cleanup
       )

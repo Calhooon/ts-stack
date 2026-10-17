@@ -239,9 +239,9 @@ export async function preparePackedIdbSnapshotField(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Snapshot field retains its original content stage and working allocation until drainage',
         cleanup
       )

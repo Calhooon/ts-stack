@@ -432,9 +432,9 @@ export class Brc38StreamedHistoryProjection {
       if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Request-history preparation retains actual cleanup',
           cleanup
         )
@@ -752,9 +752,9 @@ export class Brc38StreamedHistoryProjection {
       try {
         await this.output.close()
         this.reservation.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          failed ? [original, cleanup] : [cleanup],
+          failed ? [original, error_] : [error_],
           'Private request-history output retains actual physical cleanup',
           () => this.close()
         )

@@ -151,8 +151,8 @@ function standaloneContractOwner(build, root) {
         }
         try {
           await cleanup()
-        } catch (failure) {
-          throw new NativeCandidateBuildCleanupError(cause, failure, cleanup)
+        } catch (error_) {
+          throw new NativeCandidateBuildCleanupError(cause, error_, cleanup)
         }
         throw cause
       }
@@ -329,8 +329,8 @@ async function readActual(filename, maximum, digestOnly = false) {
   }
   try {
     await file.close()
-  } catch (cleanup) {
-    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, cleanup, () => file.close())
+  } catch (error_) {
+    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, error_, () => file.close())
   }
   if (failed) throw failure
   return bytes
@@ -931,8 +931,8 @@ async function runNativeQualification(options, mode) {
     try {
       await target.close()
       pendingTarget = undefined
-    } catch (cleanup) {
-      throw new NativeCandidateBuildCleanupError(writeFailed ? writeFailure : undefined, cleanup, () => target.close())
+    } catch (error_) {
+      throw new NativeCandidateBuildCleanupError(writeFailed ? writeFailure : undefined, error_, () => target.close())
     }
     if (writeFailed) throw writeFailure
     executable = await owner.open(parsed.destination)

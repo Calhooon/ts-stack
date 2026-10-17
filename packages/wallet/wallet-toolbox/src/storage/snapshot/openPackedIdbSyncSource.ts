@@ -205,8 +205,8 @@ export async function openPackedIdbSyncSource(
   } catch (cause) {
     try {
       await closeSnapshotJournalSource(view, options.signal)
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Packed sync source and native lease cleanup failed', { cause })
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Packed sync source and native lease cleanup failed', { cause })
     }
     throw cause
   }

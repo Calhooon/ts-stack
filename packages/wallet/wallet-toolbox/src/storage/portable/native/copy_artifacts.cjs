@@ -126,8 +126,8 @@ async function copyWalletNativeArtifacts(packageRoot = path.resolve(__dirname, '
     }
     try {
       await cleanup()
-    } catch (failure) {
-      throw new NativeSourceCleanupError([cause, failure], cleanup)
+    } catch (error_) {
+      throw new NativeSourceCleanupError([cause, error_], cleanup)
     }
     throw cause
   }
@@ -138,8 +138,8 @@ if (require.main === module)
     if (error instanceof NativeSourceCleanupError) {
       try {
         await error.retryCleanup()
-      } catch (cleanup) {
-        process.stderr.write(String(cleanup) + '\n')
+      } catch (error_) {
+        process.stderr.write(String(error_) + '\n')
       }
     }
     process.stderr.write(String(error) + '\n')

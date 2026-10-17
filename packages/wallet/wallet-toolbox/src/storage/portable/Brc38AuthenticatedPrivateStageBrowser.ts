@@ -343,17 +343,17 @@ export async function stageAuthenticatedBrc39PrivateBrowserImport(
       ]) {
         try {
           await dispose()
-        } catch (failure) {
-          failures.push(failure)
+        } catch (error_) {
+          failures.push(error_)
         }
       }
       if (failures.length !== 0) throw new AggregateError(failures, 'Authenticated browser physical cleanup remains')
     }
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Authenticated browser import retains original source/KDF/namespace owners',
         cleanup
       )

@@ -319,9 +319,9 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
       try {
         await ownership.release()
         await Brc38PrivateIdbStage.discardReleased(name, limits, boundMetadata.binding, maximumKeys)
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private IndexedDB creation retains namespace cleanup',
           async () => {
             await ownership.release()
@@ -338,8 +338,8 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
     } catch (cause) {
       try {
         await owner.discard(cause)
-      } catch (cleanup) {
-        throw new Brc38StagingCleanupError([cause, cleanup], 'Private IndexedDB creation retains disposal', () =>
+      } catch (error_) {
+        throw new Brc38StagingCleanupError([cause, error_], 'Private IndexedDB creation retains disposal', () =>
           owner.discard(cause)
         )
       }
@@ -520,9 +520,9 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
         )
       try {
         await owner.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private IndexedDB recovery retains connection cleanup before original disposal',
           async () => {
             await owner.close()
@@ -683,9 +683,9 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
       // No caller may release ownership behind this cleanup object.
       try {
         await drain()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private IndexedDB acquisition requires actual request drainage',
           drain
         )
@@ -2101,10 +2101,10 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
         if (cause instanceof Brc38StagingCleanupError) acquisitionCleanup = cause
         try {
           await release()
-        } catch (cleanup) {
+        } catch (error_) {
           acquisitions.add(release)
           throw new Brc38StagingCleanupError(
-            [cause, cleanup],
+            [cause, error_],
             'Private structured reader retains acquired index and resource cleanup',
             release
           )
@@ -2545,9 +2545,9 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
     } catch (cause) {
       try {
         await index.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private browser JSON acquisition retains its actual index cleanup',
           async () => await index.close()
         )

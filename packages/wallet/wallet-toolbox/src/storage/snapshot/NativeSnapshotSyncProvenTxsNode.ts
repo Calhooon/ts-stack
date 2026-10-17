@@ -450,9 +450,9 @@ export async function prepareNativeSnapshotSyncProvenTxs(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Native proof preparation failed with concrete retained cleanup',
         cleanup
       )

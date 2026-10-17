@@ -236,8 +236,8 @@ export async function deriveBrc39OwnedNodeKey(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'BRC-39 KDF retains actual worker/backend cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'BRC-39 KDF retains actual worker/backend cleanup', cleanup)
     }
     throw cause
   } finally {

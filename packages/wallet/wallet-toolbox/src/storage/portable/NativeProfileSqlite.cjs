@@ -906,8 +906,8 @@ class NativeProfileSqlite {
     } catch (cause) {
       try {
         await closePinnedNativeExecutable(executableHandle)
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Private native executable retains descriptor cleanup', { cause })
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Private native executable retains descriptor cleanup', { cause })
       }
       throw cause
     }
@@ -975,8 +975,8 @@ class NativeProfileSqlite {
       privateStageSessions.add(session)
       sessionObservations.set(session, Object.freeze(Object.create(null)))
       return Object.freeze({ session })
-    } catch (failure) {
-      return Object.freeze({ session, failure })
+    } catch (error_) {
+      return Object.freeze({ session, failure: error_ })
     }
   }
   /** @overload
@@ -1047,8 +1047,8 @@ class NativeProfileSqlite {
     } catch (error) {
       try {
         await closePinnedNativeExecutable(executableHandle)
-      } catch (cleanup) {
-        throw new AggregateError([error, cleanup], 'Native executable retains descriptor cleanup')
+      } catch (error_) {
+        throw new AggregateError([error, error_], 'Native executable retains descriptor cleanup')
       }
       throw error
     }
@@ -1823,10 +1823,10 @@ async function reopenPrivateComparisonDatabase(session, previous) {
   } catch (cause) {
     try {
       await database.destroy()
-    } catch (failure) {
+    } catch (error_) {
       const { Brc38StagingCleanupError } = require('./Brc38StagingCleanupError')
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Compared private SQL reopen retains its physical facade',
         async () => await database.destroy()
       )
@@ -2106,8 +2106,8 @@ async function copyOwnedNativeRecoverySnapshot(transaction, selected) {
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
-      throw new NativeRecoveryCopyCleanupError([cause, failure], cleanup)
+    } catch (error_) {
+      throw new NativeRecoveryCopyCleanupError([cause, error_], cleanup)
     }
     throw cause
   }
@@ -2149,8 +2149,8 @@ async function copyOwnedNativeRecoveryDatabaseSnapshot(database, policy) {
     nativeFailure = cause
     try {
       await cleanup()
-    } catch (failure) {
-      throw new NativeRecoveryCopyCleanupError([cause, failure], cleanup)
+    } catch (error_) {
+      throw new NativeRecoveryCopyCleanupError([cause, error_], cleanup)
     }
     throw cause
   }

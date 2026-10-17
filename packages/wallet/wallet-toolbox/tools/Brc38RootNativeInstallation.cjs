@@ -227,9 +227,9 @@ async function copyPinnedRootOwnedExecutable(source, directory) {
   }
   try {
     await close()
-  } catch (cleanup) {
+  } catch (error_) {
     let owner
-    owner = new NativeCandidateBuildCleanupError(failure, cleanup, async () => {
+    owner = new NativeCandidateBuildCleanupError(failure, error_, async () => {
       await close()
       retained.delete(owner)
     })

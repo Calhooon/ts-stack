@@ -219,9 +219,9 @@ export async function readBrc38IdbProfileSelection(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Native profile selection requires concrete read cleanup',
         cleanup
       )

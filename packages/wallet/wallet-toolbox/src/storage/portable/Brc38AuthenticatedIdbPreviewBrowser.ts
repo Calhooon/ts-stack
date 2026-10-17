@@ -151,8 +151,8 @@ export async function previewAuthenticatedBrc39BrowserImport(
     if (cause instanceof Brc38StagingCleanupError) failed.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'Browser preview retains concrete cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Browser preview retains concrete cleanup', cleanup)
     }
     throw cause
   }

@@ -151,8 +151,8 @@ export async function importJournalFixture(totalRows = 5) {
   } catch (cause) {
     try {
       await close()
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Import journal fixture setup and cleanup failed')
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Import journal fixture setup and cleanup failed')
     }
     throw cause
   }

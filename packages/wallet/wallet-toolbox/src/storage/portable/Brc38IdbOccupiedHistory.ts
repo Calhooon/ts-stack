@@ -186,9 +186,9 @@ export async function prepareBrc38IdbOccupiedHistory(
       } catch (cause) {
         try {
           await actual.close()
-        } catch (failure) {
+        } catch (error_) {
           throw new Brc38StagingCleanupError(
-            [cause, failure],
+            [cause, error_],
             'Occupied history retains its original projection index',
             () => actual.close()
           )
@@ -364,9 +364,9 @@ export async function prepareBrc38IdbOccupiedHistory(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Occupied browser history acquisition retains cleanup',
         cleanup
       )

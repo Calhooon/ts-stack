@@ -452,8 +452,8 @@ export async function installBrc38NativeLocalBaselineGeneration(
     try {
       await k.raw('ROLLBACK TO brc38_local_baseline_install')
       await k.raw('RELEASE brc38_local_baseline_install')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Local baseline installation retains actual rollback failure', {
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Local baseline installation retains actual rollback failure', {
         cause
       })
     }
@@ -901,8 +901,8 @@ export async function beginBrc38NativeLocalBaselineEpochRecovery(
     try {
       await k.raw('ROLLBACK TO __brc38_local_epoch_recovery')
       await k.raw('RELEASE __brc38_local_epoch_recovery')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Local epoch recovery entry retains actual rollback failure', {
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Local epoch recovery entry retains actual rollback failure', {
         cause
       })
     }
@@ -964,8 +964,8 @@ export async function retireBrc38NativeLocalBaselineEpochPage(
     try {
       await k.raw('ROLLBACK TO __brc38_local_epoch_retire')
       await k.raw('RELEASE __brc38_local_epoch_retire')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Local epoch retirement retains actual rollback failure', { cause })
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Local epoch retirement retains actual rollback failure', { cause })
     }
     throw cause
   }
@@ -1035,8 +1035,8 @@ export async function activateBrc38NativeLocalBaselineRecoveredEpoch(
     try {
       await k.raw('ROLLBACK TO __brc38_local_epoch_activate')
       await k.raw('RELEASE __brc38_local_epoch_activate')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Local epoch activation retains actual rollback failure', { cause })
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Local epoch activation retains actual rollback failure', { cause })
     }
     throw cause
   }

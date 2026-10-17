@@ -143,8 +143,8 @@ async function windowsBoundary(): Promise<WindowsBoundary> {
     }
     try {
       await file.close()
-    } catch (cleanup) {
-      retainedLoad = new Brc38PrivateFilesystemCleanupError(failed ? failure : undefined, cleanup, async () => {
+    } catch (error_) {
+      retainedLoad = new Brc38PrivateFilesystemCleanupError(failed ? failure : undefined, error_, async () => {
         await file.close()
       })
       throw retainedLoad
@@ -240,8 +240,8 @@ export async function createPrivateFile(filename: string, readable = false): Pro
   } catch (cause) {
     try {
       await file.close()
-    } catch (cleanup) {
-      throw new Brc38PrivateFilesystemCleanupError(cause, cleanup, async () => {
+    } catch (error_) {
+      throw new Brc38PrivateFilesystemCleanupError(cause, error_, async () => {
         await file.close()
       })
     }
@@ -267,8 +267,8 @@ export async function createPrivateTemporaryDirectory(prefix: string): Promise<s
 export async function closePrivateDescriptor(file: FileHandle): Promise<void> {
   try {
     await file.close()
-  } catch (cleanup) {
-    throw new Brc38PrivateFilesystemCleanupError(undefined, cleanup, async () => {
+  } catch (error_) {
+    throw new Brc38PrivateFilesystemCleanupError(undefined, error_, async () => {
       await file.close()
     })
   }
@@ -341,8 +341,8 @@ export async function syncPrivateDirectory(directory: string): Promise<void> {
   }
   try {
     await file.close()
-  } catch (cleanup) {
-    throw new Brc38PrivateFilesystemCleanupError(failed ? failure : undefined, cleanup, async () => {
+  } catch (error_) {
+    throw new Brc38PrivateFilesystemCleanupError(failed ? failure : undefined, error_, async () => {
       await file.close()
     })
   }

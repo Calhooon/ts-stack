@@ -66,9 +66,9 @@ export async function restartCompletedBrc38NativeProfile(
     if (profile !== undefined) {
       try {
         await profile.close()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Completed current restart retains actual target cleanup',
           async () => await profile!.close()
         )

@@ -308,9 +308,9 @@ async function withActualDestination<T>(
       if (connection === undefined) await owned.destroy()
       else await closeSnapshotJournalCapturePool(owned, connection)
     }
-  } catch (cleanup) {
+  } catch (error_) {
     throw new Brc38StagingCleanupError(
-      [...(failed ? [cause] : []), cleanup],
+      [...(failed ? [cause] : []), error_],
       'Private import destination retains physical cleanup',
       async () => {
         if (connection === undefined) await owned.destroy()

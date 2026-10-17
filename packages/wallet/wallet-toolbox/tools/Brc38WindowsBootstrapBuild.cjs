@@ -246,8 +246,8 @@ async function captureBootstrapSource(coordinates, plan, directory) {
     if (cause instanceof NativeSourceCleanupError) throw new NativeSourceCleanupError([cause], cleanup)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new NativeSourceCleanupError([cause, failure], cleanup)
+    } catch (error_) {
+      throw new NativeSourceCleanupError([cause, error_], cleanup)
     }
     throw cause
   }

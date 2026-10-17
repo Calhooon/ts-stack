@@ -176,9 +176,9 @@ async function stage(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Request text retains its actual stage and original allocation',
         cleanup
       )

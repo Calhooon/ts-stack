@@ -71,9 +71,9 @@ async function cleanupFailure(db: Knex, connection: object | undefined, cause: u
   }
   try {
     await cleanup()
-  } catch (failure) {
+  } catch (error_) {
     throw new Brc38StagingCleanupError(
-      [cause, failure],
+      [cause, error_],
       'Private import ownership claim and physical cleanup both failed',
       cleanup
     )

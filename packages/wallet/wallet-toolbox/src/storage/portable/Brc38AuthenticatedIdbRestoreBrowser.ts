@@ -320,9 +320,9 @@ async function runAuthenticatedBrc39BrowserRestore(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser authenticated restore retains original concrete cleanup',
         cleanup
       )

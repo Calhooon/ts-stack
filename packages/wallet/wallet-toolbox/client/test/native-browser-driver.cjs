@@ -27,8 +27,8 @@ async function runNativeBrowserDriver(kind, context, id = '') {
           const result = JSON.parse(stdout)
           assert.ok(result && typeof result === 'object')
           resolve(result)
-        } catch (failure) {
-          reject(failure)
+        } catch (error_) {
+          reject(error_)
         }
       }
     )

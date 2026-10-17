@@ -318,9 +318,9 @@ export async function prepareBrc38IdbRestoreText(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser restore text failed with retained actual cleanup',
         cleanup
       )

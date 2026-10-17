@@ -307,9 +307,9 @@ async function inspectField(
       const cleanupScope1 = new Brc38CleanupScope(async () => {
         try {
           await ids.close()
-        } catch (cleanup) {
+        } catch (error_) {
           throw new Brc38StagingCleanupError(
-            failed ? [original, cleanup] : [cleanup],
+            failed ? [original, error_] : [error_],
             'Structured inventory retains projection cleanup',
             () => ids.close()
           )

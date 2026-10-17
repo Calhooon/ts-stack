@@ -159,8 +159,8 @@ export async function insertBrc38PackedPlannedMetadata(
     try {
       await trx.raw('ROLLBACK TO ' + savepoint)
       await trx.raw('RELEASE ' + savepoint)
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Incoming ID and metadata rollback remains required', { cause })
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Incoming ID and metadata rollback remains required', { cause })
     }
     throw cause
   }

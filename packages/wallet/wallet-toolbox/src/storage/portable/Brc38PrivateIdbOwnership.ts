@@ -106,9 +106,9 @@ export class Brc38PrivateIdbOwnership {
       abandoned = true
       try {
         await owner.release()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private browser owner acquisition retains lock cleanup',
           () => owner.release()
         )

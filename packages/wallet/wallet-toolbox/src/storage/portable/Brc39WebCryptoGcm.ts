@@ -258,9 +258,9 @@ export class Brc39WebCryptoGcm {
     } catch (cause) {
       try {
         await owner.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Incremental browser GCM initialization retains native drain',
           async () => await owner.close()
         )
@@ -431,9 +431,9 @@ export class Brc39WebCryptoGcm {
       this.#mask.fill(0)
       this.#carry.fill(0)
       this.#carryBytes = 0
-    } catch (cleanup) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cleanup],
+        [error_],
         'Incremental browser GCM retains actual native operation',
         async () => await this.close()
       )

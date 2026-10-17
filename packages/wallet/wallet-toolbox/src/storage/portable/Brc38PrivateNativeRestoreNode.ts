@@ -264,14 +264,14 @@ export async function installBrc38PrivateNativeCandidateSchema(
   }
   try {
     await storage.knex.raw('PRAGMA foreign_keys=ON')
-  } catch (cleanup) {
+  } catch (error_) {
     if (migrationFailed)
       throw new AggregateError(
-        [migrationFailure, cleanup],
+        [migrationFailure, error_],
         'Private native migration retains foreign-key restoration failure',
         { cause: migrationFailure }
       )
-    throw cleanup
+    throw error_
   }
   if (migrationFailed) throw migrationFailure
   await storage.knex.transaction(async trx => {

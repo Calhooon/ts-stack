@@ -126,9 +126,9 @@ export async function withComposedFixtureRead<T>(
     }
     try {
       await reader.destroy()
-    } catch (cleanup) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [failure] : []), cleanup],
+        [...(failed ? [failure] : []), error_],
         'Independent semantic fixture retains its real read pool',
         async () => await reader.destroy()
       )

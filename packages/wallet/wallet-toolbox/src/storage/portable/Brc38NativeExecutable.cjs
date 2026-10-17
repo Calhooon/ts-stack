@@ -157,9 +157,9 @@ async function openFixedExecutable(filename, registry) {
     }
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [error, failure],
+        [error, error_],
         'Native executable retains actual image/descriptor cleanup',
         cleanup
       )

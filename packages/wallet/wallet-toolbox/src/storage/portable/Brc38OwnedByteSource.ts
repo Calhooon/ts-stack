@@ -241,9 +241,9 @@ export class Brc38OwnedByteSource implements AsyncIterableIterator<Uint8Array> {
       this.#drained = true
       this.#next = undefined
       this.#return = undefined
-    } catch (cleanup) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [this.#cause, cleanup],
+        [this.#cause, error_],
         'Owned byte source retains actual pending I/O and physical cleanup',
         async () => await this.close(this.#cause)
       )

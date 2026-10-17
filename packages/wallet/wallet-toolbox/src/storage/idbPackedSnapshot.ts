@@ -249,7 +249,7 @@ async function drain<T>(tx: PackedIdbTransaction, run: () => Promise<T>): Promis
     const answer = await run()
     await tx.done
     return answer
-  } catch (original) {
+  } catch (error_) {
     try {
       tx.abort()
     } catch {
@@ -258,12 +258,12 @@ async function drain<T>(tx: PackedIdbTransaction, run: () => Promise<T>): Promis
     try {
       await tx.done
     } catch (error) {
-      if (error !== original && !packedIdbIsAbortError(error))
-        throw new AggregateError([original, error], 'Packed IndexedDB snapshot and transaction cleanup failed', {
-          cause: original
+      if (error !== error_ && !packedIdbIsAbortError(error))
+        throw new AggregateError([error_, error], 'Packed IndexedDB snapshot and transaction cleanup failed', {
+          cause: error_
         })
     }
-    throw original
+    throw error_
   }
 }
 /** One durable finite lease, no retained IndexedDB transaction. All calls read
@@ -816,16 +816,16 @@ export async function readCurrentPackedIdbPage<T extends WalletSnapshotTable>(
     }
     await snapshot.close()
     return result
-  } catch (original) {
+  } catch (error_) {
     try {
       await snapshot.close()
-    } catch (cleanup) {
-      if (cleanup !== original)
-        throw new AggregateError([original, cleanup], 'Packed IndexedDB current page and snapshot cleanup failed', {
-          cause: original
+    } catch (error__) {
+      if (error__ !== error_)
+        throw new AggregateError([error_, error__], 'Packed IndexedDB current page and snapshot cleanup failed', {
+          cause: error_
         })
     }
-    throw original
+    throw error_
   }
 }
 

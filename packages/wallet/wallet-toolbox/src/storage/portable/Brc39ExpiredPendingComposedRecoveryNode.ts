@@ -272,10 +272,10 @@ export async function recoverExpiredPendingBrc39ComposedNativeImport(
     let failure = cause
     try {
       await closeTarget()
-    } catch (drain) {
+    } catch (error_) {
       cleanupRetained = true
       failure = new Brc38StagingCleanupError(
-        [cause, drain],
+        [cause, error_],
         'Expired recovery retains unreturned target and temporary cleanup',
         cleanup
       )

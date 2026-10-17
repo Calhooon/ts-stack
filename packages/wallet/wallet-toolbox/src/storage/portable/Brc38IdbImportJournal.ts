@@ -487,10 +487,10 @@ export class Brc38IdbImportJournal {
           this.#open = false
           try {
             await drain()
-          } catch (failure) {
+          } catch (error_) {
             retained = true
             this.#cleanup = new Brc38StagingCleanupError(
-              [cause, failure],
+              [cause, error_],
               'IndexedDB import retains its private callback and original allocation until drainage',
               drain
             )

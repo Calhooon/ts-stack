@@ -81,9 +81,9 @@ export async function installNativeBrowserSandbox(executable) {
     try {
       if (installed(profiles(), profile.name)) update(executable, 'remove')
       assert.ok(!installed(profiles(), profile.name))
-    } catch (cleanup) {
+    } catch (error_) {
       throw new AggregateError(
-        [cause, cleanup],
+        [cause, error_],
         'Pinned browser retains its exact sandbox attachment'
       )
     }

@@ -986,8 +986,8 @@ export class Brc38ProfileInventoryNode {
     } catch (cause) {
       try {
         await db.destroy()
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Inventory initialization retains cleanup')
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Inventory initialization retains cleanup')
       }
       // Incomplete initialization is retained for explicit recovery, never replaced.
       throw cause
@@ -1019,8 +1019,8 @@ export class Brc38ProfileInventoryNode {
     } catch (cause) {
       try {
         await db.destroy()
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Inventory reopen retains cleanup')
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Inventory reopen retains cleanup')
       }
       throw cause
     }

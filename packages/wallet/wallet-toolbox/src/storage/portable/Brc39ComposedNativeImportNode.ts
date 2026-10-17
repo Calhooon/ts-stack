@@ -136,9 +136,9 @@ export async function importBrc39ComposedNativeProfile(
       if (target !== undefined && !target.ownershipReleased) {
         try {
           await target.close()
-        } catch (failure) {
+        } catch (error_) {
           throw new Brc38StagingCleanupError(
-            [cause, failure],
+            [cause, error_],
             'Composed import target retains physical cleanup',
             async () => await target!.close()
           )

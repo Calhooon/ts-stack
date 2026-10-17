@@ -219,12 +219,12 @@ async function ownedTransaction<T>(database: Knex, work: (trx: Knex.Transaction)
         throw cause
       }
     })
-  } catch (cleanup) {
+  } catch (error_) {
     // SQLite may itself roll back on SQLITE_FULL. Preserve that first cause
     // when the driver's subsequent ROLLBACK reports no active transaction.
-    if (failed && cleanup !== original)
-      throw new AggregateError([original, cleanup], 'Private BRC-38 transaction failed and driver rollback also failed')
-    throw cleanup
+    if (failed && error_ !== original)
+      throw new AggregateError([original, error_], 'Private BRC-38 transaction failed and driver rollback also failed')
+    throw error_
   }
 }
 function maximumPages(limits: KnexBrc38StagingLimits): number {
@@ -262,9 +262,9 @@ async function cleanupCreation(
   }
   try {
     await cleanup()
-  } catch (failure) {
+  } catch (error_) {
     throw new Brc38StagingCleanupError(
-      [cause, failure],
+      [cause, error_],
       'Private BRC-38 creation and physical cleanup both failed',
       cleanup
     )
@@ -486,9 +486,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       }
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Private BRC-38 reopen and physical cleanup both failed',
           cleanup
         )
@@ -535,8 +535,8 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     } catch (cause) {
       try {
         await cleanup()
-      } catch (failure) {
-        throw new Brc38StagingCleanupError([cause, failure], 'Private native reopen retains physical cleanup', cleanup)
+      } catch (error_) {
+        throw new Brc38StagingCleanupError([cause, error_], 'Private native reopen retains physical cleanup', cleanup)
       }
       throw cause
     }
@@ -593,9 +593,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       if (cause instanceof Brc38StagingCleanupError) earlierCleanup = cause
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Recovery comparison retains physical scratch owner cleanup',
           cleanup
         )
@@ -1199,10 +1199,10 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
           const mode = (await trx.raw('PRAGMA query_only')) as Array<{ query_only: number }>
           if (mode.length !== 1 || mode[0].query_only !== 0)
             throw new Error('Private structured read mode did not drain')
-        } catch (cleanup) {
+        } catch (error_) {
           this.#retainStructuredAcquisitionCleanup(
             new Brc38StagingCleanupError(
-              [...(failed ? [original] : []), cleanup],
+              [...(failed ? [original] : []), error_],
               'Private structured completion retains read-mode cleanup',
               async () => {
                 await this.knex.raw('PRAGMA query_only=OFF')
@@ -2211,9 +2211,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       const after = (await database.raw('PRAGMA query_only')) as Array<{ query_only: number }>
       if (after.length !== 1 || after[0].query_only !== 1)
         throw new Error('Private native read-only query mode changed')
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     const cleanup = async (): Promise<void> => {
       await database.destroy()
@@ -2221,9 +2221,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
     }
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [cause] : []), failure],
+        [...(failed ? [cause] : []), error_],
         'Private native destination retains its read-only physical lease',
         cleanup
       )
@@ -2824,9 +2824,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
           const cleanupScope2 = new Brc38CleanupScope(async () => {
             try {
               await ids.close()
-            } catch (cleanup) {
+            } catch (error_) {
               throw new Brc38StagingCleanupError(
-                failed ? [originalFailure, cleanup] : [cleanup],
+                failed ? [originalFailure, error_] : [error_],
                 'Private history staging retains projection index cleanup',
                 () => ids.close()
               )
@@ -3532,9 +3532,9 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
       }
       try {
         await this.#teardown()
-      } catch (failure) {
+      } catch (error_) {
         const cleanup = new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Compared private stage retains reopened SQL cleanup',
           async () => await this.#teardown()
         )

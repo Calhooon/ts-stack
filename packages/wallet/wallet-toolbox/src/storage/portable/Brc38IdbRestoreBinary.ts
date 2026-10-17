@@ -132,9 +132,9 @@ export async function prepareBrc38IdbRestoreBinary(
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'IndexedDB binary transfer retains its actual stage cleanup and original allocation',
         cleanup
       )

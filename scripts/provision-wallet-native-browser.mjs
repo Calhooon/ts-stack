@@ -162,16 +162,16 @@ export async function provisionNativeBrowser({
       try {
         await removeNativeBrowserSandbox(executable, sandbox)
         sandboxAttempted = false
-      } catch (cleanup) {
-        failures.push(cleanup)
+      } catch (error_) {
+        failures.push(error_)
       }
     // If kernel cleanup is uncertain, retain the exact executable/owner path
     // for a concrete retry rather than leaving an attachment to a retired path.
     if (!sandboxAttempted)
       try {
         await rm(privateRoot, { recursive: true, force: true })
-      } catch (cleanup) {
-        failures.push(cleanup)
+      } catch (error_) {
+        failures.push(error_)
       }
     if (failures.length)
       throw new AggregateError(
@@ -287,9 +287,9 @@ async function main() {
   } catch (cause) {
     try {
       await removeNativeBrowserSandbox(receipt.executable, receipt.sandbox)
-    } catch (cleanup) {
+    } catch (error_) {
       throw new AggregateError(
-        [cause, cleanup],
+        [cause, error_],
         'Native browser environment handoff retains sandbox cleanup'
       )
     }

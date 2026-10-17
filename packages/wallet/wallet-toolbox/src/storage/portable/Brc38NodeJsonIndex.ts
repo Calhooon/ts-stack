@@ -258,9 +258,9 @@ export class Brc38NodeJsonIndex implements Brc38JsonMemberIndex {
       }
       try {
         await cleanupOriginal()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [error, cleanup],
+          [error, error_],
           'Native structured index acquisition retains physical cleanup',
           cleanupOriginal
         )

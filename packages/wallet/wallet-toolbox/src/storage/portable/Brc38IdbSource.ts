@@ -442,18 +442,18 @@ export async function openBrc38IdbSource(
                                     indexes.delete(index)
                                   }
                                 }
-                              } catch (original) {
+                              } catch (error_) {
                                 try {
                                   await index.close()
                                   indexes.delete(index)
-                                } catch (cleanup) {
+                                } catch (error__) {
                                   throw new AggregateError(
-                                    [original, cleanup],
+                                    [error_, error__],
                                     'BRC-38 IDB index opening and cleanup failed',
-                                    { cause: original }
+                                    { cause: error_ }
                                   )
                                 }
-                                throw original
+                                throw error_
                               }
                             })
                         })
@@ -487,14 +487,14 @@ export async function openBrc38IdbSource(
       },
       release
     })
-  } catch (original) {
+  } catch (error_) {
     try {
       await release()
-    } catch (cleanup) {
-      throw new AggregateError([original, cleanup], 'BRC-38 IDB source preparation and physical cleanup failed', {
-        cause: original
+    } catch (error__) {
+      throw new AggregateError([error_, error__], 'BRC-38 IDB source preparation and physical cleanup failed', {
+        cause: error_
       })
     }
-    throw original
+    throw error_
   }
 }

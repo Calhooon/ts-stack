@@ -169,8 +169,8 @@ async function preparePage(
     } catch (cause) {
       try {
         await prepared.close()
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Snapshot field preparation and drainage failed', { cause })
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Snapshot field preparation and drainage failed', { cause })
       }
       throw cause
     }
@@ -326,12 +326,12 @@ export async function runSnapshotSyncSession(
     }
     try {
       await prepared.close?.()
-    } catch (cleanup) {
+    } catch (error_) {
       if (failure !== undefined)
-        throw new AggregateError([failure.cause, cleanup], 'Snapshot field commit and drainage failed', {
+        throw new AggregateError([failure.cause, error_], 'Snapshot field commit and drainage failed', {
           cause: failure.cause
         })
-      throw cleanup
+      throw error_
     }
     if (failure !== undefined) throw failure.cause
     if (commitCancelled) return result

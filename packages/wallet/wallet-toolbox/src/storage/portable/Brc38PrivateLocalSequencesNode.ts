@@ -166,8 +166,8 @@ export async function copyBrc38PrivateLocalSequences(
               try {
                 await k.raw('ROLLBACK TO ' + savepoint)
                 await k.raw('RELEASE ' + savepoint)
-              } catch (cleanup) {
-                throw new AggregateError([cause, cleanup], 'Private sequence copy retains actual savepoint failure', {
+              } catch (error_) {
+                throw new AggregateError([cause, error_], 'Private sequence copy retains actual savepoint failure', {
                   cause
                 })
               }

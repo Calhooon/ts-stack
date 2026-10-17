@@ -325,9 +325,9 @@ export class Brc38StreamedNotifyProjection {
       if (cause instanceof Brc38StagingCleanupError) acquisitionCleanup.add(cause)
       try {
         await close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private notification projection failed with retained cleanup',
           close
         )
@@ -432,9 +432,9 @@ export class Brc38StreamedNotifyProjection {
       try {
         await this.index.close()
         this.reservation?.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          failed ? [original, cleanup] : [cleanup],
+          failed ? [original, error_] : [error_],
           'Private notification output retains physical index cleanup',
           () => this.close()
         )

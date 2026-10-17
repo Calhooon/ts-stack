@@ -230,9 +230,9 @@ export async function prepareSnapshotSyncNormalizedNotify(
     closed = true
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Notification normalization failed with retained cleanup',
         cleanup
       )

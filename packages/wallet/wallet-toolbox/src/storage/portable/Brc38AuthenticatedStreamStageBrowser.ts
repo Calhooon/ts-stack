@@ -359,17 +359,17 @@ export async function stageAuthenticatedBrc39StreamBrowserImport(
       ]) {
         try {
           await dispose()
-        } catch (failure) {
-          failures.push(failure)
+        } catch (error_) {
+          failures.push(error_)
         }
       }
       if (failures.length !== 0) throw new AggregateError(failures, 'Streamed browser import resource cleanup remains')
     }
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Streamed browser import retains original physical resource owners',
         cleanup
       )

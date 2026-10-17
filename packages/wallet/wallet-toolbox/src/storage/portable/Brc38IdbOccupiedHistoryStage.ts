@@ -192,9 +192,9 @@ export async function prepareBrc38IdbOccupiedHistoryStage(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Occupied history staging failed with retained cleanup',
         cleanup
       )

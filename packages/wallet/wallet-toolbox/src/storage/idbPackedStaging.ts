@@ -83,7 +83,7 @@ async function drain<T>(tx: PackedIdbTransaction, run: () => Promise<T>): Promis
     const value = await run()
     await tx.done
     return value
-  } catch (original) {
+  } catch (error_) {
     try {
       tx.abort()
     } catch {
@@ -92,12 +92,12 @@ async function drain<T>(tx: PackedIdbTransaction, run: () => Promise<T>): Promis
     try {
       await tx.done
     } catch (error) {
-      if (error !== original && !packedIdbIsAbortError(error))
-        throw new AggregateError([original, error], 'Packed IndexedDB field stage and cleanup failed', {
-          cause: original
+      if (error !== error_ && !packedIdbIsAbortError(error))
+        throw new AggregateError([error_, error], 'Packed IndexedDB field stage and cleanup failed', {
+          cause: error_
         })
     }
-    throw original
+    throw error_
   }
 }
 /** Actual owner-issued stage. Chunks commit in separate short transactions;

@@ -241,16 +241,16 @@ export async function writeBrc38NativeBinaryField(
     if (reserved) {
       try {
         await trx.raw('ROLLBACK TO __brc38_binary_field')
-      } catch (failure) {
-        failures.push(failure)
+      } catch (error_) {
+        failures.push(error_)
       }
       // A failed rollback retains the savepoint/owner; releasing it could commit
       // a partial field. Leave it for enclosing transaction rollback and drain.
       if (failures.length === 0) {
         try {
           await trx.raw('RELEASE __brc38_binary_field')
-        } catch (failure) {
-          failures.push(failure)
+        } catch (error_) {
+          failures.push(error_)
         }
       }
     }

@@ -252,15 +252,15 @@ export async function withSnapshotArchiveBackendGuard<T>(
     // its guard held. Automatic rollback would falsely prove source cleanup.
     try {
       await close()
-    } catch (cleanup) {
-      if (!(cleanup instanceof SnapshotArchiveSourceCleanupError)) throw cleanup
+    } catch (error_) {
+      if (!(error_ instanceof SnapshotArchiveSourceCleanupError)) throw error_
       const cause = outcome.ok
-        ? cleanup.cause
-        : new AggregateError([outcome.error, cleanup], 'Snapshot archive read and physical guard cleanup failed', {
+        ? error_.cause
+        : new AggregateError([outcome.error, error_], 'Snapshot archive read and physical guard cleanup failed', {
             cause: outcome.error
           })
       throw new SnapshotArchiveSourceCleanupError(cause, async () => {
-        await cleanup.retryCleanup()
+        await error_.retryCleanup()
         await trx.rollback().catch(() => undefined)
         await trx.executionPromise.catch(() => undefined)
       })

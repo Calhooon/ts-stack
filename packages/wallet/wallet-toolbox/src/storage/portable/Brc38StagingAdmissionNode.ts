@@ -136,9 +136,9 @@ async function closeFailedStore(store: KnexBrc38StagingStore | undefined, cause:
   if (store !== undefined) {
     try {
       await store.close()
-    } catch (cleanup) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, cleanup],
+        [cause, error_],
         'Private staging admission and physical close failed',
         async () => await store.close()
       )
@@ -204,9 +204,9 @@ export class Brc38StagingAdmissionNode {
     } catch (cause) {
       try {
         await db.destroy()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private staging catalog initialization and close failed',
           async () => await db.destroy()
         )
@@ -229,9 +229,9 @@ export class Brc38StagingAdmissionNode {
     } catch (cause) {
       try {
         await db.destroy()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private staging catalog reopen and close failed',
           async () => await db.destroy()
         )
@@ -261,10 +261,10 @@ export class Brc38StagingAdmissionNode {
           // A rejected native COMMIT can leave the transaction active. Keep the
           // exact connection checked out until rollback physically settles.
           if (connection.inTransaction) connection.exec('ROLLBACK')
-        } catch (cleanup) {
+        } catch (error_) {
           retained = true
           const failure = new Brc38StagingCleanupError(
-            [cause, cleanup],
+            [cause, error_],
             'Private staging catalog transaction and rollback failed',
             async () => {
               if (connection.inTransaction) connection.exec('ROLLBACK')
@@ -537,13 +537,13 @@ export class Brc38StagingAdmissionNode {
         await reservation.store.discard(cause)
         await this.#releaseRemoved(trx, row.id)
       }, true)
-    } catch (cleanup) {
-      if (!owned) throw cleanup
+    } catch (error_) {
+      if (!owned) throw error_
       // The actual catalog COMMIT is part of disposal. A failure after unlink
       // must retain the same retry owner and charge until durable release.
-      const detail = cleanup instanceof Error ? cleanup.message : 'native teardown failed'
+      const detail = error_ instanceof Error ? error_.message : 'native teardown failed'
       throw new Brc38StagingCleanupError(
-        [cause, cleanup],
+        [cause, error_],
         'Private staging disposal retains physical cleanup: ' + detail,
         async () => {
           if (this.#pendingDisposals.has(reservation.id)) await this.discard(reservation, cause)
@@ -679,9 +679,9 @@ export class Brc38StagingAdmissionNode {
     } catch (cause) {
       try {
         await owner.release()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private staging removal and owner close both failed',
           async () => await owner.release()
         )

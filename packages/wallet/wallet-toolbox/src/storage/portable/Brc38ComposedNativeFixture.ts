@@ -382,8 +382,8 @@ export async function composedNativeFixture(
   } catch (cause) {
     try {
       await close()
-    } catch (cleanup) {
-      throw new Brc38StagingCleanupError([cause, cleanup], 'Actual composed fixture retains cleanup', close)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Actual composed fixture retains cleanup', close)
     }
     throw cause
   }

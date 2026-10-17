@@ -180,9 +180,9 @@ export async function decryptBrc39OwnedBrowserEnvelope(
     }
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Owned browser envelope retains actual native settlement and erasure',
         cleanup
       )

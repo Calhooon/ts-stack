@@ -430,8 +430,8 @@ export async function prepareNativeSnapshotSyncActions(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'Native action failed with retained cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Native action failed with retained cleanup', cleanup)
     }
     throw cause
   }

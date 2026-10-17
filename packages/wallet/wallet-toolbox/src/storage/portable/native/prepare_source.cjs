@@ -157,8 +157,8 @@ async function prepareNativeSource(
     if (error instanceof NativeSourceCleanupError) throw new NativeSourceCleanupError([error], dispose)
     try {
       await dispose()
-    } catch (cleanup) {
-      throw new NativeSourceCleanupError([error, cleanup], dispose)
+    } catch (error_) {
+      throw new NativeSourceCleanupError([error, error_], dispose)
     }
     throw error
   }

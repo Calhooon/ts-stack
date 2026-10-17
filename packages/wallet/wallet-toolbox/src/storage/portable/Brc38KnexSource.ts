@@ -877,9 +877,9 @@ export async function openBrc38KnexSource(
                               await index.close()
                               indexes.delete(index)
                               rowIndexes.delete(index)
-                            } catch (cleanup) {
+                            } catch (error_) {
                               throw new AggregateError(
-                                [error, cleanup],
+                                [error, error_],
                                 'BRC-38 structured index opening and cleanup failed',
                                 { cause: error }
                               )

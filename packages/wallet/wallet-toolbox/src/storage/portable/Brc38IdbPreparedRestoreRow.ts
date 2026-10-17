@@ -381,9 +381,9 @@ export async function prepareBrc38IdbRestoreRow(
     if (cause instanceof Brc38StagingCleanupError) failed.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser row preparation retains concrete cleanup owners',
         cleanup
       )

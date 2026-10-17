@@ -179,11 +179,9 @@ export class Brc38StreamedSyncMapProjection {
             } catch (cause) {
               try {
                 await index.close()
-              } catch (cleanup) {
-                throw new Brc38StagingCleanupError(
-                  [cause, cleanup],
-                  'Sync-map source acquisition retains cleanup',
-                  () => index.close()
+              } catch (error_) {
+                throw new Brc38StagingCleanupError([cause, error_], 'Sync-map source acquisition retains cleanup', () =>
+                  index.close()
                 )
               }
               throw cause
@@ -402,9 +400,9 @@ export class Brc38StreamedSyncMapProjection {
       if (cause instanceof Brc38StagingCleanupError) acquisitionCleanup.add(cause)
       try {
         await close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Private sync-map projection failed with retained cleanup',
           close
         )
@@ -573,9 +571,9 @@ export class Brc38StreamedSyncMapProjection {
       try {
         await this.index.close()
         this.reservation?.close()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          failed ? [original, cleanup] : [cleanup],
+          failed ? [original, error_] : [error_],
           'Private sync-map output retains physical index cleanup',
           () => this.close()
         )

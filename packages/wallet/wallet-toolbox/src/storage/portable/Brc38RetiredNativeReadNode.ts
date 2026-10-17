@@ -87,9 +87,9 @@ async function loadOriginal(
   const cleanupScope1 = new Brc38CleanupScope(async () => {
     try {
       await k.destroy()
-    } catch (cleanup) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failure === undefined ? [] : [failure.cause]), cleanup],
+        [...(failure === undefined ? [] : [failure.cause]), error_],
         'Original retired catalog loader retains its physical read facade',
         async () => await k.destroy()
       )

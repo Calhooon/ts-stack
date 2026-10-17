@@ -99,9 +99,9 @@ export async function completeBrc38OwnedEmptyBootstrap(
         throw cause
       }
     })
-  } catch (cleanup) {
-    if (failed && cleanup !== original)
-      throw new AggregateError([original, cleanup], 'Private empty bootstrap and rollback failed')
-    throw cleanup
+  } catch (error_) {
+    if (failed && error_ !== original)
+      throw new AggregateError([original, error_], 'Private empty bootstrap and rollback failed')
+    throw error_
   }
 }

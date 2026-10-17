@@ -163,8 +163,8 @@ export async function compactBrc38NativeTargetIndexes(k: Knex.Transaction): Prom
       try {
         await k.raw('ROLLBACK TO __brc38_native_target_index_compaction')
         await k.raw('RELEASE __brc38_native_target_index_compaction')
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Native target index compaction and rollback failed')
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Native target index compaction and rollback failed')
       }
     }
     throw cause

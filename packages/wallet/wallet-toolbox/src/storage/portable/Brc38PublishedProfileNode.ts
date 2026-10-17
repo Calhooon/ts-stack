@@ -502,8 +502,8 @@ export class Brc38PublishedProfileNode {
     } catch (cause) {
       try {
         await profile.close()
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Publication retains physical cleanup')
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Publication retains physical cleanup')
       }
       await rm(directory, { recursive: true })
       await syncDirectory(parent)
@@ -596,8 +596,8 @@ export class Brc38PublishedProfileNode {
           const results = await Promise.allSettled([db?.destroy(), ownerDb?.destroy()])
           errors.push(...results.flatMap(result => (result.status === 'rejected' ? [result.reason] : [])))
         }
-      } catch (failure) {
-        errors.push(failure)
+      } catch (error_) {
+        errors.push(error_)
       }
       // No deletion while a native owner may still hold an open connection.
       if (errors.length) throw new AggregateError([cause, ...errors], 'Publication retains physical cleanup')
@@ -1365,9 +1365,9 @@ export class Brc38PublishedProfileNode {
       actual.phase = 'native-draining'
       try {
         await this.#closeOwnedConnections()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Composed native target retains actual physical cleanup',
           async () => await this.close()
         )
@@ -1622,8 +1622,8 @@ export class Brc38PublishedProfileNode {
           if (connection !== undefined) await ownerDb.client.releaseConnection(connection)
           await ownerDb.destroy()
         }
-      } catch (cleanup) {
-        failure = cleanup
+      } catch (error_) {
+        failure = error_
       }
       if (failure !== undefined)
         throw new AggregateError([cause, failure], 'Published profile claim and cleanup failed')
@@ -1964,10 +1964,10 @@ export class Brc38PublishedProfileNode {
       try {
         await reader.destroy()
         this.#nativeReadInspection = undefined
-      } catch (cleanup) {
+      } catch (error_) {
         this.#nativeReadInspectionCleanupRequired = true
         throw new AggregateError(
-          failed ? [cause, cleanup] : [cleanup],
+          failed ? [cause, error_] : [error_],
           'Published native read inspection retains physical cleanup'
         )
       }
@@ -1986,13 +1986,13 @@ export class Brc38PublishedProfileNode {
         await this.#physical()
         return result
       })
-    } catch (failure) {
-      if (failure instanceof Brc38StagingCleanupError) this.#structuredPhysicalCleanup.add(failure)
+    } catch (error_) {
+      if (error_ instanceof Brc38StagingCleanupError) this.#structuredPhysicalCleanup.add(error_)
       failed = true
-      cause = failure
+      cause = error_
       {
         await cleanupScope1.close()
-        throw failure
+        throw error_
       }
     } finally {
       await cleanupScope1.close()
@@ -2019,10 +2019,10 @@ export class Brc38PublishedProfileNode {
       try {
         await k?.destroy()
         this.#copyInspection = undefined
-      } catch (cleanup) {
+      } catch (error_) {
         this.#copyInspectionCleanupRequired = true
         throw new AggregateError(
-          [...(failure === undefined ? [] : [failure.cause]), cleanup],
+          [...(failure === undefined ? [] : [failure.cause]), error_],
           'Published copy inspection retains physical cleanup'
         )
       } finally {
@@ -2910,9 +2910,9 @@ export class Brc38PublishedProfileNode {
       actual.phase = 'native-draining'
       try {
         await profile.#closeOwnedConnections()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, cleanup],
+          [cause, error_],
           'Native reopen retains physical cleanup',
           async () => await profile.close()
         )
@@ -3198,9 +3198,9 @@ export class Brc38PublishedProfileNode {
     } catch (cause) {
       try {
         await this.#closeOwnedConnections()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Uncommitted current provider retains actual cleanup',
           async () => await this.close()
         )
@@ -3336,9 +3336,9 @@ export class Brc38PublishedProfileNode {
       if (profile !== undefined) {
         try {
           await profile.close()
-        } catch (failure) {
+        } catch (error_) {
           throw new Brc38StagingCleanupError(
-            [cause, failure],
+            [cause, error_],
             'Completed restart retains its current native target cleanup',
             async () => await profile!.close()
           )
@@ -3666,16 +3666,16 @@ export class Brc38PublishedProfileNode {
         await inspect()
         await fresh()
       }
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     profile.#busy = false
     try {
       await profile.close()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [...(failed ? [cause] : []), failure],
+        [...(failed ? [cause] : []), error_],
         'Pending recovery copy retains its actual target cleanup',
         async () => await profile.close()
       )
@@ -3921,9 +3921,9 @@ export class Brc38PublishedProfileNode {
           actual.phase = 'native-draining'
           try {
             await profile.#closeOwnedConnections()
-          } catch (failure) {
+          } catch (error_) {
             throw new Brc38StagingCleanupError(
-              [cause, failure],
+              [cause, error_],
               'Pending composed recovery retains its actual target cleanup',
               async () => await profile.close()
             )
@@ -4294,8 +4294,8 @@ export class Brc38PublishedProfileNode {
         actual.phase = 'native-draining'
         try {
           await profile.#closeOwnedConnections()
-        } catch (cleanup) {
-          throw new AggregateError([cause, cleanup], 'Native handoff and physical cleanup failed')
+        } catch (error_) {
+          throw new AggregateError([cause, error_], 'Native handoff and physical cleanup failed')
         }
         actual.phase = 'released'
         throw cause

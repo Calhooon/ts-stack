@@ -186,9 +186,9 @@ export class Brc39RecoveryAuthenticationNode {
       if (cause instanceof Brc38StagingCleanupError) earlierCleanup = cause
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'New recovery authentication retains source cleanup and capacity',
           cleanup
         )

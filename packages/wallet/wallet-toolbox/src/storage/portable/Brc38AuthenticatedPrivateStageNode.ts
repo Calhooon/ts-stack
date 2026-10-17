@@ -241,9 +241,9 @@ async function runAuthenticatedBrc39PrivateImport(
       if (nativeExecutable === undefined) await admission.discard(reservation, cause)
       else await reservation.store.close()
     }
-    disposal ??= close().catch(cleanup => {
+    disposal ??= close().catch(error_ => {
       throw new Brc38StagingCleanupError(
-        [cause, cleanup],
+        [cause, error_],
         'Authenticated private staging retains physical cleanup',
         close
       )
@@ -347,13 +347,13 @@ async function runAuthenticatedBrc39PrivateImport(
     await Promise.allSettled([parsing])
     try {
       await dispose(cause)
-    } catch (cleanup) {
-      if (cleanup === cause) throw cause
+    } catch (error_) {
+      if (error_ === cause) throw cause
       throw new Brc38StagingCleanupError(
-        [cause, cleanup],
+        [cause, error_],
         'Archive processing and private physical disposal failed',
         async () => {
-          if (cleanup instanceof Brc38StagingCleanupError) await cleanup.retryCleanup()
+          if (error_ instanceof Brc38StagingCleanupError) await error_.retryCleanup()
           else if (nativeExecutable === undefined) await admission.discard(reservation, cause)
           else await reservation.store.close()
         }

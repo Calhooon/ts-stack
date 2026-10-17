@@ -574,8 +574,8 @@ export async function prepareIdbSnapshotSyncProvenTxs(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'Proof preparation failed with retained cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Proof preparation failed with retained cleanup', cleanup)
     }
     throw cause
   }

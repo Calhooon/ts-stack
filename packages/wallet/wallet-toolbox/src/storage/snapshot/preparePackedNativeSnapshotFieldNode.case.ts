@@ -36,15 +36,15 @@ export async function verifyPackedNativeSnapshotField(
         cause: unknown
       try {
         result = await database.transaction(operation)
-      } catch (failure) {
+      } catch (error_) {
         failed = true
-        cause = failure
+        cause = error_
       }
       try {
         await database.destroy()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [...(failed ? [cause] : []), failure],
+          [...(failed ? [cause] : []), error_],
           'Native field case retains its reader',
           async () => {
             await database.destroy()

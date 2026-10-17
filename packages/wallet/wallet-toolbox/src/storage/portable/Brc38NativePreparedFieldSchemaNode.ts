@@ -146,8 +146,8 @@ export async function installBrc38NativePreparedFieldsSchema(k: Knex.Transaction
     try {
       await k.raw('ROLLBACK TO brc38_native_prepared_schema')
       await k.raw('RELEASE brc38_native_prepared_schema')
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Native preparation schema retains failed rollback', { cause })
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Native preparation schema retains failed rollback', { cause })
     }
     throw cause
   }

@@ -262,9 +262,9 @@ export async function installBrc38PrivateLocalCandidateJournal(
     try {
       await k.raw('ROLLBACK TO __brc38_local_candidate_journal')
       await k.raw('RELEASE __brc38_local_candidate_journal')
-    } catch (cleanup) {
+    } catch (error_) {
       throw new AggregateError(
-        [cause, cleanup],
+        [cause, error_],
         'Local candidate journal installation retains actual rollback failure',
         { cause }
       )

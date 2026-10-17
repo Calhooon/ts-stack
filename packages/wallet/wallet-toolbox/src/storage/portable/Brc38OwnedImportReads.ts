@@ -40,16 +40,16 @@ export class Brc38OwnedImportReads {
       result: T | undefined
     try {
       result = await work()
-    } catch (failure) {
+    } catch (error_) {
       failed = true
-      cause = failure
+      cause = error_
     }
     try {
       await this.finish()
-    } catch (failure) {
-      if (failed && failure !== cause)
-        throw new AggregateError([cause, failure], 'Private import callback and owned read both failed')
-      throw failure
+    } catch (error_) {
+      if (failed && error_ !== cause)
+        throw new AggregateError([cause, error_], 'Private import callback and owned read both failed')
+      throw error_
     }
     if (failed) throw cause
     return result as T

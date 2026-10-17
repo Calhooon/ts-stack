@@ -29,9 +29,9 @@ async function closeFiles(files: FileHandle[], cause?: unknown): Promise<void> {
   }
   try {
     await cleanup()
-  } catch (failure) {
+  } catch (error_) {
     throw new Brc38StagingCleanupError(
-      cause === undefined ? [failure] : [cause, failure],
+      cause === undefined ? [error_] : [cause, error_],
       'Publication retains original file descriptors',
       cleanup
     )

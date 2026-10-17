@@ -234,8 +234,8 @@ export class Brc38PrivateNativeOwnershipNode {
     } catch (cause) {
       try {
         await cleanup()
-      } catch (failure) {
-        throw new Brc38StagingCleanupError([cause, failure], 'Private native claim retains physical cleanup', cleanup)
+      } catch (error_) {
+        throw new Brc38StagingCleanupError([cause, error_], 'Private native claim retains physical cleanup', cleanup)
       }
       throw cause
     }
@@ -285,9 +285,9 @@ export class Brc38PrivateNativeOwnershipNode {
     } catch (cause) {
       try {
         await database.destroy()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Original comparison owner retains reopened SQL cleanup',
           async () => await database.destroy()
         )

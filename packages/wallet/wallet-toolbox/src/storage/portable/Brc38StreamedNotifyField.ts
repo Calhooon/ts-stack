@@ -209,8 +209,8 @@ export async function prepareBrc38StreamedNotifyField(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'Occupied notification preparation retains cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Occupied notification preparation retains cleanup', cleanup)
     }
     throw cause
   }

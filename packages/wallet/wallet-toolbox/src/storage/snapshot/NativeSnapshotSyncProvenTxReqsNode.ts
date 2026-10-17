@@ -676,8 +676,8 @@ export async function prepareNativeSnapshotSyncProvenTxReqs(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
-      throw new Brc38StagingCleanupError([cause, failure], 'Native request failed with retained cleanup', cleanup)
+    } catch (error_) {
+      throw new Brc38StagingCleanupError([cause, error_], 'Native request failed with retained cleanup', cleanup)
     }
     throw cause
   }

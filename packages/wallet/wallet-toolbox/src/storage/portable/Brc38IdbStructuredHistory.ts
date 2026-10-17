@@ -153,9 +153,9 @@ export async function prepareBrc38IdbStructuredHistory(
         closed = true
         try {
           await cleanup()
-        } catch (failure) {
+        } catch (error_) {
           throw new Brc38StagingCleanupError(
-            failed ? [original, failure] : [failure],
+            failed ? [original, error_] : [error_],
             'Browser structured history output retains actual cleanup',
             cleanup
           )
@@ -225,9 +225,9 @@ export async function prepareBrc38IdbStructuredHistory(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Browser structured history preparation retains cleanup',
         cleanup
       )

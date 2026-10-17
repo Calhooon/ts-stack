@@ -122,10 +122,10 @@ async function* notifyIds(selected: Brc38StructuredNotifyIds, policy: Policy): A
     lifetimeCharge.close()
     try {
       await source.close()
-    } catch (cleanup) {
+    } catch (error_) {
       if (failed)
-        throw new AggregateError([original, cleanup], 'Notification projection and cleanup failed', { cause: original })
-      throw cleanup
+        throw new AggregateError([original, error_], 'Notification projection and cleanup failed', { cause: original })
+      throw error_
     }
   })
   try {
@@ -1949,10 +1949,10 @@ export async function* canonicalBrc38ProjectedNotify(
     // Cleanup also applies when source admission fails before replacement.
     try {
       await projection.close()
-    } catch (cleanup) {
+    } catch (error_) {
       if (failed)
-        throw new AggregateError([original, cleanup], 'Projected notify source and cleanup failed', { cause: original })
-      throw cleanup
+        throw new AggregateError([original, error_], 'Projected notify source and cleanup failed', { cause: original })
+      throw error_
     }
   })
   try {
@@ -2070,12 +2070,12 @@ async function* canonical(
     encoded?.close()
     try {
       await index.close()
-    } catch (cleanup) {
+    } catch (error_) {
       if (failed)
-        throw new AggregateError([original, cleanup], 'BRC-38 structured source and index cleanup failed', {
+        throw new AggregateError([original, error_], 'BRC-38 structured source and index cleanup failed', {
           cause: original
         })
-      throw cleanup
+      throw error_
     }
   })
   try {

@@ -247,9 +247,9 @@ export async function withAuthenticatedBrc39NativeMerge<T>(
     let failure = cause
     try {
       await cleanup()
-    } catch (drain) {
+    } catch (error_) {
       failure = new Brc38StagingCleanupError(
-        [cause, drain],
+        [cause, error_],
         'Authenticated native merge stopped with retained cleanup',
         async () => {
           if (cause instanceof Brc38StagingCleanupError) await cause.retryCleanup()

@@ -95,9 +95,9 @@ export class NativeSnapshotSyncStructuredWorkspace {
     } catch (cause) {
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Native structured acquisition retains its actual directory',
           cleanup
         )
@@ -264,8 +264,8 @@ export class NativeSnapshotSyncStructuredWorkspace {
     } catch (cause) {
       try {
         await release()
-      } catch (failure) {
-        throw new Brc38StagingCleanupError([cause, failure], 'Native structured index retains actual cleanup', release)
+      } catch (error_) {
+        throw new Brc38StagingCleanupError([cause, error_], 'Native structured index retains actual cleanup', release)
       }
       throw cause
     }

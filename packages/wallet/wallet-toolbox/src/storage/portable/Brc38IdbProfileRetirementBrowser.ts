@@ -346,9 +346,9 @@ export async function retireExpiredBrc38BrowserProfile(selected: Brc38IdbProfile
   } catch (cause) {
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Expired browser candidate retains concrete terminal cleanup',
         cleanup
       )

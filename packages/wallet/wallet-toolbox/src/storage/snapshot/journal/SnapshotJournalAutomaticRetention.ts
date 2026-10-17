@@ -83,12 +83,12 @@ export class SnapshotJournalAutomaticRetention {
       }
       try {
         await drain()
-      } catch (cleanup) {
-        if ('error' in outcome && cleanup !== outcome.error)
-          throw new AggregateError([outcome.error, cleanup], 'Journal retention and physical cleanup failed', {
+      } catch (error_) {
+        if ('error' in outcome && error_ !== outcome.error)
+          throw new AggregateError([outcome.error, error_], 'Journal retention and physical cleanup failed', {
             cause: outcome.error
           })
-        throw cleanup
+        throw error_
       }
       if ('error' in outcome) throw outcome.error
       return outcome.value

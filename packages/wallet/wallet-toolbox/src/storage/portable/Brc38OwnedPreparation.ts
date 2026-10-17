@@ -88,13 +88,13 @@ export class Brc38OwnedPreparation {
       this.#closed = true
       try {
         await this.#drain(job)
-      } catch (failure) {
+      } catch (error_) {
         const cleanup = async () => {
           await this.#drain(job)
           this.#cleanup = undefined
         }
         this.#cleanup = new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Private preparation retains actual non-cancellable work until drainage',
           cleanup
         )

@@ -161,9 +161,9 @@ export async function deriveBrc39OwnedBrowserKey(
       }
       try {
         await cleanup()
-      } catch (failure) {
+      } catch (error_) {
         throw new Brc38StagingCleanupError(
-          [cause, failure],
+          [cause, error_],
           'Owned browser KDF retains actual backend settlement and erasure',
           cleanup
         )

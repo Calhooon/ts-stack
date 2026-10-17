@@ -451,9 +451,9 @@ export class IdbSnapshotSyncJournal {
       }
       try {
         await journal.done
-      } catch (failure) {
-        if (failure !== cause && !packedIdbIsAbortError(failure))
-          throw new AggregateError([cause, failure], 'Packed snapshot writer and physical drainage failed', { cause })
+      } catch (error_) {
+        if (error_ !== cause && !packedIdbIsAbortError(error_))
+          throw new AggregateError([cause, error_], 'Packed snapshot writer and physical drainage failed', { cause })
       }
       throw cause
     }

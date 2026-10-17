@@ -166,9 +166,9 @@ export async function inspectBrc38RawTransactionStream(
     if (!complete && iterator.return !== undefined) {
       try {
         await iterator.return()
-      } catch (cleanup) {
+      } catch (error_) {
         throw new AggregateError(
-          failure ? [failure.cause, cleanup] : [cleanup],
+          failure ? [failure.cause, error_] : [error_],
           'Raw transaction parsing and source cleanup failed',
           failure ? { cause: failure.cause } : undefined
         )

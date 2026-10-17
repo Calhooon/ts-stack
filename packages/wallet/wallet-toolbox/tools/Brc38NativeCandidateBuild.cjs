@@ -86,8 +86,8 @@ async function readSource(filename, maximum) {
   }
   try {
     await file.close()
-  } catch (cleanup) {
-    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, cleanup, () => file.close())
+  } catch (error_) {
+    throw new NativeCandidateBuildCleanupError(failed ? failure : undefined, error_, () => file.close())
   }
   if (failed) throw failure
   if (bytes === undefined) throw new Error('Native candidate source capture did not finish')
@@ -252,8 +252,8 @@ async function buildBrc38NativeCandidate(options) {
       throw new Error('Native candidate directory remains retained at ' + root, { cause })
     try {
       await fs.rm(root, { recursive: true, force: true })
-    } catch (cleanup) {
-      throw new AggregateError([cause, cleanup], 'Native candidate build retains its original directory cleanup', {
+    } catch (error_) {
+      throw new AggregateError([cause, error_], 'Native candidate build retains its original directory cleanup', {
         cause
       })
     }

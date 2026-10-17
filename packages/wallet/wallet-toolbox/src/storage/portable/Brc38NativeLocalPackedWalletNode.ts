@@ -83,8 +83,8 @@ export async function withBrc38NativeLocalPackedWalletMutation<T>(
       try {
         await trx.raw('ROLLBACK TO ' + savepoint)
         await trx.raw('RELEASE ' + savepoint)
-      } catch (cleanup) {
-        throw new AggregateError([cause, cleanup], 'Local logical row retains real savepoint cleanup failure', {
+      } catch (error_) {
+        throw new AggregateError([cause, error_], 'Local logical row retains real savepoint cleanup failure', {
           cause
         })
       }

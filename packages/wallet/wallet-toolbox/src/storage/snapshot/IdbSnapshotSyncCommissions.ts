@@ -398,9 +398,9 @@ export async function prepareIdbSnapshotSyncCommissions(
     if (cause instanceof Brc38StagingCleanupError) failures.add(cause)
     try {
       await cleanup()
-    } catch (failure) {
+    } catch (error_) {
       throw new Brc38StagingCleanupError(
-        [cause, failure],
+        [cause, error_],
         'Commission preparation failed with retained cleanup',
         cleanup
       )
