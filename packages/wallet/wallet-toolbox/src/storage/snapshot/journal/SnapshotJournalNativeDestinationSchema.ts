@@ -1,3 +1,4 @@
+import { nativeSnapshotJournalMappingDefinitions } from '../NativeSnapshotSyncMappingSchemaNode'
 import type { Knex } from 'knex'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { hasBrc38NativeLocalPackedLayout } from '../../portable/Brc38NativeLocalPackedLayoutNode'
@@ -35,6 +36,7 @@ export async function snapshotJournalNativeDestinationExtras(
   }
   if (await hasBrc38NativeLocalBaselineGenerationSchema(trx))
     result.push(...(await brc38NativeLocalBaselineSourceDefinitions(trx)).filter(belongs))
+  result.push(...(await nativeSnapshotJournalMappingDefinitions(trx)).filter(belongs))
   return Object.freeze(result)
 }
 /** SQL migration rollback cannot erase a managed physical profile or leave its

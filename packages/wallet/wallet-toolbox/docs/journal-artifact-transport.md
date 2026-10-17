@@ -535,3 +535,17 @@ cover large certificate/field UTF8 replacement and preserved commission payloads
 and physical IDs. Those assertions remain authored but unexecuted pending pinned
 native qualification. Request structured fields, complete provenance, ordinary
 SQL field storage, manager routing and remote primary recovery remain unfinished.
+
+The private native restore registry now includes an additive auxiliary journal
+mapping fence. Actual SQL triggers observe changes to transaction/proof parent
+associations and captured identity/frame data, including direct SQL and rollback.
+The original full-snapshot mapping clock is unchanged. This separate counter
+creates no wallet journal events and grants no source, writer or primary authority.
+The native destination verifier accepts only the entire freshly compared authored
+optional family; partial, changed or extra objects refuse. Absent old families
+remain absent rather than being adopted as completed native request support.
+The forthcoming request projection must use this real fence and bounded captured
+point mappings before its final writer. Registration and DDL coverage alone do
+not implement or qualify that request integration. The existing native financial
+fixture authors partial-schema refusal and rollback/reentry under its actual
+owner; pinned execution remains pending.

@@ -1,3 +1,11 @@
+import { knex } from 'knex'
+import {
+  nativeSnapshotJournalMappingDdl,
+  readNativeSnapshotJournalMappingRevision,
+  installNativeSnapshotJournalMappingSchema
+} from '../snapshot/NativeSnapshotSyncMappingSchemaNode'
+import { snapshotJournalIdentityLedgerDdl } from '../snapshot/journal/SnapshotJournalIdentityLedger'
+import { snapshotJournalCapturedIdentitiesDdl } from '../snapshot/journal/SnapshotJournalCapturedIdentities'
 import { brc38NativeLocalPackedLayoutMigration } from './Brc38NativeLocalPackedLayout'
 import type { Knex } from 'knex'
 import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -340,4 +348,119 @@ describe('private native migration configuration preserves canonical schema and 
       }) + '\n'
     )
   })
+})
+
+test('journal mapping DDL observes real parent/capture changes, rollback and exhaustion without financial events or native admission', async () => {
+  const database = knex({
+      client: 'better-sqlite3',
+      connection: { filename: ':memory:' },
+      useNullAsDefault: true,
+      pool: { min: 1, max: 1 }
+    }),
+    clock = 'brc38_journal_mapping_clock',
+    maps = 'snapshot_reconciliation_identity_maps',
+    captured = 'snapshot_reconciliation_captured_identities',
+    frames = 'snapshot_reconciliation_identity_frames',
+    parent = {
+      userId: 1,
+      lineage: 'a'.repeat(64),
+      tableId: 9,
+      incomingId: 17,
+      generation: '1',
+      naturalIdentity: 'b'.repeat(64),
+      localId: 71,
+      sourceGeneration: 'c'.repeat(64),
+      seenSession: 'd'.repeat(64)
+    },
+    identity = {
+      userId: 1,
+      sourceStorageIdentity: 'source',
+      sessionId: 'd'.repeat(64),
+      binding: 'e'.repeat(64),
+      frameDigest: 'f'.repeat(64),
+      changeIndex: 0,
+      tableId: 0,
+      incomingId: 17,
+      generation: '1',
+      naturalIdentity: 'b'.repeat(64),
+      naturalKeyJson: '{}',
+      required: 1
+    },
+    frame = {
+      userId: 1,
+      sourceStorageIdentity: 'source',
+      sessionId: 'd'.repeat(64),
+      binding: 'e'.repeat(64),
+      frameDigest: 'f'.repeat(64),
+      windowSequence: 1,
+      identities: 1,
+      sealed: 1,
+      changes: 1
+    },
+    revision = async (): Promise<string> =>
+      String((await database(clock).first(database.raw('CAST(revision AS TEXT) AS revision'))).revision)
+  try {
+    for (const sql of [
+      ...snapshotJournalIdentityLedgerDdl(database),
+      ...snapshotJournalCapturedIdentitiesDdl(database),
+      ...nativeSnapshotJournalMappingDdl
+    ])
+      await database.raw(sql)
+    await database(clock).insert({ id: 1, revision: 0 })
+    await database.raw('CREATE TABLE snapshot_journal_clock(id INTEGER PRIMARY KEY,ceiling INTEGER NOT NULL)')
+    await database('snapshot_journal_clock').insert({ id: 1, ceiling: 37 })
+    // Stock SQLite can test DDL semantics but cannot enroll as the actual native reader or installer.
+    await database.transaction(async trx => {
+      await expect(readNativeSnapshotJournalMappingRevision(trx)).rejects.toThrow()
+      await expect(installNativeSnapshotJournalMappingSchema(trx)).rejects.toThrow()
+    })
+    await database(maps).insert(parent)
+    expect(await revision()).toBe('0')
+    await database(maps).update({ tableId: 0 })
+    expect(await revision()).toBe('1')
+    await database(maps).update({ localId: 72 })
+    expect(await revision()).toBe('2')
+    await database(maps).update({ tableId: 9 })
+    expect(await revision()).toBe('3')
+    await database(maps).update({ localId: 73 })
+    await database(maps).delete()
+    expect(await revision()).toBe('3')
+    await database(maps).insert({ ...parent, tableId: 0 })
+    await database(maps).delete()
+    expect(await revision()).toBe('5')
+    await database(maps).insert({ ...parent, tableId: 8 })
+    await database(maps).update({ localId: 74 })
+    await database(maps).delete()
+    expect(await revision()).toBe('8')
+    await database(captured).insert(identity)
+    await database(captured).update({ naturalKeyJson: '{"changed":true}' })
+    await database(captured).delete()
+    expect(await revision()).toBe('11')
+    await database(frames).insert(frame)
+    await database(frames).update({ sealed: 0 })
+    await database(frames).delete()
+    expect(await revision()).toBe('14')
+    const rollback = new Error('Independent mapping transaction rollback')
+    await expect(
+      database.transaction(async trx => {
+        await trx(maps).insert({ ...parent, tableId: 0 })
+        const row = await trx(clock).first(trx.raw('CAST(revision AS TEXT) AS revision'))
+        expect(row.revision).toBe('15')
+        throw rollback
+      })
+    ).rejects.toBe(rollback)
+    expect(await revision()).toBe('14')
+    expect(await database(maps)).toHaveLength(0)
+    await database(clock).delete()
+    await expect(database(maps).insert({ ...parent, tableId: 0 })).rejects.toThrow('exhausted or absent')
+    expect(await database(maps)).toHaveLength(0)
+    await database(clock).insert({ id: 1, revision: database.raw('9223372036854775806') })
+    await database(maps).insert({ ...parent, tableId: 0 })
+    expect(await revision()).toBe('9223372036854775807')
+    await expect(database(maps).update({ localId: 75 })).rejects.toThrow('exhausted or absent')
+    expect((await database(maps).first()).localId).toBe(71)
+    expect((await database('snapshot_journal_clock').first()).ceiling).toBe(37)
+  } finally {
+    await database.destroy()
+  }
 })

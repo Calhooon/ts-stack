@@ -7,6 +7,8 @@ import {
   installBrc38NativeLocalPackedLayout
 } from './Brc38NativeLocalPackedLayoutNode'
 import {
+  nativeSnapshotJournalMappingMigration,
+  installNativeSnapshotJournalMappingSchema,
   nativeSnapshotSyncMappingMigration,
   installNativeSnapshotSyncMappingSchema
 } from '../snapshot/NativeSnapshotSyncMappingSchemaNode'
@@ -216,6 +218,13 @@ export async function installBrc38PrivateNativeCandidateSchema(
       up: async token => await installNativeSnapshotSyncMappingSchema(token as Knex.Transaction),
       down: async () => {
         throw new Error('Native sync mapping fences require owned forward recovery')
+      }
+    }
+  if (structured)
+    source.migrations[nativeSnapshotJournalMappingMigration] = {
+      up: async token => await installNativeSnapshotJournalMappingSchema(token as Knex.Transaction),
+      down: async () => {
+        throw new Error('Native journal mapping fences require owned forward recovery')
       }
     }
   if (localBaseline)

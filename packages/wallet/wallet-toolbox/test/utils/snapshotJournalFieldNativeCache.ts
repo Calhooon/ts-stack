@@ -1,3 +1,5 @@
+import type { Knex } from 'knex'
+import { readNativeSnapshotJournalMappingRevision } from '../../src/storage/snapshot/NativeSnapshotSyncMappingSchemaNode'
 import { readSnapshotJournalPointFields } from '../../src/storage/snapshot/journal/SnapshotJournalFieldSql'
 import { PrivateKey } from '@bsv/sdk'
 import type { BRC38WalletData } from '../../src/storage/portable/index'
@@ -269,6 +271,20 @@ async function verifyNativeJournalFinancialFieldPromotion(
         if (table !== 'provenTxs') row.userId = user.userId
         return row
       }
+    const schemaRollback = new Error('Independent native mapping schema rollback')
+    await expect(
+      input.storage.runSnapshotJournalWriter(async trx => {
+        await readNativeSnapshotJournalMappingRevision(trx as Knex.Transaction)
+        await trx.raw('DROP TRIGGER brc38_journal_mapping_captured_update')
+        await expect(readNativeSnapshotJournalMappingRevision(trx as Knex.Transaction)).rejects.toThrow(
+          'schema or revision differs'
+        )
+        throw schemaRollback
+      })
+    ).rejects.toBe(schemaRollback)
+    await input.storage.runSnapshotJournalWriter(
+      async trx => await readNativeSnapshotJournalMappingRevision(trx as Knex.Transaction)
+    )
     const canonicalProofId = await input.manager.runAsWriter(async active => {
       if (active !== input.storage) throw new Error('Actual canonical native fixture manager changed')
       return await input.storage.runSnapshotJournalWriter(async trx => {
