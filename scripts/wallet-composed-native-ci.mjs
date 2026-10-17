@@ -7,6 +7,9 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
+const GIT_EXECUTABLE =
+  process.platform === 'win32' ? String.raw`C:\Program Files\Git\cmd\git.exe` : '/usr/bin/git'
+
 export const composedNativeTestFile =
   'packages/wallet/wallet-toolbox/src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts'
 
@@ -331,7 +334,10 @@ export const validateNativeAuthenticatedMergeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, authenticatedMergePlan)
 function identity(root, plan) {
   return {
-    head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+    head: execFileSync(GIT_EXECUTABLE, ['rev-parse', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8'
+    }).trim(),
     testFileSha256: digest(fs.readFileSync(path.join(root, plan.testFile))),
     planSha256: digest(fs.readFileSync(fileURLToPath(import.meta.url)))
   }

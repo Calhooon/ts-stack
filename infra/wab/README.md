@@ -5,6 +5,13 @@ Welcome to the **Wallet Authentication Backend (WAB)** project! This README prov
 See [Service Resource Profiles](../../docs/reference/service-resource-profiles.md)
 for bounded defaults, database sizing, and HPA prerequisites.
 
+Both Docker stages use the canonical `node` registry reference and the immutable
+digest recorded in [the container inventory](../../governance/container-images.json).
+This aligns WAB builds with the other runtime images when public ECR rate-limits
+base-image metadata requests. The governed Node version, image contents and
+runtime package pins stay the same; mirror references retain their independent
+verification requirements.
+
 ---
 
 ## What Is the WAB?

@@ -43,6 +43,13 @@ releases while its digest lets Scorecard verify pinning. The inventory's
 registry mirrors remain in `references` and must be resolved and compared
 during review. This avoids making routine dependency discovery depend on public
 ECR's unauthenticated rate limits without weakening multi-registry verification.
+
+Runtime Dockerfiles also use the canonical `node` reference at the governed
+immutable digest. WAB follows the same build source as the other components after
+repeated public ECR metadata HTTP 429 responses blocked its image build. This
+changes the registry used to fetch the existing image; its version, multi-platform
+index digest and runtime package pins remain unchanged. Equivalent mirrors stay
+registered for cross-registry verification.
 Repository health requires the discovery tag and digest, the registry's
 expected version and digest, and every digest-only release `FROM` instruction
 to reconcile in one change. Runtime Dockerfiles deliberately omit the tag

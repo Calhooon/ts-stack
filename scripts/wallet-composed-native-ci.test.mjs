@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { delimiter, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import * as nativeRouting from './wallet-composed-native-ci.mjs'
 import {
   composedNativeTestFile,
@@ -335,3 +339,45 @@ for (const family of [
     )
   })
 }
+
+test('CLI binds native receipt identity to the real checkout with a hostile PATH', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url)),
+    cli = fileURLToPath(new URL('./wallet-composed-native-ci.mjs', import.meta.url)),
+    expected = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' })
+  assert.equal(expected.status, 0, expected.stderr)
+  const directory = mkdtempSync(join(tmpdir(), 'native-ci-git-path-'))
+  try {
+    if (process.platform === 'win32') copyFileSync(process.execPath, join(directory, 'git.exe'))
+    else
+      writeFileSync(
+        join(directory, 'git'),
+        '#!/bin/sh\nprintf "%s\\n" "' + '0'.repeat(40) + '"\n',
+        {
+          mode: 0o700
+        }
+      )
+    const cohort = composedNativeCohorts[0],
+      input = join(directory, 'validator-unit-report.json'),
+      receipt = join(directory, 'validator-unit-receipt.json'),
+      env = { ...process.env }
+    // This synthetic report exercises receipt validation only; it supplies no
+    // native runtime or original-case execution evidence.
+    writeFileSync(input, JSON.stringify(report(cohort)))
+    for (const name of Object.keys(env)) if (name.toUpperCase() === 'PATH') delete env[name]
+    env.PATH = directory + delimiter + (process.env.PATH ?? process.env.Path ?? '')
+    const actual = spawnSync(process.execPath, [cli, 'capture', cohort.id, input, receipt], {
+      cwd: root,
+      env,
+      encoding: 'utf8',
+      timeout: 10000,
+      maxBuffer: 1048576
+    })
+    assert.equal(actual.error, undefined)
+    assert.equal(actual.status, 0, actual.stderr)
+    const captured = JSON.parse(readFileSync(receipt, 'utf8'))
+    assert.equal(captured.identity.head, expected.stdout.trim())
+    assert.notEqual(captured.identity.head, '0'.repeat(40))
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
