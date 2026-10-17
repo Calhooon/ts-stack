@@ -1,3 +1,4 @@
+import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import { retrySnapshotArchiveOperation } from '../archive/SnapshotArchiveTransportFailure'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { SnapshotCancelledError } from '../SnapshotCancelledError'
@@ -54,6 +55,12 @@ export class RemoteSnapshotJournalDataDestination {
       { version: 1, identityKey, source },
       signal
     )
+    if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'outcome')) {
+      const outcome = snapshotJournalDataRecord(value, ['version', 'outcome'])
+      if (outcome.version !== 1 || outcome.outcome !== 'bootstrap-required')
+        throw new TypeError('Invalid journal destination admission refusal')
+      throw new SnapshotJournalDataBootstrapRequiredError()
+    }
     const actual = parseSnapshotJournalDataStatus(value, identityKey, sourceStorageIdentity, destinationStorageIdentity)
     if (
       JSON.stringify(actual.binding.source) !== JSON.stringify(source.journal.source) ||
@@ -71,6 +78,23 @@ export class RemoteSnapshotJournalDataDestination {
       signal
     )
   }
+  /** Fresh observation DATA only; opening a new writer still requires BEGIN. */
+  static async observe(
+    rpc: SnapshotJournalDataRpcCall,
+    identityKey: string,
+    sourceStorageIdentity: string,
+    destinationStorageIdentity: string
+  ): Promise<SnapshotJournalDataStatus | undefined> {
+    const value = await this.request(rpc, 'getSnapshotJournalDataStatus', {
+      version: 1,
+      identityKey,
+      sourceStorageIdentity
+    })
+    return value === null
+      ? undefined
+      : parseSnapshotJournalDataStatus(value, identityKey, sourceStorageIdentity, destinationStorageIdentity)
+  }
+
   private static async request(
     rpc: SnapshotJournalDataRpcCall,
     method: SnapshotJournalDataMethod,

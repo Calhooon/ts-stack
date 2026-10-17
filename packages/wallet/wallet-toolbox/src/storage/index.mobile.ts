@@ -97,3 +97,6 @@ export type {
   SnapshotJournalDataCapabilities,
   SnapshotJournalDataStatus
 } from './snapshot/journal/SnapshotJournalDataProtocol'
+
+export { runSnapshotJournalSourceDataReconciliation } from './snapshot/journal/runSnapshotJournalSourceDataReconciliation'
+export type { SnapshotJournalDataOptions } from './snapshot/journal/SnapshotJournalDataProvider'

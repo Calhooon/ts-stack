@@ -1,3 +1,4 @@
+import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
 import { WERR_INVALID_OPERATION, WERR_UNAUTHORIZED } from '../../../sdk/WERR_errors'
@@ -112,24 +113,31 @@ export class KnexSnapshotJournalDataRpc {
     current()
     if (input.source !== undefined && input.source.sourceStorage.chain !== this.storage.chain)
       throw new WERR_UNAUTHORIZED('Journal DATA network must match the current endpoint')
-    const destination =
-      input.source !== undefined
-        ? (
-            await KnexSnapshotJournalDataDestination.begin(
+    let destination: KnexSnapshotJournalDataDestination | undefined
+    try {
+      destination =
+        input.source !== undefined
+          ? (
+              await KnexSnapshotJournalDataDestination.begin(
+                this.storage,
+                identityKey,
+                input.source,
+                journalCopyLimits(),
+                admission
+              )
+            ).destination
+          : await KnexSnapshotJournalDataDestination.resume(
               this.storage,
               identityKey,
-              input.source,
+              input.sourceStorageIdentity,
               journalCopyLimits(),
               admission
             )
-          ).destination
-        : await KnexSnapshotJournalDataDestination.resume(
-            this.storage,
-            identityKey,
-            input.sourceStorageIdentity,
-            journalCopyLimits(),
-            admission
-          )
+    } catch (error) {
+      if (method === 'beginSnapshotJournalData' && error instanceof SnapshotJournalDataBootstrapRequiredError)
+        return { version: 1, outcome: 'bootstrap-required' }
+      throw error
+    }
     current()
     if (destination === undefined) {
       if (method === 'getSnapshotJournalDataStatus') return null

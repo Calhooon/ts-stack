@@ -138,3 +138,28 @@ destination's actual status. The existing coordinator retains real source cleanu
 and cancellation/progress semantics. This explicit candidate does not yet wire
 ordinary manager copies or remote primary selection; those remain implementation
 work, and full system qualification is still pending.
+
+## Ordinary manager integration in progress
+
+SQL providers now expose DATA receiver negotiation, actual stored status and
+manager-admitted receiver opening. Full/mobile clients expose the corresponding
+authenticated operations. Status is comparison DATA; it never opens a writer.
+The manager can route a negotiated remote journal artifact to its local DATA
+receiver, retaining its original auth/generation/provider membership checks and
+progress/observer/error/cleanup behavior. Source I/O and remote dispatch run
+outside that queue. A target generation that cannot extend the requested lineage
+returns an explicit bootstrap-required refusal before mutation. The manager may
+then open one new complete source/closure and seek actual admission again; an
+observer throwing a similar error cannot trigger that retry.
+
+A genuine local retained source can also feed `runSnapshotJournalSourceDataReconciliation`
+directly. Its real read owner remains local and is physically drained on exit;
+only bounded DATA packets go to the endpoint. Neither source SQL commit nor
+current-data fences are invoked across HTTP. This avoids an unnecessary local
+artifact store. The existing local-to-local journal path is preserved.
+
+Ordinary pushes retain their existing safe primary-propagation path while full
+remote primary cutover is unfinished. The explicit DATA coordinator does not
+activate a primary. These additions remain under focused feedback, not full
+feature/system qualification. Verified large-field reuse, DATA no-change receipt
+integration and complete remote primary coordination still require source work.

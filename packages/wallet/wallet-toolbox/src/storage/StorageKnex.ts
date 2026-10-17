@@ -1,3 +1,8 @@
+import { KnexSnapshotJournalDataDestination } from './snapshot/journal/KnexSnapshotJournalDataDestination'
+import type { SnapshotJournalDataOptions } from './snapshot/journal/SnapshotJournalDataProvider'
+import type { SnapshotJournalDataStatus } from './snapshot/journal/SnapshotJournalDataProtocol'
+import type { SnapshotJournalArchiveBinding } from './snapshot/journal/SnapshotJournalArchiveBinding'
+import { journalCopyLimits } from './snapshot/journal/SnapshotJournalCopyLimits'
 import {
   parseSnapshotSyncContentPosition,
   parseSnapshotSyncContentRevision,
@@ -614,6 +619,48 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       bootstrap,
       preferIncremental
     )
+  }
+
+  async supportsSnapshotJournalDataSync(): Promise<boolean> {
+    return await this.supportsSnapshotJournalSync()
+  }
+
+  async getSnapshotJournalDataStatus(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalDataOptions = {}
+  ): Promise<SnapshotJournalDataStatus | undefined> {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal DATA observation requires actual current manager/provider admission')
+    const destination = await KnexSnapshotJournalDataDestination.resume(
+      this,
+      identityKey,
+      sourceStorageIdentity,
+      journalCopyLimits(),
+      options.admission
+    )
+    return destination === undefined
+      ? undefined
+      : { version: 1, binding: destination.binding, ...(await destination.status()) }
+  }
+
+  async openSnapshotJournalDataDestination(
+    identityKey: string,
+    source: SnapshotJournalArchiveBinding,
+    options: SnapshotJournalDataOptions = {}
+  ): Promise<KnexSnapshotJournalDataDestination> {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal DATA writers require actual current manager/provider admission')
+    return (
+      await KnexSnapshotJournalDataDestination.begin(
+        this,
+        identityKey,
+        source,
+        journalCopyLimits(),
+        options.admission,
+        options.signal
+      )
+    ).destination
   }
 
   /** Fresh local negotiation only. Absence on an older migrated store selects

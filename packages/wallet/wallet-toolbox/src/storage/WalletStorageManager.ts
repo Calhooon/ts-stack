@@ -1,3 +1,18 @@
+import {
+  snapshotJournalDataProvider,
+  snapshotJournalArchiveProvider
+} from './snapshot/journal/SnapshotJournalDataProvider'
+import { snapshotJournalDataSourceBinding } from './snapshot/journal/snapshotJournalDataSourceBinding'
+import {
+  isSnapshotJournalDataBootstrapRequiredError,
+  type SnapshotJournalDataBootstrapRequiredError
+} from './snapshot/journal/SnapshotJournalDataBootstrapRequiredError'
+import {
+  runSnapshotJournalArchiveReconciliation,
+  type SnapshotJournalDataDestination
+} from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+import { runSnapshotJournalSourceDataReconciliation } from './snapshot/journal/runSnapshotJournalSourceDataReconciliation'
+import type { RemoteSnapshotJournalArchive } from './snapshot/journal/openRemoteSnapshotJournalArchive'
 import { parseSnapshotSyncContentRevision, snapshotSyncContentPosition } from './snapshot/SnapshotSyncContentRevision'
 import { Brc38CleanupScope } from './portable/Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
@@ -1499,6 +1514,198 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
+  private journalCopyAdmission(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    selected: { generation: number; active: sdk.WalletStorageProvider },
+    identityKey: string,
+    signal?: AbortSignal
+  ) {
+    const managedReader = this._stores.some(store => Object.is(store.storage, reader))
+    const managedWriter = this._stores.some(store => store.storage === writer)
+    return <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> =>
+      this.withAccess(
+        async active => {
+          if (
+            (observe !== 'observe' && (active !== selected.active || selected.generation !== this.generation)) ||
+            identityKey !== this._authId.identityKey ||
+            (managedReader && !this._stores.some(store => Object.is(store.storage, reader))) ||
+            (managedWriter && !this._stores.some(store => store.storage === writer))
+          )
+            throw new WERR_INVALID_OPERATION('Journal copy selection changed; open a fresh source')
+          if ((await this.getAuth()).identityKey !== identityKey) throw new WERR_UNAUTHORIZED()
+          return await operation()
+        },
+        false,
+        true,
+        observe === 'observe' ? undefined : signal
+      )
+  }
+
+  private journalCopyProgress(
+    options: SyncSessionOptions,
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+  ) {
+    return (progress: SnapshotJournalReconciliationProgress): void => {
+      onDurableProgress?.(progress)
+      options.onProgress?.({
+        state:
+          progress.state === 'complete'
+            ? 'completed'
+            : progress.state === 'stopped'
+              ? 'cancelled'
+              : progress.state === 'cancelRequested'
+                ? 'cancelling'
+                : 'committed',
+        mode: 'paged',
+        ...progress.progress,
+        journalCheckpoint: {
+          ...progress.checkpoint,
+          ...(progress.checkpoint.after === undefined ? {} : { after: { ...progress.checkpoint.after } })
+        }
+      })
+      options.onJournalProgress?.(progress)
+    }
+  }
+
+  /** Explicit DATA peers keep their actual endpoint/SQL source owners. A remote
+   * operation is admitted briefly, then runs outside the manager queue. */
+  private async copyJournalDataWindow(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions = {},
+    selection?: { generation: number; active: sdk.WalletStorageProvider },
+    onCustody?: (value: JournalCopyCustody) => void,
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+  ): Promise<SyncSessionResult | undefined> {
+    // Remote primary cutover requires its separate current-endpoint protocol.
+    // Keep that existing serialized path until its actual fences are installed.
+    if (
+      onCustody !== undefined ||
+      !snapshotJournalDataProvider(writer) ||
+      !(await writer.supportsSnapshotJournalDataSync())
+    )
+      return undefined
+    const local = journalSource(reader) && (await reader.supportsSnapshotJournalSync())
+    const remote = !local && snapshotJournalArchiveProvider(reader) && (await reader.supportsSnapshotJournalArchive())
+    if (!local && !remote) return undefined
+    const selected = selection ?? (await this.captureSyncSelection(options.signal))
+    if (selected === undefined || options.signal?.aborted)
+      return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    const identityKey = this._authId.identityKey,
+      readerSettings = await reader.makeAvailable(),
+      writerSettings = await writer.makeAvailable()
+    assertSyncNetwork(readerSettings, writerSettings)
+    const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
+    const outside = writer.journalDataCommitOutsideManager === true
+    const dispatch = async (observe = false): Promise<void> => {
+      if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+    }
+    await dispatch(true)
+    const previous = await writer.getSnapshotJournalDataStatus(identityKey, readerSettings.storageIdentityKey, {
+      admission
+    })
+    const limits = journalCopyLimits(options.maxItems, options.maxRoughSize)
+    let forceBootstrap = false
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let source: SnapshotJournalReconciliationSource | RemoteSnapshotJournalArchive | undefined
+      let admissionRefusal: SnapshotJournalDataBootstrapRequiredError | undefined
+      let failure: { error: unknown } | undefined
+      const cleanupScope = new Brc38CleanupScope(async () => {
+        if (source === undefined) return
+        try {
+          await closeSnapshotJournalSource(source, options.signal)
+        } catch (cleanup) {
+          if (failure !== undefined && cleanup !== failure.error)
+            throw new AggregateError([failure.error, cleanup], 'Journal DATA and actual source cleanup failed', {
+              cause: failure.error
+            })
+          throw cleanup
+        }
+      })
+      try {
+        if (local && journalSource(reader))
+          source = await reader.openCurrentSnapshotJournalSource(identityKey, {
+            lifetimeMs: options.snapshotLifetimeMs,
+            signal: options.signal
+          })
+        else if (remote && snapshotJournalArchiveProvider(reader)) {
+          const position =
+            !forceBootstrap && previous?.checkpoint.phase === 'acknowledged'
+              ? { binding: previous.binding.receipt.binding, highWater: previous.binding.receipt.highWater }
+              : undefined
+          source = await reader.openSnapshotJournalArchive(identityKey, position, {
+            lifetimeMs: options.snapshotLifetimeMs,
+            signal: options.signal
+          })
+          if (source === undefined) return undefined
+        }
+        if (source === undefined) throw new WERR_INVALID_OPERATION('Journal DATA actual source is unavailable')
+        const sourceBinding =
+          'manifest' in source
+            ? source.manifest.binding
+            : snapshotJournalDataSourceBinding(source, previous, forceBootstrap)
+        const open = async (): Promise<SnapshotJournalDataDestination> => {
+          await dispatch()
+          let destination: SnapshotJournalDataDestination | undefined
+          try {
+            destination = await writer.openSnapshotJournalDataDestination(identityKey, sourceBinding, {
+              admission,
+              signal: options.signal
+            })
+          } catch (error) {
+            if (isSnapshotJournalDataBootstrapRequiredError(error)) admissionRefusal = error
+            throw error
+          }
+          if (destination === undefined)
+            throw new WERR_INVALID_OPERATION('Negotiated journal DATA destination disappeared')
+          const admitted = destination
+          return {
+            status: async () => {
+              await dispatch(true)
+              return await admitted.status()
+            },
+            stagePacket: async (expected, bytes) => {
+              await dispatch()
+              return await admitted.stagePacket(expected, bytes)
+            },
+            promote: async expected => {
+              await dispatch()
+              return await admitted.promote(expected)
+            }
+          }
+        }
+        const callbacks = { signal: options.signal, onProgress: this.journalCopyProgress(options, onDurableProgress) }
+        const run =
+          'manifest' in source
+            ? runSnapshotJournalArchiveReconciliation(source, open, callbacks)
+            : runSnapshotJournalSourceDataReconciliation(source, sourceBinding, open, limits, callbacks)
+        let last: SnapshotJournalReconciliationProgress | undefined
+        for await (const progress of run) last = progress
+        if (last === undefined || (last.state !== 'complete' && last.state !== 'stopped'))
+          throw new WERR_INVALID_OPERATION('Journal DATA did not reach a physically drained terminal state')
+        return {
+          status: last.state === 'complete' ? 'completed' : 'cancelled',
+          mode: 'paged',
+          pages: last.progress.pages,
+          inserts: last.progress.inserts,
+          updates: last.progress.updates,
+          journalCheckpoint: copyJournalCheckpoint(last.checkpoint)
+        }
+      } catch (error) {
+        failure = { error }
+        if (attempt === 0 && admissionRefusal !== undefined && error === admissionRefusal) {
+          forceBootstrap = true
+          continue
+        }
+        throw error
+      } finally {
+        await cleanupScope.close()
+      }
+    }
+    throw new WERR_INVALID_OPERATION('Journal DATA bootstrap retry was exhausted')
+  }
+
   /** Negotiate afresh for every ordinary copy. A provider's method presence
    * chooses an adapter; the source and each physical destination transaction
    * independently establish actual current authority. No result is cached. */
@@ -1605,35 +1812,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     onCustody?: (value: JournalCopyCustody) => void,
     onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
-    if (reader === writer || !journalSource(reader) || !journalDestination(writer)) return undefined
+    if (reader === writer) return undefined
+    if (!journalSource(reader) || !journalDestination(writer))
+      return await this.copyJournalDataWindow(reader, writer, options, selection, onCustody, onDurableProgress)
     if (!(await reader.supportsSnapshotJournalSync()) || !(await writer.supportsSnapshotJournalSync())) return undefined
     const limits = journalCopyLimits(options.maxItems, options.maxRoughSize)
     if (options.signal?.aborted) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
     const selected = selection ?? (await this.captureSyncSelection(options.signal))
     if (selected === undefined) return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
     const identityKey = this._authId.identityKey
-    const managedReader = this._stores.some(store => Object.is(store.storage, reader))
-    const managedWriter = this._stores.some(store => store.storage === writer)
     const readerSettings = await reader.makeAvailable()
     const writerSettings = await writer.makeAvailable()
     assertSyncNetwork(readerSettings, writerSettings)
-    const admission = <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> =>
-      this.withAccess(
-        async active => {
-          if (
-            (observe !== 'observe' && (active !== selected.active || selected.generation !== this.generation)) ||
-            identityKey !== this._authId.identityKey ||
-            (managedReader && !this._stores.some(store => Object.is(store.storage, reader))) ||
-            (managedWriter && !this._stores.some(store => store.storage === writer))
-          )
-            throw new WERR_INVALID_OPERATION('Journal copy selection changed; open a fresh source')
-          if ((await this.getAuth()).identityKey !== identityKey) throw new WERR_UNAUTHORIZED()
-          return await operation()
-        },
-        false,
-        true,
-        observe === 'observe' ? undefined : options.signal
-      )
+    const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
     const source = await reader.openCurrentSnapshotJournalSource(identityKey, {
       lifetimeMs: options.snapshotLifetimeMs,
       signal: options.signal
@@ -1676,26 +1867,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
         },
         {
           signal: options.signal,
-          onProgress: progress => {
-            onDurableProgress?.(progress)
-            options.onProgress?.({
-              state:
-                progress.state === 'complete'
-                  ? 'completed'
-                  : progress.state === 'stopped'
-                    ? 'cancelled'
-                    : progress.state === 'cancelRequested'
-                      ? 'cancelling'
-                      : 'committed',
-              mode: 'paged',
-              ...progress.progress,
-              journalCheckpoint: {
-                ...progress.checkpoint,
-                ...(progress.checkpoint.after === undefined ? {} : { after: { ...progress.checkpoint.after } })
-              }
-            })
-            options.onJournalProgress?.(progress)
-          }
+          onProgress: this.journalCopyProgress(options, onDurableProgress)
         }
       )
       for await (const progress of run) last = progress

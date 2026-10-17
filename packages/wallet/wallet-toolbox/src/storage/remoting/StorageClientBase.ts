@@ -1,3 +1,5 @@
+import type { SnapshotJournalDataOptions } from '../snapshot/journal/SnapshotJournalDataProvider'
+import type { SnapshotJournalDataStatus } from '../snapshot/journal/SnapshotJournalDataProtocol'
 import { RemoteSnapshotJournalDataDestination } from '../snapshot/journal/RemoteSnapshotJournalDataDestination'
 import {
   isSnapshotJournalDataMethod,
@@ -470,12 +472,35 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return await openRemoteSnapshotJournalArchive(transport, position, options)
   }
 
+  readonly journalDataCommitOutsideManager = true as const
+
+  async supportsSnapshotJournalArchive(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalArchive !== undefined
+  }
+  async supportsSnapshotJournalDataSync(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalData !== undefined
+  }
+  async getSnapshotJournalDataStatus(
+    identityKey: string,
+    sourceStorageIdentity: string
+  ): Promise<SnapshotJournalDataStatus | undefined> {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalData === undefined) return undefined
+    return await RemoteSnapshotJournalDataDestination.observe(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey)
+    )
+  }
+
   /** Actual authenticated destination admission; no local source fence is serialized. */
   async openSnapshotJournalDataDestination(
     identityKey: string,
     source: SnapshotJournalArchiveBinding,
-    signal?: AbortSignal
+    options: SnapshotJournalDataOptions | AbortSignal = {}
   ): Promise<RemoteSnapshotJournalDataDestination | undefined> {
+    const signal = 'aborted' in options ? options : options.signal
     const settings = await this.makeAvailable()
     if (!this.snapshotArchivesEnabled || settings.snapshotJournalData === undefined) return undefined
     if (source.sourceStorage.chain !== settings.chain)

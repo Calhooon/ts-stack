@@ -1,3 +1,4 @@
+import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
 import { validateSyncProofs } from '../../remoting/validateRpcSyncProofs'
 import type { TableProvenTx } from '../../schema/tables'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
@@ -167,10 +168,10 @@ export class KnexSnapshotJournalDataDestination {
                 snapshotJournalAssociationGeneration(previous.binding) ===
                   snapshotJournalAssociationGeneration(binding) &&
                 previous.binding.receipt.highWater === binding.low
-              if (!source.journal.bootstrap && !incremental) invalid()
+              if (!source.journal.bootstrap && !incremental) throw new SnapshotJournalDataBootstrapRequiredError()
               return { binding, checkpoint: undefined, previous, incremental }
             }
-            if (!source.journal.bootstrap) invalid()
+            if (!source.journal.bootstrap) throw new SnapshotJournalDataBootstrapRequiredError()
             const scopes = await trx('snapshot_reconciliation_windows')
               .where('userId', userId)
               .select('sourceStorageIdentity')
