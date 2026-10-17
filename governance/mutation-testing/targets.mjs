@@ -16,7 +16,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/schema/snapshotSyncReceiptMigration.test.ts',
@@ -37,7 +42,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
@@ -57,7 +67,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
@@ -77,7 +92,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
@@ -108,7 +128,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
@@ -133,7 +158,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalArchive*.test.ts',
@@ -155,14 +185,19 @@ const walletDataAdditions = {
       'src/storage/snapshot/journal/SnapshotJournalDataProvider.ts',
       'src/storage/snapshot/journal/runSnapshotJournalArchiveReconciliation.ts',
       'src/storage/snapshot/journal/runSnapshotJournalSourceDataReconciliation.ts',
-      'src/storage/snapshot/journal/snapshotJournalDataSourceBinding.ts'
+      'src/storage/snapshot/journal/snapshotJournalDataSourceBinding.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     additionalInputs: [
       'test/utils/snapshotJournalArchiveFixture.ts',
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
       'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+      'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
@@ -178,7 +213,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalArchiveFixture.ts',
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
-      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: ['<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchive.test.ts']
   },
@@ -189,7 +229,12 @@ const walletDataAdditions = {
       'test/utils/snapshotJournalArchiveFixture.ts',
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
-      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
@@ -199,14 +244,19 @@ const walletDataAdditions = {
   'wallet-current-snapshot-journal-source-identities': {
     mutate: [
       'src/storage/snapshot/journal/SnapshotJournalFieldReferences.ts',
-      'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts'
+      'src/storage/snapshot/journal/captureSnapshotJournalFieldArchiveSource.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     additionalInputs: [
       'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
       'test/utils/snapshotJournalArchiveFixture.ts',
       'test/utils/snapshotJournalDataManagerFixture.ts',
       'test/utils/snapshotArchiveHttpFixtures.ts',
-      'test/utils/snapshotContentReceiptHistoricalFixture.ts'
+      'test/utils/snapshotContentReceiptHistoricalFixture.ts',
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts'
     ],
     tests: [
       '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldSource.test.ts',
@@ -219,10 +269,14 @@ const walletDataAdditions = {
     ]
   },
   'wallet-current-brc38-native-catalog-node': {
-    mutate: [],
+    mutate: ['src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts'],
     additionalInputs: [
       'test/utils/snapshotJournalFieldNativeCache.ts',
-      'src/storage/snapshot/preparePackedNativeSnapshotFieldNode.case.ts'
+      'src/storage/snapshot/preparePackedNativeSnapshotFieldNode.case.ts',
+      'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
     ],
     tests: []
   }

@@ -1,3 +1,5 @@
+import { encodeSnapshotJournalFieldFrame, decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
+import type { RemoteSnapshotJournalFieldArchive } from './openRemoteSnapshotJournalFieldArchive'
 import {
   retireSnapshotJournalDestinationWindow,
   replaceSnapshotJournalDestinationWindow
@@ -364,6 +366,154 @@ test('an actual owned field window cannot resume or bootstrap through the origin
     expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
     expect((await f.target.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe('journal-data-target')
   } finally {
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('authenticated field DATA and copied frames cannot enroll an ordinary SQL row window as a native financial action', async () => {
+  const { prepareSnapshotJournalNativeActionMerge } = await import('./SnapshotJournalNativeActionMerge')
+  const f = await fixture(true)
+  let archive: RemoteSnapshotJournalArchive | undefined, fields: RemoteSnapshotJournalFieldArchive | undefined
+  try {
+    archive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual original row source unavailable')
+    const old = await KnexSnapshotJournalDataDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    await archive.close()
+    await archive.closed
+    fields = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (fields === undefined) throw new Error('Actual authenticated field source unavailable')
+    let admissions = 0
+    const frame = await fields.readFrame(0, async () => {
+        expect(await f.target.knex('users').where('identityKey', f.source.identityKey).first()).toBeDefined()
+      }),
+      page = frame.page,
+      bytes = encodeSnapshotJournalFieldFrame(page, { stream: frame.stream, tableId: frame.tableId }),
+      receipt = {
+        sequence: 1,
+        streamIndex: 0,
+        tableId: frame.tableId,
+        examined: page.examined,
+        bytes: bytes.length,
+        digest: frame.frameDigest
+      },
+      admission = async <T>(operation: () => Promise<T>): Promise<T> => {
+        admissions++
+        return await f.admission(operation)
+      },
+      before = await f.target.knex('snapshot_reconciliation_windows').first()
+    expect(page.changes.some(change => change.present)).toBe(true)
+    await expect(
+      prepareSnapshotJournalNativeActionMerge(
+        f.target,
+        old.destination.binding,
+        old.checkpoint,
+        receipt,
+        0,
+        fields,
+        structuredClone(frame),
+        journalCopyLimits(),
+        admission
+      )
+    ).rejects.toThrow('actual opened artifact')
+    await expect(
+      prepareSnapshotJournalNativeActionMerge(
+        f.target,
+        old.destination.binding,
+        old.checkpoint,
+        receipt,
+        0,
+        fields,
+        frame,
+        journalCopyLimits(),
+        admission
+      )
+    ).rejects.toThrow('actual field/window/current ownership')
+    expect(admissions).toBe(0)
+    expect(await f.target.knex('snapshot_reconciliation_windows').first()).toEqual(before)
+    expect(await f.target.knex('transactions')).toHaveLength(0)
+    expect(await f.target.knex('outputs')).toHaveLength(0)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
+  } finally {
+    await fields?.close()
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('actual field intake retains large-field descriptors, resumes its own window, and refuses copied archive frames without a financial ACK', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
+  const f = await fixture(true),
+    bytes = Buffer.alloc(2097152, 107)
+  let archive: RemoteSnapshotJournalFieldArchive | undefined
+  try {
+    await f.source.storage.knex('transactions').where('transactionId', 1).update({ rawTx: bytes })
+    archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual authenticated field artifact unavailable')
+    const begun = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    expect(begun.destination.binding.fieldEncoding).toBe('wallet-journal-fields/1')
+    await expect(
+      KnexSnapshotJournalDataDestination.resume(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding.sourceStorage.storageIdentityKey,
+        journalCopyLimits(),
+        f.admission
+      )
+    ).rejects.toThrow('actual admitted window')
+    const actual = archive,
+      copied = {
+        ...archive,
+        readFrame: async (...args: Parameters<typeof actual.readFrame>) =>
+          structuredClone(await actual.readFrame(...args))
+      }
+    await expect(begun.destination.stageArchiveFrame(begun.checkpoint, copied)).rejects.toThrow(
+      'actual opened artifact'
+    )
+    expect((await begun.destination.status()).checkpoint).toEqual(begun.checkpoint)
+    const next = await begun.destination.stageArchiveFrame(begun.checkpoint, actual)
+    expect(next.sequence).toBe(1)
+    expect(next.phase).toBe('intake')
+    const staged = await f.target
+      .knex('snapshot_reconciliation_stage_pages')
+      .where('sessionId', next.sessionId)
+      .select('tableId', 'payload')
+    expect(staged).toHaveLength(1)
+    const page = decodeSnapshotJournalFieldFrame(new Uint8Array(staged[0].payload), { stream: 'scope', tableId: 0 }),
+      selected = page.changes.find(change => change.present && change.metadata.id1 === 1)
+    if (selected === undefined || !selected.present) throw new Error('Actual staged source transaction missing')
+    expect(selected.fields.rawTx.bytes).toBe(bytes.length)
+    expect(selected.row).not.toHaveProperty('rawTx')
+    expect(staged[0].payload.length).toBeLessThan(262144)
+    expect(await f.target.knex('transactions')).toHaveLength(0)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
+    const resumed = await KnexSnapshotJournalFieldDestination.resume(
+      f.target,
+      f.source.identityKey,
+      actual.manifest.binding.sourceStorage.storageIdentityKey,
+      journalCopyLimits(),
+      f.admission
+    )
+    if (resumed === undefined) throw new Error('Actual durable field window unavailable')
+    expect((await resumed.status()).checkpoint).toEqual(next)
+    await actual.close()
+    await actual.closed
+    await expect(resumed.stageArchiveFrame(next, actual)).rejects.toThrow('actual admitted artifact/window')
+    expect((await resumed.status()).checkpoint).toEqual(next)
+  } finally {
+    bytes.fill(0)
     await archive?.close()
     await f.close()
   }

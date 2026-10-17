@@ -1,3 +1,4 @@
+import type { SyncMap } from '../../schema/entities/EntityBase'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
@@ -44,6 +45,7 @@ import {
   updateSnapshotJournalMembership,
   readSnapshotJournalMembershipPreimage,
   readSnapshotJournalInheritedMembershipPreimage,
+  type SnapshotJournalMembershipChange,
   type SnapshotJournalMembershipLimits
 } from './SnapshotJournalMemberships'
 
@@ -115,7 +117,7 @@ function rowDigest(change: SnapshotJournalDelta, receipt: SnapshotJournalDestina
     .digest('hex')
 }
 
-async function* captured(
+export async function* readSnapshotJournalEntityFrameIdentities(
   k: Knex,
   binding: SnapshotJournalDestinationBinding,
   state: SnapshotJournalDestinationCheckpoint,
@@ -246,25 +248,22 @@ export class SnapshotJournalPreparedEntityMerge {
       invalid()
     this.#consumed = true
     this.signal?.throwIfAborted()
-    return await withSnapshotJournalDestinationWindowFence(k, binding, expected, async fenced => {
-      await verifySnapshotJournalEntityIndexes(fenced)
-      const { map, self } = await loadSnapshotJournalDestinationParents(
-        fenced,
-        binding,
-        expected,
-        captured(fenced, binding, expected, receipt.digest, changeIndex),
-        limits,
-        this.budget
-      )
-      let preimage: { fingerprint: string; generation: string; inheritedCreated?: true } | undefined =
-        await readSnapshotJournalMembershipPreimage(fenced, binding, receipt.tableId, change, this.budget)
-      const chunk = {
-        fromStorageIdentityKey: binding.source.storageIdentity,
-        toStorageIdentityKey: binding.destinationStorageIdentity,
-        userIdentityKey: binding.source.identityKey,
-        [this.table]: [this.row]
-      } as SyncChunk
-      const merge = async (trx: Knex): Promise<{ inserts: number; updates: number }> => {
+    return await applySnapshotJournalPreparedEntityEffect(
+      k,
+      binding,
+      expected,
+      change,
+      receipt,
+      changeIndex,
+      limits,
+      this.budget,
+      async (trx, map, observeCurrent) => {
+        const chunk = {
+          fromStorageIdentityKey: binding.source.storageIdentity,
+          toStorageIdentityKey: binding.destinationStorageIdentity,
+          userIdentityKey: binding.source.identityKey,
+          [this.table]: [this.row]
+        } as SyncChunk
         const storage = this.storage
         const adapter = new Proxy(storage, {
           get: (target, name) => {
@@ -273,14 +272,7 @@ export class SnapshotJournalPreparedEntityMerge {
               return async (args: { partial: Readonly<Record<string, string | number>>; trx?: unknown }) => {
                 const rows = await readSnapshotJournalNativeEntityRows(trx, storage, name, args, this.budget)
                 if (snapshotJournalNativeFindTable(name) === this.table && rows.length === 1) {
-                  const inherited = await readSnapshotJournalInheritedMembershipPreimage(
-                    trx,
-                    binding,
-                    receipt.tableId,
-                    rows[0],
-                    this.budget
-                  )
-                  if (inherited !== undefined) preimage = inherited
+                  await observeCurrent(rows[0])
                 }
                 return rows
               }
@@ -305,11 +297,111 @@ export class SnapshotJournalPreparedEntityMerge {
         this.signal?.throwIfAborted()
         return { inserts: result.inserts, updates: result.updates }
       }
-      if (self === undefined) {
-        if (receipt.tableId < 10) invalid()
-        const result = await merge(fenced)
+    )
+  }
+}
+
+/** Shared actual identity/parent/membership effect boundary. An incoming row or
+ * field descriptor cannot supply SQL authority. The caller owns a real admitted
+ * destination writer plus a one-use prepared semantic effect; this function
+ * freshly loads captured identities, checks natural keys/generations and records
+ * actual postimage custody in the same savepoint. No source/network I/O here. */
+export async function applySnapshotJournalPreparedEntityEffect(
+  k: Knex,
+  binding: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  change: SnapshotJournalMembershipChange,
+  receipt: SnapshotJournalDestinationStageReceipt,
+  changeIndex: number,
+  limits: SnapshotJournalEntityMergeLimits,
+  budget: SnapshotJournalAllocationBudget,
+  effect: (
+    trx: Knex,
+    map: SyncMap,
+    observeCurrent: (row: Readonly<Record<string, unknown>>) => Promise<void>
+  ) => Promise<{ inserts: number; updates: number }>
+): Promise<{ inserts: number; updates: number }> {
+  if (
+    !change.present ||
+    !change.metadata.present ||
+    !Number.isSafeInteger(changeIndex) ||
+    changeIndex < 0 ||
+    changeIndex > 255 ||
+    snapshotJournalDestinationStreams[receipt.streamIndex]?.tableId !== receipt.tableId
+  )
+    invalid()
+  return await withSnapshotJournalDestinationWindowFence(k, binding, expected, async fenced => {
+    await verifySnapshotJournalEntityIndexes(fenced)
+    const { map, self } = await loadSnapshotJournalDestinationParents(
+      fenced,
+      binding,
+      expected,
+      readSnapshotJournalEntityFrameIdentities(fenced, binding, expected, receipt.digest, changeIndex),
+      limits,
+      budget
+    )
+    let preimage: { fingerprint: string; generation: string; inheritedCreated?: true } | undefined =
+      await readSnapshotJournalMembershipPreimage(fenced, binding, receipt.tableId, change, budget)
+    const merge = async (trx: Knex): Promise<{ inserts: number; updates: number }> =>
+      await effect(trx, map, async row => {
+        const inherited = await readSnapshotJournalInheritedMembershipPreimage(
+          trx,
+          binding,
+          receipt.tableId,
+          row,
+          budget
+        )
+        if (inherited !== undefined) preimage = inherited
+      })
+    if (self === undefined) {
+      if (receipt.tableId < 10) invalid()
+      const result = await merge(fenced)
+      await updateSnapshotJournalMembership(
+        fenced,
+        binding,
+        expected,
+        receipt.tableId,
+        change,
+        snapshotJournalLocalMembershipKey(receipt.tableId, change, map),
+        result.inserts === 1,
+        limits,
+        budget,
+        preimage
+      )
+      return result
+    }
+    if (
+      self.tableId !== receipt.tableId ||
+      self.incomingId !== change.metadata.id1 ||
+      (change.metadata.generation !== undefined && self.generation !== change.metadata.generation)
+    )
+      invalid()
+    let missingBootstrapLocalId: number | undefined
+    return await applySnapshotJournalIdentityTransition(
+      fenced,
+      binding,
+      expected,
+      [self],
+      limits,
+      async (trx, associations) => {
+        const key = self.tableId + ':' + self.incomingId
+        const previous = associations.get(key)
+        if (previous !== undefined) {
+          await verifySnapshotJournalDestinationIdentity(trx, binding.destinationUserId, self, previous, map)
+          map[snapshotJournalIdentityEntities[self.tableId]].idMap[self.incomingId] = previous.localId
+        }
+        const result = await merge(trx)
+        const localId = map[snapshotJournalIdentityEntities[self.tableId]].idMap[self.incomingId]
+        if (!Number.isSafeInteger(localId) || localId < 1) invalid()
+        await verifySnapshotJournalDestinationIdentity(
+          trx,
+          binding.destinationUserId,
+          self,
+          { generation: self.generation, naturalIdentity: self.naturalIdentity, localId },
+          map
+        )
         await updateSnapshotJournalMembership(
-          fenced,
+          trx,
           binding,
           expected,
           receipt.tableId,
@@ -317,71 +409,26 @@ export class SnapshotJournalPreparedEntityMerge {
           snapshotJournalLocalMembershipKey(receipt.tableId, change, map),
           result.inserts === 1,
           limits,
-          this.budget,
-          preimage
+          budget,
+          preimage,
+          missingBootstrapLocalId
         )
-        return result
-      }
-      if (
-        self.tableId !== receipt.tableId ||
-        self.incomingId !== change.metadata.id1 ||
-        (change.metadata.generation !== undefined && self.generation !== change.metadata.generation)
-      )
-        invalid()
-      let missingBootstrapLocalId: number | undefined
-      return await applySnapshotJournalIdentityTransition(
-        fenced,
-        binding,
-        expected,
-        [self],
-        limits,
-        async (trx, associations) => {
-          const key = self.tableId + ':' + self.incomingId
-          const previous = associations.get(key)
-          if (previous !== undefined) {
-            await verifySnapshotJournalDestinationIdentity(trx, binding.destinationUserId, self, previous, map)
-            map[snapshotJournalIdentityEntities[self.tableId]].idMap[self.incomingId] = previous.localId
+        return { assignments: new Map([[key, localId]]), result }
+      },
+      binding.bootstrap === true
+        ? async (trx, _reference, association) => {
+            const present = await verifySnapshotJournalDestinationIdentity(
+              trx,
+              binding.destinationUserId,
+              self,
+              association,
+              map,
+              true
+            )
+            if (!present) missingBootstrapLocalId = association.localId
+            return present
           }
-          const result = await merge(trx)
-          const localId = map[snapshotJournalIdentityEntities[self.tableId]].idMap[self.incomingId]
-          if (!Number.isSafeInteger(localId) || localId < 1) invalid()
-          await verifySnapshotJournalDestinationIdentity(
-            trx,
-            binding.destinationUserId,
-            self,
-            { generation: self.generation, naturalIdentity: self.naturalIdentity, localId },
-            map
-          )
-          await updateSnapshotJournalMembership(
-            trx,
-            binding,
-            expected,
-            receipt.tableId,
-            change,
-            snapshotJournalLocalMembershipKey(receipt.tableId, change, map),
-            result.inserts === 1,
-            limits,
-            this.budget,
-            preimage,
-            missingBootstrapLocalId
-          )
-          return { assignments: new Map([[key, localId]]), result }
-        },
-        binding.bootstrap === true
-          ? async (trx, _reference, association) => {
-              const present = await verifySnapshotJournalDestinationIdentity(
-                trx,
-                binding.destinationUserId,
-                self,
-                association,
-                map,
-                true
-              )
-              if (!present) missingBootstrapLocalId = association.localId
-              return present
-            }
-          : undefined
-      )
-    })
-  }
+        : undefined
+    )
+  })
 }

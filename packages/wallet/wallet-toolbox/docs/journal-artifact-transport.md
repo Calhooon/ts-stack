@@ -84,6 +84,32 @@ cleanup. The new large fixture passed in23.88s and later exceeded its original
 30s case guard under type-reader contention; only this new complete case now has
 a60s guard. Existing tests/benchmarks, production lifetimes and limits are unchanged.
 
+## Bounded destination custody postimages
+
+Current-row ownership checks keep small raw rows on their original path. Larger
+rows read actual small SQL cells and explicit logical binary/TEXT extents from
+the same locked destination transaction. Each chunk is at most16KiB; TEXT decodes
+strict UTF8 including leading U+FEFF. Every byte contributes to the fingerprint.
+Packed length/hash metadata only selects a candidate: actual streamed bytes are
+hashed to EOF and compared with the stored descriptor. No schema verdict survives
+the operation, and the original profile/key/index/generation checks still apply.
+
+Source paging and destination custody share a bounded SQL primitive module;
+destination custody does not import the snapshot/source orchestrator. Fixed table
+coordinates are immutable DATA, and schema/mode checks remain fresh per operation.
+
+The fingerprint retains the exact raw-v1 header/cell/type/column-order spelling,
+including the four-byte header length and raw binary suffixes. It hashes that
+spelling in bounded windows instead of constructing a frame. Historical small-row
+fingerprints remain identical; no wire frame ceiling or persisted schema changes.
+Returned large rows expose small cells plus explicit measured field descriptors;
+they are not complete financial DTOs. A transient4MiB hashing reservation drains
+on success or failure while retained metadata keeps its own charge under the
+original16MiB operation allowance. This closes the large postimage/custody read
+gap; complete field-aware financial effects and durable byte-cache integration
+remain separate requirements. The existing genuine native cache component and
+mandatory pair also assert real packed binary/TEXT custody; execution is pending.
+
 ## Separate destination field windows
 
 A target-owned destination binding may select the exact `wallet-journal-fields/1`
@@ -108,6 +134,26 @@ that durable cursor; replaying an older cursor refuses before effects. The old
 row batch refuses field windows. The field effect still must supply complete
 content, identity, proof and merge policy; this cursor component does not itself
 perform financial promotion or primary selection.
+
+## Native journal transaction and output effects
+
+The internal native action preparer now accepts an actual issued authenticated
+field frame and the actual target's staged promotion receipt. It checks that
+stored frame and completed captured-identity sidecars in the target window before
+preparing content. Target inspection and source HTTP/content preparation occur
+in separate scopes; no HTTP runs under the target writer.
+
+The original full-snapshot action kernel is shared with this journal path. It
+retains current-row and parent-generation checks, original transaction/output
+merge policy, BRC177 reclaim quarantine and genuine one-use native attachments.
+Journal effects also retain the original actual identity-transition and membership
+boundary, including inherited creation custody, missing bootstrap repair and
+postimage fingerprints. A changed frame, target window, profile, producer or
+current state refuses before financial effects. The complete outer receiver,
+remaining proof/request/simple-field components, ordinary SQL byte cache and
+manager routing still need integration; this internal component alone does not
+supply a complete-window financial ACK or primary handoff. Native execution is
+pending full feature assembly.
 
 ## Native preparation from actual field artifacts
 
@@ -404,3 +450,23 @@ still require genuine component/functional execution and original mutation
 coverage/score gates; copied actors and ordinary SQL connections cannot stand in
 for the native producer. Later runtime components must extend their owning
 registrations too before final qualification.
+
+## Field receiver intake
+
+The version-4 receiver uses the same actual target-window lifecycle as the
+version-3 row receiver, through a shared internal window controller. Both retain
+fresh physical schema, profile, backend, primary, nonce and allocation checks.
+The row receiver still refuses field windows. A replacement field controller
+resumes only its actual persisted field binding; a source metadata object
+cannot create an SQL source or select the target primary.
+
+Field intake reads the genuine authenticated archive outside target writer
+admission, fences each bounded identity prefix in its actual writer, verifies
+actual issued frame membership and digest, and seals/stages metadata plus intake
+progress atomically. A large field remains an explicit length/hash descriptor;
+its absent payload is never represented as a complete row. Intake does not
+write financial rows or complete a content receipt. Deferred sync-state
+provenance currently refuses until complete verified byte custody is available;
+no cursor advances over omitted provenance. The complete field promoter, other
+field semantic merges, remote primary handoff and full-system qualification
+remain unfinished.

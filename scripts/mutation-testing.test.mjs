@@ -331,7 +331,12 @@ test('journal mutation registration retains its complete source, canonical tests
     'test/utils/snapshotJournalDataManagerFixture.ts',
     'test/utils/snapshotArchiveHttpFixtures.ts',
     'test/utils/snapshotContentReceiptHistoricalFixture.ts',
-    'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts'
+    'src/storage/snapshot/journal/SnapshotJournalFieldTypes.ts',
+    'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
+    'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
+    'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
+    'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
   ])
   assert.equal(target.runnerOptions.maxTestRunnerReuse, 8)
   assert.deepEqual(target.runnerOptions.jest.config.testMatch, [

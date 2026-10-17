@@ -1,3 +1,5 @@
+import type { SyncMap } from '../schema/entities/EntityBase'
+import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
 import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import { Brc38WorkingAllocation, type Brc38WorkingCharge } from '../portable/Brc38WorkingAllocation'
@@ -39,9 +41,9 @@ import { snapshotSyncSmallText } from './SnapshotSyncSmallText'
 import { writeNativeSnapshotSyncRow } from './writeNativeSnapshotSyncRowNode'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 
-interface PreparedAction {
+export interface PreparedNativeSnapshotAction {
   readonly action: NativeSnapshotSyncAction
-  readonly metadata: Readonly<DetachedSnapshotSyncFieldRow>
+  readonly metadata: Readonly<Pick<DetachedSnapshotSyncFieldRow, 'fields'>>
   readonly current: NativeSnapshotSyncActionCurrent
   readonly stages: Readonly<Record<string, PreparedPackedNativeSnapshotField>>
   readonly inline: ReturnType<typeof prepareBrc38NativePackedTextWalletWrite>
@@ -94,7 +96,7 @@ export async function prepareNativeSnapshotSyncActions(
     retained = working.claim(16384 + 16 * detached.allocationBytes),
     allocations: Brc38WorkingCharge[] = [],
     stages: PreparedPackedNativeSnapshotField[] = [],
-    rows: PreparedAction[] = [],
+    rows: PreparedNativeSnapshotAction[] = [],
     failures = new Set<Brc38StagingCleanupError>(),
     scalarNames: readonly string[] = table === 'transactions' ? transactionScalarTextFields : outputScalarTextFields,
     payloadNames: readonly string[] = table === 'transactions' ? transactionPayloadFields : outputPayloadFields
@@ -272,139 +274,19 @@ export async function prepareNativeSnapshotSyncActions(
             table,
             rows.map(row => row.metadata.fields)
           )
-          for (const row of rows) {
-            check()
-            requireSameNativeSnapshotSyncActionCurrent(
-              row.current,
-              await readNativeSnapshotSyncActionCurrent(
-                storage,
-                writer.transaction,
-                writer.user.userId,
-                row.action,
-                loaded.map,
-                signal
-              )
-            )
-          }
-          let inserts = 0,
-            updates = 0
-          for (const row of rows) {
-            check()
-            const actual = await readNativeSnapshotSyncActionCurrent(
-                storage,
-                writer.transaction,
-                writer.user.userId,
-                row.action,
-                loaded.map,
-                signal
-              ),
-              current = actual.action
-            // Earlier rows may deliberately become this row's local identity;
-            // rerun original policies on that real postimage, never cached choices.
-            let selected: NativeSnapshotSyncAction | undefined, quarantineTxid: string | undefined
-            if (row.action.table === 'transactions') {
-              if (current !== undefined && current.table !== 'transactions') invalid()
-              const policy =
-                current === undefined ? undefined : planTransactionMerge(current.row, row.action.row, loaded.map)
-              selected =
-                current === undefined
-                  ? {
-                      table: 'transactions',
-                      row: { ...row.action.row, userId: writer.user.userId, provenTxId: actual.parentIds.provenTxId }
-                    }
-                  : policy === undefined
-                    ? undefined
-                    : { table: 'transactions', row: policy.row }
-              quarantineTxid = policy?.quarantineReclaimTxid
-            } else {
-              if (current !== undefined && current.table !== 'outputs') invalid()
-              const policy =
-                current === undefined ? undefined : planOutputMerge(current.row, row.action.row, loaded.map)
-              selected =
-                current === undefined
-                  ? {
-                      table: 'outputs',
-                      row: {
-                        ...row.action.row,
-                        userId: writer.user.userId,
-                        transactionId: actual.parentIds.transactionId,
-                        basketId: actual.parentIds.basketId,
-                        spentBy: actual.parentIds.spentBy
-                      }
-                    }
-                  : policy === undefined
-                    ? undefined
-                    : { table: 'outputs', row: policy }
-              if (
-                selected?.table === 'outputs' &&
-                selected.row.spendable &&
-                selected.row.txid !== undefined &&
-                (await nativeSnapshotUnresolvedReclaim(
-                  writer.transaction,
-                  writer.user.userId,
-                  selected.row.txid,
-                  signal
-                ))
-              )
-                selected.row.spendable = false
-            }
-            const entity = table === 'transactions' ? 'transaction' : 'output',
-              idName = table === 'transactions' ? 'transactionId' : 'outputId',
-              incomingId = positive(row.metadata.fields[idName])
-            if (selected === undefined) {
-              if (actual.field.metadata === undefined) invalid()
-              loaded.map[entity].idMap[incomingId] = positive(actual.field.metadata[idName])
-              continue
-            }
-            const fields: Record<string, unknown> = { ...selected.row },
-              attachments: Record<string, PreparedPackedNativeSnapshotField> = {},
-              inlineNames = new Set<string>()
-            for (const name of payloadNames) {
-              const cell = fields[name]
-              if (cell === undefined) continue
-              if (typeof cell === 'string') {
-                if (cell !== value(row.action.row, name) || !row.inline.fields.some(field => field.field === name))
-                  invalid()
-                inlineNames.add(name)
-                continue
-              }
-              delete fields[name]
-              if (
-                current !== undefined &&
-                cell === value(current.row, name) &&
-                (actual.field.binaries[name] !== undefined || actual.field.texts?.[name] !== undefined)
-              )
-                continue
-              if (cell !== value(row.action.row, name) || row.stages[name] === undefined) invalid()
-              attachments[name] = row.stages[name]
-            }
-            const currentId = actual.field.metadata === undefined ? undefined : positive(actual.field.metadata[idName]),
-              id = await writeNativeSnapshotSyncRow(
-                storage,
-                writer.transaction,
-                table,
-                fields,
-                { row: row.inline.row, fields: row.inline.fields.filter(field => inlineNames.has(field.field)) },
-                attachments,
-                currentId
-              )
-            if (currentId !== undefined && id !== currentId) invalid()
-            loaded.map[entity].idMap[incomingId] = id
-            if (quarantineTxid !== undefined)
-              await nativeSnapshotQuarantineReclaim(
-                storage,
-                writer.transaction,
-                writer.user.userId,
-                quarantineTxid,
-                signal
-              )
-            check()
-            if (currentId === undefined) inserts++
-            else updates++
-          }
+          const result = await applyPreparedNativeSnapshotActions(
+            storage,
+            writer.transaction,
+            writer.user.userId,
+            table,
+            rows,
+            loaded.map,
+            check,
+            signal
+          )
           await loaded.persist()
           check()
-          return { inserts, updates }
+          return result
         })
         try {
           const result = await applying
@@ -435,4 +317,126 @@ export async function prepareNativeSnapshotSyncActions(
     }
     throw cause
   }
+}
+
+/** Shared financial action effect for genuine prepared native fields. The
+ * caller retains its original actual destination/session or journal window,
+ * identity maps, source checks and atomic ACK. A descriptor never replaces a
+ * producer: the original writer verifies each real prepared attachment. */
+export async function applyPreparedNativeSnapshotActions(
+  storage: StorageKnex,
+  trx: Knex.Transaction,
+  userId: number,
+  table: 'transactions' | 'outputs',
+  rows: readonly PreparedNativeSnapshotAction[],
+  map: SyncMap,
+  check: () => void,
+  signal?: AbortSignal
+): Promise<{ inserts: number; updates: number }> {
+  const payloadNames: readonly string[] = table === 'transactions' ? transactionPayloadFields : outputPayloadFields
+  if (rows.some(row => row.action.table !== table)) invalid()
+  for (const row of rows) {
+    check()
+    requireSameNativeSnapshotSyncActionCurrent(
+      row.current,
+      await readNativeSnapshotSyncActionCurrent(storage, trx, userId, row.action, map, signal)
+    )
+  }
+  let inserts = 0,
+    updates = 0
+  for (const row of rows) {
+    check()
+    const actual = await readNativeSnapshotSyncActionCurrent(storage, trx, userId, row.action, map, signal),
+      current = actual.action
+    // Earlier rows may deliberately become this row's local identity;
+    // rerun original policies on that real postimage, never cached choices.
+    let selected: NativeSnapshotSyncAction | undefined, quarantineTxid: string | undefined
+    if (row.action.table === 'transactions') {
+      if (current !== undefined && current.table !== 'transactions') invalid()
+      const policy = current === undefined ? undefined : planTransactionMerge(current.row, row.action.row, map)
+      selected =
+        current === undefined
+          ? {
+              table: 'transactions',
+              row: { ...row.action.row, userId: userId, provenTxId: actual.parentIds.provenTxId }
+            }
+          : policy === undefined
+            ? undefined
+            : { table: 'transactions', row: policy.row }
+      quarantineTxid = policy?.quarantineReclaimTxid
+    } else {
+      if (current !== undefined && current.table !== 'outputs') invalid()
+      const policy = current === undefined ? undefined : planOutputMerge(current.row, row.action.row, map)
+      selected =
+        current === undefined
+          ? {
+              table: 'outputs',
+              row: {
+                ...row.action.row,
+                userId: userId,
+                transactionId: actual.parentIds.transactionId,
+                basketId: actual.parentIds.basketId,
+                spentBy: actual.parentIds.spentBy
+              }
+            }
+          : policy === undefined
+            ? undefined
+            : { table: 'outputs', row: policy }
+      if (
+        selected?.table === 'outputs' &&
+        selected.row.spendable &&
+        selected.row.txid !== undefined &&
+        (await nativeSnapshotUnresolvedReclaim(trx, userId, selected.row.txid, signal))
+      )
+        selected.row.spendable = false
+    }
+    const entity = table === 'transactions' ? 'transaction' : 'output',
+      idName = table === 'transactions' ? 'transactionId' : 'outputId',
+      incomingId = positive(row.metadata.fields[idName])
+    if (selected === undefined) {
+      if (actual.field.metadata === undefined) invalid()
+      map[entity].idMap[incomingId] = positive(actual.field.metadata[idName])
+      continue
+    }
+    const fields: Record<string, unknown> = { ...selected.row },
+      attachments: Record<string, PreparedPackedNativeSnapshotField> = {},
+      inlineNames = new Set<string>()
+    for (const name of payloadNames) {
+      const cell = fields[name]
+      if (cell === undefined) continue
+      if (typeof cell === 'string') {
+        if (cell !== value(row.action.row, name) || !row.inline.fields.some(field => field.field === name)) invalid()
+        inlineNames.add(name)
+        continue
+      }
+      delete fields[name]
+      if (
+        current !== undefined &&
+        cell === value(current.row, name) &&
+        (actual.field.binaries[name] !== undefined || actual.field.texts?.[name] !== undefined)
+      )
+        continue
+      if (cell !== value(row.action.row, name) || row.stages[name] === undefined) invalid()
+      attachments[name] = row.stages[name]
+    }
+    const currentId = actual.field.metadata === undefined ? undefined : positive(actual.field.metadata[idName]),
+      id = await writeNativeSnapshotSyncRow(
+        storage,
+        trx,
+        table,
+        fields,
+        { row: row.inline.row, fields: row.inline.fields.filter(field => inlineNames.has(field.field)) },
+        attachments,
+        currentId
+      )
+    if (currentId !== undefined && id !== currentId) invalid()
+    map[entity].idMap[incomingId] = id
+    if (quarantineTxid !== undefined)
+      await nativeSnapshotQuarantineReclaim(storage, trx, userId, quarantineTxid, signal)
+    check()
+    if (currentId === undefined) inserts++
+    else updates++
+  }
+  check()
+  return { inserts, updates }
 }

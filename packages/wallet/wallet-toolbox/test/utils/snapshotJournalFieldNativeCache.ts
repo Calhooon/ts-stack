@@ -1,3 +1,4 @@
+import { readSnapshotJournalNativeOwnedRow } from '../../src/storage/snapshot/journal/SnapshotJournalNativeRows'
 import { createHash } from 'node:crypto'
 import { Brc38WorkingAllocation } from '../../src/storage/portable/Brc38WorkingAllocation'
 import { snapshotHttpFixture } from './snapshotArchiveHttpFixtures'
@@ -143,6 +144,39 @@ export async function verifyNativeSnapshotFieldArtifactCache(
             bytes.fill(0)
           }
         }
+        if (pass === 0)
+          await input.storage.knex.transaction(
+            async trx =>
+              await input.storage.writePreparedNativeSnapshotFields(
+                'outputs',
+                input.targetRowId,
+                { outputDescription: prepared },
+                trx
+              )
+          )
+        const custody = await input.storage.runSnapshotJournalWriter(async trx => {
+          const target = await trx('outputs').where('outputId', input.targetRowId).first('userId')
+          if (target === undefined) throw new Error('Actual native custody output missing')
+          return await readSnapshotJournalNativeOwnedRow(
+            trx,
+            1,
+            Number(target.userId),
+            { id1: input.targetRowId, id2: 0, exactText: '' },
+            { remaining: 16777216 }
+          )
+        })
+        expect(custody?.row).not.toHaveProperty('lockingScript')
+        expect(custody?.row).not.toHaveProperty('outputDescription')
+        expect(custody?.fields?.lockingScript).toEqual({
+          kind: 'binary',
+          bytes: expected.length,
+          sha256: createHash('sha256').update(expected).digest('hex')
+        })
+        expect(custody?.fields?.outputDescription).toEqual({
+          kind: 'utf8',
+          bytes: expectedText.length,
+          sha256: createHash('sha256').update(expectedText).digest('hex')
+        })
       } finally {
         await prepared.close()
       }

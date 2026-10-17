@@ -1,16 +1,17 @@
+import {
+  snapshotJournalDeltaSources as sources,
+  type SnapshotJournalSqlSource as Source,
+  driver,
+  columns,
+  materialization,
+  fieldColumns,
+  fieldLength,
+  scalarCharge,
+  ownCells,
+  packedFieldDigest
+} from './SnapshotJournalFieldSql'
 import { readBrc38NativeTextExtent } from '../../portable/Brc38NativeTextReadNode'
-import { nativePackedTextSource } from '../../portable/Brc38NativePackedTextSources'
-import { brc38NativePackedLength, readBrc38NativePackedDescriptor } from '../../portable/Brc38NativePackedFieldsNode'
-import {
-  brc38NativePackedTextLength,
-  readBrc38NativePackedTextDescriptor
-} from '../../portable/Brc38NativePackedTextFieldsNode'
-import {
-  brc38NativeTextCoordinate,
-  brc38NativeTextProtocolSupports,
-  type Brc38NativeBlobRead,
-  type Brc38NativeTextRead
-} from '../../portable/Brc38NativeBlobProtocol'
+import { type Brc38NativeBlobRead, type Brc38NativeTextRead } from '../../portable/Brc38NativeBlobProtocol'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import { snapshotJournalRevisionOperand } from './SnapshotJournalRevisionSql'
 import type {
@@ -22,10 +23,7 @@ import {
   readBrc38NativeBinaryExtent,
   isBrc38NativeBinaryReadTransaction
 } from '../../portable/Brc38NativeBinaryReadNode'
-import { hasBrc38NativePackedSchema } from '../../portable/Brc38NativePackedSchemaNode'
-import { hasBrc38NativePackedTextSchema } from '../../portable/Brc38NativePackedTextSchemaNode'
 import {
-  brc38NativePackedWalletFields,
   isBrc38NativePackedWalletTable,
   brc38NativePackedWalletRowCharge,
   hydrateBrc38NativePackedWalletRows
@@ -36,7 +34,6 @@ import {
   prechargeBrc38NativePackedTextWalletRows,
   hydrateBrc38NativePackedTextWalletRows
 } from '../../portable/Brc38NativePackedTextWalletNode'
-import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { SnapshotJournalDelta, SnapshotJournalDeltaPage } from './SnapshotJournalTypes'
 export type { SnapshotJournalDelta, SnapshotJournalDeltaPage } from './SnapshotJournalTypes'
 import type { Knex } from 'knex'
@@ -53,39 +50,8 @@ import {
   type SnapshotJournalPosition
 } from './SnapshotJournalPage'
 
-interface Source {
-  table: WalletSnapshotTable
-  name: string
-  keys: readonly string[]
-}
-
-// Journal IDs follow observer order, not portable archive or sync dependency order.
-const sources: readonly Source[] = [
-  { table: 'transactions', name: 'transactions', keys: ['transactionId'] },
-  { table: 'outputs', name: 'outputs', keys: ['outputId'] },
-  { table: 'certificates', name: 'certificates', keys: ['certificateId'] },
-  { table: 'txLabels', name: 'tx_labels', keys: ['txLabelId'] },
-  { table: 'outputBaskets', name: 'output_baskets', keys: ['basketId'] },
-  { table: 'outputTags', name: 'output_tags', keys: ['outputTagId'] },
-  { table: 'commissions', name: 'commissions', keys: ['commissionId'] },
-  { table: 'syncStates', name: 'sync_states', keys: ['syncStateId'] },
-  { table: 'provenTxs', name: 'proven_txs', keys: ['provenTxId'] },
-  { table: 'provenTxReqs', name: 'proven_tx_reqs', keys: ['provenTxReqId'] },
-  { table: 'txLabelMaps', name: 'tx_labels_map', keys: ['txLabelId', 'transactionId'] },
-  { table: 'outputTagMaps', name: 'output_tags_map', keys: ['outputTagId', 'outputId'] },
-  { table: 'certificateFields', name: 'certificate_fields', keys: ['certificateId', 'fieldName'] }
-]
-
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Invalid or inconsistent snapshot journal delta source')
-}
-
-function driver(k: Knex): boolean {
-  const client = k.client.config.client
-  if (!k.isTransaction) return invalid()
-  if (client === 'better-sqlite3' || client === 'sqlite3' || isOwnedNativeSqlite(k)) return false
-  if (client === 'mysql' || client === 'mysql2') return true
-  return invalid()
 }
 
 function position(row: SnapshotJournalMetadata): SnapshotJournalPosition {
@@ -99,26 +65,6 @@ function values(source: Source, row: SnapshotJournalMetadata): Array<string | nu
   }
   if (row.exactText !== '' || (source.keys.length === 1 ? row.id2 !== 0 : row.id2 < 1)) return invalid()
   return source.keys.length === 1 ? [row.id1] : [row.id1, row.id2]
-}
-
-async function columns(k: Knex, source: Source, mysql: boolean): Promise<string[]> {
-  const rows: Array<{ name: unknown }> = mysql
-    ? (
-        await k.raw(
-          'SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? ORDER BY ORDINAL_POSITION LIMIT 65',
-          [source.name]
-        )
-      )[0]
-    : await k.raw('SELECT name FROM pragma_table_info(?) ORDER BY cid LIMIT 65', [source.name])
-  if (
-    rows.length === 0 ||
-    rows.length > 64 ||
-    rows.some(({ name }) => typeof name !== 'string' || Buffer.byteLength(name, 'utf8') > 128 || name === '')
-  )
-    return invalid()
-  const names = rows.map(({ name }) => name as string)
-  if (new Set(names).size !== names.length || source.keys.some(key => !names.includes(key))) return invalid()
-  return names
 }
 
 /** An exact physical event is relevant only while this profile retains references.
@@ -199,26 +145,6 @@ function pointQuery(
   return query
 }
 
-async function materialization(k: Knex, source: Source) {
-  const native = isBrc38NativeBinaryReadTransaction(k)
-  const text =
-    native &&
-    isBrc38NativePackedTextWalletTable(source.name) &&
-    (await hasBrc38NativePackedTextSchema(k as Knex.Transaction))
-  if (native && isBrc38NativePackedTextWalletTable(source.name) && !text) {
-    const protocol: Array<{ abi: number }> = await k.raw('SELECT brc38_text_read_protocol() AS abi')
-    if (
-      protocol.length !== 1 ||
-      !brc38NativeTextProtocolSupports(source.table as Brc38NativeTextRead['table'], protocol[0].abi)
-    )
-      invalid()
-  }
-  return {
-    native,
-    packed: native && isBrc38NativePackedWalletTable(source.name) && (await hasBrc38NativePackedSchema(k)),
-    text
-  }
-}
 function logicalCharge(
   k: Knex,
   source: Source,
@@ -332,91 +258,6 @@ export async function readSnapshotJournalDeltaPage(
     complete: examined === metadata.rows.length && metadata.complete,
     ...(after === undefined ? {} : { after: { ...after } })
   }
-}
-
-function fieldColumns(source: Source, fields: readonly string[]) {
-  const binaries = isBrc38NativePackedWalletTable(source.name) ? brc38NativePackedWalletFields(source.name) : []
-  const texts = isBrc38NativePackedTextWalletTable(source.name) ? nativePackedTextSource(source.name).fields : []
-  const deferred = fields.filter(field => binaries.includes(field) || (texts as readonly string[]).includes(field))
-  return { deferred, binary: (field: string) => binaries.includes(field) }
-}
-function fieldLength(
-  k: Knex,
-  source: Source,
-  field: string,
-  binary: boolean,
-  mode: Awaited<ReturnType<typeof materialization>>,
-  mysql: boolean
-): Knex.Raw {
-  if (binary && mode.packed)
-    return brc38NativePackedLength(k as Knex.Transaction, {
-      table: source.table as Brc38NativeBlobRead['table'],
-      field: field as Brc38NativeBlobRead['field']
-    })
-  if (!binary && mode.text)
-    return brc38NativePackedTextLength(k as Knex.Transaction, {
-      table: source.table as Brc38NativeTextRead['table'],
-      field: field as Brc38NativeTextRead['field']
-    })
-  if (!binary && mode.native) {
-    const coordinate = brc38NativeTextCoordinate(
-      source.table as Brc38NativeTextRead['table'],
-      field as Brc38NativeTextRead['field']
-    )
-    return k.raw('brc38_text_extent_bytes(?,?,??.rowid)', [coordinate[0], coordinate[1], source.name])
-  }
-  const name = source.name + '.' + field
-  if (mysql)
-    return binary ? k.raw('octet_length(??)', [name]) : k.raw('octet_length(CONVERT(?? USING utf8mb4))', [name])
-  return k.raw('CASE WHEN ?? IS NULL THEN NULL WHEN typeof(??)=? THEN length(CAST(?? AS BLOB)) ELSE -1 END', [
-    name,
-    name,
-    binary ? 'blob' : 'text',
-    name
-  ])
-}
-function scalarCharge(k: Knex, source: Source, fields: readonly string[], mysql: boolean): Knex.Raw {
-  if (fields.length === 0) return k.raw('0')
-  const cell = mysql ? 'octet_length(??)' : 'length(CAST(?? AS BLOB))'
-  return k.raw(
-    '(' + fields.map(() => '2*coalesce(' + cell + ',0)+64').join('+') + ')',
-    fields.map(field => source.name + '.' + field)
-  )
-}
-function ownCells(raw: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
-  return Object.fromEntries(
-    fields.map(field => {
-      const d = Object.getOwnPropertyDescriptor(raw, field)
-      if (d === undefined || !d.enumerable || !Object.hasOwn(d, 'value')) invalid()
-      return [field, d.value]
-    })
-  )
-}
-async function packedFieldDigest(
-  k: Knex,
-  source: Source,
-  field: string,
-  binary: boolean,
-  mode: Awaited<ReturnType<typeof materialization>>,
-  row: Readonly<Record<string, unknown>>,
-  bytes: number
-): Promise<string | undefined> {
-  if (binary ? !mode.packed : !mode.text) return undefined
-  const rowId = binary || source.name === 'certificate_fields' ? row.__journalFieldRowId : row[source.keys[0]]
-  if (typeof rowId !== 'number' || !Number.isSafeInteger(rowId)) invalid()
-  const value = binary
-    ? await readBrc38NativePackedDescriptor(k as Knex.Transaction, {
-        table: source.table as Brc38NativeBlobRead['table'],
-        field: field as Brc38NativeBlobRead['field'],
-        rowId
-      })
-    : await readBrc38NativePackedTextDescriptor(k as Knex.Transaction, {
-        table: source.table as Brc38NativeTextRead['table'],
-        field: field as Brc38NativeTextRead['field'],
-        rowId
-      })
-  if (value === undefined || value.bytes !== bytes || !/^[0-9a-f]{64}$/.test(value.sha256)) invalid()
-  return value.sha256
 }
 
 /** Bounded metadata from the SAME actual pinned source as its journal prefix.

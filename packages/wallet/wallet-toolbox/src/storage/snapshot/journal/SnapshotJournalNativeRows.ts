@@ -1,3 +1,6 @@
+import type { SnapshotJournalFieldDescriptor } from './SnapshotJournalFieldTypes'
+import { readSnapshotJournalPointFields } from './SnapshotJournalFieldSql'
+import { hashSnapshotJournalOwnedPointFields } from './SnapshotJournalOwnedRowFingerprint'
 import {
   hydrateBrc38NativePackedWalletRows,
   brc38NativePackedWalletRowCharge,
@@ -296,7 +299,9 @@ async function verifyCompositeKey(k: Knex, table: string, expected: readonly str
 }
 
 /** Bounded raw native postimage for ownership/withdrawal checks. The fingerprint
- * covers every cell and the real destination key; updated_at alone does not
+ * covers every cell and the real destination key. Large results expose small
+ * cells plus explicit measured field descriptors, never a complete-row marker.
+ * updated_at alone does not
  * establish that a local row was left unchanged. Global proof/request rows are
  * observable here but are never deletion-authorized by this result. */
 export async function readSnapshotJournalNativeOwnedRow(
@@ -306,7 +311,12 @@ export async function readSnapshotJournalNativeOwnedRow(
   input: { id1: number; id2: number; exactText: string },
   budget: SnapshotJournalAllocationBudget
 ): Promise<
-  | { fingerprint: string; key: Readonly<Record<string, string | number>>; row: Readonly<Record<string, unknown>> }
+  | {
+      fingerprint: string
+      key: Readonly<Record<string, string | number>>
+      row: Readonly<Record<string, unknown>>
+      fields?: Readonly<Record<string, Readonly<SnapshotJournalFieldDescriptor>>>
+    }
   | undefined
 > {
   if (!k.isTransaction || !Number.isSafeInteger(tableId) || tableId < 0 || tableId > 12 || tableId === 7) invalid()
@@ -362,6 +372,26 @@ export async function readSnapshotJournalNativeOwnedRow(
   if (sizes.length > 1) invalid()
   if (sizes.length === 0) return undefined
   if (sizes[0].bytes === null) invalid()
+  if (Number(sizes[0].bytes) > 1048576) {
+    // Workspace is transient and returned on every exit. Retained small cells
+    // and measured descriptors keep their own actual charge. Existing small
+    // DTO reads and every historical fingerprint retain their original path.
+    const workspace = 4194304
+    chargeSnapshotJournalAllocation(budget, workspace)
+    try {
+      const point = await readSnapshotJournalPointFields(k, tableId, key, Math.min(16777216, budget.remaining))
+      if (
+        point === undefined ||
+        JSON.stringify(point.names) !== JSON.stringify(Object.keys(Object.fromEntries(names.map(name => [name, 0]))))
+      )
+        invalid()
+      chargeSnapshotJournalAllocation(budget, point.allocationBytes)
+      const measured = await hashSnapshotJournalOwnedPointFields(point, table, tableId, local)
+      return { ...measured, key: Object.freeze(key), row: point.smallRow }
+    } finally {
+      budget.remaining += workspace
+    }
+  }
   chargeSnapshotJournalAllocation(budget, Number(sizes[0].bytes))
   const rows: Array<Record<string, unknown>> = await query().select(names)
   if (rows.length !== 1) invalid()

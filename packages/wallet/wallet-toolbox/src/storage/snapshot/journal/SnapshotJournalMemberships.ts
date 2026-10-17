@@ -23,6 +23,9 @@ import {
   type SnapshotJournalDestinationCheckpoint
 } from './SnapshotJournalDestinationWindow'
 
+/** Identity/custody bookkeeping consumes metadata only, never a complete financial row. */
+export type SnapshotJournalMembershipChange = Pick<SnapshotJournalDelta, 'metadata' | 'present'>
+
 const table = 'snapshot_reconciliation_memberships'
 const retirements = 'snapshot_reconciliation_membership_retirements'
 const budgets = 'snapshot_reconciliation_membership_budgets'
@@ -59,7 +62,11 @@ function remote(k: Knex): boolean {
   if (['sqlite3', 'better-sqlite3'].includes(String(k.client.config.client)) || isOwnedNativeSqlite(k)) return false
   return invalid()
 }
-function sourceKey(binding: SnapshotJournalDestinationBinding, tableId: number, change: SnapshotJournalDelta) {
+function sourceKey(
+  binding: SnapshotJournalDestinationBinding,
+  tableId: number,
+  change: SnapshotJournalMembershipChange
+) {
   if (tableId === 7 || number(tableId, 0, 12) !== tableId) invalid()
   const { id1, id2, exactText, revision } = change.metadata
   number(id1, 1)
@@ -79,7 +86,7 @@ function sourceKey(binding: SnapshotJournalDestinationBinding, tableId: number, 
 }
 export function snapshotJournalLocalMembershipKey(
   tableId: number,
-  change: SnapshotJournalDelta,
+  change: SnapshotJournalMembershipChange,
   map: SyncMap
 ): SnapshotJournalLocalKey {
   const incoming = change.metadata
@@ -228,7 +235,7 @@ export async function readSnapshotJournalMembershipPreimage(
   k: Knex,
   binding: SnapshotJournalDestinationBinding,
   tableId: number,
-  change: SnapshotJournalDelta,
+  change: SnapshotJournalMembershipChange,
   allocation: SnapshotJournalAllocationBudget
 ): Promise<{ fingerprint: string; generation: string } | undefined> {
   const mysql = remote(k)
@@ -310,7 +317,7 @@ export async function updateSnapshotJournalMembership(
   binding: SnapshotJournalDestinationBinding,
   expected: SnapshotJournalDestinationCheckpoint,
   tableId: number,
-  change: SnapshotJournalDelta,
+  change: SnapshotJournalMembershipChange,
   local: SnapshotJournalLocalKey | undefined,
   inserted: boolean,
   limits: SnapshotJournalMembershipLimits,

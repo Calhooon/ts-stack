@@ -1,3 +1,4 @@
+import type { SnapshotJournalFieldDescriptor } from './SnapshotJournalFieldTypes'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
@@ -18,6 +19,7 @@ export interface SnapshotJournalNativeCustody {
 export interface SnapshotJournalNativeCustodyResult extends SnapshotJournalNativeCustody {
   key: Readonly<Record<string, string | number>>
   row: Readonly<Record<string, unknown>>
+  fields?: Readonly<Record<string, Readonly<SnapshotJournalFieldDescriptor>>>
 }
 function invalid(): never {
   throw new WERR_INVALID_OPERATION('Native journal custody no longer matches the actual destination')
