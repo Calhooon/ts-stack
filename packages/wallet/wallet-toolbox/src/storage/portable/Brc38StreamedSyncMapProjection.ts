@@ -27,7 +27,7 @@ interface Entry {
   entityName?: { start: number; end: number }
   maxUpdated_at?: string
 }
-const entities = Object.freeze((Object.keys(createSyncMap()) as Entity[]).sort())
+const entities = Object.freeze((Object.keys(createSyncMap()) as Entity[]).sort((a, b) => Number(a > b) - Number(a < b)))
 function arrayIndex(key: string): boolean {
   const value = Number(key)
   return Number.isInteger(value) && value >= 0 && value < 4294967295 && String(value) === key

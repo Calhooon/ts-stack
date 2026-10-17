@@ -340,7 +340,7 @@ export async function verifyIdbInactiveHistoryUsesCurrentMappingAndOriginalAlloc
         [original, 2, false]
       )
       equal(
-        Object.keys(mapped).sort(),
+        Object.keys(mapped).sort((a, b) => Number(a > b) - Number(a < b)),
         [
           'certificate',
           'certificateField',
@@ -354,7 +354,7 @@ export async function verifyIdbInactiveHistoryUsesCurrentMappingAndOriginalAlloc
           'transaction',
           'txLabel',
           'txLabelMap'
-        ].sort()
+        ].sort((a, b) => Number(a > b) - Number(a < b))
       )
       if (f.workingAllocation.used === 0) throw new Error('History reservation was released before its prepared data')
     } finally {

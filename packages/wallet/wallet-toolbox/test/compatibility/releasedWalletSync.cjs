@@ -526,7 +526,10 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor) {
 async function runWalletSyncCompatibilityCohorts(cohorts) {
   assert.ok(cohorts !== null && typeof cohorts === 'object' && !Array.isArray(cohorts))
   const names = ['releasedSdk2', 'candidateSdk2', 'releasedSdk3', 'candidateSdk3']
-  assert.deepEqual(Object.keys(cohorts).sort(), [...names].sort())
+  assert.deepEqual(
+    Object.keys(cohorts).sort((a, b) => Number(a > b) - Number(a < b)),
+    [...names].sort((a, b) => Number(a > b) - Number(a < b))
+  )
   const roots = await Promise.all(names.map(name => fs.realpath(cohorts[name])))
   assert.equal(new Set(roots).size, 4, 'Four independent installations are required for the complete SDK2/SDK3 matrix')
   const reports = []

@@ -80,7 +80,7 @@ export async function verifyNativePackedTextPreparationRecovery(
     page.data.table !== 'provenTxReqs' ||
     page.data.rows.length !== 1 ||
     Object.keys(page.data.rows[0].source.structured ?? {})
-      .sort()
+      .sort((a, b) => Number(a > b) - Number(a < b))
       .join() !== 'history,notify' ||
     projections.get(page.data.fromIndex)?.field !== 'notify'
   )

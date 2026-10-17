@@ -53,7 +53,7 @@ const key = (row: Retained): string => JSON.stringify([row.sourceLineageSha256, 
  * including inert prior receipts, IDs and source operational values. */
 function metadata(row: Readonly<Record<string, Cell>>): Metadata {
   return Object.keys(row)
-    .sort()
+    .sort((a, b) => Number(a > b) - Number(a < b))
     .map(name => {
       const value = row[name]
       const cell: MetadataCell =

@@ -478,8 +478,8 @@ export async function prepareBrc38ActionMerge(
       if (policy.table !== 'transactions' && policy.table !== 'outputs') invalid()
       const incoming: NativeSnapshotSyncAction =
         policy.table === 'transactions'
-          ? { table: policy.table, row: policy.value }
-          : { table: policy.table, row: policy.value }
+          ? { table: 'transactions', row: policy.value }
+          : { table: 'outputs', row: policy.value }
       chargeBrc38ImportDecodedBudget(budget, 1114112)
       const current = await readNativeSnapshotSyncActionCurrent(
           storage,

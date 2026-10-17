@@ -110,7 +110,7 @@ export async function verifyCompleteBrowserRestoreResumeAndIndependentNativeInve
     // Canonical archive spelling sorts members; the fixture was inserted in
     // transactionIds/memo order. Both keys and every complete value must agree.
     equal(
-      [Object.keys(notify).sort(), notify.transactionIds, notify.memo],
+      [Object.keys(notify).sort((a, b) => Number(a > b) - Number(a < b)), notify.transactionIds, notify.memo],
       [['memo', 'transactionIds'], [1], '😀雪'.repeat(12000)]
     )
     equal(mapped.output.idMap, { '160': 1 })
@@ -121,8 +121,16 @@ export async function verifyCompleteBrowserRestoreResumeAndIndependentNativeInve
       )
     const expectedNotify = f.data.tables.provenTxReqs[0].notify as Record<string, unknown>
     equal(
-      [Object.keys(originalNotify).sort(), originalNotify.transactionIds, originalNotify.memo],
-      [Object.keys(expectedNotify).sort(), expectedNotify.transactionIds, expectedNotify.memo]
+      [
+        Object.keys(originalNotify).sort((a, b) => Number(a > b) - Number(a < b)),
+        originalNotify.transactionIds,
+        originalNotify.memo
+      ],
+      [
+        Object.keys(expectedNotify).sort((a, b) => Number(a > b) - Number(a < b)),
+        expectedNotify.transactionIds,
+        expectedNotify.memo
+      ]
     )
     equal(JSON.parse(provenance.destinationKeyJson), 1)
     const before = await inspection.get(packedIdbStores.clock, 'clock'),

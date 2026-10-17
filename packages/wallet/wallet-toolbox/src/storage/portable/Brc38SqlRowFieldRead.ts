@@ -53,7 +53,7 @@ async function fields(
         : family === 'structured'
           ? await readBrc38SqlStructuredDescriptors(k, table, position)
           : await readBrc38SqlTextDescriptors(k, table, position),
-    names = Object.keys(expected).sort()
+    names = Object.keys(expected).sort((a, b) => Number(a > b) - Number(a < b))
   if (names.length > (family === 'text' ? 7 : 3) || names.length !== Object.keys(descriptors).length) invalid()
   const result: Readonly<FieldMetadata>[] = []
   for (const field of names) {

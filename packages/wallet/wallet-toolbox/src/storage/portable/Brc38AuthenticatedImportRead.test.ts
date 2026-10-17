@@ -60,9 +60,21 @@ describe('actual authenticated bounded private import reads', () => {
     const catalogCounts = queries.filter(query => /count\s*\(/i.test(query.sql))
     expect(catalogCounts.length).toBeGreaterThan(0)
     for (const query of catalogCounts) {
-      expect(query.sql).toMatch(
-        /^select count\(\*\) as `count` from (?:`main`\.)?`sqlite_(?:schema|master)` where .+ limit \?$/i
-      )
+      const sql = query.sql.replace(/\s+/g, ' ')
+      if (/^select count\(\*\) as `count` /i.test(sql))
+        expect(sql).toMatch(
+          /^select count\(\*\) as `count` from (?:`main`\.)?`sqlite_(?:schema|master)` where .+ limit \?$/i
+        )
+      else {
+        // Fresh field-family verification aggregates only its bounded catalog,
+        // including complete DDL/prefix/seal checks; it never counts data rows.
+        expect(sql).toMatch(/^select count\(\*\) AS total, sum\(CASE WHEN /)
+        expect(sql.match(/\bfrom\b/gi)).toHaveLength(1)
+        expect(sql).toMatch(/ AS sealMatches from `sqlite_schema` where `tbl_name` in \(\?, \?\) limit \?$/)
+        expect(
+          [...sql.matchAll(/ AS (total|baseMatches|prefixMatches|sealCount|sealMatches)\b/g)].map(match => match[1])
+        ).toEqual(['total', 'baseMatches', 'prefixMatches', 'sealCount', 'sealMatches'])
+      }
       expect(query.bindings?.at(-1)).toBe(1)
     }
     expect(await target.writer('users')).toEqual([])

@@ -18,7 +18,7 @@ function oracleJson(value: unknown): string | undefined {
       const row = data as Record<string, unknown>
       return Object.fromEntries(
         Object.keys(row)
-          .sort()
+          .sort((a, b) => Number(a > b) - Number(a < b))
           .map(key => [key, ordered(row[key])])
       )
     }

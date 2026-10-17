@@ -312,7 +312,7 @@ export function composedArchivePostimage(
   const maximum = Object.values(map)
       .map(entry => entry.maxUpdated_at)
       .filter((value): value is string => value !== undefined)
-      .sort()
+      .sort((a, b) => Number(a > b) - Number(a < b))
       .at(-1),
     checkpoint = {
       ...sync,

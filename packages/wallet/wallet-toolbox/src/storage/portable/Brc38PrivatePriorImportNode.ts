@@ -49,7 +49,7 @@ export function encodeBrc38PrivatePriorMetadata(
   value: Readonly<Record<string, unknown>>,
   working: Brc38WorkingAllocation
 ): Readonly<{ json: string; close(): void }> {
-  const names = Object.keys(value).sort()
+  const names = Object.keys(value).sort((a, b) => Number(a > b) - Number(a < b))
   if (names.length < 1 || names.length > 128) invalid()
   let allocation = 131072
   for (const name of names) {

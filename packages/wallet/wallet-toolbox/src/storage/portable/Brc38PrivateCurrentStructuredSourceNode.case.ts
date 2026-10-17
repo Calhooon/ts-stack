@@ -166,7 +166,8 @@ function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)
   if (value !== null && typeof value === 'object') {
     const result: Record<string, unknown> = Object.create(null)
-    for (const key of Object.keys(value).sort()) result[key] = canonical(Reflect.get(value, key))
+    for (const key of Object.keys(value).sort((a, b) => Number(a > b) - Number(a < b)))
+      result[key] = canonical(Reflect.get(value, key))
     return result
   }
   return value

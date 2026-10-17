@@ -197,7 +197,7 @@ export async function* encodeBrc38StreamedRow(
     ...Object.keys(sources),
     ...Object.keys(structured),
     ...Object.keys(texts)
-  ].sort()
+  ].sort((a, b) => Number(a > b) - Number(a < b))
   if (fields.length > 64 || new Set(fields).size !== fields.length) invalid()
   const encoder = new TextEncoder()
   const small = {

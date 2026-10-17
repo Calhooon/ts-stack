@@ -133,12 +133,13 @@ const nativeBrowserWorkerTest = 'src/utility/BrowserArgon2idWorker.native.test.c
 // the original broader test universe as affected inputs and bind this source
 // configuration into the qualification identity. No canonical mutant changes.
 export function applyWalletComponentTests(targets, selections) {
-  const ids = Object.keys(targets).sort()
+  const ids = Object.keys(targets).sort((a, b) => Number(a > b) - Number(a < b))
   if (
     !selections ||
     typeof selections !== 'object' ||
     Array.isArray(selections) ||
-    JSON.stringify(Object.keys(selections).sort()) !== JSON.stringify(ids)
+    JSON.stringify(Object.keys(selections).sort((a, b) => Number(a > b) - Number(a < b))) !==
+      JSON.stringify(ids)
   )
     throw new Error('Component selections must contain every exact current wallet target')
   for (const id of ids) {

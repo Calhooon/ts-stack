@@ -9,3 +9,5 @@ RUN apt-get update --error-on=any \
  && test "$(cc -dumpfullversion)" = 12.2.0 \
  && dpkg-query -W gcc gcc-12 cpp-12 libgcc-12-dev libc6-dev > /usr/local/share/wallet-native-test-toolchain.txt \
  && rm -rf /var/lib/apt/lists/*
+# Qualified execution supplies the actual caller UID/GID explicitly.
+USER node

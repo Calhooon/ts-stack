@@ -1,5 +1,11 @@
 ## Held #569 implementation candidate — unreleased
 
+- Retain bounded catalog-only read checks for both simple counts and fresh aggregate field-schema verification, including the complete five-field aggregate inventory and one-row limit. Data-row counts remain forbidden by the original authenticated reader test.
+
+- Apply measured provisional Metro15percent and Hermes25percent artifact allowances with retained baselines, exact job/source, owner and post-goal review/removal metadata. Preserve namespace, source maps/licenses, compiler settings and native/production/runtime/negative limits; no platform or physical-device proof is inferred. Give the compiler image a non-root fallback while retaining its existing explicit caller UID/GID.
+
+- State canonical key/name ordering explicitly as UTF-16 code units, preserving prior bytes and relationships. Keep correlated action table/value types explicit and avoid forwarding unrelated array callback arguments to fixture DDL generation. No API, schema, wire or production default migration.
+
 - Pack archive table fragments within the existing chunk ceiling, preserve header backpressure/emitted-buffer ownership and raw-byte quotas, and enroll the factored SQL comparator/regression in its existing mutation target. Retain portable benchmark reservations before assertions. Use measured fixed positive fixture admissions (portable import 240 seconds; native full-programme setup/phases 540 seconds, case 570), preserving original export/native phase, memory, foreground and negative controls. Failed samples remain evidence; no production default, wire or schema migration. Full qualification remains pending.
 
 - Private binary, structured JSON, canonical JSON and text field schemas now compare their complete original tables, primary indexes, prefix guards and optional authenticated seals in one fresh bounded scalar query per family. This replaces repeated catalog dispatches without caching a verdict, changing DDL or relaxing any caller ownership, expiry, quota or tampering check. The original 10000-label import independently exhausted its 120-second owner on the previous implementation; complete performance and native qualification of this correction remain required.

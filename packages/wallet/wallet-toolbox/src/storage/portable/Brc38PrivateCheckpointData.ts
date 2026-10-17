@@ -26,7 +26,9 @@ export function brc38PrivateCheckpointData(value: unknown): Readonly<Brc38Privat
   const item = value as Brc38PrivateCheckpointData
   const incremental = item.protocol === 'brc38-private-checkpoint-data/v2'
   if (
-    Object.keys(item).sort().join(',') !==
+    Object.keys(item)
+      .sort((a, b) => Number(a > b) - Number(a < b))
+      .join(',') !==
       (incremental
         ? 'materializedNextRow,mode,preparedAt,protocol,refNum,syncStateId,timestamp'
         : 'mode,preparedAt,protocol,refNum,syncStateId,timestamp') ||

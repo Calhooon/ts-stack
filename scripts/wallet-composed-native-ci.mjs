@@ -100,7 +100,7 @@ export const nativePairCohorts = Object.freeze(
   ].map(([id, name]) => Object.freeze({ id, name, cases: 1, pattern: `^${escapePattern(name)}$` }))
 )
 export const nativePairCaseNames = Object.freeze(
-  nativePairCohorts.map(cohort => cohort.name).sort()
+  nativePairCohorts.map(cohort => cohort.name).sort((a, b) => Number(a > b) - Number(a < b))
 )
 
 export const nativeMergeTestFile =
@@ -130,7 +130,7 @@ export const nativeMergeCohorts = Object.freeze(
   ].map(value => Object.freeze({ ...value, cases: 1, pattern: `^${escapePattern(value.name)}$` }))
 )
 export const nativeMergeCaseNames = Object.freeze(
-  nativeMergeCohorts.map(cohort => cohort.name).sort()
+  nativeMergeCohorts.map(cohort => cohort.name).sort((a, b) => Number(a > b) - Number(a < b))
 )
 
 export const nativeAuthenticatedMergeTestFile =
@@ -146,7 +146,9 @@ export const nativeAuthenticatedMergeCohorts = Object.freeze(
   })
 )
 export const nativeAuthenticatedMergeCaseNames = Object.freeze(
-  nativeAuthenticatedMergeCohorts.map(cohort => cohort.name).sort()
+  nativeAuthenticatedMergeCohorts
+    .map(cohort => cohort.name)
+    .sort((a, b) => Number(a > b) - Number(a < b))
 )
 
 // COMPLETED has the same original name for live and expired admissions. Keep
@@ -167,7 +169,9 @@ export const composedNativeCohorts = Object.freeze(
 )
 
 export const composedNativeCaseNames = Object.freeze(
-  composedNativeCohorts.flatMap(cohort => Array(cohort.cases).fill(cohort.name)).sort()
+  composedNativeCohorts
+    .flatMap(cohort => Array(cohort.cases).fill(cohort.name))
+    .sort((a, b) => Number(a > b) - Number(a < b))
 )
 
 const composedPlan = {
@@ -238,7 +242,10 @@ function validateNativeReport(report, cohortId, plan) {
     !suite.name?.replaceAll('\\', '/').endsWith('/' + plan.testFile) ||
     !Array.isArray(assertions) ||
     assertions.length !== plan.names.length ||
-    !isDeepStrictEqual(assertions.map(value => value.fullName).sort(), plan.names)
+    !isDeepStrictEqual(
+      assertions.map(value => value.fullName).sort((a, b) => Number(a > b) - Number(a < b)),
+      plan.names
+    )
   )
     throw new Error('Native report lacks the complete original case inventory')
   for (const value of assertions) {

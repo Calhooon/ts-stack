@@ -21,7 +21,7 @@ function equal(actual: unknown, expected: unknown): void {
     if (value !== null && typeof value === 'object')
       return Object.fromEntries(
         Object.keys(value)
-          .sort()
+          .sort((a, b) => Number(a > b) - Number(a < b))
           .map(key => [key, ordered(Reflect.get(value, key))])
       )
     return value

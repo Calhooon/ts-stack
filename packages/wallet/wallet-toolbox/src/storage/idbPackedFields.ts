@@ -435,7 +435,7 @@ export function packedIdbRowValue(row: PackedIdbRow): Record<string, unknown> {
  * index. These keys never admit content; an audit must freshly compare them
  * with actual row descriptors, native records/refcounts and complete chunks. */
 export function packedIdbReferences(row: Pick<PackedIdbRow, 'extents'>): Array<[string, number]> {
-  const names = Object.keys(row.extents).sort()
+  const names = Object.keys(row.extents).sort((a, b) => Number(a > b) - Number(a < b))
   if (names.length > 128) packedIdbInvalid()
   return names.map((name, ordinal) => [descriptor(row.extents[name]).content, ordinal])
 }

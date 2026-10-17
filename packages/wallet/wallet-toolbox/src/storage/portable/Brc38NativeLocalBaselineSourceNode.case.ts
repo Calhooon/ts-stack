@@ -73,7 +73,8 @@ export async function verifyBrc38NativeLocalBaselineSource(
             if (actual.fields.some(field => field.bytes !== null && field.bytes > 0)) escapedRow = actual
             if (
               comparable(actual.metadata) !== comparable(row.metadata) ||
-              comparable(actual.fields.map(field => field.field).sort()) !== comparable(Object.keys(row.fields).sort())
+              comparable(actual.fields.map(field => field.field).sort((a, b) => Number(a > b) - Number(a < b))) !==
+                comparable(Object.keys(row.fields).sort((a, b) => Number(a > b) - Number(a < b)))
             )
               throw new Error('Complete local row metadata or separate field inventory differs')
             for (const field of actual.fields) {

@@ -28,7 +28,7 @@ export async function installMembershipDraft(
   if (sharedWitnesses && layout === undefined) throw new Error('Independent shared witness fixture layout missing')
   const planned = layout?.definitions ?? definitions
   await k.transaction(async trx => {
-    await runInSeries(layout?.ddl ?? definitions.flatMap(identityDDL), async ddl => {
+    await runInSeries(layout?.ddl ?? definitions.flatMap(definition => identityDDL(definition)), async ddl => {
       await trx.raw(ddl)
     })
     const sources = [

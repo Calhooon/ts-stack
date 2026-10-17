@@ -1908,7 +1908,7 @@ export class Brc38IdbImportJournal {
               Array.isArray(selected)
             )
               invalid()
-            const names = Object.keys(selected).sort(),
+            const names = Object.keys(selected).sort((a, b) => Number(a > b) - Number(a < b)),
               fields: Record<string, PackedIdbStagedField> = Object.create(null)
             if (names.length < 1 || names.length > 13) invalid()
             for (const name of names) {

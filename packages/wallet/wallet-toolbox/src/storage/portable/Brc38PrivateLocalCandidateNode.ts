@@ -105,7 +105,7 @@ function digest(value: string): string {
 function rowDigest(row: Readonly<Brc38PrivateLocalBaselineRow>): string {
   const hash = createHash('sha256')
   hash.update(JSON.stringify([row.table, row.rowId, row.revision, row.generation]))
-  for (const key of Object.keys(row.metadata).sort()) {
+  for (const key of Object.keys(row.metadata).sort((a, b) => Number(a > b) - Number(a < b))) {
     const value = row.metadata[key]
     hash.update(JSON.stringify(key))
     if (value === null) hash.update('null')

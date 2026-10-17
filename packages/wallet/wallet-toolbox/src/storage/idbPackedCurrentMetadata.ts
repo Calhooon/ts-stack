@@ -162,7 +162,7 @@ export async function readPackedIdbCurrentMetadata(
   }
   verifyPackedIdbReferences(version.references, previous)
   if (!packedIdbRowMetadataEqual(current, previous)) invalid()
-  const extentNames = Object.keys(current.extents).sort()
+  const extentNames = Object.keys(current.extents).sort((a, b) => Number(a > b) - Number(a < b))
   const nativeKey =
     typeof store.keyPath === 'string'
       ? current.fields[store.keyPath]
