@@ -4,7 +4,8 @@ import { privateNativeDatabaseIdentity } from './Brc38PrivateNativeOwnershipNode
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import {
   readBrc38NativePackedTextVersionDescriptor,
-  readBrc38NativePackedTextVersionExtent
+  readBrc38NativePackedTextVersionDescriptorData,
+  readBrc38NativePackedTextVersionExtentData
 } from './Brc38NativePackedTextFieldsNode'
 import type { Brc38PrivateDerivedTextDescriptor } from './Brc38PrivateDerivedTextVersionNode'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation } from './Brc38WorkingAllocation'
@@ -88,14 +89,16 @@ export async function compareBrc38PrivateDerivedText(
         await database.transaction(async trx => {
           store.assertPrivateNativeReadTransaction(trx)
           await verifyBrc38AuthenticatedSourceSeal(trx)
+          const firstBefore = await readBrc38NativePackedTextVersionDescriptor(trx, left.sha256)
           const bytes: Array<Uint8Array | undefined> = []
           try {
             for (const [index, descriptor] of descriptors.entries()) {
-              const actual = await readBrc38NativePackedTextVersionDescriptor(trx, descriptor.sha256)
+              const actual =
+                index === 0 ? firstBefore : await readBrc38NativePackedTextVersionDescriptorData(trx, descriptor.sha256)
               if (actual.bytes !== descriptor.bytes || actual.sha256 !== descriptor.sha256) invalid()
               const length = Math.max(0, Math.min(16384, descriptor.bytes - offset))
               if (length === 0) continue
-              const part = await readBrc38NativePackedTextVersionExtent(
+              const part = await readBrc38NativePackedTextVersionExtentData(
                 trx,
                 { sha256: descriptor.sha256, totalBytes: descriptor.bytes, offset, length },
                 signal
@@ -108,6 +111,10 @@ export async function compareBrc38PrivateDerivedText(
             if (bytes[0] !== undefined && bytes[1] !== undefined)
               for (let index = 0; index < bytes[0].length; index++)
                 if (bytes[0][index] !== bytes[1][index]) equal = false
+            store.assertPrivateNativeReadTransaction(trx)
+            check()
+            const lastAfter = await readBrc38NativePackedTextVersionDescriptor(trx, right.sha256)
+            if (lastAfter.bytes !== right.bytes || lastAfter.sha256 !== right.sha256) invalid()
             store.assertPrivateNativeReadTransaction(trx)
             check()
           } finally {

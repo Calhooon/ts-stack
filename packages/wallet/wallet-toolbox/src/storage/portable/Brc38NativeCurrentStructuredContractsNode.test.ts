@@ -1,3 +1,5 @@
+import { compareBrc38PrivateDerivedText } from './Brc38PrivateDerivedTextComparisonNode'
+
 import { withBrc38PrivateCurrentStructuredSource } from './Brc38PrivateCurrentStructuredSourceNode'
 import {
   readBrc38NativePackedTextDescriptorData,
@@ -55,9 +57,11 @@ function policy(fixture: Brc38NativePrivateContractFixture, workingAllocation: B
     workingAllocation
   }
 }
-async function seed(fixture: Brc38NativePrivateContractFixture) {
+async function seed(fixture: Brc38NativePrivateContractFixture, selectedHistory?: string) {
   const when = new Date('2026-10-08T00:00:00.000Z'),
-    history = '{"notes":[{"when":"2026-10-08T00:00:00.000Z","what":"independent 雪😀 history"}],"unknown":null}',
+    history =
+      selectedHistory ??
+      '{"notes":[{"when":"2026-10-08T00:00:00.000Z","what":"independent 雪😀 history"}],"unknown":null}',
     notify = '{"transactionIds":[17,19],"unknown":"independent 雪"}',
     syncMap = JSON.stringify({ ...independentMap(), unknown: { retained: '雪😀', empty: null } }),
     errorLocal = '{"code":"independent local","description":"雪😀"}',
@@ -264,3 +268,53 @@ test('private current range checks its complete schema at both operation boundar
     expected.fill(0)
   })
 }, 180000)
+
+test('private version comparison admits each bounded native read view at its two boundaries', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const history = JSON.stringify({
+        notes: [{ when: '2026-10-08T00:00:00.000Z', what: 'x'.repeat(40000) + '雪😀' }],
+        unknown: null
+      }),
+      original = await seed(fixture, history),
+      bytes = Buffer.from(history),
+      descriptor = Object.freeze({ bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }),
+      working = new Brc38WorkingAllocation(8388608),
+      policy = { expiresAt: fixture.expiresAt, workingAllocation: working },
+      budget = { maximum: 16777216, remaining: 16777216 }
+    expect(original.history).toBe(history)
+    let completeSchemaAnchors = 0
+    const count = (query: { sql: string; bindings?: readonly unknown[] }): void => {
+        if (
+          /^select sql from sqlite_schema where name = \? and type = \? limit \?$/.test(
+            query.sql.replace(/[`\"]/g, '')
+          ) &&
+          query.bindings?.[0] === 'brc38_native_text_versions' &&
+          query.bindings?.[1] === 'table'
+        )
+          completeSchemaAnchors++
+      },
+      borrow = fixture.store.withPrivateNativeDatabase.bind(fixture.store),
+      observe = <T>(readOnly: boolean, work: (database: Knex) => Promise<T>): Promise<T> =>
+        borrow(readOnly, async database => {
+          // Observe the actual borrowed database. The original issuer still
+          // creates, enrolls and drains its physical readonly lease.
+          if (readOnly) database.on('query', count)
+          try {
+            return await work(database)
+          } finally {
+            if (readOnly) database.off('query', count)
+          }
+        }),
+      observed = jest.spyOn(fixture.store, 'withPrivateNativeDatabase').mockImplementation(observe)
+    try {
+      expect(await compareBrc38PrivateDerivedText(fixture.store, descriptor, descriptor, policy, budget)).toBe(true)
+      // Both stored versions are read and independently hashed to EOF, even
+      // when their descriptor hashes match. Each view is at most 16 KiB.
+      expect(completeSchemaAnchors).toBe(2 * Math.ceil(bytes.length / 16384))
+    } finally {
+      observed.mockRestore()
+      bytes.fill(0)
+    }
+    expect(working.used).toBe(0)
+  })
+}, 90000)
