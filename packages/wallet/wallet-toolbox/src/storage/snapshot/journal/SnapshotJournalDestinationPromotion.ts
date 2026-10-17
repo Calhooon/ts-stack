@@ -1,3 +1,4 @@
+import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -6,6 +7,7 @@ import { snapshotSyncTables } from '../SnapshotSync'
 import { requireSnapshotJournalCapturedFrame } from './SnapshotJournalCapturedIdentities'
 import {
   readSnapshotJournalDestinationPromotionPage,
+  readSnapshotJournalDestinationFieldPromotionPage,
   type SnapshotJournalDestinationStageReceipt
 } from './SnapshotJournalDestinationStage'
 import {
@@ -152,6 +154,77 @@ export async function promoteSnapshotJournalDestinationBatch(
   cursor?: SnapshotJournalPromotionCursor
   applied: number
 }> {
+  if (input.fieldEncoding !== undefined) invalid()
+  return await promoteDestinationBatch(
+    k,
+    input,
+    expected,
+    expectedCursor,
+    maximumChanges,
+    applyChange,
+    readSnapshotJournalDestinationPromotionPage,
+    finishPromotion
+  )
+}
+
+/** Internal field-family progress only. The effect callback must own complete
+ * content/proof/semantic policy in this same actual SQL writer; descriptors and
+ * the committed cursor do not grant financial authority. No source/network I/O
+ * belongs in that callback. Recovery rereads the original durable cursor. */
+export async function promoteSnapshotJournalDestinationFieldBatch(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  expectedCursor: SnapshotJournalPromotionCursor | undefined,
+  maximumChanges: number,
+  applyChange: (
+    trx: Knex,
+    change: SnapshotJournalHashedFieldDelta,
+    receipt: SnapshotJournalDestinationStageReceipt,
+    changeIndex: number
+  ) => Promise<void>,
+  finishPromotion?: (trx: Knex) => Promise<boolean>
+): Promise<{
+  checkpoint: SnapshotJournalDestinationCheckpoint
+  cursor?: SnapshotJournalPromotionCursor
+  applied: number
+}> {
+  if (input.fieldEncoding !== 'wallet-journal-fields/1') invalid()
+  return await promoteDestinationBatch(
+    k,
+    input,
+    expected,
+    expectedCursor,
+    maximumChanges,
+    applyChange,
+    readSnapshotJournalDestinationFieldPromotionPage,
+    finishPromotion
+  )
+}
+
+async function promoteDestinationBatch<T extends SnapshotJournalDelta | SnapshotJournalHashedFieldDelta>(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  expectedCursor: SnapshotJournalPromotionCursor | undefined,
+  maximumChanges: number,
+  applyChange: (
+    trx: Knex,
+    change: T,
+    receipt: SnapshotJournalDestinationStageReceipt,
+    changeIndex: number
+  ) => Promise<void>,
+  readPage: (
+    trx: Knex,
+    binding: SnapshotJournalDestinationBinding,
+    state: SnapshotJournalDestinationCheckpoint
+  ) => Promise<{ receipt: SnapshotJournalDestinationStageReceipt; page: { changes: readonly T[] } } | undefined>,
+  finishPromotion?: (trx: Knex) => Promise<boolean>
+): Promise<{
+  checkpoint: SnapshotJournalDestinationCheckpoint
+  cursor?: SnapshotJournalPromotionCursor
+  applied: number
+}> {
   transaction(k)
   const limit = integer(maximumChanges, 256)
   if (limit < 1 || typeof applyChange !== 'function') invalid()
@@ -164,7 +237,7 @@ export async function promoteSnapshotJournalDestinationBatch(
     const prepared = await withSnapshotJournalDestinationWindowFence(trx, binding, state, async pinned => {
       const actual = await readSnapshotJournalPromotionCursor(pinned, binding, state)
       if (JSON.stringify(actual) !== JSON.stringify(wanted)) invalid()
-      const frame = await readSnapshotJournalDestinationPromotionPage(pinned, binding, state)
+      const frame = await readPage(pinned, binding, state)
       if (frame === undefined) {
         if (actual !== undefined) invalid()
         return undefined

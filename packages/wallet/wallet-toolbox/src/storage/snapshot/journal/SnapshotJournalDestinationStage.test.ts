@@ -1,3 +1,15 @@
+import { createHash } from 'node:crypto'
+import { encodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
+import {
+  snapshotJournalCapturedIdentitiesDdl,
+  sealSnapshotJournalCapturedFrame
+} from './SnapshotJournalCapturedIdentities'
+import {
+  snapshotJournalDestinationPromotionDdl,
+  promoteSnapshotJournalDestinationFieldBatch,
+  promoteSnapshotJournalDestinationBatch,
+  readSnapshotJournalPromotionCursor
+} from './SnapshotJournalDestinationPromotion'
 import type { SnapshotJournalHashedFieldPage } from './SnapshotJournalFieldTypes'
 import { decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
 import {
@@ -844,4 +856,119 @@ test('field metadata reopens in dependency order after all streams without grant
   } finally {
     await reopened.destroy()
   }
+})
+
+test('field partial promotion retains actual rollback, durable lost-reply recovery and family fences', async () => {
+  for (const ddl of snapshotJournalCapturedIdentitiesDdl(db)) await db.raw(ddl)
+  await db.raw(snapshotJournalDestinationPromotionDdl(db))
+  binding = { ...binding, fieldEncoding: 'wallet-journal-fields/1' }
+  let state = await begin()
+  let physicalDigest: string | undefined
+  for (let index = 0; index < 15; index++) {
+    const tableId = index < 13 ? index : index === 13 ? 8 : 9,
+      ids = index === 13 ? [7, 8] : [],
+      data: SnapshotJournalHashedFieldPage = {
+        table: tableNames[tableId],
+        changes: ids.map(id1 => ({
+          metadata: {
+            generation: snapshotJournalRevision('2'),
+            revision: snapshotJournalRevision('3'),
+            id1,
+            id2: 0,
+            exactText: '',
+            present: true
+          },
+          present: true,
+          row: { provenTxId: id1 },
+          fields: { rawTx: { kind: 'binary', bytes: 2097153, sha256: String(id1).repeat(64) } }
+        })),
+        examined: ids.length,
+        metadataBytes: ids.length * 1024,
+        fieldBytes: ids.length * 2097153,
+        complete: true,
+        ...(ids.length ? { after: { revision: snapshotJournalRevision('3'), id1: 8, id2: 0, exactText: '' } } : {})
+      },
+      digest = createHash('sha256')
+        .update(encodeSnapshotJournalFieldFrame(data, { stream: index < 13 ? 'scope' : 'physical', tableId }))
+        .digest('hex')
+    if (index === 13) physicalDigest = digest
+    state = (
+      await db.transaction(async trx => {
+        await sealSnapshotJournalCapturedFrame(trx, binding, state, digest, ids.length)
+        return await stageSnapshotJournalDestinationFieldPage(trx, binding, state, data, limits)
+      })
+    ).checkpoint
+  }
+  const effect = jest.fn(
+    async (trx: Knex, change: import('./SnapshotJournalFieldTypes').SnapshotJournalHashedFieldDelta) => {
+      if (!change.present) throw new Error('Actual populated metadata required')
+      expect(change.row).not.toHaveProperty('rawTx')
+      expect(change.fields.rawTx.bytes).toBe(2097153)
+      await trx('test_staged_rows').insert({ id: change.metadata.id1, value: change.fields.rawTx.sha256 })
+    }
+  )
+  await expect(
+    db.transaction(
+      async trx =>
+        await promoteSnapshotJournalDestinationBatch(trx, binding, state, undefined, 1, async () => {
+          throw new Error('Wrong family must reject before effects')
+        })
+    )
+  ).rejects.toThrow()
+  // The first actual scope frame is empty; traversing it writes no entity.
+  state = (
+    await db.transaction(
+      async trx => await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, undefined, 1, effect)
+    )
+  ).checkpoint
+  expect(effect).not.toHaveBeenCalled()
+  if (physicalDigest === undefined) throw new Error('Actual physical frame missing')
+  const captured = await db('snapshot_reconciliation_identity_frames').where({ frameDigest: physicalDigest }).first()
+  expect(captured).toBeDefined()
+  await db('snapshot_reconciliation_identity_frames').where({ frameDigest: physicalDigest }).delete()
+  await expect(
+    db.transaction(
+      async trx => await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, undefined, 1, effect)
+    )
+  ).rejects.toThrow('captured journal identity')
+  expect(effect).not.toHaveBeenCalled()
+  // Restore exactly the producer-completion row removed by the injected fault.
+  await db('snapshot_reconciliation_identity_frames').insert(captured)
+  const frame = await db('snapshot_reconciliation_stage_pages').where({ streamIndex: 13 }).first()
+  const before = state
+  const failed = new Error('injected after actual effect before outer commit')
+  await expect(
+    db.transaction(async trx => {
+      await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, undefined, 1, effect)
+      throw failed
+    })
+  ).rejects.toBe(failed)
+  expect(await db('test_staged_rows')).toHaveLength(0)
+  expect(
+    await db.transaction(async trx => await readSnapshotJournalPromotionCursor(trx, binding, state))
+  ).toBeUndefined()
+  const committed = await db.transaction(
+    async trx => await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, undefined, 1, effect)
+  )
+  expect(committed.checkpoint).toEqual(before)
+  expect(committed.cursor?.nextChange).toBe(1)
+  expect(await db('test_staged_rows')).toHaveLength(1)
+  const recovered = await db.transaction(async trx => await readSnapshotJournalPromotionCursor(trx, binding, state))
+  expect(recovered).toEqual(committed.cursor)
+  await expect(
+    db.transaction(
+      async trx => await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, undefined, 1, effect)
+    )
+  ).rejects.toThrow()
+  expect(await db('test_staged_rows')).toHaveLength(1)
+  const completedFrame = await db.transaction(
+    async trx => await promoteSnapshotJournalDestinationFieldBatch(trx, binding, state, recovered, 1, effect)
+  )
+  state = completedFrame.checkpoint
+  expect(state.phase).toBe('promoting')
+  expect(state.promotionSequence).toBe(frame.sequence)
+  expect(completedFrame.cursor).toBeUndefined()
+  expect(await db('test_staged_rows').orderBy('id').pluck('id')).toEqual([7, 8])
+  expect(await db('snapshot_reconciliation_promotion_cursors')).toHaveLength(0)
+  expect(await db('users').first('activeStorage')).toEqual({ activeStorage: 'destination' })
 })

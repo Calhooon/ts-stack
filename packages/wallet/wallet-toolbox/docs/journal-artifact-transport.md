@@ -101,6 +101,14 @@ staging that descriptor nor reading it for promotion proves content custody or
 issues a financial acknowledgement. Complete field-byte custody and semantic
 promotion are still separate implementation requirements.
 
+The separate internal field promotion batch uses the original atomic partial
+cursor, captured-frame completion check and fresh window fence. A failed outer
+commit rolls back effects and cursor together. A lost reply is recovered from
+that durable cursor; replaying an older cursor refuses before effects. The old
+row batch refuses field windows. The field effect still must supply complete
+content, identity, proof and merge policy; this cursor component does not itself
+perform financial promotion or primary selection.
+
 ## Native preparation from actual field artifacts
 
 `preparePackedNativeSnapshotArchiveField` accepts only a frame issued by the
