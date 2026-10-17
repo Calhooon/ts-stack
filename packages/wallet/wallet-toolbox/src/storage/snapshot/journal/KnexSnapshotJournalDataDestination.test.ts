@@ -1,3 +1,8 @@
+import {
+  retireSnapshotJournalDestinationWindow,
+  replaceSnapshotJournalDestinationWindow
+} from './SnapshotJournalDestinationWindow'
+import { cleanupSnapshotJournalWindowCustody, requireSnapshotJournalWindowClean } from './SnapshotJournalWindowCleanup'
 import * as RpcProofs from '../../remoting/validateRpcSyncProofs'
 import { knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -294,6 +299,71 @@ test('DATA receiver runs the real RPC proof policy before acknowledging an inval
     throw new Error('Actual invalid fixture proof was not visited')
   } finally {
     validate.mockRestore()
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('an actual owned field window cannot resume or bootstrap through the original row DATA receiver', async () => {
+  const f = await fixture()
+  let archive: RemoteSnapshotJournalArchive | undefined
+  try {
+    archive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual authenticated source unavailable')
+    const original = await KnexSnapshotJournalDataDestination.begin(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding,
+        journalCopyLimits(),
+        f.admission
+      ),
+      fieldBinding = { ...original.destination.binding, fieldEncoding: 'wallet-journal-fields/1' as const }
+    const fieldCheckpoint = await f.admission(
+      async () =>
+        await f.target.runSnapshotJournalWriter(async trx => {
+          await retireSnapshotJournalDestinationWindow(trx, original.destination.binding, original.checkpoint)
+          while (
+            !(await cleanupSnapshotJournalWindowCustody(trx, original.destination.binding, original.checkpoint))
+              .complete
+          ) {
+            // Each iteration performs actual bounded SQL custody cleanup.
+          }
+          return await replaceSnapshotJournalDestinationWindow(
+            trx,
+            original.destination.binding,
+            original.checkpoint,
+            fieldBinding,
+            'ed'.repeat(32),
+            async actual =>
+              await requireSnapshotJournalWindowClean(actual, original.destination.binding, original.checkpoint)
+          )
+        })
+    )
+    const before = await f.target.knex('snapshot_reconciliation_windows').first()
+    expect(JSON.parse(before.bindingJson).fieldEncoding).toBe('wallet-journal-fields/1')
+    expect(fieldCheckpoint.phase).toBe('intake')
+    await expect(
+      KnexSnapshotJournalDataDestination.resume(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding.sourceStorage.storageIdentityKey,
+        journalCopyLimits(),
+        f.admission
+      )
+    ).rejects.toThrow('actual admitted window')
+    await expect(
+      KnexSnapshotJournalDataDestination.begin(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding,
+        journalCopyLimits(),
+        f.admission
+      )
+    ).rejects.toThrow('actual admitted window')
+    expect(await f.target.knex('snapshot_reconciliation_windows').first()).toEqual(before)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
+    expect((await f.target.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe('journal-data-target')
+  } finally {
     await archive?.close()
     await f.close()
   }

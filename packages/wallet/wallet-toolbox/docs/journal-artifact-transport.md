@@ -84,6 +84,23 @@ cleanup. The new large fixture passed in23.88s and later exceeded its original
 30s case guard under type-reader contention; only this new complete case now has
 a60s guard. Existing tests/benchmarks, production lifetimes and limits are unchanged.
 
+## Separate destination field windows
+
+A target-owned destination binding may select the exact `wallet-journal-fields/1`
+encoding. That selection participates in its persisted binding digest. Removing
+or changing it cannot reopen the window. Existing row bindings retain their exact
+encoding and digest. The original row DATA receiver refuses a stored field window
+before resume, replacement cleanup or promotion; local row bootstrap also refuses
+it. This prevents incomplete metadata from becoming a complete financial row.
+
+Field metadata uses separate staging and promotion-read functions. They retain
+the original actual SQL window/primary fence, nonce, ordered fifteen-stream intake,
+byte/page quota, payload hash chain and dependency order. A multi-megabyte field
+remains an explicit length/hash descriptor in the bounded metadata frame. Neither
+staging that descriptor nor reading it for promotion proves content custody or
+issues a financial acknowledgement. Complete field-byte custody and semantic
+promotion are still separate implementation requirements.
+
 ## Native preparation from actual field artifacts
 
 `preparePackedNativeSnapshotArchiveField` accepts only a frame issued by the

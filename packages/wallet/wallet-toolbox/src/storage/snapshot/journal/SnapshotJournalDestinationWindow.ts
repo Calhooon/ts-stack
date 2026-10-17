@@ -112,6 +112,7 @@ function ownBinding(input: SnapshotJournalDestinationBinding): {
     expiresAt: integer(input.receipt.expiresAt, 1)
   }
   const value: SnapshotJournalDestinationBinding = {
+    ...(input.fieldEncoding === 'wallet-journal-fields/1' ? { fieldEncoding: 'wallet-journal-fields/1' as const } : {}),
     ...(input.lineageVersion === 2 ? { lineageVersion: 2 as const } : {}),
     ...(input.bootstrap === true ? { bootstrap: true as const } : {}),
     source,
@@ -131,6 +132,7 @@ function ownBinding(input: SnapshotJournalDestinationBinding): {
     value.destinationStorageIdentity === source.storageIdentity ||
     !chains.includes(source.chain) ||
     receipt.highWater === '0' ||
+    (input.fieldEncoding !== undefined && input.fieldEncoding !== 'wallet-journal-fields/1') ||
     (input.lineageVersion !== undefined && input.lineageVersion !== 2) ||
     (input.bootstrap !== undefined && input.bootstrap !== true) ||
     (value.bootstrap === true

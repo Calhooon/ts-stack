@@ -44,6 +44,8 @@ export interface SnapshotJournalMetadata extends SnapshotJournalPosition {
 }
 
 export interface SnapshotJournalDestinationBinding {
+  /** Distinct staged metadata family; DATA alone never grants a writer or ACK. */
+  fieldEncoding?: 'wallet-journal-fields/1'
   /** V2 profile-scoped association data supports freshly authorized full repair. */
   lineageVersion?: 2
   /** Complete current-state scan; never represents retained historical deltas. */

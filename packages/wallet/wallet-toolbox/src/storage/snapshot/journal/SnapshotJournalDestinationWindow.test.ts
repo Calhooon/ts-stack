@@ -908,3 +908,21 @@ test('regtest destination windows keep their network binding and reject another 
   wrong.receipt = { ...wrong.receipt, binding: snapshotJournalReceiptBinding(wrong.source) }
   await expect(db.transaction(t => beginSnapshotJournalDestinationWindow(t, wrong, sessionId))).rejects.toThrow()
 })
+
+test('field-window encoding is part of the actual stored binding and unknown families cannot create custody', async () => {
+  const bad = { ...binding, fieldEncoding: 'unrecognized' as 'wallet-journal-fields/1' }
+  await expect(
+    db.transaction(async trx => await beginSnapshotJournalDestinationWindow(trx, bad, sessionId))
+  ).rejects.toThrow()
+  expect(await db('snapshot_reconciliation_windows')).toHaveLength(0)
+  binding = { ...binding, fieldEncoding: 'wallet-journal-fields/1' }
+  const state = await begin(),
+    stored = await db('snapshot_reconciliation_windows').first()
+  expect(JSON.parse(stored.bindingJson).fieldEncoding).toBe('wallet-journal-fields/1')
+  const rowBinding = { ...binding }
+  delete rowBinding.fieldEncoding
+  await expect(
+    db.transaction(async trx => await readSnapshotJournalDestinationWindow(trx, rowBinding))
+  ).rejects.toThrow()
+  expect(await db.transaction(async trx => await readSnapshotJournalDestinationWindow(trx, binding))).toEqual(state)
+})

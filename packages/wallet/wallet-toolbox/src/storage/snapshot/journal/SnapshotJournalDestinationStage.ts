@@ -1,3 +1,5 @@
+import type { SnapshotJournalHashedFieldPage } from './SnapshotJournalFieldTypes'
+import { encodeSnapshotJournalFieldFrame, decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
 import {
   writeSnapshotJournalPayloadRow,
   readSnapshotJournalPayloadRow,
@@ -137,7 +139,10 @@ function scope(binding: SnapshotJournalDestinationBinding, state: SnapshotJourna
   }
 }
 
-function pageInterval(page: SnapshotJournalDeltaPage, binding: SnapshotJournalDestinationBinding): void {
+function pageInterval(
+  page: Pick<SnapshotJournalHashedFieldPage, 'changes' | 'after'> | SnapshotJournalDeltaPage,
+  binding: SnapshotJournalDestinationBinding
+): void {
   for (const value of [
     ...page.changes.map(change => change.metadata.revision),
     ...(page.after === undefined ? [] : [page.after.revision])
@@ -173,6 +178,35 @@ export async function stageSnapshotJournalDestinationPage(
   checkpoint: SnapshotJournalDestinationCheckpoint
   result: SnapshotJournalDestinationStageReceipt
 }> {
+  if (input.fieldEncoding !== undefined) invalid()
+  return await stageDestinationPage(k, input, expected, { kind: 'rows', page: inputPage }, inputLimits)
+}
+
+export async function stageSnapshotJournalDestinationFieldPage(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  inputPage: SnapshotJournalHashedFieldPage,
+  inputLimits: SnapshotJournalDestinationStageLimits
+): Promise<{
+  checkpoint: SnapshotJournalDestinationCheckpoint
+  result: SnapshotJournalDestinationStageReceipt
+}> {
+  if (input.fieldEncoding !== 'wallet-journal-fields/1') invalid()
+  return await stageDestinationPage(k, input, expected, { kind: 'fields', page: inputPage }, inputLimits)
+}
+
+async function stageDestinationPage(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  selectedPage:
+    { kind: 'rows'; page: SnapshotJournalDeltaPage } | { kind: 'fields'; page: SnapshotJournalHashedFieldPage },
+  inputLimits: SnapshotJournalDestinationStageLimits
+): Promise<{
+  checkpoint: SnapshotJournalDestinationCheckpoint
+  result: SnapshotJournalDestinationStageReceipt
+}> {
   const mysql = transaction(k)
   const { binding, state } = owned(input, expected)
   if (state.phase !== 'intake') invalid()
@@ -182,8 +216,14 @@ export async function stageSnapshotJournalDestinationPage(
     maximumBytes: integer(inputLimits.maximumBytes, 1, inputLimits.version === 2 ? Number.MAX_SAFE_INTEGER : 67108864),
     maximumPages: integer(inputLimits.maximumPages, 1, inputLimits.version === 2 ? 2147483647 : 4096)
   }
-  const frame = encodeSnapshotJournalDeltaFrame(inputPage, bound)
-  const page = decodeSnapshotJournalDeltaFrame(frame, bound)
+  const frame =
+    selectedPage.kind === 'fields'
+      ? encodeSnapshotJournalFieldFrame(selectedPage.page, bound)
+      : encodeSnapshotJournalDeltaFrame(selectedPage.page, bound)
+  const page =
+    selectedPage.kind === 'fields'
+      ? decodeSnapshotJournalFieldFrame(frame, bound)
+      : decodeSnapshotJournalDeltaFrame(frame, bound)
   pageInterval(page, binding)
   const cursor = state.after
   if (cursor !== undefined && page.changes.some(change => comparePosition(change.metadata, cursor) <= 0)) invalid()
@@ -350,6 +390,25 @@ export async function readSnapshotJournalDestinationPromotionPage(
   input: SnapshotJournalDestinationBinding,
   expected: SnapshotJournalDestinationCheckpoint
 ): Promise<{ receipt: SnapshotJournalDestinationStageReceipt; page: SnapshotJournalDeltaPage } | undefined> {
+  if (input.fieldEncoding !== undefined) invalid()
+  return await readPromotionPage(k, input, expected, decodeSnapshotJournalDeltaFrame)
+}
+
+export async function readSnapshotJournalDestinationFieldPromotionPage(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint
+): Promise<{ receipt: SnapshotJournalDestinationStageReceipt; page: SnapshotJournalHashedFieldPage } | undefined> {
+  if (input.fieldEncoding !== 'wallet-journal-fields/1') invalid()
+  return await readPromotionPage(k, input, expected, decodeSnapshotJournalFieldFrame)
+}
+
+async function readPromotionPage<T extends SnapshotJournalDeltaPage | SnapshotJournalHashedFieldPage>(
+  k: Knex,
+  input: SnapshotJournalDestinationBinding,
+  expected: SnapshotJournalDestinationCheckpoint,
+  decode: (payload: Uint8Array, context: SnapshotJournalDeltaFrameContext) => T
+): Promise<{ receipt: SnapshotJournalDestinationStageReceipt; page: T } | undefined> {
   const mysql = transaction(k)
   const { binding, state } = owned(input, expected)
   if (state.phase !== 'promoting') invalid()
@@ -496,9 +555,9 @@ export async function readSnapshotJournalDestinationPromotionPage(
     payload.fill(0)
     invalid()
   }
-  let page: SnapshotJournalDeltaPage
+  let page: T
   try {
-    page = decodeSnapshotJournalDeltaFrame(payload, bound)
+    page = decode(payload, bound)
   } finally {
     payload.fill(0)
   }

@@ -1,3 +1,9 @@
+import type { SnapshotJournalHashedFieldPage } from './SnapshotJournalFieldTypes'
+import { decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
+import {
+  stageSnapshotJournalDestinationFieldPage,
+  readSnapshotJournalDestinationFieldPromotionPage
+} from './SnapshotJournalDestinationStage'
 import { knex, type Knex } from 'knex'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -706,4 +712,136 @@ test('only the actual complete last stream and recorded tail establish exhaustio
     })
   ).rejects.toThrow('Tail proof rollback')
   expect(await db.transaction(async trx => await readSnapshotJournalDestinationWindow(trx, binding))).toEqual(initial)
+})
+
+// Metadata/staging unit contract only: a field descriptor and intake checkpoint
+// never prove content custody, semantic promotion or a financial ACK.
+test('field staging binds its distinct family, exact metadata bytes and nonce while the row path refuses it', async () => {
+  binding = { ...binding, fieldEncoding: 'wallet-journal-fields/1' }
+  const state = await begin(),
+    metadata = { revision: snapshotJournalRevision('3'), id1: 7, id2: 0, exactText: '', present: true },
+    data: SnapshotJournalHashedFieldPage = {
+      table: 'transactions',
+      examined: 1,
+      metadataBytes: 1024,
+      fieldBytes: 2097153,
+      complete: true,
+      after: { revision: metadata.revision, id1: 7, id2: 0, exactText: '' },
+      changes: [
+        {
+          present: true,
+          metadata,
+          row: { transactionId: 7, userId: 3, nullable: null },
+          fields: { rawTx: { kind: 'binary', bytes: 2097153, sha256: 'a'.repeat(64) } }
+        }
+      ]
+    }
+  await expect(stage(state)).rejects.toThrow()
+  const result = await db.transaction(
+      async trx => await stageSnapshotJournalDestinationFieldPage(trx, binding, state, data, limits)
+    ),
+    stored = await db('snapshot_reconciliation_stage_pages').first()
+  expect(result.checkpoint).toMatchObject({ sequence: 1, streamIndex: 1, phase: 'intake' })
+  expect(stored.bytes).toBe(stored.payload.length)
+  expect(stored.bytes).toBeLessThan(4096)
+  expect(decodeSnapshotJournalFieldFrame(stored.payload, { stream: 'scope', tableId: 0 })).toEqual(data)
+  expect(() => decodeSnapshotJournalDeltaFrame(stored.payload, { stream: 'scope', tableId: 0 })).toThrow()
+  const oldBinding = { ...binding }
+  delete oldBinding.fieldEncoding
+  await expect(
+    db.transaction(async trx => await readSnapshotJournalDestinationWindow(trx, oldBinding))
+  ).rejects.toThrow()
+  await expect(
+    db.transaction(async trx => await stageSnapshotJournalDestinationFieldPage(trx, binding, state, data, limits))
+  ).rejects.toThrow()
+  expect(await db('test_staged_rows')).toHaveLength(0)
+  expect(await db('snapshot_reconciliation_stage_pages')).toHaveLength(1)
+})
+
+test('field metadata reopens in dependency order after all streams without granting the old row promoter or a financial ACK', async () => {
+  binding = { ...binding, fieldEncoding: 'wallet-journal-fields/1' }
+  let state = await begin()
+  for (let index = 0; index < 15; index++) {
+    const tableId = index < 13 ? index : index === 13 ? 8 : 9,
+      metadata = {
+        generation: snapshotJournalRevision('2'),
+        revision: snapshotJournalRevision('3'),
+        id1: 7,
+        id2: 0,
+        exactText: '',
+        present: true
+      },
+      populated = index === 13,
+      data: SnapshotJournalHashedFieldPage = {
+        table: tableNames[tableId],
+        changes: populated
+          ? [
+              {
+                metadata,
+                present: true,
+                row: { provenTxId: 7, nullable: null },
+                fields: { rawTx: { kind: 'binary', bytes: 2097153, sha256: 'b'.repeat(64) } }
+              }
+            ]
+          : [],
+        examined: populated ? 1 : 0,
+        metadataBytes: populated ? 1024 : 0,
+        fieldBytes: populated ? 2097153 : 0,
+        complete: true,
+        ...(populated ? { after: { revision: metadata.revision, id1: 7, id2: 0, exactText: '' } } : {})
+      }
+    state = (
+      await db.transaction(
+        async trx => await stageSnapshotJournalDestinationFieldPage(trx, binding, state, data, limits)
+      )
+    ).checkpoint
+  }
+  expect(state.phase).toBe('promoting')
+  const reopened = knex({
+    client: 'better-sqlite3',
+    connection: { filename },
+    useNullAsDefault: true,
+    pool: { min: 0, max: 1 }
+  })
+  try {
+    await expect(
+      reopened.transaction(async trx => await readSnapshotJournalDestinationPromotionPage(trx, binding, state))
+    ).rejects.toThrow()
+    const emptyScope = await reopened.transaction(
+      async trx => await readSnapshotJournalDestinationFieldPromotionPage(trx, binding, state)
+    )
+    expect(emptyScope?.page.changes).toEqual([])
+    if (emptyScope === undefined) throw new Error('Actual empty scope frame missing')
+    state = (
+      await reopened.transaction(
+        async trx =>
+          await advanceSnapshotJournalDestinationWindow(
+            trx,
+            binding,
+            state,
+            {
+              phase: 'promoting',
+              examined: 0,
+              complete: false,
+              promotionSequence: emptyScope.receipt.sequence,
+              emptyFrameDigest: emptyScope.receipt.digest
+            },
+            async actual => {
+              expect(await actual('test_staged_rows')).toHaveLength(0)
+            }
+          )
+      )
+    ).checkpoint
+    const actual = await reopened.transaction(
+      async trx => await readSnapshotJournalDestinationFieldPromotionPage(trx, binding, state)
+    )
+    expect(actual?.page.table).toBe('provenTxs')
+    expect(actual?.receipt.streamIndex).toBe(13)
+    expect(actual?.page.fieldBytes).toBe(2097153)
+    expect(actual?.page.changes[0]).toMatchObject({ present: true, fields: { rawTx: { bytes: 2097153 } } })
+    expect(await db('test_staged_rows')).toHaveLength(0)
+    expect(await db.transaction(async trx => await readSnapshotJournalDestinationWindow(trx, binding))).toEqual(state)
+  } finally {
+    await reopened.destroy()
+  }
 })

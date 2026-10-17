@@ -179,6 +179,7 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
                   activeStorage: users[0].activeStorage
                 }
                 const previous = bootstrap === true ? await readSnapshotJournalStoredWindow(trx, binding) : undefined
+                if (previous?.binding.fieldEncoding !== undefined) invalid()
                 if (
                   previous !== undefined &&
                   (previous.retired || JSON.stringify(previous.binding) !== JSON.stringify(binding))

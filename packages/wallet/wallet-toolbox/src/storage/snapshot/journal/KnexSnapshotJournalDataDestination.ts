@@ -148,6 +148,9 @@ export class KnexSnapshotJournalDataDestination {
               activeStorage: users[0].activeStorage
             }
             const previous = await readSnapshotJournalStoredWindow(trx, binding)
+            // Field windows require their separate complete-field receiver;
+            // the old row controller must not retire or promote their metadata.
+            if (previous?.binding.fieldEncoding !== undefined) invalid()
             if (
               previous !== undefined &&
               !previous.retired &&
@@ -319,6 +322,7 @@ export class KnexSnapshotJournalDataDestination {
           )
             invalid()
           const value = JSON.parse(rows[0].bindingJson) as SnapshotJournalDestinationBinding
+          if (value.fieldEncoding !== undefined) invalid()
           if (
             value.source.identityKey !== identityKey ||
             value.source.storageIdentity !== sourceStorageIdentity ||
