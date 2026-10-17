@@ -1,3 +1,15 @@
+import { withBrc38PrivateCurrentStructuredSource } from './Brc38PrivateCurrentStructuredSourceNode'
+import {
+  readBrc38NativePackedTextDescriptorData,
+  readBrc38NativePackedTextExtentData,
+  readBrc38NativePackedTextVersionDescriptorData,
+  readBrc38NativePackedTextVersionExtentData
+} from './Brc38NativePackedTextFieldsNode'
+import { createHash } from 'node:crypto'
+import type { Knex } from 'knex'
+
+import { runInSeries } from '../../utility/runInSeries'
+
 import {
   withBrc38NativePrivateContractFixture,
   type Brc38NativePrivateContractFixture
@@ -166,5 +178,89 @@ test('private legacy spelling drains two real indexes between complete passes', 
         )
     )
     expect(working.used).toBe(0)
+  })
+}, 180000)
+
+test('private current range checks its complete schema at both operation boundaries', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const original = await seed(fixture),
+      working = new Brc38WorkingAllocation(8388608),
+      coordinate = { table: 'provenTxReqs', field: 'history', rowId: original.requestId } as const,
+      expected = Buffer.from(original.history),
+      sha256 = createHash('sha256').update(expected).digest('hex'),
+      extent = { ...coordinate, offset: 0, length: expected.length, totalBytes: expected.length },
+      versionExtent = { sha256, offset: 0, length: expected.length, totalBytes: expected.length }
+    let escaped: Knex.Transaction | undefined
+    await fixture.withRead(async trx => {
+      escaped = trx
+      await withBrc38PrivateCurrentStructuredSource(
+        fixture.storage,
+        trx,
+        coordinate,
+        policy(fixture, working),
+        async source => {
+          let completeSchemaAnchors = 0
+          const count = (query: { sql: string; bindings?: readonly unknown[] }): void => {
+            if (
+              /^select sql from sqlite_schema where name = \? and type = \? limit \?$/.test(
+                query.sql.replace(/[`"]/g, '')
+              ) &&
+              query.bindings?.[0] === 'brc38_native_text_versions' &&
+              query.bindings?.[1] === 'table'
+            )
+              completeSchemaAnchors++
+          }
+          trx.on('query', count)
+          let bytes: Uint8Array | undefined
+          try {
+            bytes = await source.read(0, expected.length)
+            expect(Buffer.from(bytes)).toEqual(expected)
+            // Actual schema selection runs before and after every operation.
+            // Nested descriptor/extent reads use this same readonly transaction.
+            expect(completeSchemaAnchors).toBe(2)
+          } finally {
+            trx.off('query', count)
+            bytes?.fill(0)
+          }
+        }
+      )
+      const descriptor = await readBrc38NativePackedTextDescriptorData(trx, coordinate)
+      expect(descriptor).toEqual({ bytes: expected.length, sha256 })
+      expect(await readBrc38NativePackedTextVersionDescriptorData(trx, sha256)).toEqual(descriptor)
+      const rowBytes = await readBrc38NativePackedTextExtentData(trx, extent)
+      try {
+        expect(Buffer.from(rowBytes)).toEqual(expected)
+      } finally {
+        rowBytes.fill(0)
+      }
+      const versionBytes = await readBrc38NativePackedTextVersionExtentData(trx, versionExtent)
+      try {
+        expect(Buffer.from(versionBytes)).toEqual(expected)
+      } finally {
+        versionBytes.fill(0)
+      }
+      const forgedSql = jest.fn(() => {
+          throw new Error('Forged SQL executed')
+        }),
+        forged = Object.assign(forgedSql, { isTransaction: true }) as unknown as Knex.Transaction
+      await runInSeries([new Proxy(trx, {}), forged], async copy => {
+        await expect(readBrc38NativePackedTextDescriptorData(copy, coordinate)).rejects.toThrow()
+        await expect(readBrc38NativePackedTextVersionDescriptorData(copy, sha256)).rejects.toThrow()
+        await expect(readBrc38NativePackedTextExtentData(copy, extent)).rejects.toThrow()
+        await expect(readBrc38NativePackedTextVersionExtentData(copy, versionExtent)).rejects.toThrow()
+      })
+      expect(forgedSql).not.toHaveBeenCalled()
+    })
+    await fixture.withWriter(async trx => {
+      await expect(readBrc38NativePackedTextDescriptorData(trx, coordinate)).rejects.toThrow('private readonly')
+      await expect(readBrc38NativePackedTextExtentData(trx, extent)).rejects.toThrow('private readonly')
+      await expect(readBrc38NativePackedTextVersionDescriptorData(trx, sha256)).rejects.toThrow('private readonly')
+      await expect(readBrc38NativePackedTextVersionExtentData(trx, versionExtent)).rejects.toThrow('private readonly')
+    })
+    expect(escaped).toBeDefined()
+    await expect(readBrc38NativePackedTextDescriptorData(escaped!, coordinate)).rejects.toThrow()
+    await expect(readBrc38NativePackedTextExtentData(escaped!, extent)).rejects.toThrow()
+    expect(working.used).toBe(0)
+    expected.fill(0)
   })
 }, 180000)

@@ -9,10 +9,10 @@ import { privateNativeDatabaseIdentity, privateNativeTransactionIdentity } from 
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { hasBrc38NativePackedTextSchema } from './Brc38NativePackedTextSchemaNode'
 import {
-  readBrc38NativePackedTextDescriptor,
-  readBrc38NativePackedTextExtent,
-  readBrc38NativePackedTextVersionDescriptor,
-  readBrc38NativePackedTextVersionExtent
+  readBrc38NativePackedTextDescriptorData,
+  readBrc38NativePackedTextExtentData,
+  readBrc38NativePackedTextVersionDescriptorData,
+  readBrc38NativePackedTextVersionExtentData
 } from './Brc38NativePackedTextFieldsNode'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
 import { Brc38NodeJsonIndex } from './Brc38NodeJsonIndex'
@@ -298,8 +298,8 @@ async function withCurrentStructuredActor<T>(
       invalid()
     const value =
       'version' in coordinate
-        ? await readBrc38NativePackedTextVersionDescriptor(trx, coordinate.version.sha256)
-        : await readBrc38NativePackedTextDescriptor(trx, coordinate)
+        ? await readBrc38NativePackedTextVersionDescriptorData(trx, coordinate.version.sha256)
+        : await readBrc38NativePackedTextDescriptorData(trx, coordinate)
     if (
       value === undefined ||
       value.bytes < 2 ||
@@ -351,12 +351,12 @@ async function withCurrentStructuredActor<T>(
             await currentRead(trx, expected)
             bytes =
               'version' in coordinate
-                ? await readBrc38NativePackedTextVersionExtent(
+                ? await readBrc38NativePackedTextVersionExtentData(
                     trx,
                     { sha256: expected.sha256, offset, length, totalBytes: expected.bytes },
                     policy.signal
                   )
-                : await readBrc38NativePackedTextExtent(
+                : await readBrc38NativePackedTextExtentData(
                     trx,
                     { ...coordinate, offset, length, totalBytes: expected.bytes },
                     policy.signal

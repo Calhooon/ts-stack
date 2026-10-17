@@ -1,3 +1,4 @@
+import { privateNativeTransactionIdentity } from './Brc38PrivateNativeOwnershipNode'
 import { nativePackedTextSources } from './Brc38NativePackedTextSources'
 import { retireExpiredBrc38NativePreparedFields } from './Brc38NativePreparedFieldsNode'
 import { hasBrc38NativePreparedFieldsSchema, nativePreparedFieldsTable } from './Brc38NativePreparedFieldSchemaNode'
@@ -24,12 +25,19 @@ import {
 } from './Brc38SqlProjectedStructuredStaging'
 import { hasBrc38NativePackedTextSchema, nativePackedTextTables as names } from './Brc38NativePackedTextSchemaNode'
 import { requireBrc38PackedRead, requireBrc38PackedWriter } from './Brc38NativePackedSchemaNode'
-import { isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
+import { isBrc38OwnedPrivateNativeWriter, isBrc38OwnedPrivateNativeSqlite } from './KnexBrc38StagingStore'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
 import { collectBrc38NativePackedGarbage } from './Brc38NativePackedFieldsNode'
 import { nativePackedTables } from './Brc38NativePackedSchemaNode'
 import { hashBrc38NativePackedChunkWindows } from './Brc38NativePackedHashWindowNode'
+
+/** Actual readonly private membership, never copied flags or a writer. */
+function requirePrivatePackedTextDataRead(k: Knex.Transaction): void {
+  requireBrc38PackedRead(k)
+  if (!isBrc38OwnedPrivateNativeSqlite(k) || privateNativeTransactionIdentity(k)?.slot !== 3)
+    throw new Error('Packed TEXT DATA requires its actual private readonly transaction')
+}
 
 const tables: Readonly<Record<number, string>> = Object.fromEntries([
   ...nativePackedTextSources.map(source => [source.id, source.sql]),
@@ -96,6 +104,24 @@ export async function readBrc38NativePackedTextDescriptor(
   requireBrc38PackedRead(k)
   const selected = key(input)
   if (!(await hasBrc38NativePackedTextSchema(k))) invalid()
+  return await readBrc38NativePackedTextDescriptorContent(k, input, selected)
+}
+/** DATA only on an actual private query-only lease. The owning factory must
+ * freshly admit schema/seal/binding before and after its operation. This does
+ * not admit a source or cache a schema verdict. */
+export async function readBrc38NativePackedTextDescriptorData(
+  k: Knex.Transaction,
+  input: Brc38NativePackedTextCoordinate
+): Promise<Readonly<{ bytes: number; sha256: string }> | undefined> {
+  requirePrivatePackedTextDataRead(k)
+  return await readBrc38NativePackedTextDescriptorContent(k, input, key(input))
+}
+async function readBrc38NativePackedTextDescriptorContent(
+  k: Knex.Transaction,
+  input: Brc38NativePackedTextCoordinate,
+  selected: Key
+): Promise<Readonly<{ bytes: number; sha256: string }> | undefined> {
+  requireBrc38PackedRead(k)
   const physical = (await k(tables[selected.tableId])
     .where({ [keys[selected.tableId]]: selected.rowId })
     .first(k.raw('typeof(??) AS kind,length(CAST(?? AS BLOB)) AS bytes', [input.field, input.field]))) as
@@ -154,6 +180,23 @@ export async function readBrc38NativePackedTextVersionDescriptor(
   requireBrc38PackedRead(k)
   if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256) || !(await hasBrc38NativePackedTextSchema(k)))
     invalid()
+  return await readBrc38NativePackedTextVersionDescriptorContent(k, sha256)
+}
+/** Immutable version DATA only; the original actual source factory owns
+ * fresh schema, seal, row/pointer, budget and lifetime admission. */
+export async function readBrc38NativePackedTextVersionDescriptorData(
+  k: Knex.Transaction,
+  sha256: string
+): Promise<Readonly<{ bytes: number; sha256: string }>> {
+  requirePrivatePackedTextDataRead(k)
+  if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) invalid()
+  return await readBrc38NativePackedTextVersionDescriptorContent(k, sha256)
+}
+async function readBrc38NativePackedTextVersionDescriptorContent(
+  k: Knex.Transaction,
+  sha256: string
+): Promise<Readonly<{ bytes: number; sha256: string }>> {
+  requireBrc38PackedRead(k)
   const actual = await version(k, sha256)
   if (actual === undefined || actual.state !== 'SEALED' || actual.accepted !== actual.bytes) invalid()
   requireBrc38PackedRead(k)
@@ -167,6 +210,35 @@ export async function readBrc38NativePackedTextVersionExtent(
   k: Knex.Transaction,
   selected: Readonly<{ sha256: string; totalBytes: number; offset: number; length: number }>,
   signal?: AbortSignal
+): Promise<Uint8Array> {
+  return await readBrc38NativePackedTextVersionExtentContent(
+    k,
+    selected,
+    signal,
+    readBrc38NativePackedTextVersionDescriptor
+  )
+}
+/** Bounded verified bytes only within an already admitted actual private
+ * readonly operation. Geometry, current metadata, chunk hashes, cancellation
+ * and zeroing are the same as the default helper; no schema authority escapes. */
+export async function readBrc38NativePackedTextVersionExtentData(
+  k: Knex.Transaction,
+  selected: Readonly<{ sha256: string; totalBytes: number; offset: number; length: number }>,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  requirePrivatePackedTextDataRead(k)
+  return await readBrc38NativePackedTextVersionExtentContent(
+    k,
+    selected,
+    signal,
+    readBrc38NativePackedTextVersionDescriptorData
+  )
+}
+async function readBrc38NativePackedTextVersionExtentContent(
+  k: Knex.Transaction,
+  selected: Readonly<{ sha256: string; totalBytes: number; offset: number; length: number }>,
+  signal: AbortSignal | undefined,
+  descriptor: typeof readBrc38NativePackedTextVersionDescriptor
 ): Promise<Uint8Array> {
   const fixed = Object.freeze({
     sha256: selected.sha256,
@@ -187,7 +259,7 @@ export async function readBrc38NativePackedTextVersionExtent(
   )
     invalid()
   signal?.throwIfAborted()
-  const actual = await readBrc38NativePackedTextVersionDescriptor(k, fixed.sha256)
+  const actual = await descriptor(k, fixed.sha256)
   if (actual.bytes !== fixed.totalBytes) invalid()
   const output = new Uint8Array(fixed.length)
   try {
@@ -212,7 +284,7 @@ export async function readBrc38NativePackedTextVersionExtent(
         payload.fill(0)
       }
     }
-    const after = await readBrc38NativePackedTextVersionDescriptor(k, fixed.sha256)
+    const after = await descriptor(k, fixed.sha256)
     if (after.bytes !== actual.bytes || after.sha256 !== actual.sha256) invalid()
     signal?.throwIfAborted()
     requireBrc38PackedRead(k)
@@ -259,6 +331,25 @@ export async function readBrc38NativePackedTextExtent(
   input: Brc38NativePackedTextRead,
   signal?: AbortSignal
 ): Promise<Uint8Array> {
+  return await readBrc38NativePackedTextExtentContent(k, input, signal, readBrc38NativePackedTextDescriptor)
+}
+/** Bounded verified bytes only within an already admitted actual private
+ * readonly operation. Geometry, current metadata, chunk hashes, cancellation
+ * and zeroing are the same as the default helper; no schema authority escapes. */
+export async function readBrc38NativePackedTextExtentData(
+  k: Knex.Transaction,
+  input: Brc38NativePackedTextRead,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  requirePrivatePackedTextDataRead(k)
+  return await readBrc38NativePackedTextExtentContent(k, input, signal, readBrc38NativePackedTextDescriptorData)
+}
+async function readBrc38NativePackedTextExtentContent(
+  k: Knex.Transaction,
+  input: Brc38NativePackedTextRead,
+  signal: AbortSignal | undefined,
+  descriptor: typeof readBrc38NativePackedTextDescriptor
+): Promise<Uint8Array> {
   signal?.throwIfAborted()
   requireBrc38PackedRead(k)
   validateBrc38NativePackedTextRead(input)
@@ -270,7 +361,7 @@ export async function readBrc38NativePackedTextExtent(
       length: input.length,
       totalBytes: input.totalBytes
     } as Brc38NativePackedTextRead,
-    actual = await readBrc38NativePackedTextDescriptor(k, fixed)
+    actual = await descriptor(k, fixed)
   if (actual === undefined || actual.bytes !== fixed.totalBytes) invalid()
   const output = new Uint8Array(fixed.length)
   try {
@@ -300,7 +391,7 @@ export async function readBrc38NativePackedTextExtent(
     }
     signal?.throwIfAborted()
     requireBrc38PackedRead(k)
-    const after = await readBrc38NativePackedTextDescriptor(k, fixed)
+    const after = await descriptor(k, fixed)
     if (after?.bytes !== actual.bytes || after.sha256 !== actual.sha256) invalid()
     return output
   } catch (cause) {
