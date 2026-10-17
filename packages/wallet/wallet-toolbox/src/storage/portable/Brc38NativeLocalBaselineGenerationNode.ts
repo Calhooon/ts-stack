@@ -290,6 +290,9 @@ export async function hasBrc38NativeLocalBaselineGenerationSchema(k: Knex.Transa
   // Compare every fresh definition inside SQLite with bounded bindings. Both
   // counts must agree so a duplicate cannot mask an absent object. This is
   // comparison DATA for this call, never a retained schema or owner verdict.
+  // Use the existing packed-schema 32-definition/32KiB dispatch envelope,
+  // within the original 65,537-byte native frame floor. Fresh exact checks,
+  // unique-name counts and the complete family/index comparisons remain.
   let batch: Array<{ name: string; type: string; sql: string }> = [],
     bytes = 0
   const flush = async (): Promise<void> => {
@@ -315,10 +318,10 @@ export async function hasBrc38NativeLocalBaselineGenerationSchema(k: Knex.Transa
   for (const [name, source] of currentExpected) {
     actual(k)
     const amount = Buffer.byteLength(name) + Buffer.byteLength(source.type) + Buffer.byteLength(source.sql)
-    if (batch.length !== 0 && (batch.length >= 8 || amount > 8192 - bytes)) await flush()
+    if (batch.length !== 0 && (batch.length >= 32 || amount > 32768 - bytes)) await flush()
     batch.push({ name, ...source })
     bytes += amount
-    if (amount > 8192) await flush()
+    if (amount > 32768) await flush()
   }
   await flush()
   const primary = (await k('sqlite_schema')

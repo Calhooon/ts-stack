@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+- Native baseline generation verification uses the existing packed-schema dispatch envelope of at most 32 definitions and 32 KiB of fixed source bindings per query. Candidate-journal verification compares its nine original definitions in one fresh bounded scalar query. Both retain complete exact SQL/type/name comparisons, unique-name counts, family and implicit-index checks, and actual transaction admission on every call. The original 65,537-byte native frame floor, DDL, executable pins, production defaults, row checkpoints, expiry and negative controls are unchanged; query packing retains no reusable schema verdict. Genuine query-packet and missing/changed-trigger, extra-index and rollback regressions cover the change. Full original native programme performance remains subject to qualification.
+
 - Consume the existing prior-import row/operation allowance with original per-row checkpoints and field drainage. Amortize native prior-import schema comparisons while retaining complete fresh exact-definition, family/index and owner checks; preserve original limits and error behavior.
 
 - Use the admitted native COPY row budget across top-level and parent rows, with finite empty-family traversal and original per-record journal commits, source coherence, lifetime and resource guards. Add a genuine stored-row batching and physical-reopen regression while retaining all original native cases. No schema, wire, production limit or API migration; whole-programme validation remains pending.

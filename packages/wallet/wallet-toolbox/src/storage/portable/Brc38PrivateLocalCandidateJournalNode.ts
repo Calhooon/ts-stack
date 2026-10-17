@@ -70,15 +70,24 @@ export async function hasBrc38PrivateLocalCandidateJournal(k: Knex.Transaction):
     .first()) as { count: unknown } | undefined
   if (total?.count === 0) return false
   if (total?.count !== definitions.length) invalid()
-  for (const sql of definitions) {
-    const match = /^CREATE (TABLE|TRIGGER) ([A-Za-z0-9_]+)/.exec(sql)!,
-      current = (await k('sqlite_schema')
-        .where({ type: match[1].toLowerCase(), name: match[2] })
-        .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
-        .count({ count: '*' })
-        .first()) as { count: unknown } | undefined
-    if (current?.count !== 1) invalid()
-  }
+  // All nine fixed definitions fit the original native frame floor together.
+  // Compare exact bytes freshly in this view; retain both counts so duplicate
+  // names cannot replace an absent original definition. No verdict is cached.
+  const current = (await k('sqlite_schema')
+    .where(query => {
+      for (const sql of definitions) {
+        const match = /^CREATE (TABLE|TRIGGER) ([A-Za-z0-9_]+)/.exec(sql)!
+        void query.orWhere(part => {
+          void part
+            .where({ type: match[1].toLowerCase(), name: match[2] })
+            .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
+        })
+      }
+    })
+    .count({ count: '*' })
+    .countDistinct({ names: 'name' })
+    .first()) as { count: unknown; names: unknown } | undefined
+  if (current?.count !== definitions.length || current.names !== definitions.length) invalid()
   const indexes = (await k('sqlite_schema')
     .where({ tbl_name: points, type: 'index' })
     .select('name', 'sql')

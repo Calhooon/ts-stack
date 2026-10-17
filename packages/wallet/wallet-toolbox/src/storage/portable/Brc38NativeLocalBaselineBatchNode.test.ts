@@ -31,15 +31,23 @@ test('native baseline bounded comparisons retain complete schema and exact curre
           trx.removeListener('query', observe)
         }
         expect(batches.length).toBeGreaterThan(0)
-        expect(batches.length).toBeLessThan(expected.length)
+        expect(batches.length).toBeLessThanOrEqual(Math.ceil(expected.length / 16))
         for (const query of batches) {
           expect(query.bindings.at(-1)).toBe(1) // Knex first() adds the fixed LIMIT binding.
           const definitions = query.bindings.slice(0, -1)
           expect(definitions.every(value => typeof value === 'string')).toBe(true)
           expect(definitions.length % 3).toBe(0)
-          expect(definitions.length / 3).toBeLessThanOrEqual(8)
+          expect(definitions.length / 3).toBeLessThanOrEqual(32)
           const bytes = definitions.reduce<number>((total, value) => total + Buffer.byteLength(String(value)), 0)
-          expect(bytes <= 8192 || definitions.length === 3).toBe(true)
+          expect(bytes <= 32768 || definitions.length === 3).toBe(true)
+          const packetBytes =
+            16 +
+            Buffer.byteLength(query.sql) +
+            query.bindings.reduce<number>(
+              (sum, item) => sum + (typeof item === 'string' ? 5 + Buffer.byteLength(item) : 9),
+              0
+            )
+          expect(packetBytes).toBeLessThanOrEqual(65537)
         }
         const generation = await readBrc38NativeLocalBaselineGeneration(trx)
         expect(generation).toMatchObject({

@@ -4,7 +4,11 @@ import {
   brc38PrivatePriorImportBudget
 } from './Brc38PrivatePriorImportSchemaNode'
 import { Brc38PrivateLocalCandidate } from './Brc38PrivateLocalCandidateNode'
-import { brc38PrivateLocalCandidateStateTable } from './Brc38PrivateLocalCandidateJournalNode'
+import {
+  brc38PrivateLocalCandidateStateTable,
+  brc38PrivateLocalCandidatePointTable,
+  hasBrc38PrivateLocalCandidateJournal
+} from './Brc38PrivateLocalCandidateJournalNode'
 import { runInSeries } from '../../utility/runInSeries'
 import type { Knex } from 'knex'
 import {
@@ -375,6 +379,63 @@ test('native prior custody uses admitted batches and bounded fresh schema packet
           )
       })
       expect(complete).toBe(true)
+      // Observe actual current native queries, not a query/constructor mock.
+      const journalPackets: number[] = []
+      await fixture.withRead(async trx => {
+        const query = (value: { sql: string; bindings: unknown[] }): void => {
+          if (!value.sql.includes('sqlite_schema')) return
+          expect(value.bindings.every(item => typeof item === 'string' || Number.isSafeInteger(item))).toBe(true)
+          journalPackets.push(
+            16 +
+              Buffer.byteLength(value.sql) +
+              value.bindings.reduce<number>(
+                (sum, item) => sum + (typeof item === 'string' ? 5 + Buffer.byteLength(item) : 9),
+                0
+              )
+          )
+        }
+        trx.on('query', query)
+        try {
+          expect(await hasBrc38PrivateLocalCandidateJournal(trx)).toBe(true)
+        } finally {
+          trx.off('query', query)
+        }
+      })
+      expect(journalPackets).toHaveLength(3)
+      expect(journalPackets.every(bytes => bytes <= 65537)).toBe(true)
+      await fixture.withWriter(async trx => {
+        const trigger = brc38PrivateLocalCandidateStateTable + '_update'
+        const original = await trx('sqlite_schema').where({ type: 'trigger', name: trigger }).select('sql').limit(2)
+        expect(original).toHaveLength(1)
+        expect(typeof original[0].sql).toBe('string')
+        await runInSeries([false, true], async changed => {
+          await trx.raw('SAVEPOINT independent_candidate_journal_comparison')
+          try {
+            await trx.raw('DROP TRIGGER ??', [trigger])
+            if (changed) await trx.raw(original[0].sql.replace(' BEGIN ', ' BEGIN SELECT 1; '))
+            await expect(hasBrc38PrivateLocalCandidateJournal(trx)).rejects.toThrow(
+              'Private local candidate journal differs from its actual owner, exact schema or original progress'
+            )
+          } finally {
+            await trx.raw('ROLLBACK TO independent_candidate_journal_comparison')
+            await trx.raw('RELEASE independent_candidate_journal_comparison')
+          }
+          expect(await hasBrc38PrivateLocalCandidateJournal(trx)).toBe(true)
+        })
+        await trx.raw('SAVEPOINT independent_candidate_journal_index')
+        try {
+          await trx.raw('CREATE INDEX independent_candidate_journal_extra ON ??(revision)', [
+            brc38PrivateLocalCandidatePointTable
+          ])
+          await expect(hasBrc38PrivateLocalCandidateJournal(trx)).rejects.toThrow(
+            'Private local candidate journal differs from its actual owner, exact schema or original progress'
+          )
+        } finally {
+          await trx.raw('ROLLBACK TO independent_candidate_journal_index')
+          await trx.raw('RELEASE independent_candidate_journal_index')
+        }
+        expect(await hasBrc38PrivateLocalCandidateJournal(trx)).toBe(true)
+      })
       await fixture.withSource(
         async source =>
           await Brc38PrivateLocalCandidate.with(fixture.store, source, options, async candidate => {
