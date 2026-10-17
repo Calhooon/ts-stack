@@ -1,14 +1,24 @@
 import {
+  snapshotJournalFieldArchiveStorageTable,
+  parseSnapshotJournalFieldArchiveStorageTable,
   snapshotJournalArchiveStorageTable,
   parseSnapshotJournalArchiveStorageTable
 } from '../journal/SnapshotJournalArchiveStorageTable'
 import {
+  parseSnapshotJournalFieldArchiveBinding,
+  type SnapshotJournalFieldArchiveBinding,
+  type SnapshotJournalFieldArchiveManifest,
   parseSnapshotJournalArchiveBinding,
   snapshotJournalArchiveStreams,
   type SnapshotJournalArchiveBinding,
   type SnapshotJournalArchiveManifest
 } from '../journal/SnapshotJournalArchiveBinding'
 import {
+  decodeSnapshotJournalFieldArchivePacket,
+  parseSnapshotJournalFieldContentIndex,
+  snapshotJournalFieldContentIndexFromHeader,
+  type SnapshotJournalFieldContentIndex,
+  snapshotJournalFieldArchiveEncoding,
   decodeSnapshotJournalArchivePacket,
   snapshotJournalArchiveEncoding
 } from '../journal/SnapshotJournalArchivePacket'
@@ -188,6 +198,29 @@ export class KnexSnapshotArchiveStore {
     )
   }
 
+  async beginJournalFields(
+    input: SnapshotJournalFieldArchiveBinding,
+    options: { maxBytes?: number; lifetimeMs?: number } = {}
+  ): Promise<SnapshotArchiveWriter> {
+    const binding = parseSnapshotJournalFieldArchiveBinding(input),
+      reservedBytes = integer(
+        options.maxBytes ?? snapshotArchiveLimits.archiveBytes,
+        snapshotArchiveLimits.headerCharge + 1,
+        snapshotArchiveLimits.archiveBytes,
+        'maxBytes'
+      ),
+      lifetimeMs = integer(options.lifetimeMs ?? 300000, 1, snapshotArchiveLimits.lifetimeMs, 'lifetimeMs'),
+      now = await this.now(this.knex)
+    if (now + lifetimeMs > binding.journal.receipt.expiresAt) throw unavailable()
+    return await this.beginEncoded(
+      binding.user.identityKey,
+      JSON.stringify(binding),
+      reservedBytes,
+      lifetimeMs,
+      binding.journal.receipt.expiresAt
+    )
+  }
+
   private async beginEncoded(
     identityKey: string,
     encoded: string,
@@ -261,11 +294,19 @@ export class KnexSnapshotArchiveStore {
     await this.appendPage(writer, page, authorize, true)
   }
 
+  async appendJournalFields(
+    writer: SnapshotArchiveWriter,
+    page: Omit<SnapshotArchivePage, 'digest'>,
+    authorize?: (trx: Knex) => Promise<void>
+  ): Promise<void> {
+    await this.appendPage(writer, page, authorize, 'fields')
+  }
+
   private async appendPage(
     writer: SnapshotArchiveWriter,
     page: Omit<SnapshotArchivePage, 'digest'>,
     authorize: ((trx: Knex) => Promise<void>) | undefined,
-    journal: boolean
+    journal: boolean | 'fields'
   ): Promise<void> {
     integer(page.sequence, 0, snapshotArchiveLimits.pages - 1, 'sequence')
     integer(page.rows, 0, snapshotArchiveLimits.rowsPerPage, 'rows')
@@ -295,7 +336,10 @@ export class KnexSnapshotArchiveStore {
           prior === undefined
             ? undefined
             : journal
-              ? parseSnapshotJournalArchiveStorageTable(prior.tableName).table
+              ? (journal === 'fields'
+                  ? parseSnapshotJournalFieldArchiveStorageTable(prior.tableName)
+                  : parseSnapshotJournalArchiveStorageTable(prior.tableName)
+                ).table
               : prior.tableName
         if (
           prior?.digest !== digest ||
@@ -307,22 +351,40 @@ export class KnexSnapshotArchiveStore {
         return
       }
       if (row.state !== 'building' || input.sequence !== row.nextSequence) throw unavailable()
-      let storedTable: string = input.table
+      let storedTable: string = input.table,
+        contentIndex: Readonly<SnapshotJournalFieldContentIndex> | null = null
       if (journal) {
-        const binding = parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
+        const binding =
+            journal === 'fields'
+              ? parseSnapshotJournalFieldArchiveBinding(JSON.parse(row.binding))
+              : parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
           stream = snapshotJournalArchiveStreams[row.tableIndex]
         if (stream === undefined || input.table !== stream.table) throw unavailable()
-        const packet = decodeSnapshotJournalArchivePacket(
-          input.bytes,
-          { stream: stream.stream, tableId: stream.tableId },
-          binding.journal.receipt.highWater
-        )
+        const packet = (
+            journal === 'fields' ? decodeSnapshotJournalFieldArchivePacket : decodeSnapshotJournalArchivePacket
+          )(input.bytes, { stream: stream.stream, tableId: stream.tableId }, binding.journal.receipt.highWater),
+          frame = packet.kind === 'field-frame' || packet.kind === 'frame' ? packet : undefined
+        if (packet.kind === 'field-content')
+          contentIndex = parseSnapshotJournalFieldContentIndex({
+            frameDigest: packet.frameDigest,
+            changeIndex: packet.changeIndex,
+            field: packet.field,
+            descriptor: packet.descriptor,
+            offset: packet.offset,
+            length: packet.bytes.length
+          })
         if (
-          input.rows !== (packet.kind === 'frame' ? packet.page.changes.length : 0) ||
-          input.done !== (packet.kind === 'frame' && packet.page.complete)
+          input.rows !== (frame === undefined ? 0 : frame.page.changes.length) ||
+          input.done !== (frame !== undefined && frame.page.complete)
         )
           throw unavailable()
-        storedTable = snapshotJournalArchiveStorageTable(packet.kind === 'frame' ? 'frame' : 'identities', stream)
+        storedTable =
+          journal === 'fields'
+            ? snapshotJournalFieldArchiveStorageTable(
+                frame !== undefined ? 'frame' : packet.kind === 'field-content' ? 'content' : 'identities',
+                stream
+              )
+            : snapshotJournalArchiveStorageTable(frame === undefined ? 'identities' : 'frame', stream)
       } else if (input.table !== snapshotArchiveTables[row.tableIndex]) throw unavailable()
       const usedBytes = Number(row.usedBytes) + input.bytes.length + snapshotArchiveLimits.pageCharge
       if (usedBytes > Number(row.reservedBytes))
@@ -337,7 +399,15 @@ export class KnexSnapshotArchiveStore {
         payload: Buffer.from(input.bytes)
       })
       const receipt = new TextEncoder().encode(
-        JSON.stringify([row.digest, input.sequence, storedTable, input.rows, input.done, digest])
+        JSON.stringify([
+          row.digest,
+          input.sequence,
+          storedTable,
+          input.rows,
+          input.done,
+          digest,
+          ...(journal === 'fields' ? [contentIndex] : [])
+        ])
       )
       await trx('snapshot_archives')
         .where({ archiveId: row.archiveId })
@@ -351,11 +421,15 @@ export class KnexSnapshotArchiveStore {
     })
   }
 
-  private journalRow(row: ArchiveRow): boolean {
+  private journalRow(row: ArchiveRow): boolean | 'fields' {
     if (typeof row.binding !== 'string' || row.binding.length > snapshotArchiveLimits.bindingBytes) throw unavailable()
     const binding: unknown = JSON.parse(row.binding)
     if (binding === null || typeof binding !== 'object') throw unavailable()
     const version = Object.getOwnPropertyDescriptor(binding, 'version')?.value
+    if (version === 4) {
+      parseSnapshotJournalFieldArchiveBinding(binding)
+      return 'fields'
+    }
     if (version === 3) {
       parseSnapshotJournalArchiveBinding(binding)
       return true
@@ -365,11 +439,24 @@ export class KnexSnapshotArchiveStore {
   }
 
   private journalManifest(row: ArchiveRow): SnapshotJournalArchiveManifest {
-    if (!this.journalRow(row)) throw unavailable()
+    if (this.journalRow(row) !== true) throw unavailable()
     return {
       version: 1,
       archiveId: row.archiveId,
       binding: parseSnapshotJournalArchiveBinding(JSON.parse(row.binding)),
+      expiresAt: Number(row.expiresAt),
+      pages: row.nextSequence,
+      rows: Number(row.rows),
+      digest: row.digest
+    }
+  }
+
+  private journalFieldManifest(row: ArchiveRow): SnapshotJournalFieldArchiveManifest {
+    if (this.journalRow(row) !== 'fields') throw unavailable()
+    return {
+      version: 1,
+      archiveId: row.archiveId,
+      binding: parseSnapshotJournalFieldArchiveBinding(JSON.parse(row.binding)),
       expiresAt: Number(row.expiresAt),
       pages: row.nextSequence,
       rows: Number(row.rows),
@@ -412,13 +499,29 @@ export class KnexSnapshotArchiveStore {
     return await this.knex.transaction(async trx => {
       await this.capacity(trx)
       const row = await this.ownedWriter(trx, owner)
-      if (!this.journalRow(row) || row.tableIndex !== snapshotJournalArchiveStreams.length) throw unavailable()
+      if (this.journalRow(row) !== true || row.tableIndex !== snapshotJournalArchiveStreams.length) throw unavailable()
       await trx('snapshot_archives').where({ archiveId: row.archiveId }).update({ state: 'ready' })
       return this.journalManifest(row)
     })
   }
 
-  private async ready(identityKey: string, archiveId: string, journal = false): Promise<ArchiveRow> {
+  async sealJournalFields(writer: SnapshotArchiveWriter): Promise<SnapshotJournalFieldArchiveManifest> {
+    const owner = { archiveId: writer.archiveId, writerToken: writer.writerToken }
+    return await this.knex.transaction(async trx => {
+      await this.capacity(trx)
+      const row = await this.ownedWriter(trx, owner)
+      if (this.journalRow(row) !== 'fields' || row.tableIndex !== snapshotJournalArchiveStreams.length)
+        throw unavailable()
+      await trx('snapshot_archives').where({ archiveId: row.archiveId }).update({ state: 'ready' })
+      return this.journalFieldManifest(row)
+    })
+  }
+
+  private async ready(
+    identityKey: string,
+    archiveId: string,
+    journal: boolean | 'fields' = false
+  ): Promise<ArchiveRow> {
     identity(identityKey)
     identifier(archiveId, 'archiveId')
     const row: ArchiveRow | undefined = await this.knex('snapshot_archives')
@@ -437,6 +540,13 @@ export class KnexSnapshotArchiveStore {
     return this.journalManifest(await this.ready(identityKey, archiveId, true))
   }
 
+  async inspectJournalFields(identityKey: string, archiveId: string): Promise<SnapshotJournalFieldArchiveManifest> {
+    return this.journalFieldManifest(await this.ready(identityKey, archiveId, 'fields'))
+  }
+  async journalFieldsDirectory(identityKey: string, archiveId: string) {
+    return await this.directoryData(identityKey, archiveId, 'fields')
+  }
+
   async journalDirectory(identityKey: string, archiveId: string) {
     return await this.directoryData(identityKey, archiveId, true)
   }
@@ -446,10 +556,26 @@ export class KnexSnapshotArchiveStore {
     return { ...(await this.directoryData(identityKey, archiveId, false)), encoding: snapshotArchiveEncoding }
   }
 
-  private async directoryData(identityKey: string, archiveId: string, journal: boolean) {
+  private async directoryData(identityKey: string, archiveId: string, journal: boolean | 'fields') {
     const header = await this.ready(identityKey, archiveId, journal)
-    const pages: Array<Omit<PageRow, 'payload' | 'archiveId'>> = await this.knex('snapshot_archive_pages')
-      .select('sequence', 'tableName', 'rows', 'done', 'digest')
+    const pages: Array<
+      Omit<PageRow, 'payload' | 'archiveId'> & { fieldHeader?: Uint8Array | null; packetBytes?: number | string }
+    > = await this.knex('snapshot_archive_pages')
+      .select(
+        'sequence',
+        'tableName',
+        'rows',
+        'done',
+        'digest',
+        ...(journal === 'fields'
+          ? [
+              this.knex.raw(
+                "CASE WHEN tableName LIKE 'journal-fields-content/%' THEN substr(payload,1,4096) ELSE NULL END AS fieldHeader"
+              ),
+              this.knex.raw('length(payload) AS packetBytes')
+            ]
+          : [])
+      )
       .where({ archiveId })
       .orderBy('sequence')
       .limit(snapshotArchiveLimits.pages)
@@ -458,7 +584,12 @@ export class KnexSnapshotArchiveStore {
     await this.ready(identityKey, archiveId, journal)
     return {
       version: 1 as const,
-      encoding: journal ? snapshotJournalArchiveEncoding : snapshotArchiveEncoding,
+      encoding:
+        journal === 'fields'
+          ? snapshotJournalFieldArchiveEncoding
+          : journal
+            ? snapshotJournalArchiveEncoding
+            : snapshotArchiveEncoding,
       archiveId,
       expiresAt: Number(header.expiresAt),
       pages: header.nextSequence,
@@ -466,7 +597,12 @@ export class KnexSnapshotArchiveStore {
       digest: header.digest,
       bindingJson: header.binding,
       receipts: pages.map(page => {
-        const packet = journal ? parseSnapshotJournalArchiveStorageTable(page.tableName) : undefined,
+        const packet =
+            journal === 'fields'
+              ? parseSnapshotJournalFieldArchiveStorageTable(page.tableName)
+              : journal
+                ? parseSnapshotJournalArchiveStorageTable(page.tableName)
+                : undefined,
           table = packet?.table ?? snapshotArchiveTables.find(table => table === page.tableName)
         if (table === undefined) throw unavailable()
         return {
@@ -475,7 +611,18 @@ export class KnexSnapshotArchiveStore {
           rows: page.rows,
           done: Boolean(page.done),
           digest: page.digest,
-          ...(packet === undefined ? {} : { packet: packet.packet, stream: packet.stream, tableId: packet.tableId })
+          ...(packet === undefined ? {} : { packet: packet.packet, stream: packet.stream, tableId: packet.tableId }),
+          ...(journal === 'fields'
+            ? {
+                content:
+                  packet?.packet === 'content'
+                    ? snapshotJournalFieldContentIndexFromHeader(page.fieldHeader!, Number(page.packetBytes), {
+                        stream: packet.stream,
+                        tableId: packet.tableId
+                      })
+                    : null
+              }
+            : {})
         }
       })
     }
@@ -489,11 +636,15 @@ export class KnexSnapshotArchiveStore {
     return await this.readPage(identityKey, archiveId, sequence, true)
   }
 
+  async readJournalFields(identityKey: string, archiveId: string, sequence: number): Promise<SnapshotArchivePage> {
+    return await this.readPage(identityKey, archiveId, sequence, 'fields')
+  }
+
   private async readPage(
     identityKey: string,
     archiveId: string,
     sequence: number,
-    journal: boolean
+    journal: boolean | 'fields'
   ): Promise<SnapshotArchivePage> {
     integer(sequence, 0, snapshotArchiveLimits.pages - 1, 'sequence')
     const header = await this.ready(identityKey, archiveId, journal)
@@ -504,7 +655,10 @@ export class KnexSnapshotArchiveStore {
     // Release/expiry during I/O cannot return a newly stale page.
     await this.ready(identityKey, archiveId, journal)
     const table = journal
-      ? parseSnapshotJournalArchiveStorageTable(page.tableName).table
+      ? (journal === 'fields'
+          ? parseSnapshotJournalFieldArchiveStorageTable(page.tableName)
+          : parseSnapshotJournalArchiveStorageTable(page.tableName)
+        ).table
       : snapshotArchiveTables.find(table => table === page.tableName)
     if (table === undefined) throw unavailable()
     return {

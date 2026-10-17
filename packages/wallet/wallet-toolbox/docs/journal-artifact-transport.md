@@ -41,6 +41,54 @@ Remote field artifact/transfer/staging/semantic promotion and full remote primar
 handoff remain implementation work. This source connection is not complete
 large-payload sync or whole-system qualification.
 
+## Immutable field artifacts
+
+The actual field producer now captures all fifteen journal streams into a separate
+version-four binding and `wallet-journal-fields/1` encoding. A version-two field
+frame contains small raw cells plus exact binary/UTF-8 length and SHA-256 DATA;
+whole payloads are never inserted into those SQL cells. Separate content packets
+carry at most64KiB. The original version-one raw-cell and journal-packet formats
+remain unchanged and their strict decoders refuse field envelopes.
+
+Each actual retained field is measured and hashed, including duplicate content.
+The producer stores each distinct SHA/length only once, replays bounded extents
+and independently rehashes that replay. A mismatch cannot publish its metadata
+frame or READY. The directory binds each content packet's frame/change/field,
+kind, whole-content hash, offset and length into the exact archive chain. Its SQL
+index query reads at most4KiB of each content header rather than the full payload.
+This lets a future receiving cache locate required chunks and skip already
+verified content; an index or hash cannot authorize cached bytes or an ACK.
+
+Identity capture rereads and compares the actual small-cell page in the same
+pinned view. Notification documents use a private streamed JSON index, retaining
+last-duplicate-member behavior and legacy invalid-ID filtering. Batches visit at
+most64 candidates and resolve actual indexed profile membership before capturing
+identities. Private temporary logical/physical storage is bounded to64MiB, member
+count to one million and shared working allocation to16MiB. Both EOF digests and
+physical index cleanup precede source completion; no complete notification object
+or wallet-sized ID map is allocated.
+
+The new artifact methods share the original eight archives,128MiB aggregate,
+32MiB per artifact,4096 packets and1MiB packet ceilings. They retain actual SQL
+capacity transactions, writer tokens and source receipt expiry. Old row/journal
+APIs refuse field artifacts. Cancellation after an actual prefix commit preserves
+the cancellation error, drains the actual source and removes provisional staging.
+Replay corruption and forged small-row metadata refuse. Leading U+FEFF remains
+exact text in natural identity DATA as well as raw frames.
+
+Focused host tests cover a2MiB multichunk value reused across two source fields,
+a notification document over1MiB with257 candidates, foreign-profile filtering,
+exact Unicode/NUL values, foreground writes, closure-before-READY, incremental
+hard deletes, future positions, integrity-bound index tampering and failure
+cleanup. The new large fixture passed in23.88s and later exceeded its original
+30s case guard under type-reader contention; only this new complete case now has
+a60s guard. Existing tests/benchmarks, production lifetimes and limits are unchanged.
+
+These are actual source/store components. No new HTTP field capability is yet
+advertised. Authenticated field transport, target-owned verified cache/semantic
+promotion and full remote primary handoff remain to be implemented. An immutable
+field artifact must never masquerade as a live SQL source or supply a commit fence.
+
 A version-three binding identifies `wallet-journal-packets/1`. It records the
 actual captured source/profile/schema, exact receipt/high-water/floor, source
 primary DATA and requested lower bound. A matching retained position selects

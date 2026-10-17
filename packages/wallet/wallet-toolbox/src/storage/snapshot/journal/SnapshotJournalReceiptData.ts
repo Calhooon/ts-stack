@@ -37,7 +37,7 @@ export function snapshotJournalDataText(input: unknown, maximumBytes: number, mi
     input.length < minimum ||
     input.length > maximumBytes ||
     brc38Utf8ByteLength(input) > maximumBytes ||
-    new TextDecoder().decode(new TextEncoder().encode(input)) !== input
+    new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(new TextEncoder().encode(input)) !== input
   )
     invalid()
   return input

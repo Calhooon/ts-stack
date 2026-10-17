@@ -79,7 +79,8 @@ function field(row: object, name: string): unknown {
  */
 export function* snapshotJournalRowReferences(
   tableId: number,
-  change: SnapshotJournalDelta
+  change: SnapshotJournalDelta,
+  skipNotifications?: true
 ): Generator<SnapshotJournalRowReference> {
   const id = integer(tableId, 0)
   if (id >= forms.length || id === 7) invalid()
@@ -97,7 +98,7 @@ export function* snapshotJournalRowReferences(
     if (optional === true && value == null) continue
     yield { tableId: parentTable, incomingId: integer(value), use: 'parent' }
   }
-  if (id !== 9) return
+  if (id !== 9 || skipNotifications === true) return
   const notify = field(row, 'notify')
   if (typeof notify !== 'string' || Buffer.byteLength(notify, 'utf8') > 1048576) invalid()
   const parsed: unknown = JSON.parse(notify)
@@ -126,7 +127,8 @@ export async function* readSnapshotJournalRowSourceIdentities(
   highWater: SnapshotJournalRevision,
   tableId: number,
   change: SnapshotJournalDelta,
-  inputIndexes?: SnapshotJournalSourceIndexes
+  inputIndexes?: SnapshotJournalSourceIndexes,
+  skipNotifications?: true
 ): AsyncGenerator<ReadonlyMap<string, SnapshotJournalSourceIdentity>> {
   if (
     !k.isTransaction ||
@@ -138,7 +140,7 @@ export async function* readSnapshotJournalRowSourceIdentities(
   const indexes = snapshotJournalSourceIndexes(k, inputIndexes)
   const high = snapshotJournalRevision(highWater)
   if (high === '0') invalid()
-  const iterator = snapshotJournalRowReferences(tableId, change)
+  const iterator = snapshotJournalRowReferences(tableId, change, skipNotifications)
   let done = false
   while (!done) {
     const references = new Map<string, SnapshotJournalRowReference>()
@@ -191,4 +193,43 @@ export async function* readSnapshotJournalRowSourceIdentities(
     }
     yield result
   }
+}
+
+/** One bounded notification batch from the original retained JSON visitor.
+ * Actual indexed profile membership is required before capturing identities. */
+export async function readSnapshotJournalNotificationSourceIdentities(
+  k: Knex,
+  userId: number,
+  highWater: SnapshotJournalRevision,
+  input: readonly number[],
+  inputIndexes?: SnapshotJournalSourceIndexes
+): Promise<ReadonlyMap<string, SnapshotJournalSourceIdentity>> {
+  if (!k.isTransaction || input.length < 1 || input.length > 64) invalid()
+  const user = integer(userId),
+    indexes = snapshotJournalSourceIndexes(k, inputIndexes),
+    ids = [...new Set(input.map(value => integer(value)))],
+    rows: Array<{ transactionId: unknown }> = await walletSnapshotSourceQuery(
+      k,
+      'transactions',
+      user,
+      indexes.profile,
+      indexes.relation,
+      indexes.certificate,
+      indexes.global
+    )
+      .select('transactions.transactionId')
+      .whereIn('transactions.transactionId', ids)
+      .limit(65)
+  if (rows.length > ids.length) invalid()
+  const owned = rows.map(row => integer(row.transactionId))
+  if (new Set(owned).size !== owned.length || owned.some(id => !ids.includes(id))) invalid()
+  if (owned.length === 0) return new Map()
+  const values = await readSnapshotJournalSourceIdentities(
+    k,
+    user,
+    snapshotJournalRevision(highWater),
+    owned.map(incomingId => ({ tableId: 0 as const, incomingId })),
+    indexes
+  )
+  return new Map([...values].map(([key, value]) => [key, Object.freeze({ ...value, required: true })]))
 }

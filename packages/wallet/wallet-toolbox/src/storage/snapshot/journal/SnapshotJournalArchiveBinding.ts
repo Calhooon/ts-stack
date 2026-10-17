@@ -7,7 +7,7 @@ import {
   snapshotJournalDataRecord,
   snapshotJournalDataText
 } from './SnapshotJournalReceiptData'
-import { snapshotJournalArchiveEncoding } from './SnapshotJournalArchivePacket'
+import { snapshotJournalArchiveEncoding, snapshotJournalFieldArchiveEncoding } from './SnapshotJournalArchivePacket'
 import {
   compareSnapshotJournalRevisions,
   snapshotJournalRevision,
@@ -186,3 +186,30 @@ export const snapshotJournalArchiveStreams = Object.freeze([
   Object.freeze({ stream: 'physical' as const, tableId: 8, table: 'provenTxs' as const }),
   Object.freeze({ stream: 'physical' as const, tableId: 9, table: 'provenTxReqs' as const })
 ])
+
+/** Distinct immutable field DATA binding. Its source/profile/receipt metadata
+ * follows the existing exact journal contract; no SQL source actor is parsed. */
+export interface SnapshotJournalFieldArchiveBinding extends Omit<
+  SnapshotJournalArchiveBinding,
+  'version' | 'encoding'
+> {
+  version: 4
+  encoding: typeof snapshotJournalFieldArchiveEncoding
+}
+export interface SnapshotJournalFieldArchiveManifest extends Omit<SnapshotJournalArchiveManifest, 'binding'> {
+  binding: SnapshotJournalFieldArchiveBinding
+}
+export function parseSnapshotJournalFieldArchiveBinding(input: unknown): SnapshotJournalFieldArchiveBinding {
+  const row = snapshotJournalDataRecord(input, [
+    'version',
+    'encoding',
+    'snapshotId',
+    'sourceStorage',
+    'sourceSchema',
+    'user',
+    'journal'
+  ])
+  if (row.version !== 4 || row.encoding !== snapshotJournalFieldArchiveEncoding) invalid()
+  const common = parseSnapshotJournalArchiveBinding({ ...row, version: 3, encoding: snapshotJournalArchiveEncoding })
+  return { ...common, version: 4, encoding: snapshotJournalFieldArchiveEncoding }
+}

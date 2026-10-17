@@ -1,4 +1,4 @@
-import type { SnapshotJournalFieldReader } from './SnapshotJournalFieldTypes'
+import type { SnapshotJournalFieldReader, SnapshotJournalHashedFieldPage } from './SnapshotJournalFieldTypes'
 import type { WalletStorageProvider } from '../../../sdk/WalletStorage.interfaces'
 import type { RetainedReadSnapshotOptions } from '../RetainedReadSnapshot'
 import type { WalletReadSnapshot } from '../WalletReadSnapshot'
@@ -36,6 +36,16 @@ export interface SnapshotJournalReconciliationSource extends SnapshotJournalSour
   readonly primary: { activeStorage: string | null; epoch: SnapshotJournalRevision }
   /** Optional bounded logical-field producer from this SAME actual view. */
   readonly fieldDeltaReader?: SnapshotJournalFieldReader
+  /** Artifact-only identity DATA from the same actual small-cell/extent view.
+   * A prefix flush cannot borrow a reentrant local SQL commit fence. */
+  readFieldIdentities?: (
+    request: SnapshotJournalDeltaRequest,
+    page: SnapshotJournalHashedFieldPage,
+    capture: (
+      changeIndex: number,
+      identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+    ) => void | Promise<void>
+  ) => Promise<void>
   verifyLive: () => Promise<void>
   withCommitFence: <T>(commit: () => Promise<T>) => Promise<T>
   withCurrentDataFence: <T>(

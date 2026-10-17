@@ -1,8 +1,11 @@
+import type { SnapshotJournalHashedFieldPage, SnapshotJournalHashedFieldDescriptor } from './SnapshotJournalFieldTypes'
 import { brc38Utf8ByteLength } from '../../portable/Brc38Utf8Length'
 import { sha256 } from '@bsv/sdk/primitives/Hash'
 import { toHex } from '@bsv/sdk/primitives/utils'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
 import {
+  decodeSnapshotJournalFieldFrame,
+  encodeSnapshotJournalFieldFrame,
   decodeSnapshotJournalDeltaFrame,
   encodeSnapshotJournalDeltaFrame,
   type SnapshotJournalDeltaFrameContext
@@ -269,4 +272,207 @@ export function decodeSnapshotJournalArchivePacket(
   )
     invalid()
   return { kind, frameDigest, page }
+}
+
+/** Separately negotiated field encoding. Version-one packet parsers must refuse
+ * these envelopes rather than silently treat metadata as complete SQL rows. */
+export const snapshotJournalFieldArchiveEncoding = 'wallet-journal-fields/1'
+export type SnapshotJournalFieldArchivePacket =
+  | { readonly kind: 'field-frame'; readonly frameDigest: string; readonly page: SnapshotJournalHashedFieldPage }
+  | {
+      readonly kind: 'field-identities'
+      readonly frameDigest: string
+      readonly changeIndex: number
+      readonly identities: ReadonlyMap<string, SnapshotJournalSourceIdentity>
+    }
+  | {
+      readonly kind: 'field-content'
+      readonly frameDigest: string
+      readonly changeIndex: number
+      readonly field: string
+      readonly descriptor: Readonly<SnapshotJournalHashedFieldDescriptor>
+      readonly offset: number
+      readonly bytes: Uint8Array
+    }
+
+export function encodeSnapshotJournalFieldArchiveFrame(
+  inputContext: SnapshotJournalDeltaFrameContext,
+  page: SnapshotJournalHashedFieldPage
+): Uint8Array {
+  const bound = context(inputContext),
+    frame = encodeSnapshotJournalFieldFrame(page, bound)
+  return envelope({ version: 2, kind: 'field-frame', ...bound, frameDigest: toHex(sha256(frame)) }, frame)
+}
+export function encodeSnapshotJournalFieldArchiveIdentities(
+  inputContext: SnapshotJournalDeltaFrameContext,
+  inputDigest: string,
+  changeIndex: number,
+  input: ReadonlyMap<string, SnapshotJournalSourceIdentity>,
+  highWater: SnapshotJournalRevision
+): Uint8Array {
+  const bound = context(inputContext),
+    frameDigest = snapshotJournalDataDigest(inputDigest),
+    bytes = encodeSnapshotJournalArchiveIdentities(bound, frameDigest, changeIndex, input, highWater)
+  return envelope({ version: 2, kind: 'field-identities', ...bound, frameDigest }, bytes)
+}
+function fieldContent(input: unknown) {
+  const data = snapshotJournalDataRecord(input, ['changeIndex', 'field', 'descriptor', 'offset']),
+    descriptor = snapshotJournalDataRecord(data.descriptor, ['kind', 'bytes', 'sha256'])
+  if (descriptor.kind !== 'binary' && descriptor.kind !== 'utf8') invalid()
+  return {
+    changeIndex: integer(data.changeIndex, 0, 255),
+    field: snapshotJournalDataText(data.field, 128, 1),
+    offset: integer(data.offset, 0, 1000000000),
+    descriptor: Object.freeze({
+      kind: descriptor.kind,
+      bytes: integer(descriptor.bytes, 0, 1000000000),
+      sha256: snapshotJournalDataDigest(descriptor.sha256)
+    })
+  }
+}
+function contentSize(field: ReturnType<typeof fieldContent>, size: number): void {
+  if (
+    size > 65536 ||
+    size < (field.descriptor.bytes === 0 ? 0 : 1) ||
+    field.offset > field.descriptor.bytes - size ||
+    (field.descriptor.bytes === 0 &&
+      (field.offset !== 0 || field.descriptor.sha256 !== toHex(sha256(new Uint8Array()))))
+  )
+    invalid()
+}
+export function encodeSnapshotJournalFieldArchiveContent(
+  inputContext: SnapshotJournalDeltaFrameContext,
+  inputDigest: string,
+  inputChangeIndex: number,
+  inputField: string,
+  inputDescriptor: Readonly<SnapshotJournalHashedFieldDescriptor>,
+  inputOffset: number,
+  inputBytes: Uint8Array
+): Uint8Array {
+  const bound = context(inputContext),
+    frameDigest = snapshotJournalDataDigest(inputDigest),
+    field = fieldContent({
+      changeIndex: inputChangeIndex,
+      field: inputField,
+      descriptor: inputDescriptor,
+      offset: inputOffset
+    }),
+    getSize = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get
+  if (!(inputBytes instanceof Uint8Array) || getSize === undefined) invalid()
+  contentSize(field, getSize.call(inputBytes))
+  return envelope({ version: 2, kind: 'field-content', ...bound, frameDigest, ...field }, new Uint8Array(inputBytes))
+}
+
+/** Closed bounded DATA parser only. Content packets still need actual archive
+ * inclusion, ordered complete extent coverage and a whole-field hash check.
+ * These descriptors never enroll a source, target writer or native pointer. */
+export function decodeSnapshotJournalFieldArchivePacket(
+  input: Uint8Array,
+  inputContext: SnapshotJournalDeltaFrameContext,
+  highWater: SnapshotJournalRevision
+): SnapshotJournalFieldArchivePacket {
+  const bound = context(inputContext),
+    high = snapshotJournalRevision(highWater),
+    getSize = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get
+  if (!(input instanceof Uint8Array) || getSize === undefined) invalid()
+  const size = getSize.call(input) as number
+  if (size < 4 || size > snapshotJournalArchivePacketBytes) invalid()
+  const bytes = new Uint8Array(input),
+    length = new DataView(bytes.buffer).getUint32(0, false)
+  if (length > bytes.length - 4) invalid()
+  const raw: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(4, 4 + length)))
+  if (raw === null || typeof raw !== 'object') invalid()
+  const kind = Object.getOwnPropertyDescriptor(raw, 'kind')?.value,
+    row = snapshotJournalDataRecord(raw, [
+      'version',
+      'kind',
+      'stream',
+      'tableId',
+      'frameDigest',
+      ...(kind === 'field-content' ? ['changeIndex', 'field', 'descriptor', 'offset'] : [])
+    ]),
+    frameDigest = snapshotJournalDataDigest(row.frameDigest),
+    body = bytes.subarray(4 + length)
+  if (row.version !== 2 || row.stream !== bound.stream || row.tableId !== bound.tableId) invalid()
+  if (kind === 'field-frame') {
+    if (toHex(sha256(body)) !== frameDigest) invalid()
+    const page = decodeSnapshotJournalFieldFrame(body, bound)
+    if (
+      page.changes.some(change => compareSnapshotJournalRevisions(change.metadata.revision, high) > 0) ||
+      (page.after !== undefined && compareSnapshotJournalRevisions(page.after.revision, high) > 0)
+    )
+      invalid()
+    return { kind, frameDigest, page }
+  }
+  if (kind === 'field-identities') {
+    const packet = decodeSnapshotJournalArchivePacket(body, bound, high)
+    if (packet.kind !== 'identities' || packet.frameDigest !== frameDigest) invalid()
+    return { kind, frameDigest, changeIndex: packet.changeIndex, identities: packet.identities }
+  }
+  if (kind !== 'field-content') invalid()
+  const field = fieldContent(
+    Object.fromEntries(['changeIndex', 'field', 'descriptor', 'offset'].map(key => [key, row[key]]))
+  )
+  contentSize(field, body.length)
+  return { kind, frameDigest, ...field, bytes: new Uint8Array(body) }
+}
+
+export interface SnapshotJournalFieldContentIndex {
+  readonly frameDigest: string
+  readonly changeIndex: number
+  readonly field: string
+  readonly descriptor: Readonly<SnapshotJournalHashedFieldDescriptor>
+  readonly offset: number
+  readonly length: number
+}
+/** Closed integrity/index DATA only. It can locate a required packet, never
+ * authorize cached bytes, a source read, a pointer attachment or an ACK. */
+export function parseSnapshotJournalFieldContentIndex(input: unknown): Readonly<SnapshotJournalFieldContentIndex> {
+  const row = snapshotJournalDataRecord(input, [
+      'frameDigest',
+      'changeIndex',
+      'field',
+      'descriptor',
+      'offset',
+      'length'
+    ]),
+    content = fieldContent(
+      Object.fromEntries(['changeIndex', 'field', 'descriptor', 'offset'].map(key => [key, row[key]]))
+    ),
+    length = integer(row.length, 0, 65536)
+  contentSize(content, length)
+  return Object.freeze({ frameDigest: snapshotJournalDataDigest(row.frameDigest), ...content, length })
+}
+
+/** Actual stored packet header, loaded through a bounded SQL prefix. The
+ * complete packet hash is still checked on read and bound into its directory.
+ * No payload bytes are fetched merely to construct this content index. */
+export function snapshotJournalFieldContentIndexFromHeader(
+  input: Uint8Array,
+  packetBytes: number,
+  inputContext: SnapshotJournalDeltaFrameContext
+): Readonly<SnapshotJournalFieldContentIndex> {
+  const bound = context(inputContext)
+  if (
+    !(input instanceof Uint8Array) ||
+    input.length < 4 ||
+    input.length > 4096 ||
+    !Number.isSafeInteger(packetBytes) ||
+    packetBytes < input.length ||
+    packetBytes > snapshotJournalArchivePacketBytes
+  )
+    invalid()
+  const bytes = new Uint8Array(input),
+    length = new DataView(bytes.buffer).getUint32(0, false)
+  if (length > bytes.length - 4) invalid()
+  const row = snapshotJournalDataRecord(
+    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(4, 4 + length))),
+    ['version', 'kind', 'stream', 'tableId', 'frameDigest', 'changeIndex', 'field', 'descriptor', 'offset']
+  )
+  if (row.version !== 2 || row.kind !== 'field-content' || row.stream !== bound.stream || row.tableId !== bound.tableId)
+    invalid()
+  return parseSnapshotJournalFieldContentIndex({
+    ...Object.fromEntries(['frameDigest', 'changeIndex', 'field', 'descriptor', 'offset'].map(key => [key, row[key]])),
+    length: packetBytes - 4 - length
+  })
 }

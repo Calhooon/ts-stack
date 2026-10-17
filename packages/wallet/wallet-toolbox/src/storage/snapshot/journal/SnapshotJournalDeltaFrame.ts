@@ -387,3 +387,160 @@ export function decodeSnapshotJournalDeltaFrame(
   encodeSnapshotJournalDeltaFrame(page, bound)
   return page
 }
+
+interface EncodedJournalField {
+  changeIndex: number
+  field: string
+  kind: 'binary' | 'utf8'
+  bytes: number
+  sha256: string
+}
+function journalField(input: unknown, changes: number): EncodedJournalField {
+  const data = record(input, ['changeIndex', 'field', 'kind', 'bytes', 'sha256']),
+    field = text(data.field, 128),
+    sha256 = text(data.sha256, 64)
+  if (field === '' || !['binary', 'utf8'].includes(data.kind as string) || !/^[0-9a-f]{64}$/.test(sha256)) invalid()
+  return {
+    changeIndex: integer(data.changeIndex, 0, changes - 1),
+    field,
+    kind: data.kind as 'binary' | 'utf8',
+    bytes: integer(data.bytes, 0, 1000000000),
+    sha256
+  }
+}
+
+/** Distinct version-two metadata envelope. The nested original raw-cell frame
+ * contains only small cells; descriptors never masquerade as SQL row values.
+ * Existing version-one frame bytes and its strict decoder remain unchanged. */
+export function encodeSnapshotJournalFieldFrame(
+  input: import('./SnapshotJournalFieldTypes').SnapshotJournalHashedFieldPage,
+  inputContext: SnapshotJournalDeltaFrameContext
+): Uint8Array {
+  const bound = context(inputContext),
+    page = record(input, ['table', 'changes', 'examined', 'metadataBytes', 'fieldBytes', 'complete'], ['after']),
+    changes = array(page.changes, 256),
+    fields: EncodedJournalField[] = []
+  let fieldBytes = 0,
+    descriptorCharge = 256
+  const small = changes.map((raw, changeIndex): SnapshotJournalDelta => {
+    const change = record(raw, ['metadata', 'present'], ['row', 'fields'])
+    if (change.present === false) {
+      if (Object.hasOwn(change, 'row') || Object.hasOwn(change, 'fields')) invalid()
+      return { metadata: metadata(change.metadata, bound), present: false }
+    }
+    if (change.present !== true || !Object.hasOwn(change, 'row') || !Object.hasOwn(change, 'fields')) invalid()
+    const row = Object.fromEntries(rowEntries(change.row)),
+      names = Reflect.ownKeys(change.fields as object)
+    if (names.length > 64 || names.some(name => typeof name !== 'string')) invalid()
+    const values = record(change.fields, names as string[])
+    for (const name of names as string[]) {
+      if (Object.hasOwn(row, name)) invalid()
+      const descriptor = record(values[name], ['kind', 'bytes', 'sha256']),
+        field = journalField({ changeIndex, field: name, ...descriptor }, changes.length)
+      fieldBytes += field.bytes
+      descriptorCharge += 256 + 6 * brc38Utf8ByteLength(field.field)
+      if (
+        !Number.isSafeInteger(fieldBytes) ||
+        fields.length >= 4096 ||
+        descriptorCharge > SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES
+      )
+        invalid()
+      fields.push(field)
+    }
+    if (Reflect.ownKeys(row).length + names.length > 64) invalid()
+    return { metadata: metadata(change.metadata, bound), present: true, row }
+  })
+  if (integer(page.fieldBytes, 0) !== fieldBytes) invalid()
+  const frame = encodeSnapshotJournalDeltaFrame(
+      {
+        table: page.table as WalletSnapshotTable,
+        changes: small,
+        examined: integer(page.examined, 0, 256),
+        payloadBytes: integer(page.metadataBytes, 0, 16777216),
+        complete: page.complete as boolean,
+        ...(page.after === undefined ? {} : { after: position(page.after, bound.tableId) })
+      },
+      bound
+    ),
+    header = new TextEncoder().encode(
+      JSON.stringify({ version: 2, ...bound, fieldBytes, fields, smallFrameBytes: frame.length })
+    ),
+    size = 4 + header.length + frame.length
+  if (size > SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES) invalid()
+  const bytes = new Uint8Array(size)
+  new DataView(bytes.buffer).setUint32(0, header.length, false)
+  bytes.set(header, 4)
+  bytes.set(frame, 4 + header.length)
+  return bytes
+}
+
+/** Decode only bounded metadata and content hash DATA. Complete extents and
+ * their hashes must be independently verified before semantic application. */
+export function decodeSnapshotJournalFieldFrame(
+  input: Uint8Array,
+  inputContext: SnapshotJournalDeltaFrameContext
+): import('./SnapshotJournalFieldTypes').SnapshotJournalHashedFieldPage {
+  const bound = context(inputContext)
+  if (
+    !(input instanceof Uint8Array) ||
+    binaryLength(input) < 4 ||
+    binaryLength(input) > SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES
+  )
+    invalid()
+  const bytes = new Uint8Array(input),
+    length = new DataView(bytes.buffer).getUint32(0, false)
+  if (length > bytes.length - 4) invalid()
+  const header = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(4, 4 + length))), [
+    'version',
+    'stream',
+    'tableId',
+    'fieldBytes',
+    'fields',
+    'smallFrameBytes'
+  ])
+  if (
+    header.version !== 2 ||
+    header.stream !== bound.stream ||
+    header.tableId !== bound.tableId ||
+    integer(header.smallFrameBytes, 4, SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES) !== bytes.length - 4 - length
+  )
+    invalid()
+  const small = decodeSnapshotJournalDeltaFrame(bytes.subarray(4 + length), bound),
+    descriptors = small.changes.map(
+      () =>
+        Object.create(null) as Record<
+          string,
+          Readonly<import('./SnapshotJournalFieldTypes').SnapshotJournalHashedFieldDescriptor>
+        >
+    )
+  let fieldBytes = 0
+  for (const raw of array(header.fields, 4096)) {
+    const field = journalField(raw, small.changes.length),
+      change = small.changes[field.changeIndex],
+      fields = descriptors[field.changeIndex]
+    if (!change.present || Object.hasOwn(change.row, field.field) || Object.hasOwn(fields, field.field)) invalid()
+    fields[field.field] = Object.freeze({ kind: field.kind, bytes: field.bytes, sha256: field.sha256 })
+    if (Reflect.ownKeys(change.row).length + Reflect.ownKeys(fields).length > 64) invalid()
+    fieldBytes += field.bytes
+    if (!Number.isSafeInteger(fieldBytes)) invalid()
+  }
+  if (integer(header.fieldBytes, 0) !== fieldBytes) invalid()
+  return {
+    table: small.table,
+    examined: small.examined,
+    complete: small.complete,
+    metadataBytes: small.payloadBytes,
+    fieldBytes,
+    changes: small.changes.map((change, index) =>
+      change.present
+        ? {
+            metadata: { ...change.metadata },
+            present: true as const,
+            row: change.row,
+            fields: Object.freeze(descriptors[index])
+          }
+        : { metadata: { ...change.metadata }, present: false as const }
+    ),
+    ...(small.after === undefined ? {} : { after: { ...small.after } })
+  }
+}

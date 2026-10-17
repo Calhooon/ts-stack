@@ -1,4 +1,5 @@
-import type { SnapshotJournalFieldReader } from './SnapshotJournalFieldTypes'
+import { captureSnapshotJournalFieldNotifications } from './SnapshotJournalFieldReferences'
+import type { SnapshotJournalFieldReader, SnapshotJournalHashedFieldPage } from './SnapshotJournalFieldTypes'
 import {
   prepareSnapshotArchiveGuardBackend,
   assertSnapshotArchiveGuardBackend,
@@ -32,6 +33,7 @@ import { StorageKnex } from '../../StorageKnex'
 import { StorageProvider } from '../../StorageProvider'
 import type { Chain } from '../../../sdk/types'
 import { WERR_INVALID_OPERATION, WERR_INVALID_PARAMETER, WERR_NOT_IMPLEMENTED } from '../../../sdk/WERR_errors'
+import { SnapshotCancelledError } from '../SnapshotCancelledError'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
 import { retainReadSnapshot, type RetainedReadSnapshotOptions } from '../RetainedReadSnapshot'
 import {
@@ -61,7 +63,11 @@ import {
   snapshotJournalMetadataQuery,
   type SnapshotJournalInterval
 } from './SnapshotJournalPage'
-import { encodeSnapshotJournalDeltaFrame } from './SnapshotJournalDeltaFrame'
+import {
+  encodeSnapshotJournalDeltaFrame,
+  encodeSnapshotJournalFieldFrame,
+  decodeSnapshotJournalFieldFrame
+} from './SnapshotJournalDeltaFrame'
 import { readSnapshotJournalRowSourceIdentities } from './SnapshotJournalRowReferences'
 import { readSnapshotJournalSqliteGeneration } from './SnapshotJournalSqliteGeneration'
 import { readSnapshotJournalMysqlGeneration } from './SnapshotJournalMysqlGeneration'
@@ -423,7 +429,8 @@ export function retainSnapshotJournalCapture(
 ): SnapshotJournalCaptureLifetime {
   if (typeof identity !== 'string' || !/^(02|03)[0-9a-fA-F]{64}$/.test(identity))
     throw new WERR_INVALID_PARAMETER('identityKey', 'a compressed public identity key')
-  const identityKey = identity.toLowerCase()
+  const identityKey = identity.toLowerCase(),
+    sourceSignal = options.signal
   const request = {
     ceiling: snapshotJournalRevision(input.ceiling),
     receiptPolicy: snapshotJournalReceiptPolicy(input.receiptPolicy)
@@ -735,8 +742,111 @@ export function retainSnapshotJournalCapture(
         })
       }
     }
+    const readFieldIdentities: NonNullable<SnapshotJournalReconciliationSource['readFieldIdentities']> = async (
+      input,
+      selectedPage,
+      capture
+    ) => {
+      if (typeof capture !== 'function') return invalid()
+      const checkFieldView = (): void => {
+        if (!view.isOpen) {
+          if (sourceSignal?.aborted) throw new SnapshotCancelledError('Journal field identity capture was cancelled')
+          return invalid()
+        }
+      }
+      const request = { ...input, ...(input.after === undefined ? {} : { after: { ...input.after } }) },
+        context = { stream: request.stream, tableId: request.tableId },
+        encoded = encodeSnapshotJournalFieldFrame(selectedPage, context),
+        expected = decodeSnapshotJournalFieldFrame(encoded, context)
+      await readFields(request, async (trx, interval, indexes, maximumBytes) => {
+        const empty =
+            interval.bootstrap === true &&
+            interval.stream === 'scope' &&
+            (interval.tableId === 8 || interval.tableId === 9),
+          actual = empty
+            ? {
+                table: interval.tableId === 8 ? ('provenTxs' as const) : ('provenTxReqs' as const),
+                changes: [],
+                examined: 0,
+                metadataBytes: 0,
+                fieldBytes: 0,
+                complete: true
+              }
+            : await readSnapshotJournalFieldPage(trx, interval, maximumBytes, indexes)
+        if (actual.changes.length !== expected.changes.length) return invalid()
+        const checked: SnapshotJournalHashedFieldPage = {
+          ...actual,
+          changes: actual.changes.map((change, index) => {
+            const prior = expected.changes[index]
+            if (!change.present) return change
+            if (!prior.present) return invalid()
+            const names = Object.keys(change.fields)
+            if (
+              names.length !== Object.keys(prior.fields).length ||
+              names.some(name => {
+                const value = change.fields[name],
+                  selected = prior.fields[name]
+                return (
+                  selected === undefined ||
+                  selected.kind !== value.kind ||
+                  selected.bytes !== value.bytes ||
+                  (value.sha256 !== undefined && value.sha256 !== selected.sha256)
+                )
+              })
+            )
+              return invalid()
+            return { ...change, fields: prior.fields }
+          })
+        }
+        if (!Buffer.from(encodeSnapshotJournalFieldFrame(checked, context)).equals(Buffer.from(encoded)))
+          return invalid()
+        if (interval.tableId === 7) return
+        for (const [index, change] of actual.changes.entries()) {
+          for await (const identities of readSnapshotJournalRowSourceIdentities(
+            trx,
+            owned.binding.userId,
+            owned.receipt.highWater,
+            interval.tableId,
+            change,
+            indexes,
+            true
+          )) {
+            checkFieldView()
+            const pending = capture(index, identities)
+            if (pending !== undefined) await pending
+          }
+          if (interval.tableId === 9 && change.present) {
+            const chosen = checked.changes[index]
+            if (!chosen.present || change.fields.notify === undefined || chosen.fields.notify === undefined)
+              return invalid()
+            await captureSnapshotJournalFieldNotifications(
+              trx,
+              owned.binding.userId,
+              owned.receipt.highWater,
+              chosen.fields.notify,
+              async (offset, length) =>
+                await readSnapshotJournalFieldExtent(
+                  trx,
+                  interval,
+                  change.metadata,
+                  'notify',
+                  offset,
+                  length,
+                  change.fields.notify,
+                  indexes
+                ),
+              checkFieldView,
+              view.expiresAt,
+              identities => capture(index, identities),
+              indexes
+            )
+          }
+        }
+      })
+    }
     const source: SnapshotJournalReconciliationSource = {
       fieldDeltaReader,
+      readFieldIdentities,
       ...archiveSource,
       get sourceStorage() {
         return archiveSource.sourceStorage

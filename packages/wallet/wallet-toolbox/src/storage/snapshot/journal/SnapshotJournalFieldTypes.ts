@@ -41,3 +41,20 @@ export interface SnapshotJournalFieldReader {
     descriptor: Readonly<SnapshotJournalFieldDescriptor>
   ) => Promise<Uint8Array>
 }
+
+/** Content hashes are portable DATA measured from the actual retained source;
+ * they do not authorize a read, pointer attachment, primary change or ACK. */
+export interface SnapshotJournalHashedFieldDescriptor extends SnapshotJournalFieldDescriptor {
+  readonly sha256: string
+}
+export type SnapshotJournalHashedFieldDelta =
+  | { readonly metadata: SnapshotJournalMetadata; readonly present: false }
+  | {
+      readonly metadata: SnapshotJournalMetadata
+      readonly present: true
+      readonly row: Readonly<Record<string, unknown>>
+      readonly fields: Readonly<Record<string, Readonly<SnapshotJournalHashedFieldDescriptor>>>
+    }
+export interface SnapshotJournalHashedFieldPage extends Omit<SnapshotJournalFieldPage, 'changes'> {
+  readonly changes: readonly SnapshotJournalHashedFieldDelta[]
+}
