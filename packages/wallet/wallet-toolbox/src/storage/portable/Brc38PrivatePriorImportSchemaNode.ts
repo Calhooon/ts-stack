@@ -4,7 +4,7 @@ import { isBrc38OwnedPublishedNativeSqlite } from './Brc38PublishedProfileNode'
 import { brc38NativePriorImportTables } from './Brc38NativePriorImportTables'
 import {
   brc38PrivateLocalCandidateStateTable as candidate,
-  brc38PrivateLocalCandidatePointTable as points
+  brc38PrivateLocalCandidatePriorPointGuard
 } from './Brc38PrivateLocalCandidateJournalNode'
 
 export const brc38PrivatePriorImportBudget = 'brc38_local_prior_import_budget'
@@ -32,7 +32,7 @@ const prefix = 'brc38_local_prior_import_',
     `CREATE TRIGGER ${chunks}_charge AFTER INSERT ON ${chunks} BEGIN UPDATE ${rows} SET accepted=accepted+NEW.bytes,chunks=chunks+1 WHERE sourceLineageSha256=NEW.sourceLineageSha256 AND tableId=NEW.tableId AND sourceRowId=NEW.sourceRowId; UPDATE ${budget} SET logicalBytes=logicalBytes+512 WHERE slot=1; END`,
     `CREATE TRIGGER ${chunks}_update BEFORE UPDATE ON ${chunks} BEGIN SELECT RAISE(ABORT,'Prior import chunks are immutable'); END`,
     `CREATE TRIGGER ${chunks}_delete BEFORE DELETE ON ${chunks} BEGIN SELECT RAISE(ABORT,'Prior import chunks require owned physical retirement'); END`,
-    `CREATE TRIGGER brc38_local_prior_import_point_guard BEFORE INSERT ON ${points} WHEN EXISTS(SELECT 1 FROM ${budget} b JOIN ${candidate} c ON c.slot=1 WHERE b.slot=1 AND b.records+c.records>=b.maximumRows) BEGIN SELECT RAISE(ABORT,'Combined prior and local candidate row quota exhausted'); END`
+    brc38PrivateLocalCandidatePriorPointGuard.sql
   ])
 function actual(k: Knex.Transaction, write = false): void {
   if (

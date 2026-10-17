@@ -29,6 +29,13 @@ const definitions = Object.freeze([
   `CREATE TRIGGER ${points}_delete BEFORE DELETE ON ${points} WHEN NOT EXISTS(SELECT 1 FROM ${state} WHERE slot=1 AND phase='CLEAR' AND clearTable=OLD.tableId AND records>0) BEGIN SELECT RAISE(ABORT,'Private local candidate points remain owned'); END`,
   `CREATE TRIGGER ${points}_delete_charge AFTER DELETE ON ${points} BEGIN UPDATE ${state} SET records=records-1 WHERE slot=1; END`
 ])
+/** Optional prior-import extension owned by the candidate point table. Its
+ * exact source definition is shared with the installer; the journal accepts
+ * neither a same-name replacement nor any unrelated attached object. */
+export const brc38PrivateLocalCandidatePriorPointGuard = Object.freeze({
+  name: 'brc38_local_prior_import_point_guard',
+  sql: `CREATE TRIGGER brc38_local_prior_import_point_guard BEFORE INSERT ON ${points} WHEN EXISTS(SELECT 1 FROM brc38_local_prior_import_budget b JOIN ${state} c ON c.slot=1 WHERE b.slot=1 AND b.records+c.records>=b.maximumRows) BEGIN SELECT RAISE(ABORT,'Combined prior and local candidate row quota exhausted'); END`
+})
 function invalid(): never {
   throw new Error('Private local candidate journal differs from its actual owner, exact schema or original progress')
 }
@@ -68,11 +75,17 @@ export async function hasBrc38PrivateLocalCandidateJournal(k: Knex.Transaction):
     .where(query => {
       void query.whereRaw('substr(name,1,?)=?', [prefix.length, prefix]).orWhereIn('tbl_name', [state, points])
     })
+    .whereNot(query => {
+      void query
+        .where({ type: 'trigger', name: brc38PrivateLocalCandidatePriorPointGuard.name, tbl_name: points })
+        .whereNotNull('sql')
+        .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [brc38PrivateLocalCandidatePriorPointGuard.sql])
+    })
     .count({ count: '*' })
     .first()) as { count: unknown } | undefined
   if (total?.count === 0) return false
-  // Include every attached object, regardless of its name. The nine exact
-  // definitions and the single implicit point index below account for all ten.
+  // Count all attached objects except the exact optional prior-import guard.
+  // Nine base definitions and the implicit point index account for all ten.
   if (total?.count !== definitions.length + 1) invalid()
   // All nine fixed definitions fit the original native frame floor together.
   // Compare exact bytes freshly in this view; retain both counts so duplicate

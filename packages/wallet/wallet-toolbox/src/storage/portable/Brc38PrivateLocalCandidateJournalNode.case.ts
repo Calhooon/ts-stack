@@ -7,6 +7,10 @@ import {
   brc38PrivateLocalCandidateStateTable as state,
   brc38PrivateLocalCandidatePointTable as points
 } from './Brc38PrivateLocalCandidateJournalNode'
+import {
+  installBrc38PrivatePriorImportSchema,
+  hasBrc38PrivatePriorImportSchema
+} from './Brc38PrivatePriorImportSchemaNode'
 import { snapshotJournalRevision } from '../snapshot/journal/SnapshotJournalRevision'
 interface ActualController {
   withRead<T>(work: (trx: Knex.Transaction) => Promise<T>): Promise<T>
@@ -67,6 +71,43 @@ export async function verifyBrc38PrivateLocalCandidateJournal(controller: Actual
     })
     const restored = await controller.withRead(async trx => await readBrc38PrivateLocalCandidateJournal(trx))
     requireCase(JSON.stringify(restored) === JSON.stringify(initial))
+  })
+  await controller.withWriter(async trx => {
+    await trx.raw('SAVEPOINT independent_owned_prior_guard')
+    try {
+      await installBrc38PrivatePriorImportSchema(trx)
+      requireCase(await hasBrc38PrivatePriorImportSchema(trx))
+      requireCase(await hasBrc38PrivateLocalCandidateJournal(trx))
+      requireCase(JSON.stringify(await readBrc38PrivateLocalCandidateJournal(trx)) === JSON.stringify(initial))
+      await trx.raw('SAVEPOINT independent_changed_prior_guard')
+      try {
+        await trx.raw('DROP TRIGGER brc38_local_prior_import_point_guard')
+        await trx.raw('CREATE TRIGGER brc38_local_prior_import_point_guard BEFORE INSERT ON ?? BEGIN SELECT 1; END', [
+          points
+        ])
+        let rejected = false
+        try {
+          await hasBrc38PrivateLocalCandidateJournal(trx)
+        } catch (error_) {
+          requireCase(
+            error_ instanceof Error &&
+              error_.message ===
+                'Private local candidate journal differs from its actual owner, exact schema or original progress'
+          )
+          rejected = true
+        }
+        requireCase(rejected)
+      } finally {
+        await trx.raw('ROLLBACK TO independent_changed_prior_guard')
+        await trx.raw('RELEASE independent_changed_prior_guard')
+      }
+      requireCase(await hasBrc38PrivatePriorImportSchema(trx))
+      requireCase(await hasBrc38PrivateLocalCandidateJournal(trx))
+    } finally {
+      await trx.raw('ROLLBACK TO independent_owned_prior_guard')
+      await trx.raw('RELEASE independent_owned_prior_guard')
+    }
+    requireCase(JSON.stringify(await readBrc38PrivateLocalCandidateJournal(trx)) === JSON.stringify(initial))
   })
   let refused = false
   try {
