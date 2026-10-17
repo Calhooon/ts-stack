@@ -604,7 +604,37 @@ The forward SQLite migration also repairs signed sync-state membership guards,
 drains live receipts before changing observers, preserves other table key
 rules, and rotates the source epoch atomically. Exact historical observer
 families remain supported. Tombstone collection preserves signed and zero
-sync-state keys. MySQL signed observer parity, ordinary financial field effects,
-manager field routing and remote primary recovery still need implementation
-and full runtime qualification. Host regressions are development evidence;
+sync-state keys. MySQL retains its existing unsigned source-key schema;
+negative SQLite source IDs remain signed in auxiliary destination provenance.
+Cross-backend validation is still required. Host regressions are development evidence;
 they do not establish pinned native, MySQL, device or whole-system qualification.
+
+Ordinary SQLite/MySQL field promotion now reconstructs complete rows from the
+actual authenticated field archive within the original combined allocation
+ceiling. It checks the exact source/frame/stage/window, field names and kinds,
+SHA-256 and EOF before normalization and the original financial merge/proof
+policy. No absent payload is passed to a complete-row entity. The original
+row API/digest stays unchanged; field preparation uses the canonical small-cell
+envelope and verified content hashes without routing large payloads through the
+legacy raw-frame metadata limit. Actual root/savepoint grants and current
+captured identities, mapped parents and membership remain final-writer checks.
+Ordinary field preparation retains one effect per commit to bound combined
+retained rows; native streaming effects preserve their existing path. Records
+that exceed the original ordinary allocation allowance still refuse explicitly.
+This does not establish arbitrary-size ordinary SQL field support or replace
+full native/backend qualification. Manager field routing, remote field delivery
+and primary recovery remain unfinished.
+
+Immutable field packet and EOF status reads retry at most one native connection
+loss within the same original lease/signal. Authentication, integrity, schema and
+application failures do not select this retry. Partial extent bytes are wiped
+on failure. A genuine authenticated HTTP regression destroys the response socket
+after body parsing for one packet read and one EOF status read, then verifies
+the complete returned bytes without replacing the source owner.
+
+New ordinary SQL integration cases check complete binary/UTF8 storage, occupied
+ID remapping, certificate updates, retained commission payload policy and the
+real invalid-proof validator before mutation/ACK. Their timers bound each owned
+phase and include cleanup; the combined cold/incremental case has two phase
+allowances. Initial socket/capacity/test-observer failures are retained. These
+new case guards do not change any existing case or production deadline.

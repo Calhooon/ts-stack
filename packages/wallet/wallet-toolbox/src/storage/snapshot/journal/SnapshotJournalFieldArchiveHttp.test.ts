@@ -11,8 +11,79 @@ import type { RemoteSnapshotJournalFieldArchive } from './openRemoteSnapshotJour
 import type { KnexSnapshotArchiveRpc } from '../archive/KnexSnapshotArchiveRpc'
 import { snapshotJournalFieldArchiveReaderRequestId } from './SnapshotJournalArchiveReaderRequest'
 import { PrivateKey } from '@bsv/sdk'
+import { StorageServer } from '../../remoting/StorageServer'
+import type { Request, Response } from 'express'
 
 afterEach(() => jest.restoreAllMocks())
+
+test('actual field packet and EOF reads retry one genuine pre-response socket loss under the same fixed archive lease', async () => {
+  const fixture = await snapshotHttpFixture(),
+    bytes = Buffer.from('independent field socket reset 雪'.repeat(1200)),
+    controller = new AbortController(),
+    timer = setTimeout(() => controller.abort(new Error('Owned field socket test deadline')), 90000)
+  let archive: RemoteSnapshotJournalFieldArchive | undefined,
+    selected = 'readSnapshotJournalFieldArchivePage',
+    armed = false,
+    dropped = false,
+    losses = 0
+  type Handler = { handleRpcRequest: (this: StorageServer, request: Request, response: Response) => Promise<void> }
+  const prototype = StorageServer.prototype as unknown as Handler,
+    original = prototype.handleRpcRequest,
+    hook = jest.spyOn(prototype, 'handleRpcRequest').mockImplementation(async function (
+      this: StorageServer,
+      request,
+      response
+    ) {
+      if (armed && !dropped && request.body.method === selected) {
+        dropped = true
+        losses++
+        response.destroy()
+        return
+      }
+      return await original.call(this, request, response)
+    })
+  try {
+    await fixture.storage.knex('transactions').where('transactionId', 1).update({ rawTx: bytes })
+    const { url } = await fixture.serve(),
+      client = new StorageClient(fixture.wallet, url, { serverIdentityKey: fixture.serverIdentityKey })
+    archive = await client.openSnapshotJournalFieldArchive(fixture.identityKey, undefined, {
+      signal: controller.signal,
+      lifetimeMs: 90000
+    })
+    if (archive === undefined) throw new Error('Actual field artifact unavailable')
+    const frame = await archive.readFrame(0, async () => {
+        await fixture.storage.knex('users').first()
+      }),
+      index = frame.page.changes.findIndex(change => change.present && change.metadata.id1 === 1)
+    expect(frame.tableId).toBe(0)
+    expect(index).toBeGreaterThanOrEqual(0)
+    armed = true
+    const first = await archive.readFieldExtent(frame, index, 'rawTx', 0, 16384)
+    try {
+      expect(first).toEqual(bytes.subarray(0, 16384))
+    } finally {
+      first.fill(0)
+    }
+    expect(dropped).toBe(true)
+    expect(losses).toBe(1)
+    selected = 'getSnapshotJournalFieldArchiveStatus'
+    dropped = false
+    expect(await archive.readFieldExtent(frame, index, 'rawTx', bytes.length, 0)).toHaveLength(0)
+    expect(dropped).toBe(true)
+    expect(losses).toBe(2)
+    expect(archive.isOpen).toBe(true)
+  } finally {
+    clearTimeout(timer)
+    armed = false
+    bytes.fill(0)
+    try {
+      await archive?.close()
+      await fixture.close()
+    } finally {
+      hook.mockRestore()
+    }
+  }
+}, 120000)
 
 // These new whole-operation cases include field hashing plus authenticated
 // reads. Their first run exceeded the generic 30s unit guard; give each a

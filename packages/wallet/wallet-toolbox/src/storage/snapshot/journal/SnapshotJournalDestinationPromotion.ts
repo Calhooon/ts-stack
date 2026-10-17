@@ -231,7 +231,9 @@ async function promoteDestinationBatch<T extends SnapshotJournalDelta | Snapshot
   const binding = { ...input, source: { ...input.source }, receipt: { ...input.receipt } }
   const state = { ...expected, ...(expected.after === undefined ? {} : { after: { ...expected.after } }) }
   const wanted = expectedCursor === undefined ? undefined : ownCursor(expectedCursor)
-  return await k.transaction(async trx => {
+  return await (
+    require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+  ).withSnapshotJournalOwnedSavepoint(k, async trx => {
     // The outer savepoint also contains a final window advance. The inner
     // partial fence verifies the old window before and after semantic work.
     const prepared = await withSnapshotJournalDestinationWindowFence(trx, binding, state, async pinned => {

@@ -1,4 +1,18 @@
 import type { SyncMap } from '../../schema/entities/EntityBase'
+import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
+import type { SnapshotJournalPreparedPromotionEffect } from './KnexSnapshotJournalDestination'
+import {
+  assertRemoteSnapshotJournalFieldFrame,
+  type RemoteSnapshotJournalFieldArchive,
+  type RemoteSnapshotJournalFieldFrame
+} from './openRemoteSnapshotJournalFieldArchive'
+import { encodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
+import { snapshotJournalReceiptBinding } from './SnapshotJournalReceipt'
+import { readSnapshotJournalDestinationFieldPromotionPage } from './SnapshotJournalDestinationStage'
+import { requireSnapshotJournalCapturedFrame } from './SnapshotJournalCapturedIdentities'
+import { snapshotJournalDeltaSources, fieldColumns } from './SnapshotJournalFieldSql'
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
+import type { SnapshotJournalDestinationLimits } from './SnapshotJournalProvider'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
@@ -116,6 +130,31 @@ function rowDigest(change: SnapshotJournalDelta, receipt: SnapshotJournalDestina
     )
     .digest('hex')
 }
+function fieldRowDigest(
+  change: SnapshotJournalHashedFieldDelta,
+  receipt: SnapshotJournalDestinationStageReceipt
+): string {
+  const context = snapshotJournalDestinationStreams[receipt.streamIndex]
+  if (!change.present || context?.tableId !== receipt.tableId) invalid()
+  const { revision, id1, id2, exactText } = change.metadata,
+    bytes = encodeSnapshotJournalFieldFrame(
+      {
+        table: tables[receipt.tableId],
+        changes: [change],
+        examined: 1,
+        metadataBytes: 0,
+        fieldBytes: Object.values(change.fields).reduce((total, field) => total + field.bytes, 0),
+        complete: false,
+        after: { revision, id1, id2, exactText }
+      },
+      context
+    )
+  try {
+    return createHash('sha256').update(bytes).digest('hex')
+  } finally {
+    bytes.fill(0)
+  }
+}
 
 export async function* readSnapshotJournalEntityFrameIdentities(
   k: Knex,
@@ -186,7 +225,8 @@ export class SnapshotJournalPreparedEntityMerge {
     private readonly frameDigest: string,
     private readonly changeIndex: number,
     private readonly budget: SnapshotJournalAllocationBudget,
-    private readonly signal?: AbortSignal
+    private readonly signal?: AbortSignal,
+    private readonly changeDigest: typeof rowDigest = rowDigest
   ) {}
 
   static async prepare(
@@ -239,6 +279,236 @@ export class SnapshotJournalPreparedEntityMerge {
     )
   }
 
+  /** Actual field archive -> complete bounded ordinary SQL row. Every payload
+   * is present and independently hashed before the original financial kernel
+   * runs. This never creates a native source or uses absent financial cells. */
+  static async prepareArchiveFields(
+    storage: StorageKnex,
+    inputBinding: SnapshotJournalDestinationBinding,
+    inputState: SnapshotJournalDestinationCheckpoint,
+    inputReceipt: SnapshotJournalDestinationStageReceipt,
+    changeIndex: number,
+    archive: RemoteSnapshotJournalFieldArchive,
+    frame: RemoteSnapshotJournalFieldFrame,
+    inputLimits: SnapshotJournalDestinationLimits,
+    signal?: AbortSignal
+  ): Promise<SnapshotJournalPreparedPromotionEffect<SnapshotJournalHashedFieldDelta>> {
+    const limits = Object.freeze({ ...inputLimits }),
+      maximumAllocationBytes = limits.maximumAllocationBytes,
+      binding = structuredClone(inputBinding),
+      state = structuredClone(inputState),
+      receipt = { ...inputReceipt },
+      root = storage.knex,
+      originalBinding = JSON.stringify(binding),
+      originalState = JSON.stringify(state),
+      page = frame.page,
+      change = page.changes[changeIndex],
+      table = tables[receipt.tableId],
+      context = snapshotJournalDestinationStreams[receipt.streamIndex],
+      expiresAt = Math.min(archive.expiresAt, binding.receipt.expiresAt),
+      deadline = performance.now() + expiresAt - Date.now(),
+      buffers = new Set<Uint8Array>(),
+      budget = { remaining: maximumAllocationBytes }
+    let closed = false,
+      consumed = false,
+      normalized: Record<string, unknown> | undefined,
+      completeRow: Record<string, unknown> | undefined
+    const check = () => {
+      signal?.throwIfAborted()
+      assertRemoteSnapshotJournalFieldFrame(archive, frame)
+      if (
+        closed ||
+        storage.knex !== root ||
+        root.isTransaction ||
+        isOwnedNativeSqlite(root) ||
+        !['sqlite3', 'better-sqlite3', 'mysql', 'mysql2'].includes(String(root.client.config.client)) ||
+        Date.now() >= expiresAt ||
+        performance.now() >= deadline
+      )
+        invalid()
+    }
+    const close = async () => {
+      closed = true
+      for (const bytes of buffers) bytes.fill(0)
+      buffers.clear()
+      for (const row of [normalized, completeRow])
+        if (row !== undefined)
+          for (const [name, value] of Object.entries(row)) {
+            if (value instanceof Uint8Array || Array.isArray(value)) value.fill(0)
+            delete row[name]
+          }
+    }
+    try {
+      check()
+      if (
+        !Number.isSafeInteger(maximumAllocationBytes) ||
+        maximumAllocationBytes < 1 ||
+        maximumAllocationBytes > 16777216 ||
+        !Number.isSafeInteger(changeIndex) ||
+        changeIndex < 0 ||
+        changeIndex > 255 ||
+        change?.present !== true ||
+        table === undefined ||
+        table === 'syncStates' ||
+        context?.tableId !== frame.tableId ||
+        context.stream !== frame.stream ||
+        receipt.tableId !== frame.tableId ||
+        frame.ordinal !== receipt.sequence - 1 ||
+        state.phase !== 'promoting' ||
+        binding.fieldEncoding !== 'wallet-journal-fields/1' ||
+        archive.manifest.binding.user.identityKey !== binding.source.identityKey ||
+        snapshotJournalReceiptBinding(archive.manifest.binding.journal.source) !==
+          snapshotJournalReceiptBinding(binding.source) ||
+        JSON.stringify(archive.manifest.binding.journal.receipt) !== JSON.stringify(binding.receipt) ||
+        archive.manifest.binding.journal.low !== binding.low ||
+        archive.manifest.binding.journal.bootstrap !== (binding.bootstrap === true)
+      )
+        invalid()
+      const encoded = encodeSnapshotJournalFieldFrame(page, context)
+      try {
+        if (
+          encoded.length !== receipt.bytes ||
+          createHash('sha256').update(encoded).digest('hex') !== receipt.digest ||
+          receipt.digest !== frame.frameDigest
+        )
+          invalid()
+        chargeSnapshotJournalAllocation(budget, 16 * encoded.length + 65536)
+      } finally {
+        encoded.fill(0)
+      }
+      const names = Object.keys(change.fields),
+        allowed = fieldColumns(snapshotJournalDeltaSources[receipt.tableId], names)
+      if (names.length < 1 || allowed.deferred.length !== names.length) invalid()
+      if (Object.hasOwn(change.row, 'userId') && Number(change.row.userId) !== binding.source.userId) invalid()
+      // Precharge the entire simultaneous input before the first field read.
+      // Normalization and target reads consume this same remaining allowance.
+      for (const name of names) {
+        const descriptor = change.fields[name]
+        if (descriptor.kind !== (allowed.binary(name) ? 'binary' : 'utf8')) invalid()
+        chargeSnapshotJournalAllocation(budget, 16 * descriptor.bytes + 512)
+      }
+      completeRow = { ...change.row }
+      for (const name of names) {
+        const descriptor = change.fields[name],
+          bytes = new Uint8Array(descriptor.bytes),
+          hash = createHash('sha256')
+        buffers.add(bytes)
+        let offset = 0
+        while (offset < bytes.length) {
+          check()
+          const length = Math.min(16384, bytes.length - offset),
+            part = await archive.readFieldExtent(frame, changeIndex, name, offset, length)
+          try {
+            if (part.length !== length) invalid()
+            bytes.set(part, offset)
+            hash.update(part)
+            offset += part.length
+          } finally {
+            part.fill(0)
+          }
+        }
+        const eof = await archive.readFieldExtent(frame, changeIndex, name, bytes.length, 0)
+        try {
+          if (eof.length !== 0 || hash.digest('hex') !== descriptor.sha256) invalid()
+        } finally {
+          eof.fill(0)
+        }
+        if (descriptor.kind === 'binary') completeRow[name] = bytes
+        else {
+          completeRow[name] = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+          bytes.fill(0)
+          buffers.delete(bytes)
+        }
+      }
+      const digestChange = (
+          value: SnapshotJournalDelta,
+          actualReceipt: SnapshotJournalDestinationStageReceipt
+        ): string => {
+          if (!value.present) invalid()
+          const small = { ...value.row }
+          for (const name of names) {
+            const descriptor = change.fields[name],
+              cell = small[name]
+            if (descriptor.kind === 'binary' ? !(cell instanceof Uint8Array) : typeof cell !== 'string') invalid()
+            const bytes = typeof cell === 'string' ? Buffer.from(cell, 'utf8') : (cell as Uint8Array)
+            try {
+              if (
+                bytes.length !== descriptor.bytes ||
+                createHash('sha256').update(bytes).digest('hex') !== descriptor.sha256
+              )
+                invalid()
+            } finally {
+              if (typeof cell === 'string') bytes.fill(0)
+            }
+            delete small[name]
+          }
+          return fieldRowDigest(
+            { metadata: value.metadata, present: true, row: small, fields: change.fields },
+            actualReceipt
+          )
+        },
+        complete: SnapshotJournalDelta = { metadata: change.metadata, present: true, row: completeRow },
+        digest = digestChange(complete, receipt)
+      normalized = normalizeSnapshotJournalNativeRow(storage, table, completeRow, budget)
+      if (table === 'provenTxs') await validateSyncProof(storage, normalized as unknown as TableProvenTx)
+      check()
+      const effect = new SnapshotJournalPreparedEntityMerge(
+        storage,
+        table,
+        normalized,
+        digest,
+        receipt.digest,
+        changeIndex,
+        budget,
+        signal,
+        digestChange
+      )
+      const prepared: SnapshotJournalPreparedPromotionEffect<SnapshotJournalHashedFieldDelta> = {
+        apply: async (trx, actualBinding, actualState, actualChange, actualReceipt, actualIndex) => {
+          check()
+          if (
+            consumed ||
+            JSON.stringify(actualBinding) !== originalBinding ||
+            JSON.stringify(actualState) !== originalState ||
+            actualIndex !== changeIndex ||
+            JSON.stringify(actualReceipt) !== JSON.stringify(receipt) ||
+            fieldRowDigest(actualChange, actualReceipt) !== digest
+          )
+            invalid()
+          const owner = require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+          owner.requireSnapshotJournalOwnedWriter(trx, root, binding.destinationBackend)
+          const staged = await readSnapshotJournalDestinationFieldPromotionPage(trx, binding, state)
+          if (
+            staged === undefined ||
+            staged.receipt.digest !== receipt.digest ||
+            staged.receipt.sequence !== receipt.sequence ||
+            staged.page.changes[changeIndex] === undefined ||
+            fieldRowDigest(staged.page.changes[changeIndex], staged.receipt) !== digest
+          )
+            invalid()
+          await requireSnapshotJournalCapturedFrame(trx, binding, state, receipt.digest, staged.page.changes.length)
+          consumed = true
+          const result = await effect.apply(
+            trx,
+            actualBinding,
+            actualState,
+            complete,
+            actualReceipt,
+            actualIndex,
+            limits
+          )
+          check()
+          return result
+        },
+        close
+      }
+      return Object.freeze(prepared)
+    } catch (cause) {
+      await close()
+      throw cause
+    }
+  }
+
   async apply(
     k: Knex,
     binding: SnapshotJournalDestinationBinding,
@@ -252,7 +522,7 @@ export class SnapshotJournalPreparedEntityMerge {
       this.#consumed ||
       receipt.digest !== this.frameDigest ||
       changeIndex !== this.changeIndex ||
-      rowDigest(change, receipt) !== this.digest
+      this.changeDigest(change, receipt) !== this.digest
     )
       invalid()
     this.#consumed = true

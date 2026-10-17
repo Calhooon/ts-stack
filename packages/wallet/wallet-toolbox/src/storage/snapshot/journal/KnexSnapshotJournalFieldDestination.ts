@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { SnapshotJournalDelta } from './SnapshotJournalTypes'
 import { SnapshotJournalPreparedEntityMerge } from './SnapshotJournalEntityMerge'
 import { promoteSnapshotJournalChanges } from './KnexSnapshotJournalDestination'
@@ -242,7 +243,7 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
       return await promoteSnapshotJournalChanges<SnapshotJournalHashedFieldDelta>(
         this.binding,
         expected,
-        this.limits,
+        isOwnedNativeSqlite(this.root) ? this.limits : { ...this.limits, maximumChanges: 1 },
         async apply => await this.writer(apply),
         verify,
         {
@@ -315,6 +316,18 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
                 }
               }
             }
+            if (!isOwnedNativeSqlite(this.root))
+              return await SnapshotJournalPreparedEntityMerge.prepareArchiveFields(
+                this.storage,
+                this.binding,
+                expected,
+                receipt,
+                index,
+                archive,
+                frame,
+                this.limits,
+                this.signal
+              )
             if ([0, 1].includes(receipt.tableId))
               return await prepareSnapshotJournalNativeActionMerge(
                 this.storage,

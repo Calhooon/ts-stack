@@ -1,4 +1,5 @@
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
+import { retrySnapshotArchiveOperation } from '../archive/SnapshotArchiveTransportFailure'
 import { runInSeries } from '../../../utility/runInSeries'
 import { OwnedRemoteSnapshotLease } from '../archive/RemoteSnapshotLease'
 import { RemoteSnapshotOpeningCleanupError } from '../archive/openRemoteSnapshot'
@@ -164,7 +165,7 @@ export async function openRemoteSnapshotJournalFieldArchive(
     const read = async (sequence: number, signal: AbortSignal) => {
       const receipt = directory.receipts[sequence],
         packet = decodeSnapshotJournalFieldArchivePacket(
-          await transport.page(request, directory, sequence, signal),
+          await retrySnapshotArchiveOperation(async () => await transport.page(request, directory, sequence, signal)),
           { stream: receipt.stream, tableId: receipt.tableId },
           directory.manifest.binding.journal.receipt.highWater
         )
@@ -320,7 +321,7 @@ export async function openRemoteSnapshotJournalFieldArchive(
           if (group === undefined || group[0].index.descriptor.bytes !== descriptor.bytes)
             throw new TypeError('Field content does not belong to this artifact')
           if (length === 0) {
-            const current = await transport.status(request, signal)
+            const current = await retrySnapshotArchiveOperation(async () => await transport.status(request, signal))
             if (
               current.state !== 'ready' ||
               current.archiveId !== directory.manifest.archiveId ||
@@ -332,22 +333,27 @@ export async function openRemoteSnapshotJournalFieldArchive(
             return new Uint8Array(0)
           }
           const result = new Uint8Array(length)
-          let accepted = 0
-          for (const candidate of group) {
-            if (accepted === length) break
-            const start = candidate.index.offset,
-              end = start + candidate.index.length
-            if (offset + accepted >= end || offset + accepted < start) continue
-            const packet = await read(candidate.sequence, signal)
-            if (packet.kind !== 'field-content') throw new TypeError('Indexed field packet is missing')
-            const at = offset + accepted - start,
-              count = Math.min(length - accepted, packet.bytes.length - at)
-            result.set(packet.bytes.subarray(at, at + count), accepted)
-            accepted += count
+          try {
+            let accepted = 0
+            for (const candidate of group) {
+              if (accepted === length) break
+              const start = candidate.index.offset,
+                end = start + candidate.index.length
+              if (offset + accepted >= end || offset + accepted < start) continue
+              const packet = await read(candidate.sequence, signal)
+              if (packet.kind !== 'field-content') throw new TypeError('Indexed field packet is missing')
+              const at = offset + accepted - start,
+                count = Math.min(length - accepted, packet.bytes.length - at)
+              result.set(packet.bytes.subarray(at, at + count), accepted)
+              accepted += count
+            }
+            if (accepted !== length) throw new TypeError('Actual field extent has missing bytes')
+            fresh()
+            return result
+          } catch (cause) {
+            result.fill(0)
+            throw cause
           }
-          if (accepted !== length) throw new TypeError('Actual field extent has missing bytes')
-          fresh()
-          return result
         })
     })
     fresh()

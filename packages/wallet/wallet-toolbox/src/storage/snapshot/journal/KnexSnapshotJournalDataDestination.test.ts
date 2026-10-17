@@ -10,6 +10,8 @@ import {
   requireSnapshotJournalWindowClean
 } from './SnapshotJournalWindowCleanup'
 import * as RpcProofs from '../../remoting/validateRpcSyncProofs'
+import * as FinancialProofs from '../../methods/validateSyncProof'
+import { Transaction, LockingScript } from '@bsv/sdk'
 import { knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -531,6 +533,308 @@ test('actual field intake retains large-field descriptors, resumes its own windo
     await f.close()
   }
 })
+
+test('ordinary SQL field effects preserve full binary and UTF8 payloads, remap parents and retain original financial update policy', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
+  const f = await fixture()
+  const captureModule = await import('./captureSnapshotJournalFieldArchiveSource'),
+    actualCapture = captureModule.captureSnapshotJournalFieldArchiveSource,
+    captureErrors: unknown[] = [],
+    captureSpy = jest
+      .spyOn(captureModule, 'captureSnapshotJournalFieldArchiveSource')
+      .mockImplementation(async (...args) => {
+        try {
+          return await actualCapture(...args)
+        } catch (cause) {
+          captureErrors.push(cause)
+          throw cause
+        }
+      })
+  let archive: RemoteSnapshotJournalFieldArchive | undefined
+  const script = Buffer.from([
+      0x6a,
+      0x4e,
+      0x70,
+      0x11,
+      0x01,
+      0x00,
+      ...Array.from({ length: 70000 }, (_v, at) => at % 251)
+    ]),
+    tx = new Transaction(1, [], [{ satoshis: 1, lockingScript: LockingScript.fromBinary(Array.from(script)) }], 0),
+    raw = Buffer.from(tx.toBinary()),
+    text = 'independent 雪\u0000' + '🧾'.repeat(45000),
+    key = 'original secret custody 雪'.repeat(300)
+  try {
+    const sourceUser = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user.userId,
+      targetUser = f.manager.getActiveUser().userId,
+      stamp = { created_at: Date.now(), updated_at: Date.now() }
+    await f.source.storage.knex('transactions').insert({
+      ...stamp,
+      transactionId: 11,
+      userId: sourceUser,
+      status: 'unprocessed',
+      reference: 'ordinary-field-tx',
+      isOutgoing: 0,
+      satoshis: 1,
+      txid: tx.id('hex'),
+      version: 1,
+      lockTime: 0,
+      description: 'ordinary field transaction',
+      rawTx: raw
+    })
+    await f.source.storage
+      .knex('output_baskets')
+      .insert({ ...stamp, basketId: 17, userId: sourceUser, name: 'ordinary field basket', isDeleted: 0 })
+    await f.source.storage.knex('outputs').insert({
+      ...stamp,
+      outputId: 19,
+      userId: sourceUser,
+      transactionId: 11,
+      basketId: 17,
+      spendable: 0,
+      change: 0,
+      vout: 0,
+      satoshis: 1,
+      providedBy: 'you',
+      purpose: '',
+      type: 'P2PKH',
+      lockingScript: script,
+      outputDescription: 'source output field'
+    })
+    await f.source.storage.knex('certificates').insert({
+      ...stamp,
+      certificateId: 23,
+      userId: sourceUser,
+      type: 'ordinary',
+      serialNumber: 'ordinary-field-cert',
+      certifier: f.source.identityKey,
+      subject: f.source.identityKey,
+      revocationOutpoint: 'a'.repeat(64) + '.0',
+      signature: 'ab'.repeat(64),
+      isDeleted: 0
+    })
+    await f.source.storage.knex('certificate_fields').insert({
+      ...stamp,
+      userId: sourceUser,
+      certificateId: 23,
+      fieldName: 'independent 雪',
+      fieldValue: text,
+      masterKey: key
+    })
+    await f.source.storage.knex('commissions').insert({
+      ...stamp,
+      commissionId: 29,
+      userId: sourceUser,
+      transactionId: 11,
+      isRedeemed: 0,
+      satoshis: 0,
+      keyOffset: 'original commission offset',
+      lockingScript: script
+    })
+    // Occupied target keys prove actual remapping, rather than coincidental IDs.
+    await f.target.knex('transactions').insert({
+      ...stamp,
+      transactionId: 73,
+      userId: targetUser,
+      status: 'unprocessed',
+      reference: 'retained-target-tx',
+      isOutgoing: 0,
+      satoshis: 0,
+      description: 'retained target'
+    })
+    await f.target.knex('certificates').insert({
+      ...stamp,
+      certificateId: 83,
+      userId: targetUser,
+      type: 'retained',
+      serialNumber: 'retained-cert',
+      certifier: f.source.identityKey,
+      subject: f.source.identityKey,
+      revocationOutpoint: 'b'.repeat(64) + '.0',
+      signature: 'cd'.repeat(64),
+      isDeleted: 0
+    })
+    const run = async (position?: import('./SnapshotJournalReceiptData').SnapshotJournalArchivePosition) => {
+      const controller = new AbortController(),
+        started = performance.now(),
+        timer = setTimeout(() => controller.abort(new Error('Owned ordinary field phase deadline')), 180000)
+      try {
+        archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey, position, {
+          lifetimeMs: 180000,
+          signal: controller.signal
+        })
+        if (archive === undefined) throw new AggregateError(captureErrors, 'Actual ordinary field archive unavailable')
+        const begun = await KnexSnapshotJournalFieldDestination.begin(
+          f.target,
+          f.source.identityKey,
+          archive.manifest.binding,
+          journalCopyLimits(),
+          f.admission,
+          controller.signal
+        )
+        let state = begun.checkpoint
+        for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+          state = await begun.destination.stageArchiveFrame(state, archive)
+        let previousTable = -1
+        while (state.phase !== 'acknowledged') {
+          if (state.tableIndex !== previousTable) {
+            console.log(
+              JSON.stringify({
+                stage: 'ordinary-field-promotion',
+                incremental: position !== undefined,
+                tableIndex: state.tableIndex,
+                elapsedMs: performance.now() - started
+              })
+            )
+            previousTable = state.tableIndex
+          }
+          state = (await begun.destination.promote(state, archive)).checkpoint
+        }
+        const receipt = archive.manifest.binding.journal.receipt
+        await archive.close()
+        await archive.closed
+        return receipt
+      } finally {
+        clearTimeout(timer)
+        await archive?.close()
+        await archive?.closed
+      }
+    }
+    const receipt = await run(),
+      copiedTx = await f.target.knex('transactions').where('txid', tx.id('hex')).first(),
+      copiedOutput = await f.target.knex('outputs').where('transactionId', copiedTx.transactionId).first(),
+      copiedCertificate = await f.target.knex('certificates').where('serialNumber', 'ordinary-field-cert').first(),
+      copiedField = await f.target
+        .knex('certificate_fields')
+        .where('certificateId', copiedCertificate.certificateId)
+        .first(),
+      copiedCommission = await f.target.knex('commissions').where('transactionId', copiedTx.transactionId).first()
+    expect(copiedTx.transactionId).not.toBe(11)
+    expect(copiedCertificate.certificateId).not.toBe(23)
+    expect(copiedTx.rawTx).toEqual(raw)
+    expect(copiedOutput.lockingScript).toEqual(script)
+    expect((await f.target.knex('output_baskets').where('basketId', copiedOutput.basketId).first()).name).toBe(
+      'ordinary field basket'
+    )
+    expect(copiedField).toMatchObject({
+      fieldName: 'independent 雪',
+      fieldValue: text,
+      masterKey: key,
+      userId: targetUser
+    })
+    expect(copiedCommission.lockingScript).toEqual(script)
+    const next = stamp.updated_at + 1000
+    await f.source.storage
+      .knex('certificate_fields')
+      .where('certificateId', 23)
+      .update({ updated_at: next, fieldValue: text + ' revised', masterKey: key + ' revised' })
+    await f.source.storage
+      .knex('commissions')
+      .where('commissionId', 29)
+      .update({
+        updated_at: next,
+        isRedeemed: 1,
+        lockingScript: Buffer.from([0x51]),
+        keyOffset: 'must not replace occupied commission'
+      })
+    await run({ binding: receipt.binding, highWater: receipt.highWater })
+    expect(
+      await f.target.knex('certificate_fields').where('certificateId', copiedCertificate.certificateId).first()
+    ).toMatchObject({ fieldValue: text + ' revised', masterKey: key + ' revised' })
+    expect(
+      await f.target.knex('commissions').where('commissionId', copiedCommission.commissionId).first()
+    ).toMatchObject({
+      isRedeemed: 1,
+      lockingScript: script,
+      keyOffset: 'original commission offset',
+      transactionId: copiedTx.transactionId
+    })
+    expect(await f.target.knex('transactions').where('transactionId', 73).first()).toMatchObject({
+      reference: 'retained-target-tx',
+      description: 'retained target'
+    })
+    expect((await f.target.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe('journal-data-target')
+  } finally {
+    raw.fill(0)
+    script.fill(0)
+    await archive?.close()
+    await f.close()
+    captureSpy.mockRestore()
+  }
+}, 400000)
+
+test('ordinary SQL field proof failure runs the original cryptographic validator before financial mutation or acknowledgement', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination'),
+    f = await fixture(),
+    proof = jest.spyOn(FinancialProofs, 'validateSyncProof'),
+    controller = new AbortController(),
+    timer = setTimeout(() => controller.abort(new Error('Owned field proof phase deadline')), 90000)
+  let archive: RemoteSnapshotJournalFieldArchive | undefined
+  try {
+    await f.source.storage.knex('proven_txs').insert({
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      provenTxId: 7,
+      txid: 'a'.repeat(64),
+      height: 1,
+      index: 0,
+      blockHash: 'b'.repeat(64),
+      merkleRoot: 'c'.repeat(64),
+      rawTx: Buffer.from([1, 2, 3]),
+      merklePath: Buffer.from([4, 5, 6])
+    })
+    const userId = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user.userId
+    await f.source.storage.knex('transactions').insert({
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      transactionId: 11,
+      userId,
+      provenTxId: 7,
+      status: 'completed',
+      reference: 'invalid-field-proof',
+      isOutgoing: 0,
+      satoshis: 0,
+      description: 'independent invalid proof',
+      txid: 'a'.repeat(64)
+    })
+    archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey, undefined, {
+      lifetimeMs: 90000,
+      signal: controller.signal
+    })
+    if (archive === undefined) throw new Error('Actual proof field archive unavailable')
+    const begun = await KnexSnapshotJournalFieldDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission,
+      controller.signal
+    )
+    let state = begun.checkpoint
+    for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+      state = await begun.destination.stageArchiveFrame(state, archive)
+    let failure: unknown
+    for (let attempt = 0; attempt < archive.frameCount + 13; attempt++) {
+      try {
+        state = (await begun.destination.promote(state, archive)).checkpoint
+      } catch (cause) {
+        failure = cause
+        break
+      }
+    }
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('server-verified proof')
+    expect(proof).toHaveBeenCalled()
+    expect((await begun.destination.status()).checkpoint).toEqual(state)
+    expect(await f.target.knex('proven_txs')).toHaveLength(0)
+    expect(await f.target.knex('snapshot_sync_journal_data_receipts').where('complete', 1)).toHaveLength(0)
+  } finally {
+    clearTimeout(timer)
+    proof.mockRestore()
+    await archive?.close()
+    await f.close()
+  }
+}, 120000)
 
 test('actual field receiver commits complete semantic rows and recovers a lost final financial ACK without replaying the merge', async () => {
   const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination')
