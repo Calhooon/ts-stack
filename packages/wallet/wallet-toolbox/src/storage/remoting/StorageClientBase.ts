@@ -1,4 +1,11 @@
 import {
+  validateSnapshotJournalFieldArchiveCapabilities,
+  type SnapshotJournalFieldArchiveCapabilities,
+  type SnapshotJournalFieldArchiveMethod
+} from '../snapshot/journal/SnapshotJournalFieldArchiveProtocol'
+import { SnapshotJournalFieldArchiveTransport } from '../snapshot/journal/SnapshotJournalFieldArchiveTransport'
+import { openRemoteSnapshotJournalFieldArchive } from '../snapshot/journal/openRemoteSnapshotJournalFieldArchive'
+import {
   validateSnapshotJournalDataContentCapabilities,
   snapshotJournalDataContentCapabilities
 } from '../snapshot/journal/SnapshotJournalDataProtocol'
@@ -168,6 +175,7 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
+  snapshotJournalFieldArchive?: SnapshotJournalFieldArchiveCapabilities
   snapshotJournalArchiveContentVersion?: 1
   snapshotJournalData?: SnapshotJournalDataCapabilities
   snapshotJournalDataContent?: typeof snapshotJournalDataContentCapabilities
@@ -339,6 +347,11 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     validateSnapshotJournalDataContentCapabilities(properties.snapshotJournalDataContent.value)
   if (properties.snapshotJournalData != null)
     validateSnapshotJournalDataCapabilities(properties.snapshotJournalData.value)
+  if (properties.snapshotJournalFieldArchive != null) {
+    validateSnapshotJournalFieldArchiveCapabilities(properties.snapshotJournalFieldArchive.value)
+    if (properties.snapshotArchive == null || properties.snapshotJournalArchive == null)
+      throw new Error('Wallet storage returned invalid field archive settings.')
+  }
   if (properties.snapshotJournalArchive != null) {
     validateSnapshotJournalArchiveCapabilities(properties.snapshotJournalArchive.value)
     if (properties.snapshotArchive == null) throw new Error('Wallet storage returned invalid settings.')
@@ -485,6 +498,32 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return await openRemoteSnapshotJournalArchive(transport, position, options)
   }
 
+  /** A distinct actual immutable field reader; no SQL source/fence is exposed. */
+  async openSnapshotJournalFieldArchive(
+    identityKey: string,
+    position?: SnapshotJournalArchivePosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const settings = await this.makeAvailable()
+    if (
+      !this.snapshotArchivesEnabled ||
+      this.snapshotSource === undefined ||
+      settings.snapshotJournalFieldArchive === undefined
+    )
+      return undefined
+    const transport = new SnapshotJournalFieldArchiveTransport(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      this.snapshotSource.identityKey,
+      this.snapshotSource.chain,
+      settings.snapshotJournalFieldArchive
+    )
+    return await openRemoteSnapshotJournalFieldArchive(transport, position, options)
+  }
+  async supportsSnapshotJournalFieldArchive(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFieldArchive !== undefined
+  }
+
   readonly journalDataCommitOutsideManager = true as const
 
   async supportsSnapshotJournalArchive(): Promise<boolean> {
@@ -559,7 +598,12 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   }
 
   private async snapshotRpcCall(
-    method: SnapshotArchiveMethod | SnapshotJournalArchiveMethod | RemoteSnapshotSyncMethod | SnapshotJournalDataMethod,
+    method:
+      | SnapshotArchiveMethod
+      | SnapshotJournalArchiveMethod
+      | SnapshotJournalFieldArchiveMethod
+      | RemoteSnapshotSyncMethod
+      | SnapshotJournalDataMethod,
     params: unknown[],
     signal?: AbortSignal
   ): Promise<unknown> {

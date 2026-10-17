@@ -1033,6 +1033,7 @@ export class StorageServer {
   private async snapshotArchiveSettings(): Promise<Record<string, unknown>> {
     const snapshotArchive = await this.snapshotArchives?.capabilities()
     const snapshotJournalArchive = await this.snapshotArchives?.journalCapabilities()
+    const snapshotJournalFieldArchive = await this.snapshotArchives?.journalFieldCapabilities()
     const snapshotSyncDestination = await this.remoteSnapshotSync?.capabilities()
     const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
     const snapshotJournalData = await this.remoteSnapshotSync?.journalDataCapabilities()
@@ -1042,6 +1043,7 @@ export class StorageServer {
       ...(snapshotJournalArchive === undefined
         ? {}
         : { snapshotJournalArchive, snapshotJournalArchiveContentVersion: 1 }),
+      ...(snapshotJournalFieldArchive === undefined ? {} : { snapshotJournalFieldArchive }),
       ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
       ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent }),
       ...(snapshotJournalData === undefined ? {} : { snapshotJournalData }),

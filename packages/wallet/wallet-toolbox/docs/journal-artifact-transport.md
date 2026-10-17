@@ -37,7 +37,7 @@ and astral characters, without changing their existing byte format. Focused host
 regressions include a2MiB source, independent hashes, foreground writes, forged
 coordinates, expiry/cleanup contracts and NULL/empty/Unicode values. A genuine
 native rollback/reuse case is authored but still requires pinned-runtime execution.
-Remote field artifact/transfer/staging/semantic promotion and full remote primary
+Target-owned field cache/semantic promotion and full remote primary
 handoff remain implementation work. This source connection is not complete
 large-payload sync or whole-system qualification.
 
@@ -84,10 +84,39 @@ cleanup. The new large fixture passed in23.88s and later exceeded its original
 30s case guard under type-reader contention; only this new complete case now has
 a60s guard. Existing tests/benchmarks, production lifetimes and limits are unchanged.
 
-These are actual source/store components. No new HTTP field capability is yet
-advertised. Authenticated field transport, target-owned verified cache/semantic
-promotion and full remote primary handoff remain to be implemented. An immutable
-field artifact must never masquerade as a live SQL source or supply a commit fence.
+## Authenticated field transport
+
+Full and mobile clients negotiate the distinct `snapshotJournalFieldArchive`
+capability and open it with `openSnapshotJournalFieldArchive`. The version-four
+server-offered tuple uses its own digest domain and actual durable offered row;
+absent, collected, changed or foreign tuples cannot acquire a source. The original
+row/content/version-three namespaces remain strict and unchanged. Existing
+AuthFetch authentication, compact binary framing, request/response bounds,
+per-I/O deadlines, source guard, quotas and immutable expiry remain required.
+Native source RPC stays unavailable until its separate durable guard contract is
+implemented and qualified.
+
+`RemoteSnapshotJournalFieldArchive.readFrame` verifies metadata and identity
+prefixes while skipping indexed content packets. The returned page is detached
+DATA. Only its actual issued frame can select `readFieldExtent`; copied frames,
+changed public metadata and getter-bearing field coordinates cannot enroll.
+Extents are at most64KiB and may cross packet boundaries. Every fetched packet
+matches the verified directory and its content index. A zero-length extent still
+checks the actual ready request without fetching content. Callers must hash a
+complete field independently before admitting it to a target-owned cache.
+
+The concrete remote lease retains one in-flight operation through identity
+consumer completion, cancellation and real remote cleanup. It exposes no
+`readPage`, source SQL fence, writer, activation or financial ACK. The bounded
+consumer example lives in `test/consumer/snapshotJournalArchive.ts`.
+
+Focused host cases exercise both clients, full/incremental source capture,
+retries, authentication, old-peer opt-out, corruption, in-flight consumers,
+cross-replica physical closure and a2MiB multichunk field. These are component
+checks, not pinned-native, MySQL, packed-consumer or whole-system qualification.
+Target-owned verified cache/semantic promotion and full remote primary handoff
+remain implementation work. An immutable field artifact must never masquerade
+as a live SQL source or supply a commit fence.
 
 A version-three binding identifies `wallet-journal-packets/1`. It records the
 actual captured source/profile/schema, exact receipt/high-water/floor, source

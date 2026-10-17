@@ -1,4 +1,11 @@
 import {
+  snapshotJournalFieldArchiveMethods,
+  isSnapshotJournalFieldArchiveMethod,
+  parseSnapshotJournalFieldArchiveRpcInput,
+  snapshotJournalFieldArchiveCapabilities,
+  type SnapshotJournalFieldArchiveMethod
+} from '../journal/SnapshotJournalFieldArchiveProtocol'
+import {
   snapshotJournalArchiveMethods,
   isSnapshotJournalArchiveMethod,
   parseSnapshotJournalArchiveRpcInput,
@@ -23,8 +30,13 @@ import {
   type SnapshotArchiveOffer
 } from './SnapshotArchiveProtocol'
 
-export const snapshotArchiveRpcMethods = Object.freeze([...snapshotArchiveMethods, ...snapshotJournalArchiveMethods])
-export type SnapshotArchiveRpcMethod = SnapshotArchiveMethod | SnapshotJournalArchiveMethod
+export const snapshotArchiveRpcMethods = Object.freeze([
+  ...snapshotArchiveMethods,
+  ...snapshotJournalArchiveMethods,
+  ...snapshotJournalFieldArchiveMethods
+])
+export type SnapshotArchiveRpcMethod =
+  SnapshotArchiveMethod | SnapshotJournalArchiveMethod | SnapshotJournalFieldArchiveMethod
 
 /** Authenticated dispatch. The HTTP edge still owns framing, rate and body limits. */
 export class KnexSnapshotArchiveRpc {
@@ -81,6 +93,16 @@ export class KnexSnapshotArchiveRpc {
     )
   }
 
+  async journalFieldCapabilities() {
+    if ((await this.capabilities()) === undefined || !(await this.storage.supportsSnapshotJournalSync()))
+      return undefined
+    const configuration = await readSnapshotJournalCaptureConfiguration(this.database)
+    if (this.stopped || this.storage.knex !== this.database) return undefined
+    return snapshotJournalFieldArchiveCapabilities(
+      Math.min(snapshotArchiveLimits.lifetimeMs, configuration.receiptPolicy.receiptLifetimeMs)
+    )
+  }
+
   private async sourceOffer(serverTime?: number): Promise<SnapshotArchiveOffer> {
     const chain = this.storage.chain
     if (chain !== 'main' && chain !== 'test') throw new WERR_INVALID_OPERATION('Snapshot archive chain is unavailable')
@@ -109,6 +131,8 @@ export class KnexSnapshotArchiveRpc {
     params: unknown[],
     authenticatedIdentityKey: string
   ): Promise<unknown> {
+    if (isSnapshotJournalFieldArchiveMethod(method))
+      return await this.dispatchJournalFields(method, params, authenticatedIdentityKey)
     if (isSnapshotJournalArchiveMethod(method))
       return await this.dispatchJournal(method, params, authenticatedIdentityKey)
     const input = parseSnapshotArchiveRpcInput(method, params)
@@ -226,6 +250,67 @@ export class KnexSnapshotArchiveRpc {
       case 'cancelSnapshotJournalArchiveRequest':
         try {
           await this.service.cancelJournalReader(identityKey, input.request)
+          return true
+        } catch (error) {
+          if (!(error instanceof SnapshotArchiveCleanupPendingError)) throw error
+          return {
+            version: 1,
+            outcome: 'cleanup-pending',
+            requestId: input.request.requestId
+          } satisfies SnapshotArchiveCleanupPending
+        }
+    }
+  }
+
+  private async dispatchJournalFields(
+    method: SnapshotJournalFieldArchiveMethod,
+    params: unknown[],
+    authenticatedIdentityKey: string
+  ): Promise<unknown> {
+    const input = parseSnapshotJournalFieldArchiveRpcInput(method, params)
+    if (input.identityKey !== authenticatedIdentityKey)
+      throw new WERR_UNAUTHORIZED('Journal archive identity must match authentication')
+    if ((await this.journalFieldCapabilities()) === undefined)
+      throw new WERR_INVALID_OPERATION('Journal archive transport is unavailable')
+    const identityKey = authenticatedIdentityKey
+    switch (input.method) {
+      case 'getSnapshotJournalFieldArchiveReaderOffer': {
+        const offer = await this.sourceOffer(),
+          issued = await this.service.offerJournalFieldsReader(identityKey, input.options, input.position)
+        if (issued === undefined) return { version: 1, outcome: 'resource-limited' }
+        return {
+          version: 1,
+          outcome: 'offered',
+          offer: { ...offer, serverTime: issued.serverTime },
+          request: issued.request
+        }
+      }
+      case 'admitSnapshotJournalFieldArchive':
+        return await this.service.admitJournalFieldsReader(identityKey, input.request)
+      case 'getSnapshotJournalFieldArchiveStatus':
+        return await this.service.journalFieldsStatus(identityKey, input.request)
+      case 'getSnapshotJournalFieldArchiveDirectory':
+      case 'readSnapshotJournalFieldArchivePage': {
+        const receipt = await this.service.journalFieldsStatus(identityKey, input.request)
+        if (receipt.state !== 'ready' || receipt.archiveId !== input.archiveId)
+          throw new WERR_INVALID_OPERATION('Journal archive differs from its current ready request')
+        const result =
+          input.method === 'getSnapshotJournalFieldArchiveDirectory'
+            ? await this.service.journalFieldsDirectory(identityKey, input.archiveId)
+            : await this.service.readJournalFields(identityKey, input.archiveId, input.sequence)
+        const current = await this.service.journalFieldsStatus(identityKey, input.request)
+        if (
+          current.state !== 'ready' ||
+          current.archiveId !== receipt.archiveId ||
+          current.digest !== receipt.digest ||
+          current.expiresAt !== receipt.expiresAt
+        )
+          throw new WERR_INVALID_OPERATION('Journal archive closed while reading its DATA')
+        return result
+      }
+      case 'cancelSnapshotJournalFieldArchiveRequest':
+        try {
+          await this.service.cancelJournalFieldsReader(identityKey, input.request)
           return true
         } catch (error) {
           if (!(error instanceof SnapshotArchiveCleanupPendingError)) throw error

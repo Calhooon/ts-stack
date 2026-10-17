@@ -105,3 +105,14 @@ export type {
 } from './snapshot/journal/SnapshotJournalDataProvider'
 
 export type { SnapshotJournalDataContentReceipt } from './snapshot/journal/SnapshotJournalDataContentReceipt'
+
+export type {
+  RemoteSnapshotJournalFieldArchive,
+  RemoteSnapshotJournalFieldFrame
+} from './snapshot/journal/openRemoteSnapshotJournalFieldArchive'
+export type { SnapshotJournalFieldArchiveCapabilities } from './snapshot/journal/SnapshotJournalFieldArchiveProtocol'
+export type { SnapshotJournalFieldArchiveProvider } from './snapshot/journal/SnapshotJournalDataProvider'
+export type {
+  SnapshotJournalHashedFieldDescriptor,
+  SnapshotJournalHashedFieldPage
+} from './snapshot/journal/SnapshotJournalFieldTypes'

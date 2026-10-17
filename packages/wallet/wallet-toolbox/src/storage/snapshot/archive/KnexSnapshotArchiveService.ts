@@ -1,3 +1,6 @@
+import { parseSnapshotJournalFieldArchiveReaderRequest } from '../journal/SnapshotJournalArchiveReaderRequest'
+import { captureSnapshotJournalFieldArchiveSource } from '../journal/captureSnapshotJournalFieldArchiveSource'
+import { closeSnapshotJournalSource } from '../journal/closeSnapshotJournalSource'
 import { parseSnapshotJournalArchiveReaderRequest } from '../journal/SnapshotJournalArchiveReaderRequest'
 import {
   parseSnapshotJournalArchivePosition,
@@ -30,11 +33,12 @@ import { assertSnapshotArchiveCaptureActive, captureSnapshotArchiveSource } from
 interface Capture {
   identityKey: string
   content: boolean
-  journal: boolean
+  journal: boolean | 'fields'
   request: Readonly<
     | SnapshotArchiveRequest
     | SnapshotArchiveReaderRequest
     | import('../journal/SnapshotJournalArchiveReaderRequest').SnapshotJournalArchiveReaderRequest
+    | import('../journal/SnapshotJournalArchiveReaderRequest').SnapshotJournalFieldArchiveReaderRequest
   >
   controller: AbortController
   terminal: Exclude<SnapshotArchiveTerminalState, 'expired'>
@@ -116,6 +120,20 @@ export class KnexSnapshotArchiveService {
     return await this.offerCurrent(identityKey, () => this.requests.offerJournal(identityKey, options, previous))
   }
 
+  async offerJournalFieldsReader(
+    identityKey: string,
+    input: SnapshotArchiveReaderOptions,
+    position?: SnapshotJournalArchivePosition
+  ) {
+    this.assertOpen()
+    const options = validateSnapshotArchiveReaderOptions(input),
+      previous = parseSnapshotJournalArchivePosition(position === undefined ? null : position),
+      configuration = await readSnapshotJournalCaptureConfiguration(this.database)
+    if (options.lifetimeMs > configuration.receiptPolicy.receiptLifetimeMs)
+      throw new WERR_INVALID_PARAMETER('lifetimeMs', 'within the current journal receipt policy')
+    return await this.offerCurrent(identityKey, () => this.requests.offerJournalFields(identityKey, options, previous))
+  }
+
   private async offerCurrent<T extends { request: { requestId: string } }>(
     identityKey: string,
     issue: () => Promise<T | undefined>
@@ -161,13 +179,36 @@ export class KnexSnapshotArchiveService {
     }
   }
 
-  private admit(identityKey: string, input: unknown, reader = false, content = false, journal = false): Capture {
+  async admitJournalFieldsReader(identityKey: string, input: unknown): Promise<SnapshotArchiveAdmission> {
+    const request = parseSnapshotJournalFieldArchiveReaderRequest(input)
+    try {
+      return {
+        version: 1,
+        outcome: 'accepted',
+        receipt: await this.admit(identityKey, request, true, false, 'fields').accepted
+      }
+    } catch (error) {
+      if (!(error instanceof SnapshotArchiveAdmissionLimitError)) throw error
+      return { version: 1, outcome: 'resource-limited', requestId: request.requestId, expiresAt: request.notAfter }
+    }
+  }
+
+  private admit(
+    identityKey: string,
+    input: unknown,
+    reader = false,
+    content = false,
+    journal: boolean | 'fields' = false
+  ): Capture {
     this.assertOpen()
-    const request = journal
-      ? parseSnapshotJournalArchiveReaderRequest(input)
-      : reader
-        ? parseSnapshotArchiveReaderRequest(input)
-        : parseSnapshotArchiveRequest(input)
+    const request =
+      journal === 'fields'
+        ? parseSnapshotJournalFieldArchiveReaderRequest(input)
+        : journal
+          ? parseSnapshotJournalArchiveReaderRequest(input)
+          : reader
+            ? parseSnapshotArchiveReaderRequest(input)
+            : parseSnapshotArchiveRequest(input)
     if (this.active !== undefined) {
       if (this.active.identityKey === identityKey && this.active.request.requestId === request.requestId) {
         if (this.active.content !== content || this.active.journal !== journal)
@@ -183,11 +224,13 @@ export class KnexSnapshotArchiveService {
       await this.requests.reap()
       await this.archives.reap()
       assertSnapshotArchiveCaptureActive(job.controller.signal)
-      return journal
-        ? await this.requests.claimJournalReader(identityKey, request)
-        : reader
-          ? await this.requests.claimReader(identityKey, request)
-          : await this.requests.claim(identityKey, request)
+      return journal === 'fields'
+        ? await this.requests.claimJournalFieldsReader(identityKey, request)
+        : journal
+          ? await this.requests.claimJournalReader(identityKey, request)
+          : reader
+            ? await this.requests.claimReader(identityKey, request)
+            : await this.requests.claim(identityKey, request)
     })
     const accepted = claim.then(result => Object.freeze({ ...result.receipt }))
     const completion = claim
@@ -224,7 +267,9 @@ export class KnexSnapshotArchiveService {
       if (job.terminal !== 'closed' && error instanceof SnapshotResourceLimitError) job.terminal = 'resource-limited'
       try {
         // Keep the logical reservation through this process's physical cleanup.
-        await source?.close()
+        if (job.journal === 'fields' && source !== undefined)
+          await closeSnapshotJournalSource(source, controller.signal)
+        else await source?.close()
         await this.requests.sourceClosed(owner)
         await this.requests.close(identityKey, request.requestId, job.terminal)
       } catch (error) {
@@ -243,7 +288,24 @@ export class KnexSnapshotArchiveService {
       assertSnapshotArchiveCaptureActive(controller.signal)
       this.assertOpen()
       if (source === undefined) throw new WERR_NOT_IMPLEMENTED('Snapshot archive capture requires SQLite WAL or MySQL')
-      if (job.journal) {
+      if (job.journal === 'fields') {
+        if (journalSource === undefined || request.version !== 4)
+          throw new WERR_INVALID_OPERATION('Field capture requires its actual issued tuple')
+        await captureSnapshotJournalFieldArchiveSource(
+          journalSource,
+          {
+            beginJournalFields: binding => this.requests.beginJournalFields(owner, binding),
+            appendJournalFields: (writer, page) => this.requests.appendJournalFields(owner, writer, page),
+            sealJournalFields: async writer => {
+              await this.requests.sourceClosed(owner)
+              return await this.requests.sealJournalFields(owner, writer)
+            },
+            close: (_identityKey, _archiveId, error) => cleanup(error)
+          },
+          request.position ?? undefined,
+          { signal: controller.signal }
+        )
+      } else if (job.journal) {
         if (journalSource === undefined || request.version !== 3)
           throw new WERR_INVALID_OPERATION('Journal capture requires its original issued journal tuple')
         await captureSnapshotJournalArchiveSource(
@@ -318,6 +380,31 @@ export class KnexSnapshotArchiveService {
     this.assertOpen()
     const request = parseSnapshotJournalArchiveReaderRequest(input)
     await this.requests.markJournalReaderCancellation(identityKey, request)
+    const job = this.active
+    if (job?.identityKey === identityKey && job.request.requestId === request.requestId) await this.stop(job)
+    await this.storage.recoverSnapshotArchiveSources()
+    await this.requests.close(identityKey, request.requestId)
+  }
+
+  async journalFieldsStatus(identityKey: string, input: unknown) {
+    this.assertOpen()
+    return await this.requests.journalFieldsStatus(identityKey, input)
+  }
+
+  async journalFieldsDirectory(identityKey: string, archiveId: string) {
+    this.assertOpen()
+    return await this.archives.journalFieldsDirectory(identityKey, archiveId)
+  }
+
+  async readJournalFields(identityKey: string, archiveId: string, sequence: number) {
+    this.assertOpen()
+    return await this.archives.readJournalFields(identityKey, archiveId, sequence)
+  }
+
+  async cancelJournalFieldsReader(identityKey: string, input: unknown): Promise<void> {
+    this.assertOpen()
+    const request = parseSnapshotJournalFieldArchiveReaderRequest(input)
+    await this.requests.markJournalFieldsReaderCancellation(identityKey, request)
     const job = this.active
     if (job?.identityKey === identityKey && job.request.requestId === request.requestId) await this.stop(job)
     await this.storage.recoverSnapshotArchiveSources()

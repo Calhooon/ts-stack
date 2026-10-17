@@ -99,3 +99,20 @@ export function snapshotJournalArchiveProvider(value: unknown): value is Snapsho
   )
 }
 export type { SnapshotJournalDestinationLimits, SnapshotJournalReconciliationSource }
+
+export interface SnapshotJournalFieldArchiveProvider {
+  supportsSnapshotJournalFieldArchive: () => Promise<boolean>
+  openSnapshotJournalFieldArchive: (
+    identityKey: string,
+    position?: SnapshotJournalArchivePosition,
+    options?: WalletReadSnapshotOptions
+  ) => Promise<import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined>
+}
+export function snapshotJournalFieldArchiveProvider(value: unknown): value is SnapshotJournalFieldArchiveProvider {
+  const provider = value as Partial<SnapshotJournalFieldArchiveProvider> | null
+  return (
+    provider != null &&
+    typeof provider.supportsSnapshotJournalFieldArchive === 'function' &&
+    typeof provider.openSnapshotJournalFieldArchive === 'function'
+  )
+}
