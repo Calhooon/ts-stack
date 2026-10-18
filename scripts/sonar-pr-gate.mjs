@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url'
+import { enforceRepositorySonarGate } from './sonar-policy-gate.mjs'
 
 const DEFAULT_BASE_URL = 'https://sonarcloud.io'
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
@@ -211,7 +212,6 @@ const invokedDirectly =
 if (invokedDirectly) {
   try {
     const options = parseArguments(process.argv.slice(2))
-    const { enforceRepositorySonarGate } = await import('./sonar-policy-gate.mjs')
     await enforceRepositorySonarGate(options)
   } catch (error) {
     console.error(error instanceof Error ? error.message : error)

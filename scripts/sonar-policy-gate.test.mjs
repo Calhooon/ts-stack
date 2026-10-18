@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { createServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
@@ -567,4 +571,60 @@ test('unknown modern status cannot hide behind legacy FIXED fields and numeric s
     rejectsSnapshot(s => {
       s.qualityGate.projectStatus.conditions[3].actualValue = value
     }, /malformed/)
+})
+
+test('actual CLI completes module loading and preserves strict pass and failure results', async () => {
+  let blocking = false
+  const server = createServer((request, response) => {
+    const path = new URL(request.url, 'http://localhost').pathname
+    const payloads = {
+      '/api/project_pull_requests/list': { pullRequests: [{ key: '385', commit: { sha: SHA } }] },
+      '/api/qualitygates/project_status': { projectStatus: { status: 'OK' } },
+      '/api/issues/search': {
+        paging: { total: blocking ? 1 : 0 },
+        issues: blocking ? [{ key: 'bug', type: 'BUG', issueStatus: 'ACCEPTED' }] : []
+      },
+      '/api/hotspots/search': { paging: { total: 0 } }
+    }
+    response.writeHead(Object.hasOwn(payloads, path) ? 200 : 404, {
+      'content-type': 'application/json'
+    })
+    response.end(JSON.stringify(payloads[path] ?? {}))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const args = [
+      fileURLToPath(new URL('./sonar-pr-gate.mjs', import.meta.url)),
+      '--project',
+      SONAR_BUDGET.project,
+      '--pull-request',
+      '385',
+      '--revision',
+      SHA,
+      '--base-url',
+      `http://127.0.0.1:${server.address().port}`,
+      '--timeout-ms',
+      '1000',
+      '--poll-ms',
+      '1'
+    ]
+    const run = () =>
+      promisify(execFile)(process.execPath, args, {
+        timeout: 5000,
+        env: { ...process.env, GITHUB_ACTIONS: 'false' }
+      })
+    const passed = await run()
+    assert.match(passed.stdout, /original zero-findings gate/)
+    assert.match(passed.stdout, /zero-findings gate passed/)
+    assert.equal(passed.stderr, '')
+    blocking = true
+    await assert.rejects(run(), error => {
+      assert.equal(error.code, 1)
+      assert.match(error.stderr, /1 new issue finding\(s\), expected 0/)
+      assert.doesNotMatch(error.stderr, /unsettled top-level await/)
+      return true
+    })
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
 })

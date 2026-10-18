@@ -1,3 +1,14 @@
+---
+id: sonar-pr569-budget
+title: 'Approved PR569 Sonar budget'
+kind: meta
+version: '1.0.0'
+last_updated: '2026-10-18'
+last_verified: '2026-10-18'
+status: stable
+tags: [governance, sonar, review]
+---
+
 # Approved PR569 Sonar budget
 
 Owner: ty-everett. Approved by the maintainer on 2026-10-18 in the private
