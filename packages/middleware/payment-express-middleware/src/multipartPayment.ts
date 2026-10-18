@@ -2,8 +2,8 @@ import {
   paymentBoundary,
   paymentPayloadContentType,
   PaymentTransportError
-} from '@bsv/sdk/auth/utils/paymentTransport'
-import { toUTF8Strict } from '@bsv/sdk/primitives/utils'
+} from './receiverPaymentPayload.js'
+import { decodePaymentUtf8 } from './receiverPaymentPayload.js'
 
 export interface ParsedMultipartPayment {
   paymentJSON: string
@@ -99,7 +99,7 @@ function collectPart(result: CollectedParts, part: Part, maxPaymentBytes: number
         'ERR_PAYMENT_SIZE',
         'Multipart payment JSON exceeds its limit.'
       )
-    result.paymentJSON = toUTF8Strict(part.bytes)
+    result.paymentJSON = decodePaymentUtf8(part.bytes)
   } else if (part.name === 'body') {
     if (part.contentType === undefined) result.invalid = true
     // Own inner bytes so downstream views cannot retain or expose the outer payment part.

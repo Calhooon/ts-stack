@@ -50,11 +50,15 @@ pnpm qualify:released-sync --cohorts /absolute/cohorts.json
 The exported `runReleasedWalletSync` also accepts an optional fourth argument,
 `{ continueOnCaseFailure: true, onCaseResult }`, for complete failure inventory.
 It retains the original case order, payloads, data assertions and bounds. The
-encoding observer checks actual received RPC bodies without changing them, under
-the existing 8 MiB body ceiling. `binaryRequests` selects ordinary RPC encoding;
+encoding observer checks the parsed RPC method only after the response finishes.
+It never subscribes to request data or starts the stream; the server retains its
+existing body ceiling. `binaryRequests` selects ordinary RPC encoding;
 negotiated version-one `writeSyncTransferPart` requests separately require binary
-JSON. The controller rejects numeric transfer parts, unexpected binary ordinary
-RPCs when disabled, unaccounted binary requests and unreadable observations.
+JSON. Compact capability probes and version-one snapshot/journal destination
+RPCs also retain their required codec. Independent fixed method lists and each
+actual signed server advertisement identify those protocols. The controller
+rejects numeric versioned requests, unexpected binary ordinary RPCs when
+disabled, unaccounted binary requests and unreadable observations.
 Each result
 callback runs after the original physical-owner cleanup. Any failed case still
 rejects the run; cleanup failure stops execution immediately. Default and CLI

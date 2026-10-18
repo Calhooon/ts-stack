@@ -1,5 +1,15 @@
 # @bsv/auth-express-middleware
 
+The unpublished candidate ships receiver-owned payload decoding and multipart
+format checks, preserving its previous SDK2 peer floor without importing new
+SDK3-only helper modules. Strict packed SDK2.8.11 and SDK3 installations use their
+actual original wallet, peer and cryptographic classes. Authentication, fatal
+UTF8 decoding, exact signed content types, resource bounds and payment/replay
+checks remain unchanged. Optional new AuthFetch payment APIs require the SDK3.3.0
+candidate; supported SDK2 receivers do not require an unpublished SDK2.9 release.
+The original large numeric-array requests above legacy structural limits still
+refuse; this fix does not claim a complete compatibility or platform gate.
+
 Express middleware for BRC-103 peer-to-peer mutual authentication over the
 BRC-104 HTTP transport. It handles the public handshake endpoint, verifies
 authenticated application requests, signs responses, and optionally exchanges
@@ -50,7 +60,7 @@ memory, pending-request and timeout limits before authentication. See the
 ## Empty binary request bodies
 
 Auth middleware 2.3.0 signs zero-length dense byte arrays and `Uint8Array`/`Buffer`
-values with BRC-104's `-1` body-length sentinel, matching the integrated SDK AuthFetch 3.0.0 candidate.
+values with BRC-104's `-1` body-length sentinel, matching the SDK AuthFetch 3.3.0 candidate.
 This includes `express.raw({ type: 'application/octet-stream' })` mounted before
 authentication without `captureRawBody`: Express may expose an empty Buffer even
 when HTTP carries no body. Nonempty byte bodies keep their existing preimages.

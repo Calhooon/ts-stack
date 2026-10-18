@@ -24,9 +24,9 @@ work; it does not prove activation or physical cancellation. Warm copying occurs
 while sources may remain active, but the short cutover can temporarily make
 wallet writes unavailable. No uninterrupted-write guarantee is implied.
 
-The SDK2 dependency graph is currently unresolved; do not force installation or
-infer compatibility from an unavailable version. All artifacts and supported
-peer combinations must qualify before release. See [delivery and rollback](delivery-544.md).
+Receiver-owned payload parsers preserve the supported SDK2 graph without an
+unpublished helper dependency or forced installation. All artifacts and supported
+peer combinations must still qualify before release. See [delivery and rollback](delivery-544.md).
 
 ## Selection and recovery
 

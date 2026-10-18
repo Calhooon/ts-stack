@@ -1,6 +1,6 @@
 import { RawRequestBodyReader, RawRequestBodyError } from './rawRequestBody.js'
-import { isMultipartPaymentType } from '@bsv/sdk/auth/utils/paymentTransport'
-import { decodePaymentPayload } from '@bsv/sdk/auth/utils/decodePaymentPayload'
+import { isMultipartPaymentType } from './receiverPaymentPayload.js'
+import { decodePaymentPayload } from './receiverPaymentPayload.js'
 import { Reader, Writer, toArray, toBase64, toHex, toUTF8 } from '@bsv/sdk/primitives/utils'
 import fs from 'node:fs'
 import path from 'node:path'

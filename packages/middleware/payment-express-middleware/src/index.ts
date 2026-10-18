@@ -1,5 +1,5 @@
-import { isMultipartPaymentType, PaymentTransportError } from '@bsv/sdk/auth/utils/paymentTransport'
-import { decodePaymentPayload } from '@bsv/sdk/auth/utils/decodePaymentPayload'
+import { isMultipartPaymentType, PaymentTransportError } from './receiverPaymentPayload.js'
+import { decodePaymentPayload } from './receiverPaymentPayload.js'
 import { parseMultipartPayment, MissingMultipartPayment } from './multipartPayment.js'
 import { toArray, toBase64 } from '@bsv/sdk/primitives/utils'
 import { Beef, createNonce, PublicKey, verifyNonce, type AtomicBEEF } from '@bsv/sdk'

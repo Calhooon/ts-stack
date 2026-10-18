@@ -15,6 +15,35 @@ const packages = Object.freeze(['@bsv/wallet-toolbox', '@bsv/wallet-toolbox-clie
 const versions = Object.freeze({ released: '2.14.5', candidate: '2.15.0' })
 const sdkVersions = Object.freeze({ 2: '2.8.11', 3: '3.2.1' })
 const candidateSdkVersions = Object.freeze({ 2: '2.8.11', 3: '3.3.0' })
+// Independent version-one wire contracts exercised by this local-source fixture.
+const snapshotMethodGroups = Object.freeze({
+  snapshotSyncDestination: [
+    'beginSnapshotSyncContent',
+    'getSnapshotSyncContentReceipt',
+    'confirmSnapshotSyncContentReceipt',
+    'observeSnapshotSyncContent',
+    'beginSnapshotSync',
+    'getSnapshotSyncCheckpoint',
+    'commitSnapshotSyncPage',
+    'beginSnapshotSyncPageTransfer',
+    'writeSnapshotSyncPageTransferPart',
+    'commitSnapshotSyncPageTransfer',
+    'releaseSnapshotSyncPageTransfer'
+  ],
+  snapshotJournalData: [
+    'getSnapshotJournalDataContentReceipt',
+    'confirmSnapshotJournalDataContentReceipt',
+    'beginSnapshotJournalData',
+    'getSnapshotJournalDataStatus',
+    'stageSnapshotJournalDataPacket',
+    'promoteSnapshotJournalData',
+    'cleanupSnapshotJournalData',
+    'beginSnapshotJournalDataTransfer',
+    'writeSnapshotJournalDataTransferPart',
+    'stageSnapshotJournalDataTransfer',
+    'releaseSnapshotJournalDataTransfer'
+  ]
+})
 
 /** Independent synthetic proof and public-row postimages. No production sync
  * exporter, native descriptor, journal hash or received row supplies an oracle. */
@@ -414,9 +443,13 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
               ordinaryNumericRequestCount = 0,
               transferBinaryRequestCount = 0,
               transferNumericRequestCount = 0,
+              negotiationBinaryRequestCount = 0,
+              snapshotBinaryRequestCount = 0,
+              snapshotNumericRequestCount = 0,
               requestCount = 0,
               requestFault
-            listener.on('request', request => {
+            const observedSnapshotProtocols = new Set()
+            listener.on('request', (request, response) => {
               if (requestCount >= 10000) {
                 requestFault ??= new Error('Released compatibility exceeded its original finite request bound')
                 return
@@ -425,34 +458,30 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
               const binary = request.headers['x-bsv-binary-request-encoding'] === 'base64'
               if (binary) binaryRequestCount++
               if (request.url !== '/') return
-              const chunks = []
-              let bytes = 0
-              request.on('data', chunk => {
-                bytes += chunk.length
-                // Match the original server's finite request-body ceiling. The
-                // observer never changes, consumes or replaces received bytes.
-                if (bytes > 8 * 1024 * 1024) {
-                  chunks.length = 0
-                  requestFault ??= new Error('Compatibility encoding observation exceeded the request bound')
-                  return
-                }
-                chunks.push(Buffer.from(chunk))
-              })
-              request.on('end', () => {
-                if (bytes > 8 * 1024 * 1024) return
+              // Observe only after Express has parsed and handled the body.
+              // A data listener would start stream flow before asynchronous
+              // middleware has necessarily installed its own body reader.
+              response.once('finish', () => {
                 try {
-                  const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-                  if (rpc === null || typeof rpc !== 'object' || typeof rpc.method !== 'string')
-                    throw new Error('Missing observed RPC method')
-                  if (rpc.method === 'writeSyncTransferPart') {
+                  const body = Object.getOwnPropertyDescriptor(request, 'body')?.value
+                  if (body === null || typeof body !== 'object') throw new Error('Missing parsed RPC body')
+                  const method = Object.getOwnPropertyDescriptor(body, 'method')?.value
+                  if (typeof method !== 'string' || method.length > 128) throw new Error('Missing observed RPC method')
+                  const protocol = Object.entries(snapshotMethodGroups).find(([, methods]) =>
+                    methods.includes(method)
+                  )?.[0]
+                  if (method === 'makeAvailable' && binary) negotiationBinaryRequestCount++
+                  else if (protocol !== undefined) {
+                    observedSnapshotProtocols.add(protocol)
+                    if (binary) snapshotBinaryRequestCount++
+                    else snapshotNumericRequestCount++
+                  } else if (method === 'writeSyncTransferPart') {
                     if (binary) transferBinaryRequestCount++
                     else transferNumericRequestCount++
                   } else if (binary) ordinaryBinaryRequestCount++
                   else ordinaryNumericRequestCount++
                 } catch (cause) {
                   requestFault ??= new Error('Compatibility could not observe the actual RPC encoding', { cause })
-                } finally {
-                  chunks.length = 0
                 }
               })
             })
@@ -491,11 +520,21 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
             await inspectFamilies()
             if (requestFault !== undefined) throw requestFault
             assert.ok(requestCount > 0)
-            // Version-one transfer parts require their negotiated binary codec;
-            // binaryRequests controls ordinary RPCs, not that separate protocol.
+            // Capability probes and separately negotiated version-one snapshot
+            // and transfer RPCs retain their mandatory codec. Check their actual
+            // advertisements; the ordinary RPC flag still remains enforced.
             assert.equal(binaryRequests ? binaryRequestCount > 0 : ordinaryBinaryRequestCount === 0, true)
-            assert.equal(binaryRequestCount, ordinaryBinaryRequestCount + transferBinaryRequestCount)
+            assert.equal(
+              binaryRequestCount,
+              ordinaryBinaryRequestCount +
+                transferBinaryRequestCount +
+                negotiationBinaryRequestCount +
+                snapshotBinaryRequestCount
+            )
             assert.equal(transferNumericRequestCount, 0)
+            assert.equal(snapshotNumericRequestCount, 0)
+            if (transferBinaryRequestCount > 0) assert.equal(client.settings?.syncTransfer?.version, 1)
+            for (const protocol of observedSnapshotProtocols) assert.equal(client.settings?.[protocol]?.version, 1)
             if (!binaryRequests) assert.ok(ordinaryNumericRequestCount > 0)
             reports.push({
               sdkMajor,
@@ -512,6 +551,9 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
               ordinaryNumericRequestCount,
               transferBinaryRequestCount,
               transferNumericRequestCount,
+              negotiationBinaryRequestCount,
+              snapshotBinaryRequestCount,
+              snapshotProtocols: [...observedSnapshotProtocols].sort(),
               requestCount,
               replicaFamilies: 12,
               largeRawTransaction: true,

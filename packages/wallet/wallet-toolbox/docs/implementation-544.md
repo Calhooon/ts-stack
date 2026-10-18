@@ -13,10 +13,11 @@ recovery, mixed versions and migration constraints.
 A parsed plan or copied status never creates a source actor, database permission,
 financial ACK or primary-selection authority.
 
-Source assembly is not end-to-end acceptance. Current qualification has exposed
-an SDK2 strict-install dependency conflict, a candidate SDK version that collides
-with immutable published bytes, and compatibility-controller expectations that
-must distinguish queued destination notification and negotiated transfer parts.
+Source assembly is not end-to-end acceptance. Receiver-owned payload codecs
+preserve the SDK2 graph without an unpublished helper prerequisite. The additive
+SDK is now a distinct 3.3.0 candidate after immutable published 3.2.1. The
+compatibility controller independently checks queued destination notification,
+unchanged source state, ordinary RPC encoding and negotiated versioned codecs.
 The original large numeric-array cases involving released peers exceed their
 preserved structural limit; they remain failed evidence. The full supported
 artifact matrix, whole-system, native/platform, performance, security,

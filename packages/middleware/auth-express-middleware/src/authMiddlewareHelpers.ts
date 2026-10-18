@@ -1,4 +1,4 @@
-import { authenticatedContentType } from '@bsv/sdk/auth/utils/paymentTransport'
+import { authenticatedContentType } from './receiverPaymentPayload.js'
 import { Writer, toArray } from '@bsv/sdk/primitives/utils'
 import { Request } from 'express'
 import { stringifyBRC100 } from '@bsv/sdk'
