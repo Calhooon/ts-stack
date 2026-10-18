@@ -1,5 +1,5 @@
 'use strict'
-// Qualification controller, authored UNRUN. Its caller supplies two isolated,
+// Qualification controller. Its caller supplies two isolated,
 // integrity-verified installations and owns their process/resource envelope.
 // It installs nothing, publishes nothing and contacts only its loopback servers.
 const assert = require('node:assert/strict')
@@ -238,10 +238,16 @@ async function seedReplicaFamilies(install, source, target, identityKey, firstLa
     fields(field, { fieldValue: 'independent value 😀', masterKey: 'independent master key' })
     fields(commission, { satoshis: 1, keyOffset: 'independent offset 雪', isRedeemed: true })
     bytesEqual(commission.lockingScript, [81])
-    fields(request, { provenTxId: proof.provenTxId, status: 'completed', attempts: 2, notified: true })
+    // Mapping a notification queues destination delivery; source delivery is
+    // not an acknowledgement by the destination.
+    fields(request, { provenTxId: proof.provenTxId, status: 'completed', attempts: 2, notified: false })
     bytesEqual(request.rawTx, rawTx)
     assert.deepEqual(JSON.parse(request.history), JSON.parse(history))
     assert.deepEqual(JSON.parse(request.notify), { transactionIds: [action.transactionId] })
+    const originalRequest = one(await source.storage.findProvenTxReqs({ partial: { txid } }))
+    fields(originalRequest, { provenTxId, status: 'completed', attempts: 2, notified: true })
+    assert.deepEqual(JSON.parse(originalRequest.history), JSON.parse(history))
+    assert.deepEqual(JSON.parse(originalRequest.notify), { transactionIds: [transactionId] })
     assert.equal(
       (await storage.findSyncStates({ partial: { userId: uid, storageIdentityKey: 'archived-compatibility-peer' } }))
         .length,

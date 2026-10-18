@@ -15,7 +15,11 @@ This Node-hosted matrix does not qualify a browser or a physical mobile device.
 
 The controller's first source574 qualification attempts found an SDK2 peer
 resolution refusal and a released-server structural-limit refusal for the
-original large numeric-array request. These failures remain recorded; the full
+original large numeric-array request. The first complete SDK3 inventory also
+exposed an incorrect notification oracle: mapped destination notifications must
+remain queued until local delivery, while the source's completed notification
+must remain unchanged. Both states are now checked independently. These initial
+failures remain recorded; the full
 48-combination programme is not qualified. Finish the implementation and source
 wiring before running it. Build the final graph, freeze the actual pack
 outputs and dependencies, and prepare four separate installations. Do not use
