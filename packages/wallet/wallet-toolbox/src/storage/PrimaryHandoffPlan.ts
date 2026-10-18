@@ -19,8 +19,8 @@ export function primaryHandoffOperation(value: unknown): string {
   return value
 }
 function exact(value: object, names: string[]): void {
-  const keys = Object.keys(value).sort(),
-    expected = names.sort()
+  const keys = Object.keys(value).sort((a, b) => Number(a > b) - Number(a < b)),
+    expected = names.sort((a, b) => Number(a > b) - Number(a < b))
   if (JSON.stringify(keys) !== JSON.stringify(expected)) invalid()
 }
 /** Bounded canonical comparison metadata. Parsing this never creates a SQL

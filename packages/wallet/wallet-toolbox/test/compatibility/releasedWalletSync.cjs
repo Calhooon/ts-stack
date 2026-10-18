@@ -336,7 +336,7 @@ async function installation(root, version, sdkMajor, sdkVersion = sdkVersions[sd
 
 async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, options = {}) {
   assert.ok(sdkMajor === 2 || sdkMajor === 3)
-  assert.ok(options !== null && typeof options === 'object' && !Array.isArray(options))
+  assert.ok(options && typeof options === 'object' && !Array.isArray(options))
   assert.ok(options.continueOnCaseFailure === undefined || typeof options.continueOnCaseFailure === 'boolean')
   assert.ok(options.onCaseResult === undefined || typeof options.onCaseResult === 'function')
   const released = await installation(releasedRoot, versions.released, sdkMajor),
@@ -553,7 +553,7 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
               transferNumericRequestCount,
               negotiationBinaryRequestCount,
               snapshotBinaryRequestCount,
-              snapshotProtocols: [...observedSnapshotProtocols].sort(),
+              snapshotProtocols: [...observedSnapshotProtocols].sort((a, b) => Number(a > b) - Number(a < b)),
               requestCount,
               replicaFamilies: 12,
               largeRawTransaction: true,

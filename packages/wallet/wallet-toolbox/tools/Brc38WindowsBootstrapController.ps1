@@ -122,9 +122,9 @@ try {
   if ($options.controllerInputs.Count -ne $expectedPaths.Count) { throw 'Bootstrap controller cohort differs' }
   $sourceFiles = [System.Collections.Generic.List[System.IO.FileStream]]::new()
   for ($i = 0; $i -lt $expectedPaths.Count; $i++) {
-    $input = $options.controllerInputs[$i]
-    if ($input.path -cne $expectedPaths[$i]) { throw 'Bootstrap controller cohort path differs' }
-    $sourceFiles.Add((Open-FrozenInput (Join-Path $toolbox $input.path) 1048576 $input))
+    $controllerInput = $options.controllerInputs[$i]
+    if ($controllerInput.path -cne $expectedPaths[$i]) { throw 'Bootstrap controller cohort path differs' }
+    $sourceFiles.Add((Open-FrozenInput (Join-Path $toolbox $controllerInput.path) 1048576 $controllerInput))
   }
   if ([System.IO.Path]::GetFileName($options.nodeExecutable.filename) -ine 'node.exe') {
     throw 'Bootstrap Node executable differs'
@@ -168,11 +168,11 @@ try {
       (& $helper -Mode Inspect -Directory $worker.directory) | Out-Null
       $candidates = @()
       for ($i = 0; $i -lt 2; $i++) {
-        $input = $worker.receipt.candidates[$i]
-        if ($input.path -cne @('brc38-build-supervisor.exe','brc38_windows.node')[$i]) { throw 'Bootstrap candidate path differs' }
-        $image = Open-FrozenInput (Join-Path $worker.directory $input.path) 2097152 $input
+        $candidateInput = $worker.receipt.candidates[$i]
+        if ($candidateInput.path -cne @('brc38-build-supervisor.exe','brc38_windows.node')[$i]) { throw 'Bootstrap candidate path differs' }
+        $image = Open-FrozenInput (Join-Path $worker.directory $candidateInput.path) 2097152 $candidateInput
         Assert-PE $image $options.architecture ($i -eq 1)
-        $candidates += [ordered]@{path=$input.path;bytes=$image.Length;sha256=(Get-InputHash $image)}
+        $candidates += [ordered]@{path=$candidateInput.path;bytes=$image.Length;sha256=(Get-InputHash $image)}
       }
       $result.candidates = $candidates
     } else { $failures.Add('Bootstrap original worker or build failed') }

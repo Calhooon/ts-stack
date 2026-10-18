@@ -121,7 +121,7 @@ async function loadReferences(
                 ? value
                 : typeof value === 'string' && /^[1-9][0-9]{0,15}$/.test(value)
                   ? Number(value)
-                  : NaN
+                  : Number.NaN
             if (!Number.isSafeInteger(actual) || actual < 1 || (typeof value === 'string' && String(actual) !== value))
               throw new WERR_INVALID_OPERATION('Snapshot current ID mapping differs from its scoped native rows')
             return actual

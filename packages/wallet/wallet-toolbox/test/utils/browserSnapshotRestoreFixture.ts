@@ -48,7 +48,7 @@ export async function browserSnapshotRestoreFixture(scalar = false, measurement?
     view = new DataView(header.buffer)
   view.setUint32(0, 1, true)
   view.setUint32(68, 1, true)
-  header.set(Uint8Array.from(txid.match(/../g)!.map(value => parseInt(value, 16))).reverse(), 36)
+  header.set(Uint8Array.from(txid.match(/../g)!.map(value => Number.parseInt(value, 16))).reverse(), 36)
   const blockHash = hex((await sha(await sha(header))).reverse())
   Object.assign(data.tables.provenTxs[0], {
     txid: txid.toUpperCase(),

@@ -37,7 +37,7 @@ function decodedOrdinal(value: string, legacy = false): number {
       value
         .slice(1)
         .match(/../g)!
-        .map(unit => parseInt(unit, 16))
+        .map(unit => Number.parseInt(unit, 16))
     )
     if (bytes[0] & 128) bytes[0] ^= 128
     else for (let index = 0; index < bytes.length; index++) bytes[index] ^= 255

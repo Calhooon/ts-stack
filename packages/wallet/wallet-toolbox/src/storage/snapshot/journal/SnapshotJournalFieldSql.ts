@@ -279,7 +279,7 @@ export async function readSnapshotJournalPointFields(
       smallRow[field] = null
       continue
     }
-    const bytes = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN
+    const bytes = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 1000000000) invalid()
     const binary = selection.binary(field),
       sha256 = await packedFieldDigest(k, source, field, binary, mode, raw, bytes)

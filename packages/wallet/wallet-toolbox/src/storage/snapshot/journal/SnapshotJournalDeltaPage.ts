@@ -349,7 +349,7 @@ export async function readSnapshotJournalFieldPage(
             row[field] = null
             continue
           }
-          const length = typeof value === 'string' || typeof value === 'number' ? Number(value) : NaN
+          const length = typeof value === 'string' || typeof value === 'number' ? Number(value) : Number.NaN
           if (!Number.isSafeInteger(length) || length < 0 || length > 1000000000) invalid()
           const binary = selection.binary(field),
             sha256 = await packedFieldDigest(k, source, field, binary, mode, raw, length)

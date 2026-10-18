@@ -228,8 +228,8 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   /** Internal scheduling only. Legacy providers keep serialized preparation. */
-  async supportsPreparedWalletWrites(): Promise<boolean> {
-    return false
+  supportsPreparedWalletWrites(): Promise<boolean> {
+    return Promise.resolve(false)
   }
   async withPreparedWalletWrite<T>(
     _auth: AuthId,
@@ -260,8 +260,8 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   /** Scheduling negotiation only; each actual write still captures/checks its role. */
-  async supportsPrimaryWriteFences(): Promise<boolean> {
-    return false
+  supportsPrimaryWriteFences(): Promise<boolean> {
+    return Promise.resolve(false)
   }
 
   abstract reviewStatus(args: StorageStatusReviewArgs): Promise<{ log: string }>

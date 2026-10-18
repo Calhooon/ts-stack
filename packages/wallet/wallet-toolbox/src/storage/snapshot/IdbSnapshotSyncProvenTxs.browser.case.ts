@@ -50,7 +50,7 @@ export async function verifyIdbSnapshotSyncProvenTxs(expiresAt: number): Promise
     txid = tx.id('hex'),
     merklePath = new MerklePath(100, [[{ offset: 0, hash: txid, txid: true }]]).toBinary(),
     header = new Uint8Array(80),
-    bytes = Uint8Array.from(txid.match(/../g)!.map(value => parseInt(value, 16)))
+    bytes = Uint8Array.from(txid.match(/../g)!.map(value => Number.parseInt(value, 16)))
   new DataView(header.buffer).setUint32(0, 1, true)
   header.set(bytes.reverse(), 36)
   const blockHash = hex((await digest(await digest(header))).reverse()),

@@ -443,7 +443,7 @@ async function escapedUnit(input: Input): Promise<string> {
     if (!/^[0-9a-fA-F]$/.test(unit)) invalid()
     hex += unit
   }
-  return String.fromCharCode(parseInt(hex, 16))
+  return String.fromCharCode(Number.parseInt(hex, 16))
 }
 async function key(input: Input, maximum: number, policy: Policy): Promise<ChargedText> {
   const charge = policy.working.claim(768),

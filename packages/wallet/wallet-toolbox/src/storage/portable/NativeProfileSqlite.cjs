@@ -833,7 +833,9 @@ class NativeProfileSqlite {
       policy = budget(limits.maximumRowAllocationBytes),
       expiresAt = recovery ? (fixed.recovery?.expiresAt ?? 0) : limits.expiresAt,
       ownDeadline = performance.now() + Math.max(0, expiresAt - Date.now()),
-      monotonicDeadline = recovery ? Math.min(ownDeadline, fixed.recovery?.monotonicDeadline ?? NaN) : ownDeadline
+      monotonicDeadline = recovery
+        ? Math.min(ownDeadline, fixed.recovery?.monotonicDeadline ?? Number.NaN)
+        : ownDeadline
     integer(expiresAt, Date.now() + 1, Date.now() + (recovery ? 3600000 : 86400000), 'Private native deadline differs')
     if (
       !Number.isFinite(monotonicDeadline) ||

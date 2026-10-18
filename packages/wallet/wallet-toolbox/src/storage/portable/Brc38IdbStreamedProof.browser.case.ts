@@ -46,7 +46,7 @@ async function fixture() {
   // it does not call the production Services header serializer/hash helper.
   view.setUint32(0, 1, true)
   view.setUint32(68, 1, true)
-  header.set(Uint8Array.from(txid.match(/../g)!.map(value => parseInt(value, 16))).reverse(), 36)
+  header.set(Uint8Array.from(txid.match(/../g)!.map(value => Number.parseInt(value, 16))).reverse(), 36)
   const blockHash = hex((await sha(await sha(header))).reverse()),
     limits = {
       maximumRows: 1000,

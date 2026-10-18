@@ -181,7 +181,7 @@ export const composedNativeCohorts = Object.freeze(
 
 export const composedNativeCaseNames = Object.freeze(
   composedNativeCohorts
-    .flatMap(cohort => Array(cohort.cases).fill(cohort.name))
+    .flatMap(cohort => new Array(cohort.cases).fill(cohort.name))
     .sort((a, b) => Number(a > b) - Number(a < b))
 )
 

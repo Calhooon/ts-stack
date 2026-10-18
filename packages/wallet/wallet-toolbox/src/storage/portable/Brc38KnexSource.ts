@@ -343,7 +343,7 @@ async function page(context: PageContext, k: Knex, table: WalletSnapshotTable, a
     for (const [index, field] of binaries.entries()) {
       const value = candidate[`__portableBinary${index}`]
       if (value === null) continue
-      const length = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN
+      const length = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
       if (!Number.isSafeInteger(length) || length < 0) throw new TypeError('Invalid BRC-38 native binary length')
       if (length > options.streamedBinary!.maximumBinaryBytes)
         throw new SnapshotResourceLimitError('BRC-38 native binary exceeds its selected byte policy')

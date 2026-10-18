@@ -671,7 +671,7 @@ export function createKnexWalletSnapshotFieldReader(
                 row[field] = undefined
                 continue
               }
-              const bytes = typeof selected === 'number' || typeof selected === 'string' ? Number(selected) : NaN
+              const bytes = typeof selected === 'number' || typeof selected === 'string' ? Number(selected) : Number.NaN
               if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 1000000000)
                 throw new WERR_INVALID_OPERATION('Native field logical length differs')
               extents[field] = Object.freeze<WalletSnapshotFieldDescriptor>({
@@ -910,7 +910,7 @@ export function createKnexWalletSnapshotBinaryReader(
                 value = row[name]
               delete row[name]
               if (value === null) continue
-              const length = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN
+              const length = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
               if (!Number.isSafeInteger(length) || length < 0)
                 throw new WERR_INVALID_OPERATION('Snapshot binary length is invalid')
               lengths[field] = length
