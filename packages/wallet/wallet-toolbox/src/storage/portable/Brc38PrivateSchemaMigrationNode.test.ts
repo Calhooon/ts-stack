@@ -1,3 +1,17 @@
+// Enter through the public migration owner first to exercise its real circular
+// import graph before private migration configuration is requested.
+import {
+  KnexMigrations,
+  SNAPSHOT_PROFILE_INDEX_MIGRATION,
+  SNAPSHOT_RELATION_INDEX_MIGRATION,
+  SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
+  SNAPSHOT_GLOBAL_INDEX_MIGRATION,
+  SNAPSHOT_SQLITE_INDEX_MIGRATION,
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
+  INTERNALIZE_RECEIPT_MIGRATION,
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
+  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION
+} from '../schema/KnexMigrations'
 import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../schema/snapshotSqlMigration'
 import { knex } from 'knex'
 import {
@@ -13,18 +27,6 @@ import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { createBrc38PrivateSchemaMigrationSource } from './Brc38PrivateSchemaMigrationNode'
 import { previewPrivateFixture } from './Brc38ImportPreviewFixture'
 import { runInSeries } from '../../utility/runInSeries'
-import {
-  KnexMigrations,
-  SNAPSHOT_PROFILE_INDEX_MIGRATION,
-  SNAPSHOT_RELATION_INDEX_MIGRATION,
-  SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
-  SNAPSHOT_GLOBAL_INDEX_MIGRATION,
-  SNAPSHOT_SQLITE_INDEX_MIGRATION,
-  SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
-  INTERNALIZE_RECEIPT_MIGRATION,
-  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
-  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION
-} from '../schema/KnexMigrations'
 
 const selectedMigrations = [
   SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION,

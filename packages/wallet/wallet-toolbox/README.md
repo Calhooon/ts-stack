@@ -66,6 +66,13 @@ those no-op entries must not be rewritten as deployed schema changes.
 
 ## Current unpublished candidate status
 
+Private candidate migrations resolve their transactional migration names when an actual
+source adapter is created, after the public/native import graph has initialized.
+Entering through the public migration owner therefore preserves the same selected
+transaction configs, complete DDL rollback and replacement retry as the private entry
+point. Ordinary migration order/configs, source SQL, native ownership and all admitted
+limits remain unchanged. This correction requires complete current-head qualification.
+
 The finite implementation inventory covers the original 24 required behavior
 families, including #542 and #543. Integration, consumer entry points and
 delivery/rollback documentation are present. Native whole-profile recovery now

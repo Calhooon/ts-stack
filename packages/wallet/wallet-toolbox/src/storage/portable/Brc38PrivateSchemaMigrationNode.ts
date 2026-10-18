@@ -19,16 +19,6 @@ type PrivateMigrationSource = Omit<Knex.MigrationSource<string>, 'getMigration'>
   getMigration: (migration: string) => ReturnType<KnexMigrations['getMigration']>
 }
 
-const transactional = new Set([
-  SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION,
-  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION,
-  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
-  SNAPSHOT_PROFILE_INDEX_MIGRATION,
-  SNAPSHOT_RELATION_INDEX_MIGRATION,
-  SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
-  SNAPSHOT_GLOBAL_INDEX_MIGRATION
-])
-
 /** Internal migration source for the existing authenticated private-destination
  * lease. Each selected SQLite callback permits a transaction; its exact original
  * SQL and checks execute unchanged. The v2 generation retains its independent
@@ -49,6 +39,17 @@ export function createBrc38PrivateSchemaMigrationSource(
     throw new Error('Private schema migration requires the original native SQLite pool')
   const assertOwned = () => KnexBrc38StagingStore.prototype.assertPrivateNativeDestination.call(store, database)
   assertOwned()
+  // The public migration owner imports this adapter through the native graph.
+  // Resolve its live names only after that graph has finished initializing.
+  const transactional = new Set([
+    SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION,
+    SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION,
+    SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
+    SNAPSHOT_PROFILE_INDEX_MIGRATION,
+    SNAPSHOT_RELATION_INDEX_MIGRATION,
+    SNAPSHOT_CERTIFICATE_INDEX_MIGRATION,
+    SNAPSHOT_GLOBAL_INDEX_MIGRATION
+  ])
   return {
     getMigrations: async () => {
       assertOwned()
