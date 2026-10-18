@@ -308,3 +308,165 @@ test('provider destruction rejects captured writers before trying to acquire a c
     await f.close()
   }
 })
+
+test('an old abort cannot invalidate a signed action after its network observation crosses an ABA role change', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('active-write-abort-ABA', 'legacy')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let pending: Promise<unknown> | undefined
+  try {
+    const created = await ctx.wallet.createAction({
+      description: 'stage an actual abort race',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'protected during handoff' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid === undefined) throw new Error('The actual signed transaction must expose its txid')
+    const before = await ctx.activeStorage.findTransactions({
+      partial: { userId: ctx.userId, txid: created.txid }
+    })
+    const reference = before[0].reference
+    jest.spyOn(ctx.services, 'getStatusForTxids').mockImplementationOnce(async txids => {
+      entered()
+      await gate
+      return {
+        name: 'controlled-role-race',
+        status: 'success' as const,
+        results: txids.map(txid => ({ txid, status: 'unknown' as const, depth: undefined }))
+      }
+    })
+    pending = ctx.activeStorage.abortAction(
+      { userId: ctx.userId, identityKey: ctx.identityKey },
+      { reference: reference }
+    )
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await reached
+    const active = ctx.activeStorage.getSettings().storageIdentityKey
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'other-primary' })
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: active })
+    release()
+    await rejected
+    expect(await ctx.activeStorage.findTransactions({ partial: { userId: ctx.userId, reference: reference } })).toEqual(
+      before
+    )
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test('an old batch begin cannot reserve outputs after asynchronous preparation crosses an ABA role change', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('active-write-batch-begin-ABA')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let pending: Promise<unknown> | undefined
+  try {
+    const read = ctx.activeStorage.findOutputBaskets.bind(ctx.activeStorage)
+    jest.spyOn(ctx.activeStorage, 'findOutputBaskets').mockImplementationOnce(async args => {
+      const result = await read(args)
+      entered()
+      await gate
+      return result
+    })
+    pending = ctx.activeStorage.beginActionBatch(
+      { userId: ctx.userId, identityKey: ctx.identityKey },
+      {
+        batchId: 'stale-batch-begin',
+        firstAction: Validation.validateCreateActionArgs({
+          description: 'actual batch role race',
+          outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'batch reservation' }],
+          options: { noSend: true }
+        })
+      }
+    )
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await reached
+    const active = ctx.activeStorage.getSettings().storageIdentityKey
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'other-primary' })
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: active })
+    release()
+    await rejected
+    expect(await ctx.activeStorage.findActionBatch(ctx.userId, 'stale-batch-begin')).toBeUndefined()
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test.each(['renew', 'resume', 'extend', 'abort'] as const)(
+  'an old batch %s keeps its captured role through admission and cannot mutate later-generation state',
+  async operation => {
+    const ctx = await _tu.createLegacyWalletSQLiteCopy(`active-write-batch-${operation}-ABA`)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let entered!: () => void
+    const reached = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    let pending: Promise<unknown> | undefined
+    try {
+      const auth = { userId: ctx.userId, identityKey: ctx.identityKey }
+      const begun = await ctx.activeStorage.beginActionBatch(auth, {
+        batchId: 'actual-batch-role',
+        firstAction: Validation.validateCreateActionArgs({
+          description: 'reserve an actual batch',
+          outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'actual reservation' }],
+          options: { noSend: true }
+        })
+      })
+      const before = await ctx.activeStorage.findActionBatch(ctx.userId, begun.batchId)
+      const capture = ctx.activeStorage.activeWriteTransaction.bind(ctx.activeStorage)
+      jest.spyOn(ctx.activeStorage, 'activeWriteTransaction').mockImplementationOnce(async args => {
+        const write = await capture(args)
+        entered()
+        await gate
+        return write
+      })
+      if (operation === 'renew') pending = ctx.activeStorage.renewActionBatch(auth, begun.batchId)
+      else if (operation === 'resume')
+        pending = ctx.activeStorage.resumeActionBatch(auth, {
+          batchId: begun.batchId,
+          outpoints: [...begun.reservedOutputs, ...begun.explicitOutputs].map(output => ({
+            txid: output.txid!,
+            vout: output.vout
+          }))
+        })
+      else if (operation === 'extend')
+        pending = ctx.activeStorage.extendActionBatch(auth, {
+          batchId: begun.batchId,
+          targetSatoshis: 0,
+          requestedOutputs: 0,
+          explicitOutpoints: [],
+          includeSourceTransactions: false
+        })
+      else pending = ctx.activeStorage.abortActionBatch(auth, begun.batchId)
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+      await reached
+      const active = ctx.activeStorage.getSettings().storageIdentityKey
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'other-primary' })
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: active })
+      release()
+      await rejected
+      expect(await ctx.activeStorage.findActionBatch(ctx.userId, begun.batchId)).toEqual(before)
+    } finally {
+      release()
+      await pending?.catch(() => undefined)
+      await ctx.wallet.destroy()
+    }
+  }
+)

@@ -64,7 +64,7 @@ export async function captureKnexActiveWrite(
     )
       throw new WERR_UNAUTHORIZED()
     if (users[0].activeStorage !== settings[0].storageIdentity)
-      throw new WERR_NOT_ACTIVE('The authenticated wallet operation no longer owns the actual primary')
+      throw new WERR_NOT_ACTIVE('The authenticated wallet operation requires the actual active storage provider')
     return {
       identityKey,
       storageIdentity: settings[0].storageIdentity,
@@ -82,7 +82,9 @@ export async function captureKnexActiveWrite(
       role.storageIdentity !== expected.storageIdentity ||
       role.epoch !== expected.epoch
     )
-      throw new WERR_NOT_ACTIVE('The authenticated wallet operation belongs to an obsolete primary generation')
+      throw new WERR_NOT_ACTIVE(
+        'The authenticated wallet operation belongs to an obsolete active storage provider generation'
+      )
   }
   const transaction = async <T>(scope: (trx: TrxToken) => Promise<T>, prior?: TrxToken): Promise<T> => {
     if (!usable()) throw new WERR_INVALID_OPERATION('Active wallet writer admission is stopped')

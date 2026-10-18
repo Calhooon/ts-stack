@@ -856,6 +856,15 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   async abortAction(auth: AuthId, args: AbortActionArgs): Promise<AbortActionResult> {
     if (auth.userId == null) throw new WERR_INVALID_PARAMETER('auth.userId', 'valid')
 
+    // Preserve the established BRC-177 policy error before general role
+    // admission. This read grants nothing; actual mutation still uses the
+    // captured database epoch and revalidates the row in its SQL writer.
+    if (auth.isActive !== true) {
+      const initial = await this.findAbortableTransaction(auth.userId, args)
+      if (initial.tx.noSendExpiryState != null)
+        throw new WERR_NOT_ACTIVE('BRC-177 requires the active storage provider')
+    }
+    const write = await this.activeWriteTransaction(auth)
     const userId = auth.userId
     let r: AbortActionStorageResult | undefined
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -864,7 +873,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
       // bind the observation to the exact row and txid re-read below.
       const preflight = await this.findAbortableTransaction(userId, args)
       const chainObservation = await this.observeAbortChainProtection(preflight.tx)
-      r = await this.transaction(async trx => {
+      r = await write.transaction(async trx => {
         const { tx, reference } = await this.findAbortableTransaction(userId, args, trx)
         if (tx.noSendExpiryState != null && auth.isActive !== true) {
           throw new WERR_NOT_ACTIVE('BRC-177 requires the active storage provider')

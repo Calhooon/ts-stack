@@ -69,9 +69,10 @@ export async function createAction(
   storage: StorageProvider,
   auth: AuthId,
   vargs: ValidCreateActionArgs,
-  _originator?: OriginatorDomainNameStringUnder250Bytes
+  _originator?: OriginatorDomainNameStringUnder250Bytes,
+  capturedWrite?: StorageActiveWrite
 ): Promise<StorageCreateActionResult> {
-  const write = await storage.activeWriteTransaction(auth)
+  const write = capturedWrite ?? (await storage.activeWriteTransaction(auth))
   if (!storage.telemetry.enabled) return await createActionCore(storage, auth, vargs, write)
   return await storage.telemetry.withSpan(
     'wallet.storage.create_action',

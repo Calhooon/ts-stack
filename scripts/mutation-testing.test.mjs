@@ -783,7 +783,10 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
   for (const source of [
     'src/storage/KnexActiveWriteFence.ts',
     'src/storage/methods/createAction.ts',
-    'src/storage/methods/internalizeAction.ts'
+    'src/storage/methods/internalizeAction.ts',
+    'src/storage/methods/actionBatch.ts',
+    'src/storage/methods/actionBatchBlobs.ts',
+    'src/storage/methods/noSendExpiry.ts'
   ])
     assert.ok(target.mutate.includes(source))
   assert.ok(target.additionalInputs.includes('src/storage/StorageActiveWrite.ts'))

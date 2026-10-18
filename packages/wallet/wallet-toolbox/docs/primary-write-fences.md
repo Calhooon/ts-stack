@@ -1,8 +1,8 @@
 # Primary write fences
 
 The unpublished candidate adds an internal operation fence for ordinary Knex
-`createAction`, `internalizeAction`, certificate insertion/relinquishment and
-output relinquishment. It reads the actual authenticated user, database storage
+`createAction`, `internalizeAction`, abort, action-batch SQL phases, BRC-177
+expiry setup/arming, certificate insertion/relinquishment and output relinquishment. It reads the actual authenticated user, database storage
 identity, network and database-owned `snapshot_sync_primary_epochs` value before
 asynchronous preparation. It retains comparison values only, with no SQL
 transaction, connection or global manager writer during preparation.
@@ -23,6 +23,14 @@ An obsolete request cannot perform cleanup against a later primary generation.
 commits, including post-network recipient publication and rollback of spent-input
 transitions. Its durable receipt claim remains a separate actual ownership check.
 Certificate and output relinquishment use the same operation boundary.
+
+Abort captures before its chain-status lookup. Batch begin/extension, renewal,
+resume, manifest persistence, packed/blob uploads and abort use the same
+original-epoch SQL boundary. Digest-based commit passes its original capture
+through the commit helper; completed-result persistence after network work is
+fenced too. Expiry pre-funding and activation pass the original capture through
+createAction rather than recapturing after height/anchor preparation. Arming
+captures before signature/height work and rechecks inside its final CAS writer.
 
 These checks are restrictions on real SQL operations. `AuthId.isActive` supplied
 by a caller does not grant permission; user ID and identity must match the actual
@@ -47,9 +55,9 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-Remaining process/abort/action-batch/expiry and relevant proof-monitor writers
-also need their own original-epoch integration, including cross-user proof
-notifications and publication follow-up. The shared broadcast helper is not
+Remaining processAction, shared broadcast/notification, background batch
+cleanup and expiry/proof-monitor writers still need their own original-epoch
+integration, including cross-user proof notifications and publication follow-up. The shared broadcast helper is not
 claimed to be fully fenced by this change. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a
 new financial acknowledgement or permission to undo it on another primary.
@@ -57,7 +65,8 @@ new financial acknowledgement or permission to undo it on another primary.
 The owning SQLite regressions exercise a separate controller's role change,
 away-and-back ABA, atomic rollback, foreign/escaped tokens, identity mismatch,
 profile independence, actual trigger removal/change, a relinquishment suspended
-at lookup and a real createAction suspended during preparation. Existing funding
+at lookup, real create/internalize/abort preparation races, and old batch
+begin/renew/resume/extend/abort requests across an ABA transition. Existing funding
 performance assertions retain their one physical transaction oracle. These
 component tests do not qualify remote handoff, native/MySQL/IndexedDB behavior,
 process crash, full-system performance or production readiness. Complete all
