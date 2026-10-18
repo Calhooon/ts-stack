@@ -175,6 +175,7 @@ jobs:
     timeout-minutes: 12
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -183,12 +184,23 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: Require the exact Sonar analysis to contain no new findings
+      - name: Enforce the exact-head repository Sonar policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: >-
           node scripts/sonar-pr-gate.mjs
           --project bsv-blockchain_ts-stack
           --pull-request "${{ github.event.pull_request.number }}"
           --revision "${{ github.event.pull_request.head.sha }}"
+
+      - name: Retain complete PR569 Sonar inventories and both policy verdicts
+        if: always() && hashFiles('.sonar-policy/**/*.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sonar-policy-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: .sonar-policy/
+          include-hidden-files: true
+          if-no-files-found: error
 
   early-gates:
     name: Early policy gates
@@ -1899,7 +1911,7 @@ jobs:
             exit 1
           fi
           if [[ "$SONAR_RESULT" != "success" && "$SONAR_RESULT" != "skipped" ]]; then
-            echo "::error::Repository quality gate failed: exact-head Sonar analysis must contain zero new findings; sonar=$SONAR_RESULT"
+            echo "::error::Repository quality gate failed: exact-head repository Sonar policy must pass; sonar=$SONAR_RESULT"
             exit 1
           fi
           if [[ "$DEPENDENCY_RESULT" != "success" && "$DEPENDENCY_RESULT" != "skipped" ]]; then

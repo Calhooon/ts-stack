@@ -113,6 +113,18 @@ malformed, unowned, or unregistered exceptions still fail CI. Dependency release
 age does not prevent applying a patched release; vulnerability audits, provenance
 checks, denied lifecycle scripts, and immutable artifact verification remain required.
 
+The maintainer-approved [PR569 Sonar budget](../docs/reviews/sonar-pr569-budget.md)
+is registered in `governance/sonar-pr569-budget.json` and the exceptions registry.
+Only the exact PR/repository/head branch/base before `2026-10-24T23:59:59Z` may
+retain visible maintainability-only findings with maintainability A and
+duplication ≤6%. Bugs, vulnerabilities, all reliability/security impacts,
+unknown classifications and unreviewed hotspots remain blocking, including
+accepted/false-positive issues. Complete inventories and original/scoped verdicts
+are retained; no suppression, exclusion, profile, baseline or finding-state
+change is authorized. Live PR and exact, stable analysis checks enforce scope;
+out-of-scope or expired approval returns to the strict gate. CodeQL and all
+other security/qualification gates remain unchanged. The PR569 merge hold remains.
+
 Public services such as Overlay, Wallet Storage, WAB, Message Box, and Wallet
 Relay may need to accept clients from previously unknown domains. Their public
 default and opt-in CORS/CSP/origin allowlists are deployment policy, not a

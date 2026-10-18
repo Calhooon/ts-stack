@@ -211,7 +211,8 @@ const invokedDirectly =
 if (invokedDirectly) {
   try {
     const options = parseArguments(process.argv.slice(2))
-    await enforceSonarPullRequestGate(options)
+    const { enforceRepositorySonarGate } = await import('./sonar-policy-gate.mjs')
+    await enforceRepositorySonarGate(options)
   } catch (error) {
     console.error(error instanceof Error ? error.message : error)
     process.exitCode = 1
