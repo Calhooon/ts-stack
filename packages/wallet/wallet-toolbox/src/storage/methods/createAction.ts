@@ -1,3 +1,4 @@
+import type { StorageActiveWrite } from '../StorageActiveWrite'
 import {
   type ValidCreateActionArgs,
   type ValidCreateActionInput,
@@ -70,7 +71,8 @@ export async function createAction(
   vargs: ValidCreateActionArgs,
   _originator?: OriginatorDomainNameStringUnder250Bytes
 ): Promise<StorageCreateActionResult> {
-  if (!storage.telemetry.enabled) return await createActionCore(storage, auth, vargs)
+  const write = await storage.activeWriteTransaction(auth)
+  if (!storage.telemetry.enabled) return await createActionCore(storage, auth, vargs, write)
   return await storage.telemetry.withSpan(
     'wallet.storage.create_action',
     {
@@ -85,7 +87,7 @@ export async function createAction(
       }
     },
     async span => {
-      const result = await createActionCore(storage, auth, vargs, span)
+      const result = await createActionCore(storage, auth, vargs, write, span)
       span.end({
         attributes: {
           'action.result_input_count': result.inputs.length,
@@ -102,6 +104,7 @@ async function createActionCore(
   storage: StorageProvider,
   auth: AuthId,
   vargs: ValidCreateActionArgs,
+  write: StorageActiveWrite,
   parent?: TelemetrySpan
 ): Promise<StorageCreateActionResult> {
   const logger = vargs.logger
@@ -203,7 +206,7 @@ async function createActionCore(
   let newTx: TableTransaction | undefined
   let newTxCommitted = false
   try {
-    const persisted = await storage.transaction(async trx => {
+    const persisted = await write.transaction(async trx => {
       const initialSatoshis = fundingPlanSatoshis(initialFundingPlan)
       newTx = await traceStorageStep(
         storage,
@@ -293,7 +296,7 @@ async function createActionCore(
         'action.include_source_transactions': vargs.includeAllSourceTransactions
       },
       async span => {
-        const assembled = await createNewInputs(storage, userId, vargs, ctx, allocatedChange)
+        const assembled = await createNewInputs(storage, userId, vargs, ctx, allocatedChange, write)
         span?.end({ attributes: { 'action.result_input_count': assembled.length } })
         return assembled
       }
@@ -314,6 +317,7 @@ async function createActionCore(
     // This is intentionally the last foreground operation. The coordinator
     // starts on a timer, so the createAction promise and HTTP response can
     // resolve before any COOK verification or persistence begins.
+    await write.assertCurrent()
     enqueuePreparedBeefs(storage, preparedInputBeef.preparations)
 
     logger?.groupEnd()
@@ -326,10 +330,15 @@ async function createActionCore(
     if (newTx?.transactionId != null) {
       try {
         if (newTxCommitted) {
-          await storage.updateTransactionStatus('failed', newTx.transactionId)
+          await write.transaction(
+            async trx =>
+              await storage.updateTransactionStatus('failed', newTx!.transactionId, undefined, undefined, trx)
+          )
           logger?.log(`marked failed createAction transaction ${newTx.transactionId} after construction error`)
         } else {
-          const failed = await createNewTxRecord(storage, userId, vargs, storageBeefBytes, 0, undefined, 'failed')
+          const failed = await write.transaction(
+            async trx => await createNewTxRecord(storage, userId, vargs, storageBeefBytes, 0, trx, 'failed')
+          )
           logger?.log(`recorded failed createAction transaction ${failed.transactionId} after rollback`)
         }
       } catch (cleanupError) {
@@ -400,10 +409,11 @@ function makeDefaultOutput(userId: number, transactionId: number, satoshis: numb
 async function markKnownInputsSpent(
   storage: StorageProvider,
   knownInputRows: Array<{ i: XValidCreateActionInput; o: TableOutput }>,
-  transactionId: number
+  transactionId: number,
+  write: StorageActiveWrite
 ): Promise<string | undefined> {
   let doubleSpendTxid: string | undefined
-  await storage.transaction(async trx => {
+  await write.transaction(async trx => {
     const outputIds = knownInputRows.map(ni => verifyId(ni.o.outputId))
     const knownOutputsById = await storage.findOutputsByIds(outputIds, trx)
     for (const ni of knownInputRows) {
@@ -491,7 +501,8 @@ async function createNewInputs(
   userId: number,
   vargs: ValidCreateActionArgs,
   ctx: CreateTransactionSdkContext,
-  allocatedChange: TableOutput[]
+  allocatedChange: TableOutput[],
+  write: StorageActiveWrite
 ): Promise<StorageCreateTransactionSdkInput[]> {
   const r: StorageCreateTransactionSdkInput[] = []
 
@@ -502,7 +513,7 @@ async function createNewInputs(
     (ni): ni is { i: XValidCreateActionInput; o: TableOutput } => ni.i != null && ni.o != null
   )
   if (knownInputRows.length > 0) {
-    const doubleSpendTxid = await markKnownInputsSpent(storage, knownInputRows, ctx.transactionId)
+    const doubleSpendTxid = await markKnownInputsSpent(storage, knownInputRows, ctx.transactionId, write)
     if (doubleSpendTxid) {
       const beef = await getCompetingBeefForReview(storage, doubleSpendTxid)
       throw new WERR_REVIEW_ACTIONS(

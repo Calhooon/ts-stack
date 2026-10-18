@@ -777,3 +777,15 @@ test('field remote upload retains the existing mutation owner and owns every new
     )
   )
 })
+
+test('active SQL writer fences retain a canonical owner with actual role-change regression cases', () => {
+  const target = buildMutationTargets(REPOSITORY_ROOT)['wallet-current-knex-brc38-staging-store']
+  for (const source of [
+    'src/storage/KnexActiveWriteFence.ts',
+    'src/storage/methods/createAction.ts',
+    'src/storage/methods/internalizeAction.ts'
+  ])
+    assert.ok(target.mutate.includes(source))
+  assert.ok(target.additionalInputs.includes('src/storage/StorageActiveWrite.ts'))
+  assert.ok(JSON.stringify(target).includes('StorageKnexActiveWriteFence.test.ts'))
+})

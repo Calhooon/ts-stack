@@ -162,6 +162,8 @@ type AbortActionStorageResult =
 const MAX_AUTH_PROOF_REQUEST_FALLBACK_ROWS = 10_000
 const MAX_AUTH_PROOF_REQUEST_TXIDS = 1_000
 
+import type { StorageActiveWrite } from './StorageActiveWrite'
+
 export abstract class StorageProvider extends StorageReaderWriter implements WalletStorageProvider {
   isDirty = false
   _services?: WalletServices
@@ -211,6 +213,15 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     this.actionBatchMaxReservedOutputs = maxReservedOutputs
     this.managedChangePolicy = validateManagedChangePolicy(options.managedChangePolicy)
     this.scriptVerifier = options.scriptVerifier
+  }
+
+  /** @internal Capture once before preparation; supported providers fence each
+   * bounded SQL commit against this operation's actual durable primary epoch. */
+  async activeWriteTransaction(_auth: AuthId): Promise<StorageActiveWrite> {
+    return {
+      transaction: async (scope, trx) => await this.transaction(scope, trx),
+      assertCurrent: async () => {}
+    }
   }
 
   abstract reviewStatus(args: { agedLimit: Date; trx?: TrxToken }): Promise<{ log: string }>
@@ -1415,6 +1426,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   async relinquishCertificate(auth: AuthId, args: RelinquishCertificateArgs): Promise<number> {
+    const write = await this.activeWriteTransaction(auth)
     const vargs = validateRelinquishCertificateArgs(args)
     const cert = verifyOne(
       await this.findCertificates({
@@ -1426,15 +1438,23 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
         }
       })
     )
-    return await this.updateCertificate(cert.certificateId, {
-      isDeleted: true
-    })
+    return await write.transaction(
+      async trx =>
+        await this.updateCertificate(
+          cert.certificateId,
+          {
+            isDeleted: true
+          },
+          trx
+        )
+    )
   }
 
   async relinquishOutput(auth: AuthId, args: RelinquishOutputArgs): Promise<number> {
+    const write = await this.activeWriteTransaction(auth)
     const vargs = validateRelinquishOutputArgs(args)
     const { txid, vout } = parseWalletOutpoint(vargs.output)
-    return await this.transaction(async trx => {
+    return await write.transaction(async trx => {
       // Keep existing "not found" behavior for a missing output.
       const output = verifyOne(await this.findOutputs({ partial: { userId: auth.userId, txid, vout }, trx }))
       // Confirm the output actually belongs to the caller-claimed basket before

@@ -1,3 +1,6 @@
+import { SNAPSHOT_SYNC_MIGRATION } from './schema/snapshotSyncMigration'
+import { captureKnexActiveWrite } from './KnexActiveWriteFence'
+import type { StorageActiveWrite } from './StorageActiveWrite'
 import {
   parseSnapshotJournalFieldArchiveReference,
   type SnapshotJournalFieldArchiveReference
@@ -444,11 +447,12 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     validateInternalizeActionArgs(args)
     const userId = auth.userId
     if (userId == null) throw new WERR_UNAUTHORIZED()
+    const write = await this.activeWriteTransaction(auth)
     const txid = canonicalizeAtomicBeef(args.tx).atomicTxid
     if (txid == null) throw new WERR_INVALID_PARAMETER('tx', 'an AtomicBEEF transaction')
     const { ownerToken, claim, preserveComplete } = await this.acquireInternalizeReceipt(userId, txid)
     try {
-      return await internalizeAction(this, auth, args, claim)
+      return await internalizeAction(this, auth, args, claim, write)
     } finally {
       // A successful writer marked its claim complete in the same transaction
       // as the output records. Preserve that durable key across later merges;
@@ -2819,8 +2823,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       (certificate.userId != null && certificate.userId !== 0 && certificate.userId !== auth.userId)
     )
       throw new WERR_UNAUTHORIZED()
+    const write = await this.activeWriteTransaction(auth)
     certificate.userId = auth.userId
-    return await this.insertCertificate(certificate)
+    return await write.transaction(async trx => await this.insertCertificate(certificate, trx))
   }
 
   override async insertCertificate(certificate: TableCertificateX, trx?: TrxToken): Promise<number> {
@@ -3880,6 +3885,28 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     } finally {
       this.snapshotDataDeletionRunning = false
     }
+  }
+
+  override async activeWriteTransaction(auth: AuthId): Promise<StorageActiveWrite> {
+    if (this.snapshotAdmissionStopped) throw new WERR_INVALID_OPERATION('Active wallet writer admission is stopped')
+    await this.makeAvailable()
+    const client = String(this.knex.client.config.client)
+    if (
+      !this.snapshotSyncEnabled ||
+      (!['sqlite3', 'better-sqlite3', 'mysql', 'mysql2'].includes(client) &&
+        ownedNativeRootIdentity(this.knex)?.slot !== 0)
+    )
+      return await super.activeWriteTransaction(auth)
+    const table = this.knex.client.config.migrations?.tableName ?? 'knex_migrations'
+    const installed = await this.knex.schema.hasTable('snapshot_sync_primary_epochs')
+    const entries: Array<{ name: string }> = await this.knex(table)
+      .where('name', SNAPSHOT_SYNC_MIGRATION)
+      .select('name')
+      .limit(2)
+    if (!installed && entries.length === 0) return await super.activeWriteTransaction(auth)
+    if (!installed || entries.length !== 1)
+      throw new WERR_INVALID_OPERATION('Active wallet primary fence migration is incomplete')
+    return await captureKnexActiveWrite(this, auth, () => !this.snapshotAdmissionStopped)
   }
 
   override async transaction<T>(scope: (trx: TrxToken) => Promise<T>, trx?: TrxToken): Promise<T> {

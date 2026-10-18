@@ -1,3 +1,5 @@
+The candidate now fences ordinary Knex `createAction`, `internalizeAction`, certificate insertion/relinquishment and output relinquishment SQL commits against their original actual primary epoch. Preparation retains no SQL transaction; current database role, identity/network and the real ABA trigger are checked again in each bounded writer. An old operation cannot regain permission after an away-and-back primary change. Existing direct sync/restore mutations remain separate. This is one part of primary safety: full local/remote handoff, remaining action/batch/proof-monitor writers and complete qualification remain required. See [primary write fences](docs/primary-write-fences.md).
+
 # BSV Wallet Toolbox
 
 Ordinary manager pulls may select authenticated field artifacts with `syncFromReaderResumable(identityKey, reader, { journalFields: true })`. The actual local receiver preserves full financial policies, ID remapping, short writer admission, durable ACK recovery and fresh unchanged-copy/target-postimage checks. Complete rows stay within the original allocation ceiling; this is not arbitrary-size ordinary SQL support. Existing callers keep row/legacy negotiation. See [field routing](docs/journal-artifact-transport.md) for migration, supported limits and unfinished full-program work.
@@ -6314,7 +6316,6 @@ immutable byte readiness and durable financial acknowledgment are separate;
 completion drains source and upload owners. See [journal artifact transport](docs/journal-artifact-transport.md)
 for limits, restart/cancellation behavior and the separate remote primary-handoff
 requirement. This candidate route remains subject to full integration qualification.
-
 
 ### Exact field-window recovery
 

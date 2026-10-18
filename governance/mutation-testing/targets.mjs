@@ -4650,6 +4650,9 @@ function currentWalletMutationTargets(repositoryRoot) {
       mutate: [
         'src/storage/portable/KnexBrc38StagingStore.ts',
         'src/storage/StorageKnex.ts',
+        'src/storage/KnexActiveWriteFence.ts',
+        'src/storage/methods/createAction.ts',
+        'src/storage/methods/internalizeAction.ts',
         'src/storage/idbPackedStaging.ts',
         'src/storage/methods/listActionsKnex.ts',
         'src/storage/methods/listOutputsKnex.ts',
@@ -4748,6 +4751,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/snapshot/archive/KnexSnapshotArchiveStore.ts'
       ],
       additionalInputs: [
+        'src/storage/StorageActiveWrite.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -4771,6 +4775,7 @@ function currentWalletMutationTargets(repositoryRoot) {
       ...jestTarget(
         'jest.config.cjs',
         [
+          '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
           '<rootDir>/src/monitor/__test/MonitorDaemon.test.ts',
           '<rootDir>/src/storage/__test/StorageIdb.packedStorage.test.ts',
           '<rootDir>/src/storage/__test/StorageKnex.postgres.test.ts',

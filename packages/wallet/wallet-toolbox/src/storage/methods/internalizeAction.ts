@@ -1,3 +1,4 @@
+import type { StorageActiveWrite } from '../StorageActiveWrite'
 import { type ValidInternalizeActionArgs, validateInternalizeActionArgs } from '@bsv/sdk/wallet/validationHelpers'
 import {
   Transaction as BsvTransaction,
@@ -178,14 +179,17 @@ export async function internalizeAction(
   storage: StorageProvider,
   auth: AuthId,
   args: InternalizeActionArgs,
-  receipt?: InternalizeReceiptClaim
+  receipt?: InternalizeReceiptClaim,
+  capturedWrite?: StorageActiveWrite
 ): Promise<StorageInternalizeActionResult> {
-  const ctx = new InternalizeActionContext(storage, auth, args, receipt)
+  const write = capturedWrite ?? (await storage.activeWriteTransaction(auth))
+  const ctx = new InternalizeActionContext(storage, auth, args, write, receipt)
   await ctx.asyncSetup()
 
   if (ctx.isMerge) await ctx.mergedInternalize()
   else await ctx.newInternalize()
 
+  await write.assertCurrent()
   return ctx.r
 }
 
@@ -246,6 +250,7 @@ class InternalizeActionContext {
     public storage: StorageProvider,
     public auth: AuthId,
     public args: InternalizeActionArgs,
+    public write: StorageActiveWrite,
     public receipt?: InternalizeReceiptClaim
   ) {
     this.vargs = validateInternalizeActionArgs(args)
@@ -296,7 +301,10 @@ class InternalizeActionContext {
     }
     let b = this.baskets[basketName]
     if (b) return b
-    b = await this.storage.findOrInsertOutputBasket(this.userId, basketName, trx)
+    b = await this.write.transaction(
+      async trx => await this.storage.findOrInsertOutputBasket(this.userId, basketName, trx),
+      trx
+    )
     this.baskets[basketName] = b
     return b
   }
@@ -657,7 +665,7 @@ class InternalizeActionContext {
     // queued on the same IndexedDB transaction.
     const preparedProven = wasNoSend ? await this.prepareNoSendProof() : undefined
 
-    await this.storage.transaction(async trx => {
+    await this.write.transaction(async trx => {
       await this.receipt?.assertActive(trx)
       await this.addLabels(transactionId, trx)
 
@@ -728,7 +736,7 @@ class InternalizeActionContext {
 
     let pr: StorageProvenOrReq = { proven: undefined, req: undefined }
 
-    await this.storage.transaction(async trx => {
+    await this.write.transaction(async trx => {
       await this.receipt?.assertActive(trx)
       if (preparedProven != null) {
         pr.proven = await this.storeResolvedProvenTx(preparedProven, trx)
@@ -785,6 +793,7 @@ class InternalizeActionContext {
         beef: this.ab,
         details: [{ txid: this.txid, status: 'readyToSend', req: pr.req }]
       }
+      await this.write.assertCurrent()
       const { swr, ndr } = await shareReqsWithWorld(this.storage, this.userId, [], false, r)
       if (ndr![0].status !== 'success') {
         // Roll back the spendable=true → false transitions performed above
@@ -801,7 +810,7 @@ class InternalizeActionContext {
       // Network publication cannot safely run while a database transaction is
       // held open. Persist recipient ownership only after broadcast succeeds.
       // Mined transactions already stored that ownership in the proof writer.
-      await this.storage.transaction(async trx => {
+      await this.write.transaction(async trx => {
         await this.receipt?.assertActive(trx)
         if (this.retryExistingTransaction) {
           await this.storage.updateTransaction(transactionId, { status: 'unproven' }, trx)
@@ -820,12 +829,15 @@ class InternalizeActionContext {
   }
 
   async markInputsSpent(transactionId: number, trx?: TrxToken): Promise<void> {
-    const transitioned = await markUserInputsSpent(this.storage, this.userId, this.tx, transactionId, trx)
+    const transitioned = await this.write.transaction(
+      async trx => await markUserInputsSpent(this.storage, this.userId, this.tx, transactionId, trx),
+      trx
+    )
     this.spentInputs.push(...transitioned)
   }
 
   async restoreSpentInputs(trx?: TrxToken): Promise<void> {
-    await restoreInputsToSpendable(this.storage, this.spentInputs, trx)
+    await this.write.transaction(async trx => await restoreInputsToSpendable(this.storage, this.spentInputs, trx), trx)
     this.spentInputs = []
   }
 
