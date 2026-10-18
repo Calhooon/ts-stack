@@ -1163,7 +1163,15 @@ async function completeCommittedBatch(
     }
   }
   await write.assertCurrent()
-  const { swr, ndr } = await shareReqsWithWorld(storage, userId, manifest.sendWith, manifest.isDelayed, share)
+  const { swr, ndr } = await shareReqsWithWorld(
+    storage,
+    userId,
+    manifest.sendWith,
+    manifest.isDelayed,
+    share,
+    undefined,
+    write
+  )
   const result: CommitActionBatchResult = {
     batchId: manifest.batchId,
     manifestDigest: manifest.digest,

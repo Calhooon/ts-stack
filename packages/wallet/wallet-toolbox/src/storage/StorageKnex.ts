@@ -3522,6 +3522,15 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       const { query } = await this.packedTextQuery<TableProvenTxReq>(db, 'proven_tx_reqs', fixed, value =>
         this.findProvenTxReqsQuery({ ...fixed, ...value })
       )
+      // Shared request history/notifications are read/modify/write data across
+      // profiles. Use a current locked read, not MySQL's earlier role snapshot.
+      if (
+        fixed.trx != null &&
+        !readSnapshotTransactions.has(fixed.trx) &&
+        (this.dbtype === 'MySQL' || this.dbtype === 'Postgres') &&
+        (fixed.partial.provenTxReqId != null || fixed.partial.txid != null)
+      )
+        query.forUpdate()
       return await query
     })
     return this.validateEntities(r, undefined, ['notified', 'wasBroadcast'])

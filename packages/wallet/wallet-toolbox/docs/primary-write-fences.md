@@ -1,7 +1,7 @@
 # Primary write fences
 
 The unpublished candidate adds an internal operation fence for ordinary Knex
-`createAction`, `internalizeAction`, abort, action-batch SQL phases, BRC-177
+`createAction`, `processAction`, `internalizeAction`, abort, action-batch SQL phases, BRC-177
 expiry setup/arming, certificate insertion/relinquishment and output relinquishment. It reads the actual authenticated user, database storage
 identity, network and database-owned `snapshot_sync_primary_epochs` value before
 asynchronous preparation. It retains comparison values only, with no SQL
@@ -32,6 +32,35 @@ fenced too. Expiry pre-funding and activation pass the original capture through
 createAction rather than recapturing after height/anchor preparation. Arming
 captures before signature/height work and rechecks inside its final CAS writer.
 
+`processAction` captures before signed-transaction preparation, fences its actual
+request/output/transaction persistence, and forwards that same capture through
+broadcast scheduling and return. Batch completion and internalization pass their
+original captures through the shared helper too.
+
+Shared broadcasts capture participating profiles from actual transaction/user
+rows before proof repair or external posting. Each profile's financial statuses
+and positively confirmed stale inputs use its own original fence and recheck
+actual row ownership. One obsolete profile does not block still-current monitor
+peers. An authenticated initiator cannot borrow another profile's capture to
+persist its request result. Ready requests must belong to the authenticated
+initiator through real transaction rows before scheduling or posting; notification
+JSON cannot supply that ownership. A profile inactive at capture cannot acquire write
+permission merely by becoming active before the reply. No SQL transaction spans
+broadcast, chain or UTXO observation. An actual orphan may receive cache-only
+request maintenance; it supplies no financial owner or synthetic identity.
+
+Shared request history is refreshed under a writable row lock, preserving late
+notes and notification identities instead of overwriting them from the preflight
+snapshot. MySQL/PostgreSQL writable exact-request lookups use current locked
+reads; retained read snapshots keep their query-only behavior. Financial fan-out
+uses the captured real transaction rows, not IDs supplied by notification JSON;
+new copies and moved profiles remain for a fresh reconciliation pass. Completed
+proofs are never downgraded, and failed financial rows still require the distinct
+proof recovery path. Existing serialized adapters without the additive captured
+entry point retain their original behavior. Caller-supplied transaction overloads
+retain their legacy contract; the new first-party network path passes no SQL
+token to transport.
+
 These checks are restrictions on real SQL operations. `AuthId.isActive` supplied
 by a caller does not grant permission; user ID and identity must match the actual
 current row. Another profile's role change does not revoke this profile's write.
@@ -55,10 +84,10 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-Remaining processAction, shared broadcast/notification, background batch
-cleanup and expiry/proof-monitor writers still need their own original-epoch
-integration, including cross-user proof notifications and publication follow-up. The shared broadcast helper is not
-claimed to be fully fenced by this change. Previously committed old-primary work
+Background batch cleanup and expiry/proof-monitor writers still need their own
+original-epoch integration, including cross-user mined-proof notifications,
+failed-proof recovery and publication follow-up. Broadcast result fencing does
+not establish that these remaining monitor writers are fenced. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a
 new financial acknowledgement or permission to undo it on another primary.
 
@@ -66,7 +95,11 @@ The owning SQLite regressions exercise a separate controller's role change,
 away-and-back ABA, atomic rollback, foreign/escaped tokens, identity mismatch,
 profile independence, actual trigger removal/change, a relinquishment suspended
 at lookup, real create/internalize/abort preparation races, and old batch
-begin/renew/resume/extend/abort requests across an ABA transition. Existing funding
+begin/renew/resume/extend/abort requests across an ABA transition. Genuine shared
+transaction copies also exercise independent profile epochs, authenticated
+non-borrowing, late history/notification preservation, signed processAction and
+positive spent-evidence races, and an actual broadcast suspended across an ABA.
+Existing funding
 performance assertions retain their one physical transaction oracle. These
 component tests do not qualify remote handoff, native/MySQL/IndexedDB behavior,
 process crash, full-system performance or production readiness. Complete all

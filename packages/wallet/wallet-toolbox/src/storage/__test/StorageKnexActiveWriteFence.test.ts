@@ -1,3 +1,6 @@
+import { markConfirmedStaleReqInputs } from '../methods/reconcileFailedTransactionInputs'
+import { StorageReqWrite } from '../StorageReqWrite'
+import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
 import { knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -470,3 +473,256 @@ test.each(['renew', 'resume', 'extend', 'abort'] as const)(
     }
   }
 )
+
+async function sharedRequestFixture(name: string) {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy(name, 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    _tu.mockPostServicesAsSuccess([ctx])
+    const created = await ctx.wallet.createAction({
+      description: 'real shared request role capture',
+      outputs: [{ satoshis: 741, lockingScript: '51', basket: 'shared-original', outputDescription: 'shared output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null || created.tx == null) throw new Error('Missing actual signed action')
+    const { user: second } = await ctx.activeStorage.findOrInsertUser('02' + '22'.repeat(32))
+    await ctx.activeStorage.internalizeAction(second, {
+      tx: created.tx,
+      description: 'genuine second profile copy',
+      outputs: [{ outputIndex: 0, protocol: 'basket insertion', insertionRemittance: { basket: 'shared-second' } }]
+    })
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual shared request')
+    const rows = await ctx.activeStorage.findTransactions({ partial: { txid: created.txid }, noRawTx: true })
+    expect(rows.map(row => row.userId).sort()).toEqual([ctx.userId, second.userId].sort())
+    return { ctx, req, second, rows }
+  } catch (error) {
+    await ctx.wallet.destroy()
+    throw error
+  }
+}
+
+test('shared request profiles retain independent original epochs and never borrow an active peer', async () => {
+  const { ctx, req, second } = await sharedRequestFixture('shared-request-profile-epochs')
+  try {
+    const storage = ctx.activeStorage
+    const { user: stranger } = await storage.findOrInsertUser('03' + '44'.repeat(32))
+    const unrelated = await StorageReqWrite.capture(storage, [req.txid], {
+      userId: stranger.userId,
+      write: await storage.activeWriteTransaction(stranger)
+    })
+    expect(() => unrelated.assertRequests([req])).toThrow('does not belong')
+    await expect(
+      unrelated.request(req, async current => {
+        current.addHistoryNote({ what: 'unrelated-profile-must-not-write' })
+      })
+    ).rejects.toMatchObject({ code: 'WERR_UNAUTHORIZED' })
+    const old = await StorageReqWrite.capture(storage, [req.txid])
+    const actor = await storage.activeWriteTransaction({ identityKey: ctx.identityKey, userId: ctx.userId })
+    const authenticated = await StorageReqWrite.capture(storage, [req.txid], { userId: ctx.userId, write: actor })
+    const identity = storage.getSettings().storageIdentityKey
+    await storage.updateUser(ctx.userId, { activeStorage: 'away' })
+    await storage.updateUser(ctx.userId, { activeStorage: identity })
+    const applied = jest.fn(async () => {})
+    expect(await old.forUser(ctx.userId, applied)).toBe(false)
+    expect(applied).not.toHaveBeenCalled()
+    expect(await old.forUser(second.userId, applied)).toBe(true)
+    expect(applied).toHaveBeenCalledTimes(1)
+    await expect(
+      authenticated.request(req, async current => {
+        current.addHistoryNote({ what: 'must-not-borrow-second-profile' })
+      })
+    ).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(
+      await old.request(req, async current => {
+        current.addHistoryNote({ what: 'still-current-monitor-peer' })
+      })
+    ).toBe(true)
+    const stored = await EntityProvenTxReq.fromStorageId(storage, req.id)
+    expect(stored.history.notes?.some(note => note.what === 'must-not-borrow-second-profile')).toBe(false)
+    expect(stored.history.notes?.some(note => note.what === 'still-current-monitor-peer')).toBe(true)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('shared request result commits preserve late durable notification history and ignore forged notify IDs', async () => {
+  const { ctx, req, second, rows } = await sharedRequestFixture('shared-request-late-notify')
+  try {
+    const storage = ctx.activeStorage
+    const writes = await StorageReqWrite.capture(storage, [req.txid])
+    const stale = new EntityProvenTxReq(req.toApi())
+    const durable = await EntityProvenTxReq.fromStorageId(storage, req.id)
+    durable.addNotifyTransactionId(rows.find(row => row.userId === second.userId)!.transactionId)
+    durable.addHistoryNote({ what: 'arrived-during-network' })
+    await durable.updateStorageDynamicProperties(storage)
+    await writes.request(stale, async current => {
+      current.addHistoryNote({ what: 'network-returned' })
+    })
+    const stored = await EntityProvenTxReq.fromStorageId(storage, req.id)
+    expect(stored.notify.transactionIds).toEqual(expect.arrayContaining(rows.map(row => row.transactionId)))
+    expect(stored.history.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ what: 'arrived-during-network' }),
+        expect.objectContaining({ what: 'network-returned' })
+      ])
+    )
+    // A different real transaction's ID in comparison DATA cannot enroll its
+    // profile or mutate that unrelated financial row.
+    const unrelated = (await storage.findTransactions({ partial: { userId: ctx.userId }, noRawTx: true })).find(
+      row => row.txid !== req.txid
+    )!
+    expect(unrelated).toBeDefined()
+    stale.addNotifyTransactionId(unrelated.transactionId)
+    const update = jest.spyOn(storage, 'updateTransactionStatus')
+    await writes.status(stale, 'sending')
+    expect(update).not.toHaveBeenCalledWith(
+      'unproven',
+      unrelated.transactionId,
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    )
+    expect(update.mock.calls.map(call => call[1]).sort()).toEqual(rows.map(row => row.transactionId).sort())
+    expect(
+      (await storage.findTransactions({ partial: { transactionId: unrelated.transactionId }, noRawTx: true }))[0].status
+    ).toBe(unrelated.status)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('shared broadcast applies a real network reply only to still-current captured profiles', async () => {
+  const { ctx, req, second, rows } = await sharedRequestFixture('shared-request-broadcast-ABA')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let pending: ReturnType<StorageProvider['attemptToPostReqsToNetwork']> | undefined
+  try {
+    const storage = ctx.activeStorage
+    const writes = await StorageReqWrite.capture(storage, [req.txid])
+    await writes.request(req, async current => {
+      current.status = 'unsent'
+    })
+    await writes.status(req, 'sending')
+    jest.spyOn(ctx.services, 'postBeef').mockImplementationOnce(async (_beef, txids) => {
+      entered()
+      await gate
+      return [
+        {
+          name: 'controlled-shared-reply',
+          status: 'success',
+          txidResults: txids.map(txid => ({ txid, status: 'success' }))
+        }
+      ]
+    })
+    pending = storage.attemptToPostReqsToNetwork([req])
+    await reached
+    const identity = storage.getSettings().storageIdentityKey
+    // This real controller update completes through the original one-pool
+    // provider while transport is pending: no SQL writer spans the network.
+    await storage.updateUser(ctx.userId, { activeStorage: 'away' })
+    await storage.updateUser(ctx.userId, { activeStorage: identity })
+    const late = await EntityProvenTxReq.fromStorageId(storage, req.id)
+    late.addHistoryNote({ what: 'late-network-observer' })
+    await late.updateStorageDynamicProperties(storage)
+    release()
+    const result = await pending
+    expect(result.details[0].status).toBe('success')
+    const current = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+    expect(current.find(row => row.userId === ctx.userId)?.status).toBe('sending')
+    expect(current.find(row => row.userId === second.userId)?.status).toBe('unproven')
+    expect((await EntityProvenTxReq.fromStorageId(storage, req.id)).history.notes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ what: 'late-network-observer' })])
+    )
+    expect(rows).toHaveLength(2)
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test('the real processAction rejects an obsolete preparation before persisting the signed transaction', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('active-write-processAction-ABA', 'legacy')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let pending: ReturnType<typeof ctx.wallet.createAction> | undefined
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    jest.spyOn(ctx.services, 'nLockTimeIsFinal').mockImplementationOnce(async () => {
+      entered()
+      await gate
+      return true
+    })
+    const before = await ctx.activeStorage.countProvenTxReqs({ partial: {} })
+    pending = ctx.wallet.createAction({
+      description: 'actual signed commit epoch race',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'fenced signature' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await reached
+    const identity = ctx.activeStorage.getSettings().storageIdentityKey
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'away' })
+    await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: identity })
+    release()
+    await rejected
+    expect(await ctx.activeStorage.countProvenTxReqs({ partial: {} })).toBe(before)
+    const rows = await ctx.activeStorage.findTransactions({
+      partial: { userId: ctx.userId, description: 'actual signed commit epoch race' }
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('unsigned')
+    expect(rows[0].txid).toBeUndefined()
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test('positive spent evidence cannot authorize an input update after an actual profile ABA', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('active-write-stale-input-ABA', 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'genuine stale input observer',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'actual input observation' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual proof request')
+    let changed = false
+    jest.spyOn(ctx.services, 'getUtxoStatus').mockImplementation(async () => {
+      if (!changed) {
+        changed = true
+        const identity = ctx.activeStorage.getSettings().storageIdentityKey
+        await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'away' })
+        await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: identity })
+      }
+      return { name: 'positive-spent-observer', status: 'success', isUtxo: false, details: [] }
+    })
+    const update = jest.spyOn(ctx.activeStorage, 'updateOutput')
+    const result = await markConfirmedStaleReqInputs(req, ctx.activeStorage, ctx.services)
+    expect(changed).toBe(true)
+    expect(result.checked).toBeGreaterThan(0)
+    expect(result.staleConfirmed).toBe(0)
+    expect(result.staleOutpoints).toEqual([])
+    expect(update).not.toHaveBeenCalled()
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})

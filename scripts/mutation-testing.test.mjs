@@ -782,6 +782,10 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
   const target = buildMutationTargets(REPOSITORY_ROOT)['wallet-current-knex-brc38-staging-store']
   for (const source of [
     'src/storage/KnexActiveWriteFence.ts',
+    'src/storage/StorageReqWrite.ts',
+    'src/storage/methods/processAction.ts',
+    'src/storage/methods/attemptToPostReqsToNetwork.ts',
+    'src/storage/methods/reconcileFailedTransactionInputs.ts',
     'src/storage/methods/createAction.ts',
     'src/storage/methods/internalizeAction.ts',
     'src/storage/methods/actionBatch.ts',

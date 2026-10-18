@@ -1,3 +1,5 @@
+import type { StorageActiveWrite } from '../StorageActiveWrite'
+import { StorageReqWrite } from '../StorageReqWrite'
 import { repairBeefProofs } from './repairBeefProofs'
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import {
@@ -74,7 +76,10 @@ export async function processAction(
   args: StorageProcessActionArgs
 ): Promise<StorageProcessActionResults> {
   args = normalizeProcessActionArgs(args)
-  if (!storage.telemetry.enabled) return await processActionCore(storage, auth, args)
+  const write = await (typeof storage.activeWriteTransaction === 'function'
+    ? storage.activeWriteTransaction(auth)
+    : StorageProvider.prototype.activeWriteTransaction.call(storage, auth))
+  if (!storage.telemetry.enabled) return await processActionCore(storage, auth, args, write)
   return await storage.telemetry.withSpan(
     'wallet.storage.process_action',
     {
@@ -88,7 +93,7 @@ export async function processAction(
       }
     },
     async span => {
-      const result = await processActionCore(storage, auth, args, span)
+      const result = await processActionCore(storage, auth, args, write, span)
       span.end({ attributes: { 'action.send_result_count': result.sendWithResults?.length ?? 0 } })
       return result
     }
@@ -99,6 +104,7 @@ async function processActionCore(
   storage: StorageProvider,
   auth: AuthId,
   args: StorageProcessActionArgs,
+  write: StorageActiveWrite,
   parent?: TelemetrySpan
 ): Promise<StorageProcessActionResults> {
   const logger = args.logger
@@ -125,7 +131,7 @@ async function processActionCore(
       storage,
       'wallet.storage.process_action.commit',
       parent,
-      async () => await commitNewTxToStorage(storage, userId, vargs)
+      async () => await commitNewTxToStorage(storage, userId, vargs, write)
     ))
     logger?.log('committed new tx updates to storage ')
     if (!req) throw new WERR_INTERNAL()
@@ -151,7 +157,7 @@ async function processActionCore(
     'wallet.storage.process_action.share',
     parent,
     async () =>
-      await shareReqsWithWorld(storage, userId, txidsOfReqsToShareWithWorld, args.isDelayed, undefined, logger)
+      await shareReqsWithWorld(storage, userId, txidsOfReqsToShareWithWorld, args.isDelayed, undefined, logger, write)
   )
 
   r.sendWithResults = swr
@@ -160,6 +166,7 @@ async function processActionCore(
   // Prepare proof material for future spends only after all foreground
   // processAction work has completed. The bounded coordinator starts later on
   // the event loop and is never awaited by this request.
+  await write.assertCurrent()
   if (prepareRootTxid != null) {
     const extension = storage as unknown as Partial<PreparedBeefWriterExtension>
     if (typeof extension.enqueuePreparedBeef === 'function') {
@@ -308,13 +315,27 @@ export async function shareReqsWithWorld(
   txids: string[],
   isDelayed: boolean,
   r?: GetReqsAndBeefResult,
-  logger?: WalletLoggerInterface
+  logger?: WalletLoggerInterface,
+  capturedWrite?: StorageActiveWrite
 ): Promise<{ swr: SendWithResult[]; ndr: ReviewActionResult[] | undefined }> {
   txids = normalizePostTxids(txids, 'txids', true)
   const swr: SendWithResult[] = []
   const ndr: ReviewActionResult[] | undefined = undefined
 
   if (r == null && txids.length < 1) return { swr, ndr }
+
+  // Older serialized provider adapters have no captured-write entry point.
+  // They retain their original scheduling path; a mode check grants nothing.
+  let writes: StorageReqWrite | undefined
+  if (typeof storage.activeWriteTransaction === 'function') {
+    const user = verifyOne(await storage.findUsers({ partial: { userId } }))
+    const write = capturedWrite ?? (await storage.activeWriteTransaction(user))
+    writes = await StorageReqWrite.capture(storage, txids.length ? txids : r!.details.map(d => d.txid), {
+      userId,
+      write
+    })
+    await writes.assertCurrent()
+  }
 
   r ??= isDelayed
     ? await getReqDetailsForDelayedShare(storage, txids)
@@ -329,18 +350,32 @@ export async function shareReqsWithWorld(
   const readyToSendReqs: EntityProvenTxReq[] = []
   if (!classifyReqDetails(r.details, swr, readyToSendReqs)) return { swr, ndr }
 
+  writes?.assertRequests(readyToSendReqs)
   const readyToSendReqIds = readyToSendReqs.map(r => r.id)
-  const transactionIds = readyToSendReqs.flatMap(r => r.notify.transactionIds ?? [])
 
   const batch = txids.length > 1 ? randomBytesBase64(16) : undefined
   if (isDelayed) {
     // Delayed sends rebuild BEEF when the monitor sends the req. Do not fail a committed
     // transaction here because the current aggregate BEEF is only a scheduling artifact.
     if (readyToSendReqIds.length > 0) {
-      await storage.transaction(async trx => {
-        await storage.updateProvenTxReq(readyToSendReqIds, { status: 'unsent', batch }, trx)
-        await storage.updateTransaction(transactionIds, { status: 'sending' }, trx)
-      })
+      if (writes == null) {
+        await storage.transaction(async trx => {
+          await storage.updateProvenTxReq(readyToSendReqIds, { status: 'unsent', batch }, trx)
+          await storage.updateTransaction(
+            readyToSendReqs.flatMap(req => req.notify.transactionIds ?? []),
+            { status: 'sending' },
+            trx
+          )
+        })
+      } else
+        for (const req of readyToSendReqs) {
+          await writes.request(req, async current => {
+            if (['completed', 'unmined'].includes(current.status)) return
+            current.status = 'unsent'
+            if (batch != null) current.batch = batch
+          })
+          await writes.status(req, 'sending')
+        }
     }
     return { swr, ndr }
   }
@@ -350,11 +385,21 @@ export async function shareReqsWithWorld(
   await verifyMergedBeef(storage, r, readyToSendReqs, logger)
 
   if (batch) {
-    for (const req of readyToSendReqs) req.batch = batch
-    await storage.updateProvenTxReq(readyToSendReqIds, { batch })
+    if (writes == null) {
+      for (const req of readyToSendReqs) req.batch = batch
+      await storage.updateProvenTxReq(readyToSendReqIds, { batch })
+    } else
+      for (const req of readyToSendReqs) {
+        await writes.request(req, async current => {
+          current.batch = batch
+        })
+      }
   }
 
-  const prtn = await storage.attemptToPostReqsToNetwork(readyToSendReqs, undefined, logger)
+  const prtn =
+    writes == null
+      ? await storage.attemptToPostReqsToNetwork(readyToSendReqs, undefined, logger)
+      : await storage.attemptToPostReqsToNetwork(readyToSendReqs, undefined, logger, writes)
   const { swr: swrRes, rar } = await aggregateActionResults(storage, swr, prtn)
   return { swr: swrRes, ndr: rar }
 }
@@ -603,7 +648,8 @@ export interface CommitNewTxResults {
 async function commitNewTxToStorage(
   storage: StorageProvider,
   userId: number,
-  vargs: ValidCommitNewTxToStorageArgs
+  vargs: ValidCommitNewTxToStorageArgs,
+  write: StorageActiveWrite
 ): Promise<CommitNewTxResults> {
   let log = vargs.log
 
@@ -626,7 +672,7 @@ async function commitNewTxToStorage(
 
   let req: EntityProvenTxReq | undefined
 
-  await storage.transaction(async trx => {
+  await write.transaction(async trx => {
     log = stampLog(log, '... storage commitNewTxToStorage storage transaction start')
 
     if (vargs.transaction.noSendExpiryState != null) {

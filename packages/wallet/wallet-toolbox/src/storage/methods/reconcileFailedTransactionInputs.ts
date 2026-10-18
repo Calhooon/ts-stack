@@ -1,3 +1,4 @@
+import { StorageReqWrite } from '../StorageReqWrite'
 import { Transaction, WalletLoggerInterface } from '@bsv/sdk'
 import type * as sdk from '../../sdk'
 import { StorageProvider } from '../StorageProvider'
@@ -134,8 +135,14 @@ export async function markConfirmedStaleReqInputs(
   storage: StorageProvider,
   services: sdk.WalletServices,
   trx?: sdk.TrxToken,
-  logger?: WalletLoggerInterface
+  logger?: WalletLoggerInterface,
+  capturedWrites?: StorageReqWrite
 ): Promise<FailedInputReconciliationResult> {
+  const writes =
+    capturedWrites ??
+    (trx == null && typeof storage.activeWriteTransaction === 'function'
+      ? await StorageReqWrite.capture(storage, [req.txid])
+      : undefined)
   const result = { checked: 0, staleConfirmed: 0, staleOutpoints: [] as string[] }
   const localInputs = await findLocalInputs(req, storage, trx)
   const verdicts = new Map<string, 'stale' | 'utxo' | 'inconclusive'>()
@@ -174,9 +181,26 @@ export async function markConfirmedStaleReqInputs(
     if (verdict == null || verdict === 'inconclusive') continue
     result.checked++
     if (verdict === 'stale') {
-      await storage.updateOutput(verifyId(output.outputId), { spendable: false }, trx)
-      result.staleConfirmed++
-      staleOutpoints.add(key)
+      let changed = false
+      const apply = async (token?: sdk.TrxToken) => {
+        const current = await storage.findOutputs({
+          partial: {
+            outputId: verifyId(output.outputId),
+            userId: output.userId,
+            txid: outpoint.txid,
+            vout: outpoint.vout
+          },
+          trx: token
+        })
+        if (current.length !== 1) return
+        await storage.updateOutput(verifyId(output.outputId), { spendable: false }, token)
+        changed = true
+      }
+      const committed = writes != null ? await writes.forUser(output.userId, apply) : (await apply(trx), true)
+      if (committed && changed) {
+        result.staleConfirmed++
+        staleOutpoints.add(key)
+      }
     }
   }
   result.staleOutpoints = [...staleOutpoints]

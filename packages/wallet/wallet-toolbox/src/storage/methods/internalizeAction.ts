@@ -794,7 +794,7 @@ class InternalizeActionContext {
         details: [{ txid: this.txid, status: 'readyToSend', req: pr.req }]
       }
       await this.write.assertCurrent()
-      const { swr, ndr } = await shareReqsWithWorld(this.storage, this.userId, [], false, r)
+      const { swr, ndr } = await shareReqsWithWorld(this.storage, this.userId, [], false, r, undefined, this.write)
       if (ndr![0].status !== 'success') {
         // Roll back the spendable=true → false transitions performed above
         // so the caller can retry with the same UTXOs. Idempotent w.r.t.

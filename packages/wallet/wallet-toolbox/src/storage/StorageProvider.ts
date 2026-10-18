@@ -1,3 +1,4 @@
+import type { StorageReqWrite } from './StorageReqWrite'
 import type { SnapshotSyncStorage } from './snapshot/SnapshotSync'
 import type { WalletReadSnapshot, WalletReadSnapshotOptions } from './snapshot/WalletReadSnapshot'
 import type { RetainedReadSnapshot, RetainedReadSnapshotOptions } from './snapshot/RetainedReadSnapshot'
@@ -1282,9 +1283,10 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   async attemptToPostReqsToNetwork(
     reqs: EntityProvenTxReq[],
     trx?: TrxToken,
-    logger?: WalletLoggerInterface
+    logger?: WalletLoggerInterface,
+    capturedWrites?: StorageReqWrite
   ): Promise<PostReqsToNetworkResult> {
-    return await attemptToPostReqsToNetwork(this, reqs, trx, logger)
+    return await attemptToPostReqsToNetwork(this, reqs, trx, logger, capturedWrites)
   }
 
   async listCertificates(auth: AuthId, args: ValidListCertificatesArgs): Promise<ListCertificatesResult> {
