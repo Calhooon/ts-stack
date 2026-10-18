@@ -56,4 +56,39 @@ describe('receiver-owned payload decoding across supported SDK releases', () => 
     expect(decodePaymentPayload(undefined, 'application/json')).toBeUndefined()
     expect(() => decodePaymentPayload(new Uint8Array(), 'application/json')).toThrow(SyntaxError)
   })
+  test('keeps hostile names as owned data and preserves duplicate and integer-key ordering', () => {
+    const body = new TextEncoder().encode(
+      '__proto__=first&constructor=one&key=a&key=b&__proto__=second&1=n&prototype=p&toString=t&hasOwnProperty=h'
+    )
+    const before = body.slice()
+    const record = decodePaymentPayload(body, 'application/x-www-form-urlencoded') as Record<
+      string,
+      unknown
+    >
+    expect(Object.getPrototypeOf(record)).toBeNull()
+    expect(Object.keys(record)).toEqual([
+      '1',
+      '__proto__',
+      'constructor',
+      'key',
+      'prototype',
+      'toString',
+      'hasOwnProperty'
+    ])
+    expect(record['__proto__']).toEqual(['first', 'second'])
+    expect(record.constructor).toBe('one')
+    expect(record.key).toEqual(['a', 'b'])
+    expect(record.prototype).toBe('p')
+    expect(record.toString).toBe('t')
+    expect(record.hasOwnProperty).toBe('h')
+    for (const name of Object.keys(record))
+      expect(Object.getOwnPropertyDescriptor(record, name)).toMatchObject({
+        enumerable: true,
+        configurable: true,
+        writable: true
+      })
+    expect(Object.prototype).not.toHaveProperty('first')
+    expect(Object.prototype).not.toHaveProperty('second')
+    expect(body).toEqual(before)
+  })
 })
