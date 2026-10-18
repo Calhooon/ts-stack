@@ -6,7 +6,7 @@ domain: sdk
 version: '3.3.0'
 npm: '@bsv/sdk'
 last_updated: '2026-10-18'
-last_verified: '2026-10-07'
+last_verified: '2026-10-18'
 review_cadence_days: 30
 status: stable
 tags: ['sdk', 'crypto', 'transactions']
@@ -27,6 +27,8 @@ validation module. Native identity, certificate and authentication APIs remain.
 Use the [identity/DID/VC guide](../../guides/identity-did-vc.md) and
 [migration map](../../guides/identity-did-vc-migration.md). SDK3 consumer peer
 qualification remains a draft prerequisite; existing SDK2 floors are preserved.
+
+Retained versioned candidate notes below are historical source records; publication is a separate action.
 
 The 3.2.0 source candidate fixes saved-contact `any` searches and retains
 contact-only matches in parallel public searches. Both identity-resolution
@@ -442,7 +444,7 @@ const output = { lockingScript: lockingScript.toHex(), satoshis: 1 }
 - **BRC-62** — BEEF (transaction envelope format)
 - **BRC-100** — Wallet interface standard
 - **SPV** — Full merkle proof verification support
-- **Bitcoin Script** — Full consensus-rule-compliant interpreter
+- **Bitcoin Script** — Script construction and configurable evaluation
 
 ## Common pitfalls
 
