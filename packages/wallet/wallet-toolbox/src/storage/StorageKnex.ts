@@ -4000,7 +4000,14 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     options: PrimaryHandoffControlOptions = {}
   ): Promise<PrimaryHandoffControl | undefined> {
     if (!(await this.supportsPrimaryWriteFences())) return undefined
-    return await createKnexPrimaryHandoffControl(this, options)
+    const control = await createKnexPrimaryHandoffControl(this, options)
+    if (control === undefined) return undefined
+    if (!(await this.supportsSnapshotJournalSync())) {
+      if (await hasKnexPrimaryEnrollment(this))
+        throw new WERR_INVALID_OPERATION('Enrolled primary control requires its actual journal backend')
+      return undefined
+    }
+    return control
   }
 
   override async supportsPrimaryWriteFences(): Promise<boolean> {

@@ -1288,7 +1288,11 @@ export async function commitActionBatch(
     if (active.digest !== manifest.digest) {
       throw new WERR_INVALID_OPERATION('action batch commit is active with another manifest')
     }
-    return await active.promise
+    const result = await active.promise
+    // The owner performs the work once. A joining caller receives a replay
+    // result only while its own original actual writer remains current.
+    await write.assertCurrent()
+    return { ...result, alreadyCommitted: true }
   }
   const promise = commitActionBatchOnce(storage, userId, manifest, write).finally(() => {
     commits?.delete(key)

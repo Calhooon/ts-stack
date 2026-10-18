@@ -39,6 +39,7 @@ async function fixture(local = 'source', peerSnapshotSync = true) {
     if (errors.length) throw new AggregateError(errors, 'Actual control roots did not drain')
   }
   try {
+    await storage.knex.raw('PRAGMA journal_mode = WAL')
     await storage.migrate('actual primary control fixture', local)
     await storage.makeAvailable()
     await peer.makeAvailable()
@@ -257,6 +258,7 @@ test('an actual createAction prepared before durable source retirement cannot pu
   let pending: Promise<unknown> | undefined
   try {
     await _tu.installOfflineLegacyChainTracker(ctx)
+    await ctx.activeStorage.knex.raw('PRAGMA journal_mode = WAL')
     const control = await ctx.activeStorage.getPrimaryHandoffControl()
     if (control == null) throw new Error('Actual SQL control unavailable')
     const auth = { identityKey: ctx.identityKey, userId: ctx.userId }
@@ -522,6 +524,59 @@ test('genuine restore writer defers on a retired source while read-only preview 
     expect(apply).not.toHaveBeenCalled()
     expect(await f.storage.knex('tx_labels')).toEqual(before)
     expect((await f.independent.status(f.auth))?.phase).toBe('retired')
+  } finally {
+    await f.close()
+  }
+})
+
+test.each(['memory', 'rollback-file'] as const)(
+  'unenrolled %s storage retains legacy selection without advertising journal primary control',
+  async kind => {
+    const directory = await mkdtemp(join(tmpdir(), 'primary-unsupported-')),
+      storage = new StorageKnex({
+        ...StorageProvider.createStorageBaseOptions('test'),
+        knex: knex({
+          client: 'better-sqlite3',
+          connection: { filename: kind === 'memory' ? ':memory:' : join(directory, 'wallet.sqlite') },
+          useNullAsDefault: true,
+          pool: { min: 0, max: 1 }
+        })
+      })
+    try {
+      await storage.migrate('actual legacy primary fixture', 'legacy-root')
+      await storage.makeAvailable()
+      const { user } = await storage.findOrInsertUser(identityKey)
+      expect(await storage.supportsPrimaryWriteFences()).toBe(true)
+      expect(await storage.supportsSnapshotJournalSync()).toBe(false)
+      expect(await storage.getPrimaryHandoffControl()).toBeUndefined()
+      await storage.updateUser(user.userId, { activeStorage: 'legacy-peer' })
+      expect((await storage.findUsers({ partial: { userId: user.userId } }))[0].activeStorage).toBe('legacy-peer')
+      expect(await storage.knex(PRIMARY_HANDOFF_TABLE)).toHaveLength(0)
+    } finally {
+      await storage.destroy()
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test('an enrolled actual profile cannot downgrade control when its journal backend becomes unavailable', async () => {
+  const f = await fixture()
+  try {
+    const original = await f.storage.activeWriteTransaction(f.auth)
+    await f.control.prepareSource(f.auth, operationId, 'target')
+    // Drain the independent physical connection before changing the actual
+    // journal mode. No mocked capability can substitute for this prerequisite.
+    await f.peer.destroy()
+    await f.storage.knex.raw('PRAGMA journal_mode = DELETE')
+    expect(await f.storage.supportsSnapshotJournalSync()).toBe(false)
+    await expect(f.storage.getPrimaryHandoffControl()).rejects.toThrow('actual journal backend')
+    await expect(original.assertCurrent()).resolves.toBeUndefined()
+    await expect(f.storage.updateUser(f.user.userId, { activeStorage: 'target' })).rejects.toThrow()
+    await f.storage.knex.raw('PRAGMA journal_mode = WAL')
+    expect(await (await f.storage.getPrimaryHandoffControl())!.status(f.auth)).toMatchObject({
+      phase: 'prepared',
+      side: 'source'
+    })
   } finally {
     await f.close()
   }

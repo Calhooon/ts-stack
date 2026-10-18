@@ -7,7 +7,10 @@ complete #544 qualification programme. They do not authorize a release or rollou
 ## Selection and recovery
 
 `StorageProvider.getPrimaryHandoffControl()` and supported full/mobile clients
-return an optional control. `status`, `prepareSource`, `prepareTarget`,
+return an optional control only when the actual journal backend is supported.
+Unenrolled in-memory or rollback-journal SQLite retains its legacy selection path.
+An enrolled root whose journal backend becomes unavailable refuses a new control;
+its database role and ordinary-writer fences remain enforced. `status`, `prepareSource`, `prepareTarget`,
 `retireSource`, `activateTarget`, `completeSource`, `completeTarget`, `followTarget`
 and `cancel` own independent short actual database operations. They bind the
 current physical provider, network, authenticated user and original role epoch.
@@ -64,7 +67,10 @@ provider-issued role/epoch capture. Registering or replacing a provider during
 preparation rejects the obsolete operation before its next financial commit.
 Actual provider instances remain unchanged. Nested writes require their original
 explicit transaction token; callbacks retained after the operation finishes cannot
-reuse its admission. Other profiles obtain their own independent writer captures.
+reuse its admission. Other profiles obtain their own independent writer captures. Identical in-flight
+action-batch commits share the actual provider operation. A joining caller gets
+`alreadyCommitted: true` after its own original writer is rechecked; its reply
+does not mutate the first caller’s result or repeat the financial/network work.
 
 Full/mobile clients release manager ownership while awaiting authenticated wallet
 RPC, then recheck their original selection. The server still enforces its own
