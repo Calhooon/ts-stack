@@ -9,7 +9,7 @@ of #544 remain required.
 ## Scope and limits
 
 The machine-readable registry is
-[`governance/sonar-pr569-budget.json`](../../governance/sonar-pr569-budget.json),
+[`governance/sonar-pr569-budget.json`](https://github.com/bsv-blockchain/ts-stack/blob/23667a791204c96c9d0447ac8bd674da20f7ec9c/governance/sonar-pr569-budget.json),
 also recorded in the repository-health exceptions registry. The only eligible
 context is repository `bsv-blockchain/ts-stack`, Sonar project
 `bsv-blockchain_ts-stack`, PR569, same-repository head branch
