@@ -1,8 +1,36 @@
 # #544 candidate delivery and rollback
 
-The original local SQL journal receiver now stamps completed-copy comparison DATA in the actual final ACK writer. Unchanged local pulls, pushes and registered backups reuse their prior real checkpoint; local pushes retain a genuine current-source fence through actual target-primary/postimage comparison. Actual primary selection first refuses copied-postimage drift, then records the new post-selection comparison DATA in its same physical writer. Cancellation during opening drains the genuine source and preserves the old ACK; observer failures retain their error channel. No schema, native ABI, wire format, resource limit or default changes. Verified large-payload reuse and full remote primary handoff remain source work; focused host feedback does not replace final qualification.
+The required source components are assembled and integrated. `PrimaryHandoffProgram`
+uses actual authenticated provider controls to prepare the target, make a warm
+copy, retire sources, copy their final changes, verify real database ACKs before
+activation, and propagate the selected primary to backups. Manager lifecycle
+fences drain current writers and recover uncertain replies from participant
+status. Journal field transport, destination-owned cache, semantic promotion,
+large-field continuation and remote full/client/mobile entry points are wired.
+Serialized providers retain their supported fallback and existing payload limits.
+See [durable primary handoff](primary-handoff.md) for application use, uncertain-reply
+recovery, mixed versions and migration constraints.
+A parsed plan or copied status never creates a source actor, database permission,
+financial ACK or primary-selection authority.
 
-The candidate now implements separately negotiated snapshot content observations and atomic completed-copy receipts. The actual copied view supplies its revision; capture-only clocks do not force another copy, and fresh source/destination checks can return the previous durable ACK with zero copied pages. Remote pulls bind their revision into the actual immutable archive digest and retain its physical reader guard through close. The additive SQLite/MySQL migration stores discardable comparison DATA, preserving wallet rows, existing ACKs, old-peer behavior and the native48 financial inventory. See [content receipts](snapshot-content-receipts.md) for contracts, migration and rollback. Packed IndexedDB uses its actual MVCC owner and counter with a bounded optional JSON receipt in the existing flat session record; source/destination changes, reopen and primary invalidation remain fenced, without a database reset. The separate journal DATA transport now carries incremental updates and hard-delete tombstones with actual destination ACK recovery. Bounded ordinary target-byte reuse and exact manager field-window recovery are implemented; complete remote primary handoff and full-system qualification remain required.
+Source assembly is not end-to-end acceptance. Current qualification has exposed
+an SDK2 strict-install dependency conflict, a candidate SDK version that collides
+with immutable published bytes, and compatibility-controller expectations that
+must distinguish queued destination notification and negotiated transfer parts.
+The original large numeric-array cases involving released peers exceed their
+preserved structural limit; they remain failed evidence. The full supported
+artifact matrix, whole-system, native/platform, performance, security,
+exact-head CI and final review must pass before a readiness claim. PR569 remains
+open, draft and unmerged. Publication, deployment and funded recovery are separate
+actions.
+
+The implementation records below retain earlier measurements and failures.
+Statements about missing components in those historical records describe that
+checkpoint; the assembled source status above is current.
+
+The original local SQL journal receiver now stamps completed-copy comparison DATA in the actual final ACK writer. Unchanged local pulls, pushes and registered backups reuse their prior real checkpoint; local pushes retain a genuine current-source fence through actual target-primary/postimage comparison. Actual primary selection first refuses copied-postimage drift, then records the new post-selection comparison DATA in its same physical writer. Cancellation during opening drains the genuine source and preserves the old ACK; observer failures retain their error channel. No schema, native ABI, wire format, resource limit or default changes. Verified large-payload reuse and full remote primary handoff are integrated; focused host feedback does not replace final qualification.
+
+The candidate now implements separately negotiated snapshot content observations and atomic completed-copy receipts. The actual copied view supplies its revision; capture-only clocks do not force another copy, and fresh source/destination checks can return the previous durable ACK with zero copied pages. Remote pulls bind their revision into the actual immutable archive digest and retain its physical reader guard through close. The additive SQLite/MySQL migration stores discardable comparison DATA, preserving wallet rows, existing ACKs, old-peer behavior and the native48 financial inventory. See [content receipts](snapshot-content-receipts.md) for contracts, migration and rollback. Packed IndexedDB uses its actual MVCC owner and counter with a bounded optional JSON receipt in the existing flat session record; source/destination changes, reopen and primary invalidation remain fenced, without a database reset. The separate journal DATA transport now carries incremental updates and hard-delete tombstones with actual destination ACK recovery. Bounded ordinary target-byte reuse, exact manager field-window recovery and full remote primary handoff are implemented; full-system qualification remains required.
 
 Native whole-program measurement supplies the low-level portable exporter with its own actual query-only reader, keeping the serving pool available for foreground reads and writes. The fixture owns reader cleanup before setup and source cleanup before streaming; query observation includes both original one-connection pools. Native pins, exporter contracts, pool sizes, timeouts and performance/negative limits are unchanged. The failed shared-pool measurement remains evidence; complete performance and system qualification are still required.
 
@@ -649,10 +677,9 @@ measured. No production API, wire, persistence, native binary, default resource
 limit or consumer migration changes. The authorized 30 percent browser allowance
 is reviewed after the full goal is achieved.
 
-The finite source inventory is documented, but runtime assembly remains incomplete.
-Destination-owned field cache/financial semantic promotion and full remote primary
-handoff/push/backup still require implementation. After assembly, qualification
-must cover the complete21-customer/20-pair/six real-UTC recovery matrix, faults and concurrency, original
+The finite source inventory is assembled, including destination-owned field
+cache/financial semantic promotion and remote primary handoff/push/backup.
+Qualification must cover the complete21-customer/20-pair/six real-UTC recovery matrix, faults and concurrency, original
 300-case properties, all 97 mutation targets, provider/HTTP/browser/mobile and
 portable consumers, actual supported native hosts, workload/performance/headroom,
 and exact-head CI/analyzers/review. All eleven acceptance rows remain open.

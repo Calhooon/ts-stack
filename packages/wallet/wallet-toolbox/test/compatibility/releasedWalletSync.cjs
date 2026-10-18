@@ -14,6 +14,7 @@ const { createHash } = require('node:crypto')
 const packages = Object.freeze(['@bsv/wallet-toolbox', '@bsv/wallet-toolbox-client', '@bsv/wallet-toolbox-mobile'])
 const versions = Object.freeze({ released: '2.14.5', candidate: '2.15.0' })
 const sdkVersions = Object.freeze({ 2: '2.8.11', 3: '3.2.1' })
+const candidateSdkVersions = Object.freeze({ 2: '2.8.11', 3: '3.3.0' })
 
 /** Independent synthetic proof and public-row postimages. No production sync
  * exporter, native descriptor, journal hash or received row supplies an oracle. */
@@ -259,7 +260,7 @@ async function seedReplicaFamilies(install, source, target, identityKey, firstLa
   }
 }
 
-async function installation(root, version, sdkMajor) {
+async function installation(root, version, sdkMajor, sdkVersion = sdkVersions[sdkMajor]) {
   assert.equal(typeof root, 'string')
   assert.ok(path.isAbsolute(root) && root.length <= 4096)
   root = await fs.realpath(root)
@@ -285,7 +286,7 @@ async function installation(root, version, sdkMajor) {
   assert.ok(sdkDirectory.startsWith(root + path.sep))
   const sdkManifest = JSON.parse(await fs.readFile(path.join(sdkDirectory, 'package.json'), 'utf8'))
   assert.equal(sdkManifest.name, '@bsv/sdk')
-  assert.equal(sdkManifest.version, sdkVersions[sdkMajor])
+  assert.equal(sdkManifest.version, sdkVersion)
   for (const directory of directories)
     assert.ok(
       createRequire(path.join(directory, 'package.json'))
@@ -297,6 +298,7 @@ async function installation(root, version, sdkMajor) {
     modules,
     directories,
     coreRequire,
+    sdkVersion,
     Server: coreRequire('./out/src/storage/remoting/StorageServer.js').StorageServer,
     sdk: coreRequire('@bsv/sdk'),
     knex: coreRequire('knex').knex
@@ -309,7 +311,7 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
   assert.ok(options.continueOnCaseFailure === undefined || typeof options.continueOnCaseFailure === 'boolean')
   assert.ok(options.onCaseResult === undefined || typeof options.onCaseResult === 'function')
   const released = await installation(releasedRoot, versions.released, sdkMajor),
-    candidate = await installation(candidateRoot, versions.candidate, sdkMajor),
+    candidate = await installation(candidateRoot, versions.candidate, sdkMajor, candidateSdkVersions[sdkMajor]),
     reports = [],
     failures = []
   assert.notEqual(released.directories[0], candidate.directories[0])
@@ -408,6 +410,10 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
             listener = server.server
             if (!listener.listening) await once(listener, 'listening')
             let binaryRequestCount = 0,
+              ordinaryBinaryRequestCount = 0,
+              ordinaryNumericRequestCount = 0,
+              transferBinaryRequestCount = 0,
+              transferNumericRequestCount = 0,
               requestCount = 0,
               requestFault
             listener.on('request', request => {
@@ -416,7 +422,39 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
                 return
               }
               requestCount++
-              if (request.headers['x-bsv-binary-request-encoding'] === 'base64') binaryRequestCount++
+              const binary = request.headers['x-bsv-binary-request-encoding'] === 'base64'
+              if (binary) binaryRequestCount++
+              if (request.url !== '/') return
+              const chunks = []
+              let bytes = 0
+              request.on('data', chunk => {
+                bytes += chunk.length
+                // Match the original server's finite request-body ceiling. The
+                // observer never changes, consumes or replaces received bytes.
+                if (bytes > 8 * 1024 * 1024) {
+                  chunks.length = 0
+                  requestFault ??= new Error('Compatibility encoding observation exceeded the request bound')
+                  return
+                }
+                chunks.push(Buffer.from(chunk))
+              })
+              request.on('end', () => {
+                if (bytes > 8 * 1024 * 1024) return
+                try {
+                  const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+                  if (rpc === null || typeof rpc !== 'object' || typeof rpc.method !== 'string')
+                    throw new Error('Missing observed RPC method')
+                  if (rpc.method === 'writeSyncTransferPart') {
+                    if (binary) transferBinaryRequestCount++
+                    else transferNumericRequestCount++
+                  } else if (binary) ordinaryBinaryRequestCount++
+                  else ordinaryNumericRequestCount++
+                } catch (cause) {
+                  requestFault ??= new Error('Compatibility could not observe the actual RPC encoding', { cause })
+                } finally {
+                  chunks.length = 0
+                }
+              })
             })
             const address = listener.address()
             assert.ok(address && typeof address !== 'string')
@@ -453,16 +491,27 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
             await inspectFamilies()
             if (requestFault !== undefined) throw requestFault
             assert.ok(requestCount > 0)
-            assert.equal(binaryRequests ? binaryRequestCount > 0 : binaryRequestCount === 0, true)
+            // Version-one transfer parts require their negotiated binary codec;
+            // binaryRequests controls ordinary RPCs, not that separate protocol.
+            assert.equal(binaryRequests ? binaryRequestCount > 0 : ordinaryBinaryRequestCount === 0, true)
+            assert.equal(binaryRequestCount, ordinaryBinaryRequestCount + transferBinaryRequestCount)
+            assert.equal(transferNumericRequestCount, 0)
+            if (!binaryRequests) assert.ok(ordinaryNumericRequestCount > 0)
             reports.push({
               sdkMajor,
-              sdkVersion: sdkVersions[sdkMajor],
+              sdkVersion: clientInstall.sdkVersion,
+              serverSdkVersion: serverInstall.sdkVersion,
+              sourceSdkVersion: candidate.sdkVersion,
               serverLine,
               clientLine,
               clientPackage: packages[index],
               rows: 130,
               requestEncoding: binaryRequests ? 'compact-base64' : 'numeric-json',
               binaryRequestCount,
+              ordinaryBinaryRequestCount,
+              ordinaryNumericRequestCount,
+              transferBinaryRequestCount,
+              transferNumericRequestCount,
               requestCount,
               replicaFamilies: 12,
               largeRawTransaction: true,
@@ -521,7 +570,9 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
             if (options.onCaseResult !== undefined) {
               const result = {
                 sdkMajor,
-                sdkVersion: sdkVersions[sdkMajor],
+                sdkVersion: clientInstall.sdkVersion,
+                serverSdkVersion: serverInstall.sdkVersion,
+                sourceSdkVersion: candidate.sdkVersion,
                 serverLine,
                 clientLine,
                 clientPackage: packages[index],
@@ -557,6 +608,7 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, opti
     versions,
     sdkMajor,
     sdkVersion: sdkVersions[sdkMajor],
+    candidateSdkVersion: candidateSdkVersions[sdkMajor],
     reports,
     physicalDeviceQualified: false,
     processTreeQualified: false
@@ -579,7 +631,14 @@ async function runWalletSyncCompatibilityCohorts(cohorts) {
     reports.reduce((count, report) => count + report.reports.length, 0),
     48
   )
-  return { versions, sdkVersions, cohorts: reports, physicalDeviceQualified: false, processTreeQualified: false }
+  return {
+    versions,
+    sdkVersions,
+    candidateSdkVersions,
+    cohorts: reports,
+    physicalDeviceQualified: false,
+    processTreeQualified: false
+  }
 }
 
 async function readWalletSyncCohorts(filename) {
@@ -612,7 +671,8 @@ module.exports = {
   readWalletSyncCohorts,
   packages,
   versions,
-  sdkVersions
+  sdkVersions,
+  candidateSdkVersions
 }
 
 if (require.main === module) {

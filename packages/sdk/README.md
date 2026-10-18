@@ -28,6 +28,16 @@ See [identity integration](../../docs/guides/identity-did-vc.md) and
 [migration guidance](../../docs/guides/identity-did-vc-migration.md) before upgrading.
 This is a source candidate; publication and deployment are separate actions.
 
+## 3.3.0 source candidate
+
+The additive payment transport helpers, typed recovery outcomes and AuthFetch
+multipart support in this source require a minor release after immutable
+published 3.2.1. This candidate is built from this branch; changing its version
+does not publish it or replace any registry artifact. Existing non-multipart
+wire behavior and security limits remain. The complete dependency and supported
+peer matrix must qualify before release; an unavailable SDK2 version is not a
+compatibility implementation.
+
 ## Wallet integration
 
 For application-to-wallet integrations, the SDK exposes the BRC-100 `WalletClient` interface. BSV Desktop and BSV Browser are the BSV Association reference implementations for this interface; vendor distributions such as Babbage's Metanet Desktop / Metanet Explorer and Hudos Browser can implement the same interface with their own branding and service defaults.
@@ -89,7 +99,7 @@ Request framing remains capped at 16 MiB, configured response body limits remain
 enforced, and handshake, certificate, signature, nonce and redirect checks are
 unchanged. No API, wire or wallet-data migration is required.
 
-The unpublished 3.2.1 patch candidate captures byte-array descriptor values once
+The unpublished 3.3.0 minor candidate captures byte-array descriptor values once
 while validating and owning authenticated payloads. It avoids repeated copy
 validation and retaining a descriptor object for every byte of a large request.
 Dense-byte checks, payload capacities, signature bytes and response deadlines
@@ -622,7 +632,7 @@ upgrade. No BRC-100 wire or wallet-data changes are introduced by this option.
 
 ## Pre-construction wallet reviews
 
-The 3.2.1 candidate accepts a storage pre-construction double-spend review through
+The SDK accepts a storage pre-construction double-spend review through
 `HTTPWalletJSON` only for `createAction` with explicit inputs. It requires one
 empty attempted-TXID result, no constructed-action fields, and complete competing
 transactions that spend those requested outpoints. Malformed, unrelated and

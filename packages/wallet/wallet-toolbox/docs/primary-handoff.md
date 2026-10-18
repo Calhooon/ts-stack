@@ -4,6 +4,30 @@ The candidate implements local SQL controls, authenticated full/mobile RPC, and
 wallet-manager coordination. These unpublished components remain subject to the
 complete #544 qualification programme. They do not authorize a release or rollout.
 
+## Application entry point
+
+Continue using the application's existing `WalletStorageManager` and an already
+registered backup's storage identity key. The manager negotiates actual controls;
+applications do not construct plans or write control tables. Keep each manager's
+identity, network and provider registrations specific to one profile.
+
+```ts
+await manager.makeAvailable()
+await manager.setActive(targetStorageIdentityKey, undefined, { signal })
+if (manager.getActiveStore() !== targetStorageIdentityKey || !manager.isActiveEnabled) {
+  throw new Error('The requested primary is not available')
+}
+```
+
+Here `signal` is a caller-owned `AbortSignal`. Progress describes committed copy
+work; it does not prove activation or physical cancellation. Warm copying occurs
+while sources may remain active, but the short cutover can temporarily make
+wallet writes unavailable. No uninterrupted-write guarantee is implied.
+
+The SDK2 dependency graph is currently unresolved; do not force installation or
+infer compatibility from an unavailable version. All artifacts and supported
+peer combinations must qualify before release. See [delivery and rollback](delivery-544.md).
+
 ## Selection and recovery
 
 `StorageProvider.getPrimaryHandoffControl()` and supported full/mobile clients
@@ -118,6 +142,11 @@ result still requires authenticated transport and the actual destination ACK.
 Backoff retains no manager writer or in-flight HTTP request, observes cancellation,
 and runs outside each new control request's independent I/O deadline. All server
 rate, admission and resource limits remain unchanged.
+The ordinary `binaryRequests` flag does not redefine these separately negotiated
+compact control RPCs or the mandatory binary codec of version-one transfer parts.
+Disable optional server capabilities during a mixed deployment if every serving
+instance cannot provide them; preserve the legacy request ceilings.
+
 Unsupported serialized primary providers do not claim this new cancellation
 contract. A new request must use a fresh signal to recover uncertain state.
 

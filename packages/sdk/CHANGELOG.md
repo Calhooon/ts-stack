@@ -214,9 +214,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+- Version the new exported payment transport/error/payload APIs as the additive
+  3.3.0 source candidate after immutable published 3.2.1. No publication occurs
+  through this source change.
+
 - Reduce authenticated large-payload preparation overhead with one-pass byte validation/copy and value-only array snapshots; preserve byte checks, wire formats, limits and deadlines. No migration is required.
 
-### 3.1.0 candidate — prepared BRC-118 payments and recipient interoperability
+### 3.3.0 candidate — prepared BRC-118 payments and recipient interoperability
 
 - Preserve native body serialization and inferred Content-Type on ordinary HTTP
   fallback, including cached unauthenticated peers; retain owned payment bytes.
@@ -234,7 +238,7 @@ All notable changes to this project will be documented in this file. The format 
 - Add independent Python wire/preimage vectors, real HTTP/proxy-limit tests and
   adversarial payment lifecycle coverage. See the BRC-118 guide for migration.
 
-### Fixed (3.2.1 candidate)
+### Fixed (3.2.1)
 
 - Align `OP_SUBSTR`, `OP_LEFT` and `OP_RIGHT` operand decoding with
   [SV Node v1.2.3](https://github.com/bitcoin-sv/bitcoin-sv/releases/tag/v1.2.3).

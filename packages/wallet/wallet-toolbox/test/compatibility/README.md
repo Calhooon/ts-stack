@@ -25,8 +25,9 @@ wiring before running it. Build the final graph, freeze the actual pack
 outputs and dependencies, and prepare four separate installations. Do not use
 workspace symlinks or silently replace released artifacts with source aliases.
 The selected versions are wallet packages 2.14.5 and candidate 2.15.0, SDK 2.8.11
-and the held branch's SDK 3.2.1. Another branch's SDK 3.3 metadata does not update
-this graph's implementation or qualify a different SDK version.
+and independently pinned published SDK 3.2.1 versus this branch's SDK 3.3.0
+candidate. Each installation and report identifies its actual SDK version;
+matching candidate version labels across branches do not identify equal bytes.
 
 The input file has exactly these four keys, each containing an absolute path to
 an isolated installation with its own `node_modules`:
@@ -48,7 +49,13 @@ pnpm qualify:released-sync --cohorts /absolute/cohorts.json
 
 The exported `runReleasedWalletSync` also accepts an optional fourth argument,
 `{ continueOnCaseFailure: true, onCaseResult }`, for complete failure inventory.
-It retains the original case order, payloads, assertions and bounds. Each result
+It retains the original case order, payloads, data assertions and bounds. The
+encoding observer checks actual received RPC bodies without changing them, under
+the existing 8 MiB body ceiling. `binaryRequests` selects ordinary RPC encoding;
+negotiated version-one `writeSyncTransferPart` requests separately require binary
+JSON. The controller rejects numeric transfer parts, unexpected binary ordinary
+RPCs when disabled, unaccounted binary requests and unreadable observations.
+Each result
 callback runs after the original physical-owner cleanup. Any failed case still
 rejects the run; cleanup failure stops execution immediately. Default and CLI
 behavior still stop at the first failure. A partial SDK3 inventory does not
@@ -66,6 +73,7 @@ identifies bytes; successful compatibility still requires the real test results.
 | `@bsv/wallet-toolbox-client@2.14.5` | `sha512-KPW+a3OQoZ6fDPGsM/FJMjulICzuzCy+Ucb5jpaiegwjmLSyFVpe11CrLIL2dceIJdoVxKv5utE3If2A1bWvUA==` |
 | `@bsv/wallet-toolbox-mobile@2.14.5` | `sha512-ZN8eqIPQMG9OrC5xMdiIevss/jk5OIACLCzR9/cCkXKvwGlXl+tRKj8VWK4Jr/FVYv1jOLLzEFjfPFuunRxi0g==` |
 | `@bsv/sdk@2.8.11`                   | `sha512-Kt70E52bGTCayebmKQJCmEKCFwwS1MOUJ4Q4mKLCadsktVpZMv4NoWjvEbO7VDIw3g5zo8RMJsTuRy5zFI77og==` |
+| `@bsv/sdk@3.2.1`                    | `sha512-Xml2szbKhjMaDthC/FiDg80EchD09UXgR+lcH6BFJWoYpsROzEzBJ+C2+1zE7c0kzh6DwrxKaq90e8Rm0z0UtQ==` |
 
 Run the controller in the separately agreed finite qualification process and
 resource envelope. It opens only synthetic local SQLite files and loopback HTTP
