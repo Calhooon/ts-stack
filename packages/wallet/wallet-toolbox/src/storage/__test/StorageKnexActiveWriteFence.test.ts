@@ -1491,3 +1491,108 @@ test('foreground batch planning avoids global expiry scans and background cleanu
     await ctx.wallet.destroy()
   }
 })
+
+test('manager wallet preparation releases ownership while every actual SQL commit rejoins the original provider', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('manager-prepared-write-yield', 'legacy')
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => {
+      release = resolve
+    }),
+    reached = new Promise<void>(resolve => {
+      entered = resolve
+    })
+  let pending: Promise<unknown> | undefined
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const read = ctx.activeStorage.findOutputBaskets.bind(ctx.activeStorage)
+    jest.spyOn(ctx.activeStorage, 'findOutputBaskets').mockImplementationOnce(async (...args) => {
+      const rows = await read(...args)
+      entered()
+      await gate
+      return rows
+    })
+    pending = ctx.storage.createAction(
+      Validation.validateCreateActionArgs({
+        description: 'actual prepared manager action',
+        outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'actual prepared output' }],
+        options: { noSend: true }
+      })
+    )
+    await Promise.race([
+      reached,
+      pending.then(() => {
+        throw new Error('Actual wallet preparation did not pause')
+      })
+    ])
+    await ctx.storage.runAsStorageProvider(async active => {
+      expect(active).toBe(ctx.activeStorage)
+      await active.updateUser(ctx.userId, { updated_at: new Date() })
+    })
+    release()
+    await expect(pending).resolves.toBeDefined()
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test('manager generation changes reject a prepared wallet write even when its SQL primary remains unchanged', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('manager-prepared-write-generation', 'legacy')
+  const directory = await mkdtemp(join(tmpdir(), 'wallet-prepared-generation-'))
+  const backup = new StorageKnex({
+    ...StorageProvider.createStorageBaseOptions('test'),
+    knex: knex({
+      client: 'better-sqlite3',
+      connection: { filename: join(directory, 'backup.sqlite') },
+      useNullAsDefault: true,
+      pool: { min: 0, max: 1 }
+    })
+  })
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => {
+      release = resolve
+    }),
+    reached = new Promise<void>(resolve => {
+      entered = resolve
+    })
+  let pending: Promise<unknown> | undefined
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    await backup.migrate('actual generation peer', 'manager-generation-peer')
+    const before = await ctx.activeStorage.knex('transactions').count({ n: '*' }).first()
+    const read = ctx.activeStorage.findOutputBaskets.bind(ctx.activeStorage)
+    jest.spyOn(ctx.activeStorage, 'findOutputBaskets').mockImplementationOnce(async (...args) => {
+      const rows = await read(...args)
+      entered()
+      await gate
+      return rows
+    })
+    pending = ctx.storage.createAction(
+      Validation.validateCreateActionArgs({
+        description: 'obsolete manager preparation',
+        outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'must not publish' }],
+        options: { noSend: true }
+      })
+    )
+    await Promise.race([
+      reached,
+      pending.then(() => {
+        throw new Error('Actual wallet preparation did not pause')
+      })
+    ])
+    await ctx.storage.addWalletStorageProvider(backup)
+    expect((await ctx.activeStorage.findUsers({ partial: { userId: ctx.userId } }))[0].activeStorage).toBe(
+      ctx.activeStorage.getSettings().storageIdentityKey
+    )
+    release()
+    await expect(pending).rejects.toThrow('obsolete manager')
+    expect(await ctx.activeStorage.knex('transactions').count({ n: '*' }).first()).toEqual(before)
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await ctx.wallet.destroy()
+    await backup.destroy()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

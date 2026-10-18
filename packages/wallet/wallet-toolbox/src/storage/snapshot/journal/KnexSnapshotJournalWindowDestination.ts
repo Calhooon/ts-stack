@@ -87,6 +87,7 @@ export abstract class KnexSnapshotJournalWindowDestination {
       async () =>
         await storage.runSnapshotJournalWriter(
           async (trx, backend) => {
+            await storage.assertFinancialDataWriteAdmission(identityKey, source.sourceStorage.storageIdentityKey, trx)
             const uploads = uploadOwner === undefined ? undefined : new KnexSnapshotArchiveRequestStore(trx)
             if (uploadOwner !== undefined) await uploads!.verifyJournalFieldUploadWriter(uploadOwner, source.journal)
             try {
@@ -166,7 +167,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
                   binding,
                   checkpoint,
                   source.snapshotId,
-                  source.journal.contentRevision
+                  source.journal.contentRevision,
+                  { sourceStorage: source.sourceStorage, user: source.user, primary: source.journal.primary }
                 )
                 return { binding, checkpoint, previous: undefined, incremental: false }
               }
@@ -203,7 +205,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
                 binding,
                 checkpoint,
                 source.snapshotId,
-                source.journal.contentRevision
+                source.journal.contentRevision,
+                { sourceStorage: source.sourceStorage, user: source.user, primary: source.journal.primary }
               )
               return { binding, checkpoint, previous: undefined, incremental: false }
             } finally {
@@ -268,7 +271,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
           begin.binding,
           next,
           source.snapshotId,
-          source.journal.contentRevision
+          source.journal.contentRevision,
+          { sourceStorage: source.sourceStorage, user: source.user, primary: source.journal.primary }
         )
         return next
       })
@@ -368,6 +372,12 @@ export abstract class KnexSnapshotJournalWindowDestination {
         await this.storage.runSnapshotJournalWriter(
           async (trx, backend) => {
             this.current()
+            if (!observe)
+              await this.storage.assertFinancialDataWriteAdmission(
+                this.binding.source.identityKey,
+                this.binding.source.storageIdentity,
+                trx
+              )
             const uploads = this.uploadOwner === undefined ? undefined : new KnexSnapshotArchiveRequestStore(trx)
             if (this.uploadOwner !== undefined)
               await uploads!.verifyJournalFieldUploadWriter(this.uploadOwner, this.binding)

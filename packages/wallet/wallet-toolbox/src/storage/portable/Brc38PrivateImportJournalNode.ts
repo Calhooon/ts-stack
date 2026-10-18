@@ -1,3 +1,4 @@
+import { assertKnexPrimaryRestoreWrite } from '../KnexPrimaryHandoffAdmission'
 import type { Brc38PrivateCheckpointData } from './Brc38PrivateCheckpointData'
 import {
   assertBrc38PrivateMergeProgramBudget,
@@ -210,6 +211,7 @@ async function commitBoundImportStep(
       step,
       brc38ImportDestinationDigest(actual),
       async () => {
+        await assertKnexPrimaryRestoreWrite(storage, trx, preview.target.identityKey)
         await apply(trx)
         await assertBrc38PrivateMergeProgramBudget(trx, admission)
         const post = await read()

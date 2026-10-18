@@ -4653,6 +4653,35 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/KnexActiveWriteFence.ts',
         'src/storage/StorageReqWrite.ts',
         'src/storage/KnexPrimaryHandoffControl.ts',
+        'src/storage/KnexPrimaryHandoffAdmission.ts',
+        'src/storage/KnexPrimaryHandoffCopies.ts',
+        'src/storage/KnexPrimaryHandoffCopyMetadata.ts',
+        'src/storage/KnexWalletWriteAdmission.ts',
+        'src/storage/PrimaryHandoffPlan.ts',
+        'src/storage/PrimaryHandoffProgram.ts',
+        'src/storage/remoting/PrimaryHandoffProtocol.ts',
+        'src/storage/schema/entities/EntityUser.ts',
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/WalletStorageManager.ts',
+          'private async trySetActiveHandoff(',
+          'private async trySetActiveJournal('
+        ),
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/WalletStorageManager.ts',
+          'private async runAsAuthorizedWriter<R>(',
+          'runAsReader<R>('
+        ),
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/WalletStorageManager.ts',
+          'private async copyJournalWindow(',
+          'private async confirmLocalJournalPushContent('
+        ),
         'src/storage/schema/primaryHandoffMigration.ts',
         sourceLineRange(
           repositoryRoot,
@@ -4817,6 +4846,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         [
           '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
           '<rootDir>/src/storage/__test/KnexPrimaryHandoffControl.test.ts',
+          '<rootDir>/src/storage/snapshot/journal/KnexSnapshotJournalDataDestination.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskSendWaiting.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReviewUtxos.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReviewDoubleSpends.test.ts',

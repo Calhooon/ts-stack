@@ -1,3 +1,5 @@
+import { captureBrc38KnexDestinationFence, withBrc38KnexDestinationFence } from '../portable/Brc38KnexDestinationFence'
+import { EntitySyncState } from '../schema/entities/EntitySyncState'
 import { knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -16,7 +18,7 @@ import { _tu } from '../../../test/utils/TestUtilsWalletStorage'
 
 const identityKey = '02' + '11'.repeat(32),
   operationId = 'ab'.repeat(16)
-async function fixture(local = 'source') {
+async function fixture(local = 'source', peerSnapshotSync = true) {
   const directory = await mkdtemp(join(tmpdir(), 'actual-primary-handoff-'))
   const config = {
     client: 'better-sqlite3',
@@ -25,7 +27,11 @@ async function fixture(local = 'source') {
     pool: { min: 0, max: 1 }
   }
   const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: knex(config) })
-  const peer = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: knex(config) })
+  const peer = new StorageKnex({
+    ...StorageProvider.createStorageBaseOptions('test'),
+    snapshotSync: peerSnapshotSync,
+    knex: knex(config)
+  })
   const close = async () => {
     const results = await Promise.allSettled([storage.destroy(), peer.destroy()])
     await rm(directory, { recursive: true, force: true })
@@ -38,7 +44,7 @@ async function fixture(local = 'source') {
     await peer.makeAvailable()
     const { user } = await storage.findOrInsertUser(identityKey)
     const control = await storage.getPrimaryHandoffControl(),
-      independent = await peer.getPrimaryHandoffControl()
+      independent = peerSnapshotSync ? await peer.getPrimaryHandoffControl() : control
     if (control == null || independent == null) throw new Error('Actual migrated SQL control unavailable')
     return { storage, peer, user, auth: { userId: user.userId, identityKey }, control, independent, close }
   } catch (error) {
@@ -190,11 +196,29 @@ test('control rollback preserves role, epoch and intent, and enrolled downgrade 
       if (/^update [`"]wallet_primary_handoffs[`"]/.test(query.sql) && query.bindings?.includes('retired'))
         throw new Error('injected retirement rollback')
     }
-    f.storage.knex.on('query', stop)
+    const original = f.storage.runSnapshotJournalWriter.bind(f.storage)
+    let injected = false
+    const writer = jest.spyOn(f.storage, 'runSnapshotJournalWriter').mockImplementation(
+      async (apply, backend, signal) =>
+        await original(
+          async (trx, actualBackend) => {
+            trx.on('query', stop)
+            try {
+              injected = true
+              return await apply(trx, actualBackend)
+            } finally {
+              trx.removeListener('query', stop)
+            }
+          },
+          backend,
+          signal
+        )
+    )
     try {
       await expect(f.control.retireSource(f.auth, plan())).rejects.toThrow('injected retirement rollback')
+      expect(injected).toBe(true)
     } finally {
-      f.storage.knex.removeListener('query', stop)
+      writer.mockRestore()
     }
     expect((await f.independent.status(f.auth))?.phase).toBe('prepared')
     expect((await f.storage.findUsers({ partial: { userId: f.user.userId } }))[0].activeStorage).toBe('source')
@@ -292,6 +316,212 @@ test('even empty control schema uses forward recovery rather than a racy MySQL-s
     await expect(removePrimaryHandoffSchema(f.storage.knex)).rejects.toThrow('forward recovery')
     await verifyPrimaryHandoffSchema(f.storage.knex)
     expect(await f.control.status(f.auth)).toBeUndefined()
+  } finally {
+    await f.close()
+  }
+})
+
+test('actual legacy DATA prepared before retirement cannot merge rows or advance its checkpoint', async () => {
+  const source = await fixture('backup'),
+    destination = await fixture()
+  try {
+    await source.storage.findOrInsertTxLabel(source.user.userId, 'actual late sync label')
+    const ss = await EntitySyncState.fromStorage(destination.storage, identityKey, source.storage.getSettings())
+    const args = ss.makeRequestSyncChunkArgs(identityKey, 'source')
+    const chunk = await source.storage.getSyncChunk(args)
+    const prepared = await destination.storage.prepareSyncChunk(args, chunk)
+    const before = await destination.storage.knex('sync_states')
+    await destination.control.prepareSource(destination.auth, operationId, 'target')
+    await destination.control.retireSource(destination.auth, plan())
+    await expect(destination.storage.transaction(async trx => await prepared(trx))).rejects.toMatchObject({
+      code: 'WERR_NOT_ACTIVE'
+    })
+    await expect(destination.storage.processSyncChunk(args, chunk)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(await destination.storage.knex('sync_states')).toEqual(before)
+    expect(await destination.storage.findTxLabels({ partial: { label: 'actual late sync label' } })).toEqual([])
+  } finally {
+    await Promise.all([source.close(), destination.close()])
+  }
+})
+
+test('enrolled target DATA preserves parked selection while merging genuine allowed-source rows', async () => {
+  const source = await fixture(),
+    target = await fixture('target'),
+    foreign = await fixture('foreign')
+  try {
+    const prepared = await source.control.prepareSource(source.auth, operationId, 'target')
+    await target.control.prepareTarget(target.auth, plan(prepared.epoch))
+    await source.storage.findOrInsertTxLabel(source.user.userId, 'declared actual source label')
+    await source.control.retireSource(source.auth, plan(prepared.epoch))
+    const ss = await EntitySyncState.fromStorage(target.storage, identityKey, source.storage.getSettings())
+    const args = ss.makeRequestSyncChunkArgs(identityKey, 'target')
+    const chunk = await source.storage.getSyncChunk(args)
+    // The actual source selects target after retirement. A DATA user merge
+    // cannot activate it or bypass the explicit durable control gate.
+    expect(chunk.user?.activeStorage).toBe('target')
+    if (chunk.user == null) throw new Error('Genuine sync user missing')
+    chunk.user.updated_at = new Date(Date.now() + 1000)
+    await target.storage.processSyncChunk(args, chunk)
+    expect(await target.storage.findTxLabels({ partial: { label: 'declared actual source label' } })).toHaveLength(1)
+    expect((await target.storage.findUsers({ partial: { userId: target.user.userId } }))[0].activeStorage).toBe(
+      'source'
+    )
+    expect((await target.control.status(target.auth))?.phase).toBe('prepared')
+    await foreign.storage.findOrInsertTxLabel(foreign.user.userId, 'undeclared source label')
+    const foreignState = await EntitySyncState.fromStorage(target.storage, identityKey, foreign.storage.getSettings())
+    const foreignArgs = foreignState.makeRequestSyncChunkArgs(identityKey, 'target')
+    await expect(
+      target.storage.processSyncChunk(foreignArgs, await foreign.storage.getSyncChunk(foreignArgs))
+    ).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(await target.storage.findTxLabels({ partial: { label: 'undeclared source label' } })).toEqual([])
+  } finally {
+    await Promise.all([source.close(), target.close(), foreign.close()])
+  }
+})
+
+test('disabling snapshot capability cannot downgrade an enrolled ordinary writer', async () => {
+  const f = await fixture('source', false)
+  try {
+    expect(await f.peer.supportsPrimaryWriteFences()).toBe(false)
+    await f.control.prepareSource(f.auth, operationId, 'target')
+    expect(await f.peer.supportsPrimaryWriteFences()).toBe(true)
+    const old = await f.peer.activeWriteTransaction(f.auth)
+    await f.control.retireSource(f.auth, plan())
+    const apply = jest.fn(async () => {})
+    await expect(old.transaction(apply)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await expect(f.peer.activeWriteTransaction(f.auth)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(apply).not.toHaveBeenCalled()
+  } finally {
+    await f.close()
+  }
+})
+
+test('changed actual control guards reject incoming enrolled DATA without cached schema authority', async () => {
+  const source = await fixture('backup'),
+    target = await fixture()
+  try {
+    await target.control.prepareSource(target.auth, operationId, 'target')
+    const ss = await EntitySyncState.fromStorage(target.storage, identityKey, source.storage.getSettings())
+    const args = ss.makeRequestSyncChunkArgs(identityKey, 'source')
+    const chunk = await source.storage.getSyncChunk(args)
+    await target.storage.processSyncChunk(args, chunk)
+    await target.storage.knex.raw('DROP TRIGGER wallet_primary_control_guard')
+    await expect(target.storage.processSyncChunk(args, chunk)).rejects.toThrow('schema')
+    await expect(target.storage.activeWriteTransaction(target.auth)).rejects.toThrow('schema')
+  } finally {
+    await Promise.all([source.close(), target.close()])
+  }
+})
+
+test('activation cannot select a target from control DATA without actual final financial ACKs', async () => {
+  const source = await fixture(),
+    target = await fixture('target')
+  try {
+    const prepared = await source.control.prepareSource(source.auth, operationId, 'target')
+    const selected = plan(prepared.epoch)
+    await target.control.prepareTarget(target.auth, selected)
+    await source.control.retireSource(source.auth, selected)
+    await expect(target.control.activateTarget(target.auth, selected)).rejects.toThrow('actual completed')
+    expect((await target.independent.status(target.auth))?.phase).toBe('prepared')
+    expect((await target.storage.findUsers({ partial: { userId: target.user.userId } }))[0].activeStorage).toBe(
+      'source'
+    )
+    await expect(source.control.cancel(source.auth, operationId)).rejects.toThrow('recover forward')
+    await expect(target.control.completeTarget(target.auth, selected)).rejects.toThrow()
+  } finally {
+    await Promise.all([source.close(), target.close()])
+  }
+})
+
+test('cancellation preserves source writes, never reactivates a parked target, and permits a fresh operation', async () => {
+  const source = await fixture(),
+    target = await fixture('target')
+  try {
+    const prepared = await source.control.prepareSource(source.auth, operationId, 'target')
+    await target.control.prepareTarget(target.auth, plan(prepared.epoch))
+    expect((await source.control.cancel(source.auth, operationId)).phase).toBe('cancelled')
+    await expect(source.storage.activeWriteTransaction(source.auth)).resolves.toBeDefined()
+    expect((await target.control.cancel(target.auth, operationId)).phase).toBe('cancelled')
+    await expect(target.storage.activeWriteTransaction(target.auth)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await expect(source.control.retireSource(source.auth, plan())).rejects.toThrow()
+    await expect(target.control.activateTarget(target.auth, plan())).rejects.toThrow()
+    const next = 'cd'.repeat(16)
+    await source.control.prepareSource(source.auth, next, 'target')
+    await target.control.prepareTarget(target.auth, { ...plan(), operationId: next })
+    expect((await source.independent.status(source.auth))?.operationId).toBe(next)
+    expect((await target.independent.status(target.auth))?.operationId).toBe(next)
+  } finally {
+    await Promise.all([source.close(), target.close()])
+  }
+})
+
+test('explicit backup propagation cannot bypass retirement of an actual writable participant', async () => {
+  const f = await fixture('backup')
+  try {
+    await expect(f.control.followTarget(f.auth, plan())).rejects.toThrow()
+    expect(await f.control.status(f.auth)).toBeUndefined()
+    await f.peer.setActive(f.auth, 'source')
+    const followed = await f.control.followTarget(f.auth, plan())
+    expect(followed).toMatchObject({ side: 'backup', phase: 'complete', targetStorageIdentityKey: 'target' })
+    expect(await f.independent.followTarget(f.auth, plan())).toEqual(followed)
+    await expect(f.storage.activeWriteTransaction(f.auth)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await expect(f.peer.setActive(f.auth, 'backup')).rejects.toThrow('Coordinated primary control')
+  } finally {
+    await f.close()
+  }
+})
+
+test('cancelling an actual control writer before physical commit rolls back role epoch and intent together', async () => {
+  const f = await fixture(),
+    controller = new AbortController()
+  try {
+    const control = await f.storage.getPrimaryHandoffControl({ signal: controller.signal })
+    if (control === undefined) throw new Error('Actual control unavailable')
+    await control.prepareSource(f.auth, operationId, 'target')
+    const update = f.storage.updateUser.bind(f.storage)
+    const spy = jest.spyOn(f.storage, 'updateUser').mockImplementation(async (...args) => {
+      const result = await update(...args)
+      if (args[1].activeStorage === 'target') controller.abort(new Error('actual cutover cancellation'))
+      return result
+    })
+    try {
+      await expect(control.retireSource(f.auth, plan())).rejects.toThrow('actual cutover cancellation')
+    } finally {
+      spy.mockRestore()
+    }
+    expect((await f.independent.status(f.auth))?.phase).toBe('prepared')
+    expect((await f.storage.findUsers({ partial: { userId: f.user.userId } }))[0].activeStorage).toBe('source')
+    expect(await f.storage.knex('snapshot_sync_primary_epochs')).toEqual([])
+    await expect(f.storage.activeWriteTransaction(f.auth)).resolves.toBeDefined()
+  } finally {
+    await f.close()
+  }
+})
+
+test('genuine restore writer defers on a retired source while read-only preview remains observable', async () => {
+  const f = await fixture()
+  try {
+    await f.storage.knex.raw('PRAGMA journal_mode=WAL')
+    await f.control.prepareSource(f.auth, operationId, 'target')
+    await f.control.retireSource(f.auth, plan())
+    const policy = await f.storage
+      .knex('snapshot_journal_retention')
+      .select('receiptLimit', 'receiptLifetimeMs')
+      .first()
+    if (policy === undefined) throw new Error('Actual retention policy unavailable')
+    const selected = { identityKey, chain: 'test' as const, targetStorageIdentityKey: 'source', mode: 'merge' as const }
+    const preview = await captureBrc38KnexDestinationFence(f.storage, selected, policy)
+    const before = await f.storage.knex('tx_labels')
+    const apply = jest.fn(
+      async (trx: import('knex').Knex.Transaction) =>
+        await f.storage.findOrInsertTxLabel(f.user.userId, 'late restore row', trx)
+    )
+    await expect(withBrc38KnexDestinationFence(f.storage, preview, policy, apply)).rejects.toMatchObject({
+      code: 'WERR_NOT_ACTIVE'
+    })
+    expect(apply).not.toHaveBeenCalled()
+    expect(await f.storage.knex('tx_labels')).toEqual(before)
+    expect((await f.independent.status(f.auth))?.phase).toBe('retired')
   } finally {
     await f.close()
   }

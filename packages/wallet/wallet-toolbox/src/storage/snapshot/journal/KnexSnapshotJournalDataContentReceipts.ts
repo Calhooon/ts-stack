@@ -1,3 +1,4 @@
+import { recordKnexPrimaryCopyMetadata, type PrimaryCopySourceMetadata } from '../../KnexPrimaryHandoffCopyMetadata'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
@@ -136,13 +137,15 @@ export class KnexSnapshotJournalDataContentReceipts {
     binding: SnapshotJournalDestinationBinding,
     checkpoint: SnapshotJournalDestinationCheckpoint,
     snapshotId: string,
-    input: SnapshotSyncContentRevision | undefined
+    input: SnapshotSyncContentRevision | undefined,
+    metadata?: PrimaryCopySourceMetadata
   ): Promise<void> {
     this.current(k)
     if (input === undefined || !(await this.supports(k))) return
     const source = parseSnapshotSyncContentRevision(input),
       prior = await this.read(k, binding)
     if (!/^[0-9a-f]{64}$/.test(snapshotId)) invalid()
+    await recordKnexPrimaryCopyMetadata(this.storage, k, binding, checkpoint, source, metadata)
     if (prior?.sessionId === checkpoint.sessionId) {
       if (
         prior.snapshotId !== snapshotId ||

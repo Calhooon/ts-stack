@@ -174,27 +174,9 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-The [local handoff control component](primary-handoff.md) now supplies durable
-preparation/retirement and enrolled-profile database guards; actual target
-financial activation and manager/RPC/recovery integration are still incomplete.
-The integrated lifecycle and maintenance paths still require original full
-backend/native/platform and concurrency qualification. A complete remaining-writer
-audit must accompany primary handoff integration. These implemented monitor paths do not imply that every surrounding
-maintenance writer is fenced. Remaining supported-provider and large-record
-routing, full primary handoff and whole-system qualification are still required. Previously committed old-primary work
-must be reconciled through actual target state; a caller's failure log is not a
-new financial acknowledgement or permission to undo it on another primary.
-
-The owning SQLite regressions exercise a separate controller's role change,
-away-and-back ABA, atomic rollback, foreign/escaped tokens, identity mismatch,
-profile independence, actual trigger removal/change, a relinquishment suspended
-at lookup, real create/internalize/abort preparation races, and old batch
-begin/renew/resume/extend/abort requests across an ABA transition. Genuine shared
-transaction copies also exercise independent profile epochs, authenticated
-non-borrowing, late history/notification preservation, signed processAction and
-positive spent-evidence races, and an actual broadcast suspended across an ABA.
-Existing funding
-performance assertions retain their one physical transaction oracle. These
-component tests do not qualify remote handoff, native/MySQL/IndexedDB behavior,
-process crash, full-system performance or production readiness. Complete all
-features and integration before the original full qualification campaign.
+The [durable handoff controls](primary-handoff.md) now connect source preparation,
+target parking, retirement, actual final receipt/postimage-gated activation and
+explicit backup propagation to local and authenticated full/mobile manager
+selection. Incoming DATA and ordinary writes retain actual enrolled-role checks;
+uncertain replies recover forward. Complete provider, financial, platform and
+exact-head qualification remains required before production adoption.

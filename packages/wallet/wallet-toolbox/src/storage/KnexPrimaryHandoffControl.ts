@@ -1,12 +1,24 @@
-import type { TableUser } from './schema/tables/TableUser'
+import { requireKnexPrimaryCopies } from './KnexPrimaryHandoffCopies'
+import {
+  canonicalPrimaryHandoffPlan,
+  primaryHandoffIdentity as identity,
+  primaryHandoffOperation as operation
+} from './PrimaryHandoffPlan'
+export { canonicalPrimaryHandoffPlan } from './PrimaryHandoffPlan'
 import type { Knex } from 'knex'
 import type { StorageKnex } from './StorageKnex'
 import type { AuthId } from '../sdk/WalletStorage.interfaces'
-import type { PrimaryHandoffControl, PrimaryHandoffPlan, PrimaryHandoffStatus } from './PrimaryHandoffControl'
+import type {
+  PrimaryHandoffControl,
+  PrimaryHandoffPlan,
+  PrimaryHandoffStatus,
+  PrimaryHandoffControlOptions
+} from './PrimaryHandoffControl'
 import { WERR_INVALID_OPERATION, WERR_NOT_ACTIVE, WERR_UNAUTHORIZED } from '../sdk/WERR_errors'
 import { snapshotJournalRevision } from './snapshot/journal/SnapshotJournalRevision'
 import {
   PRIMARY_HANDOFF_KEY,
+  PRIMARY_HANDOFF_COPIES,
   PRIMARY_HANDOFF_MIGRATION,
   PRIMARY_HANDOFF_TABLE,
   verifyPrimaryHandoffSchema
@@ -28,48 +40,6 @@ const fields = {
 function invalid(message = 'Primary handoff intent is invalid or conflicts with pending control'): never {
   throw new WERR_INVALID_OPERATION(message)
 }
-function identity(value: unknown): string {
-  if (typeof value !== 'string' || value.length < 1 || value.length > 130) invalid()
-  return value
-}
-function operation(value: unknown): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{32}$/.test(value)) invalid()
-  return value
-}
-function exact(value: object, names: string[]): void {
-  const keys = Object.keys(value).sort(),
-    expected = names.sort()
-  if (JSON.stringify(keys) !== JSON.stringify(expected)) invalid()
-}
-/** Bounded canonical comparison metadata. Parsing this never creates a SQL
- * capability or proves that any remote source retired or any copy completed. */
-export function canonicalPrimaryHandoffPlan(input: PrimaryHandoffPlan): PrimaryHandoffPlan {
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) invalid()
-  exact(input, ['version', 'operationId', 'targetStorageIdentityKey', 'sources'])
-  if (input.version !== 1 || !Array.isArray(input.sources) || input.sources.length < 1 || input.sources.length > 8)
-    invalid()
-  const targetStorageIdentityKey = identity(input.targetStorageIdentityKey)
-  const sources = input.sources
-    .map(source => {
-      if (source == null || typeof source !== 'object' || Array.isArray(source)) invalid()
-      exact(source, ['storageIdentityKey', 'epoch'])
-      const storageIdentityKey = identity(source.storageIdentityKey)
-      if (storageIdentityKey === targetStorageIdentityKey) invalid()
-      return { storageIdentityKey, epoch: snapshotJournalRevision(source.epoch) }
-    })
-    .sort((a, b) =>
-      a.storageIdentityKey < b.storageIdentityKey ? -1 : a.storageIdentityKey === b.storageIdentityKey ? 0 : 1
-    )
-  if (new Set(sources.map(source => source.storageIdentityKey)).size !== sources.length) invalid()
-  const plan: PrimaryHandoffPlan = {
-    version: 1,
-    operationId: operation(input.operationId),
-    targetStorageIdentityKey,
-    sources
-  }
-  if (JSON.stringify(plan).length > 8192) invalid()
-  return plan
-}
 interface Role {
   activeStorage: string | null
   epoch: string
@@ -77,8 +47,11 @@ interface Role {
 /** Bound to one actual provider/root. Every method owns a short real SQL
  * transaction and authenticates the actual user; caller isActive is ignored. */
 export async function createKnexPrimaryHandoffControl(
-  storage: StorageKnex
+  storage: StorageKnex,
+  options: PrimaryHandoffControlOptions = {}
 ): Promise<PrimaryHandoffControl | undefined> {
+  const signal = options.signal
+  signal?.throwIfAborted()
   const root = storage.knex,
     local = storage.getSettings().storageIdentityKey
   const migrations = root.client.config.migrations?.tableName ?? 'knex_migrations'
@@ -132,8 +105,8 @@ export async function createKnexPrimaryHandoffControl(
       row.roleGateFrom !== null ||
       row.roleGateTo !== null ||
       row.roleGateEpoch !== null ||
-      !['source', 'target'].includes(String(row.side)) ||
-      !['prepared', 'retired'].includes(String(row.phase))
+      !['source', 'target', 'backup'].includes(String(row.side)) ||
+      !['prepared', 'retired', 'activated', 'complete', 'cancelled'].includes(String(row.phase))
     )
       invalid()
     const target = identity(row.targetStorageIdentityKey)
@@ -152,26 +125,38 @@ export async function createKnexPrimaryHandoffControl(
       )
         invalid()
     }
-    const side = row.side as 'source' | 'target',
-      phase = row.phase as 'prepared' | 'retired'
+    const side = row.side as PrimaryHandoffStatus['side'],
+      phase = row.phase as PrimaryHandoffStatus['phase']
     const sourceEpoch = row.sourceEpoch === null ? undefined : snapshotJournalRevision(row.sourceEpoch)
     if (side === 'source') {
       if (
         target === local ||
         sourceEpoch === undefined ||
-        (phase === 'prepared'
+        !['prepared', 'retired', 'complete', 'cancelled'].includes(phase) ||
+        (phase === 'prepared' || phase === 'cancelled'
           ? role.activeStorage !== local || role.epoch !== sourceEpoch
           : role.activeStorage !== target || BigInt(role.epoch) !== BigInt(sourceEpoch) + 1n || plan === undefined)
       )
         invalid()
       if (plan != null && plan.sources.find(source => source.storageIdentityKey === local)?.epoch !== sourceEpoch)
         invalid()
+    } else if (side === 'backup') {
+      if (
+        target === local ||
+        phase !== 'complete' ||
+        sourceEpoch !== undefined ||
+        plan === undefined ||
+        role.activeStorage !== target
+      )
+        invalid()
     } else if (
       target !== local ||
-      phase !== 'prepared' ||
+      !['prepared', 'activated', 'complete', 'cancelled'].includes(phase) ||
       sourceEpoch !== undefined ||
       plan === undefined ||
-      !plan.sources.some(source => source.storageIdentityKey === role.activeStorage)
+      (phase === 'activated' || phase === 'complete'
+        ? role.activeStorage !== local
+        : !plan.sources.some(source => source.storageIdentityKey === role.activeStorage))
     )
       invalid()
     return {
@@ -188,9 +173,11 @@ export async function createKnexPrimaryHandoffControl(
   }
   const transaction = async <T>(
     auth: AuthId,
-    body: (k: Knex.Transaction, role: Role, auth: AuthId) => Promise<T>
+    body: (k: Knex.Transaction, role: Role, auth: AuthId) => Promise<T>,
+    journal = true
   ): Promise<T> => {
     const actor: AuthId = { userId: auth.userId, identityKey: auth.identityKey }
+    signal?.throwIfAborted()
     if (storage.knex !== root || !(await storage.supportsPrimaryWriteFences()))
       invalid('Primary control provider is unavailable or changed')
     if (
@@ -201,9 +188,9 @@ export async function createKnexPrimaryHandoffControl(
       actor.identityKey.length > 130
     )
       throw new WERR_UNAUTHORIZED()
-    return await storage.transaction(async token => {
+    const apply = async (token: unknown): Promise<T> => {
       const k = token as Knex.Transaction
-      if (!k.isTransaction || k.isCompleted() || storage.toDb(token) !== k) invalid()
+      if (!k.isTransaction || k.isCompleted() || storage.toDb(k) !== k) invalid()
       if (mysql) {
         if ((await k('users').where({ userId: actor.userId }).select('userId').limit(2).forUpdate()).length !== 1)
           throw new WERR_UNAUTHORIZED()
@@ -222,14 +209,17 @@ export async function createKnexPrimaryHandoffControl(
       const saved = await read(k, actor.userId!)
       if (saved != null) decode(saved, await readRole(k, actor))
       return result
-    })
+    }
+    return journal
+      ? await storage.runSnapshotJournalWriter(async token => await apply(token), undefined, signal)
+      : await storage.transaction(async token => await apply(token))
   }
   const insert = async (
     k: Knex,
     auth: AuthId,
     operationId: string,
     target: string,
-    side: 'source' | 'target',
+    side: PrimaryHandoffStatus['side'],
     role: Role,
     plan?: PrimaryHandoffPlan
   ) => {
@@ -259,15 +249,55 @@ export async function createKnexPrimaryHandoffControl(
         .update({ roleGateFrom: before.activeStorage, roleGateTo: next, roleGateEpoch: before.epoch })) !== 1
     )
       invalid()
-    if (
-      (await k('users')
-        .where({ userId: auth.userId, activeStorage: before.activeStorage })
-        .update(storage.validatePartialForUpdate<TableUser>({ activeStorage: next }))) !== 1
-    )
-      invalid()
+    if ((await storage.updateUser(auth.userId!, { activeStorage: next }, k)) !== 1) invalid()
     const after = await readRole(k, auth)
     if (after.activeStorage !== next || BigInt(after.epoch) !== BigInt(before.epoch) + 1n) invalid()
     return after
+  }
+  const replaceFinished = async (
+    k: Knex,
+    auth: AuthId,
+    current: PrimaryHandoffStatus,
+    nextId: string
+  ): Promise<boolean> => {
+    if (!['complete', 'cancelled'].includes(current.phase) || current.operationId === nextId) return false
+    await k(PRIMARY_HANDOFF_COPIES).where({ userId: auth.userId }).delete()
+    if (
+      (await k(PRIMARY_HANDOFF_TABLE)
+        .where({
+          userId: auth.userId,
+          sourceKey: PRIMARY_HANDOFF_KEY,
+          operationId: current.operationId,
+          phase: current.phase
+        })
+        .delete()) !== 1
+    )
+      invalid()
+    return true
+  }
+  const matching = (current: PrimaryHandoffStatus, plan: PrimaryHandoffPlan, side: 'source' | 'target') => {
+    if (
+      current.side !== side ||
+      current.operationId !== plan.operationId ||
+      current.targetStorageIdentityKey !== plan.targetStorageIdentityKey ||
+      JSON.stringify(current.plan) !== JSON.stringify(plan)
+    )
+      invalid()
+  }
+  const finish = async (auth: AuthId, input: PrimaryHandoffPlan, side: 'source' | 'target') => {
+    const plan = canonicalPrimaryHandoffPlan(input)
+    return await transaction(auth, async (k, role, actor) => {
+      const row = await read(k, actor.userId!)
+      if (row === undefined) invalid()
+      const current = decode(row, role)
+      matching(current, plan, side)
+      if (current.phase === 'complete') return current
+      if (current.phase !== (side === 'source' ? 'retired' : 'activated')) invalid()
+      await k(PRIMARY_HANDOFF_TABLE)
+        .where({ userId: actor.userId, sourceKey: PRIMARY_HANDOFF_KEY })
+        .update({ phase: 'complete' })
+      return decode((await read(k, actor.userId!))!, role)
+    })
   }
   const status = async (auth: AuthId) =>
     await transaction(auth, async (k, role, auth) => {
@@ -284,13 +314,16 @@ export async function createKnexPrimaryHandoffControl(
         const row = await read(k, auth.userId!)
         if (row != null) {
           const current = decode(row, role)
-          if (
-            current.side !== 'source' ||
-            current.operationId !== operationId ||
-            current.targetStorageIdentityKey !== target
-          )
-            invalid()
-          return { storageIdentityKey: local, epoch: current.sourceEpoch! }
+          if (!(await replaceFinished(k, auth, current, operationId))) {
+            if (
+              current.side !== 'source' ||
+              current.operationId !== operationId ||
+              current.targetStorageIdentityKey !== target ||
+              current.phase === 'cancelled'
+            )
+              invalid()
+            return { storageIdentityKey: local, epoch: current.sourceEpoch! }
+          }
         }
         if (role.activeStorage !== local)
           throw new WERR_NOT_ACTIVE('Only the actual current primary may prepare retirement')
@@ -305,8 +338,11 @@ export async function createKnexPrimaryHandoffControl(
         const row = await read(k, auth.userId!)
         if (row != null) {
           const current = decode(row, role)
-          if (current.side !== 'target' || JSON.stringify(current.plan) !== JSON.stringify(plan)) invalid()
-          return current
+          if (!(await replaceFinished(k, auth, current, plan.operationId))) {
+            matching(current, plan, 'target')
+            if (current.phase === 'cancelled') invalid()
+            return current
+          }
         }
         if (
           role.activeStorage !== local &&
@@ -335,12 +371,83 @@ export async function createKnexPrimaryHandoffControl(
           (current.plan !== undefined && JSON.stringify(current.plan) !== JSON.stringify(plan))
         )
           invalid()
-        if (current.phase === 'retired') return current
+        if (current.phase === 'retired' || current.phase === 'complete') return current
+        if (current.phase !== 'prepared') invalid()
         const after = await changeRole(k, auth, role, plan.targetStorageIdentityKey)
         await k(PRIMARY_HANDOFF_TABLE)
           .where({ userId: auth.userId, sourceKey: PRIMARY_HANDOFF_KEY })
           .update({ plan: JSON.stringify(plan), phase: 'retired', localEpoch: after.epoch })
         return decode((await read(k, auth.userId!))!, after)
+      })
+    },
+    activateTarget: async (auth, input) => {
+      const plan = canonicalPrimaryHandoffPlan(input)
+      return await transaction(
+        auth,
+        async (k, role, actor) => {
+          const row = await read(k, actor.userId!)
+          if (row === undefined) invalid()
+          const current = decode(row, role)
+          matching(current, plan, 'target')
+          if (current.phase === 'activated' || current.phase === 'complete') return current
+          if (current.phase !== 'prepared') invalid()
+          const final = await requireKnexPrimaryCopies(storage, k, actor.userId!, actor.identityKey, plan)
+          const after = await changeRole(k, actor, role, local)
+          await k(PRIMARY_HANDOFF_TABLE)
+            .where({ userId: actor.userId, sourceKey: PRIMARY_HANDOFF_KEY })
+            .update({ phase: 'activated', localEpoch: after.epoch })
+          await final.receipts.recordPrimarySelection(k, final.binding, final.checkpoint, local)
+          return decode((await read(k, actor.userId!))!, after)
+        },
+        true
+      )
+    },
+    followTarget: async (auth, input) => {
+      const plan = canonicalPrimaryHandoffPlan(input)
+      if (plan.targetStorageIdentityKey === local) invalid()
+      return await transaction(auth, async (k, role, actor) => {
+        const row = await read(k, actor.userId!)
+        if (row !== undefined) {
+          const current = decode(row, role)
+          if (
+            current.side === 'backup' &&
+            current.phase === 'complete' &&
+            JSON.stringify(current.plan) === JSON.stringify(plan)
+          )
+            return current
+          if (!(await replaceFinished(k, actor, current, plan.operationId))) invalid()
+        }
+        // Every genuinely writable participant must prepare, retire and copy
+        // as a declared source. A backup follow can never skip that sequence.
+        if (
+          role.activeStorage === local ||
+          (role.activeStorage !== plan.targetStorageIdentityKey &&
+            !plan.sources.some(source => source.storageIdentityKey === role.activeStorage))
+        )
+          invalid()
+        await insert(k, actor, plan.operationId, plan.targetStorageIdentityKey, 'backup', role, plan)
+        const after = await changeRole(k, actor, role, plan.targetStorageIdentityKey)
+        await k(PRIMARY_HANDOFF_TABLE)
+          .where({ userId: actor.userId, sourceKey: PRIMARY_HANDOFF_KEY })
+          .update({ phase: 'complete', localEpoch: after.epoch })
+        return decode((await read(k, actor.userId!))!, after)
+      })
+    },
+    completeSource: async (auth, plan) => await finish(auth, plan, 'source'),
+    completeTarget: async (auth, plan) => await finish(auth, plan, 'target'),
+    cancel: async (auth, id) => {
+      const operationId = operation(id)
+      return await transaction(auth, async (k, role, actor) => {
+        const row = await read(k, actor.userId!)
+        if (row === undefined) invalid()
+        const current = decode(row, role)
+        if (current.operationId !== operationId) invalid()
+        if (current.phase === 'cancelled') return current
+        if (current.phase !== 'prepared') invalid('A retired or activated primary must recover forward')
+        await k(PRIMARY_HANDOFF_TABLE)
+          .where({ userId: actor.userId, sourceKey: PRIMARY_HANDOFF_KEY })
+          .update({ phase: 'cancelled' })
+        return decode((await read(k, actor.userId!))!, role)
       })
     }
   }

@@ -1,3 +1,4 @@
+import { assertKnexPrimaryRestoreWrite } from '../KnexPrimaryHandoffAdmission'
 import { isOwnedNativeSqlite } from '../schema/ownedNativeSqliteRuntimeNode'
 import { createOwnedNativeReadDatabase } from '../schema/ownedNativeSqliteConnectionsNode'
 import { lstat, realpath } from 'node:fs/promises'
@@ -375,6 +376,7 @@ export async function withBrc38KnexDestinationFence<T>(
         const actual = await readFence(storage, trx, backendSha256, selected, policy)
         if (JSON.stringify(actual) !== wanted)
           throw new WERR_INVALID_OPERATION('BRC-38 destination changed after its private import preview')
+        await assertKnexPrimaryRestoreWrite(storage, trx, selected.identityKey)
         return await write(trx)
       })
   )

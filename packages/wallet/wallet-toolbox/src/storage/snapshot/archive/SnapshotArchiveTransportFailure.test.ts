@@ -1,3 +1,4 @@
+import { snapshotArchiveRateLimitDelay, waitSnapshotArchiveRateLimit } from './SnapshotArchiveTransportFailure'
 import {
   isSnapshotArchiveTransportFailure,
   snapshotArchiveFetch,
@@ -65,4 +66,41 @@ test('auth, framing, body bounds and arbitrary error names never authorize recov
   const error = await fetched.text().catch(error => error)
   expect(error).toBe(bodyFailure)
   expect(isSnapshotArchiveTransportFailure(error)).toBe(false)
+})
+
+test('an opted-in public429 is only a bounded retry hint, never native connection loss or authenticated success', async () => {
+  for (const [header, expected] of [
+    ['2', 2000],
+    ['999', 60000],
+    ['-1', 1000],
+    ['0', 250]
+  ] as const) {
+    const response = new Response('unsigned throttle', { status: 429, headers: { 'retry-after': header } })
+    const error = await snapshotArchiveFetch(async () => response, true)('http://127.0.0.1:1').catch(error => error)
+    expect(snapshotArchiveRateLimitDelay(error)).toBe(expected)
+    expect(isSnapshotArchiveTransportFailure(error)).toBe(false)
+    expect(response.bodyUsed).toBe(true)
+    const sdk = new Error('SDK wrapper')
+    Object.defineProperty(sdk, 'cause', { value: error })
+    expect(snapshotArchiveRateLimitDelay(sdk)).toBe(expected)
+  }
+  const ordinary = new Response('ordinary response', { status: 429 })
+  expect(await snapshotArchiveFetch(async () => ordinary)('http://127.0.0.1:1')).toBe(ordinary)
+  const getter = new Error('foreign error')
+  Object.defineProperty(getter, 'cause', {
+    get() {
+      throw new Error('not DATA')
+    }
+  })
+  expect(snapshotArchiveRateLimitDelay(getter)).toBeUndefined()
+  expect(snapshotArchiveRateLimitDelay({ delayMs: 1 })).toBeUndefined()
+})
+
+test('rate backoff cancels promptly without consuming another request or leaving a timer', async () => {
+  const controller = new AbortController(),
+    reason = new Error('requested throttle cancellation')
+  const pending = waitSnapshotArchiveRateLimit(60000, controller.signal)
+  controller.abort(reason)
+  await expect(pending).rejects.toBe(reason)
+  await expect(waitSnapshotArchiveRateLimit(60000, controller.signal)).rejects.toBe(reason)
 })

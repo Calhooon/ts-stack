@@ -1,5 +1,12 @@
+import { KnexWalletWriteAdmission } from './KnexWalletWriteAdmission'
+import { parseSnapshotJournalDataCheckpoint } from './snapshot/journal/SnapshotJournalDataProtocol'
+import {
+  assertKnexPrimaryDataWrite,
+  primarySelectionFromKnexSync,
+  hasKnexPrimaryEnrollment
+} from './KnexPrimaryHandoffAdmission'
 import { createKnexPrimaryHandoffControl } from './KnexPrimaryHandoffControl'
-import type { PrimaryHandoffControl } from './PrimaryHandoffControl'
+import type { PrimaryHandoffControl, PrimaryHandoffControlOptions } from './PrimaryHandoffControl'
 import { SNAPSHOT_SYNC_MIGRATION, verifySnapshotSyncPrimaryFence } from './schema/snapshotSyncMigration'
 import { captureKnexActiveWrite } from './KnexActiveWriteFence'
 import type { StorageActiveWrite, StorageStatusReviewArgs, StorageWriterAdmission } from './StorageActiveWrite'
@@ -850,14 +857,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
   ) {
     const root = this.knex,
       limits = { ...(input.limits ?? journalCopyLimits()) },
-      supplied = input.checkpoint === undefined ? undefined : structuredClone(input.checkpoint),
+      supplied = input.checkpoint === undefined ? undefined : parseSnapshotJournalDataCheckpoint(input.checkpoint),
       options = { ...input, checkpoint: supplied, limits, admission: input.admission, signal: input.signal },
-      wanted =
-        supplied === undefined
-          ? undefined
-          : (await import('./snapshot/journal/SnapshotJournalDataProtocol')).parseSnapshotJournalDataCheckpoint(
-              supplied
-            ),
+      wanted = supplied,
       destination = await this.resumeSnapshotJournalFieldDestination(identityKey, sourceStorageIdentity, options)
     if (destination === undefined || options.admission === undefined || this.knex !== root)
       throw new WERR_INVALID_OPERATION('Acknowledged field provenance requires its actual current receiver')
@@ -3945,12 +3947,24 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     }
   }
 
+  private readonly walletWriteAdmission = new KnexWalletWriteAdmission(this)
+  override async supportsPreparedWalletWrites(): Promise<boolean> {
+    return await this.supportsPrimaryWriteFences()
+  }
+  override async withPreparedWalletWrite<T>(
+    auth: AuthId,
+    admission: StorageWriterAdmission,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return await this.walletWriteAdmission.run(auth, admission, operation)
+  }
+
   private async primaryWriteFenceInstalled(): Promise<boolean> {
     if (this.snapshotAdmissionStopped) throw new WERR_INVALID_OPERATION('Active wallet writer admission is stopped')
     await this.makeAvailable()
     const client = String(this.knex.client.config.client)
     if (
-      !this.snapshotSyncEnabled ||
+      (!this.snapshotSyncEnabled && !(await hasKnexPrimaryEnrollment(this))) ||
       (!['sqlite3', 'better-sqlite3', 'mysql', 'mysql2'].includes(client) &&
         ownedNativeRootIdentity(this.knex)?.slot !== 0)
     )
@@ -3967,9 +3981,26 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     return true
   }
 
-  override async getPrimaryHandoffControl(): Promise<PrimaryHandoffControl | undefined> {
+  override async assertFinancialDataWriteAdmission(
+    identityKey: string,
+    sourceStorageIdentityKey: string | undefined,
+    trx: TrxToken
+  ): Promise<void> {
+    await assertKnexPrimaryDataWrite(this, this.toDb(trx) as Knex.Transaction, identityKey, sourceStorageIdentityKey)
+  }
+
+  override async activeStorageFromSync(userId: number, proposed: string, trx?: TrxToken): Promise<string> {
+    return await this.transaction(
+      async token => await primarySelectionFromKnexSync(this, this.toDb(token) as Knex.Transaction, userId, proposed),
+      trx
+    )
+  }
+
+  override async getPrimaryHandoffControl(
+    options: PrimaryHandoffControlOptions = {}
+  ): Promise<PrimaryHandoffControl | undefined> {
     if (!(await this.supportsPrimaryWriteFences())) return undefined
-    return await createKnexPrimaryHandoffControl(this)
+    return await createKnexPrimaryHandoffControl(this, options)
   }
 
   override async supportsPrimaryWriteFences(): Promise<boolean> {
@@ -3979,6 +4010,8 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
   }
 
   override async activeWriteTransaction(auth: AuthId): Promise<StorageActiveWrite> {
+    const admitted = this.walletWriteAdmission.captured(auth)
+    if (admitted !== undefined) return admitted
     if (!(await this.primaryWriteFenceInstalled())) return await super.activeWriteTransaction(auth)
     return await captureKnexActiveWrite(this, auth, () => !this.snapshotAdmissionStopped)
   }

@@ -1,3 +1,4 @@
+import { assertKnexPrimaryOrdinaryWrite } from './KnexPrimaryHandoffAdmission'
 import type { Knex } from 'knex'
 import type { StorageKnex } from './StorageKnex'
 import type { AuthId, TrxToken } from '../sdk/WalletStorage.interfaces'
@@ -65,11 +66,9 @@ export async function captureKnexActiveWrite(
       throw new WERR_UNAUTHORIZED()
     if (users[0].activeStorage !== settings[0].storageIdentity)
       throw new WERR_NOT_ACTIVE('The authenticated wallet operation requires the actual active storage provider')
-    return {
-      identityKey,
-      storageIdentity: settings[0].storageIdentity,
-      epoch: snapshotJournalRevision(epochs[0]?.epoch ?? '0')
-    }
+    const epoch = snapshotJournalRevision(epochs[0]?.epoch ?? '0')
+    await assertKnexPrimaryOrdinaryWrite(storage, trx, userId!, epoch, users[0].activeStorage)
+    return { identityKey, storageIdentity: settings[0].storageIdentity, epoch }
   }
   // No transaction spans preparation. A concurrent capture race can only make
   // the later locked comparison fail; no mutation is authorized by these reads.

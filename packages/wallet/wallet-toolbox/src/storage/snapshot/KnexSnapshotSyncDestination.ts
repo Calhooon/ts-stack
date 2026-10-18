@@ -402,8 +402,9 @@ export class KnexSnapshotSyncDestination {
     }
   }
 
-  private async lockUser(identityKey: string, trx: TrxToken): Promise<TableUser> {
+  private async lockUser(identityKey: string, trx: TrxToken, dataSource?: string): Promise<TableUser> {
     const k = this.storage.toDb(trx)
+    if (dataSource !== undefined) await this.storage.assertFinancialDataWriteAdmission(identityKey, dataSource, trx)
     // Acquire the write lock before reading on both SQLite (deferred transaction)
     // and MySQL. Primary-selection updates and sibling processes use this same row.
     await k('users')
@@ -601,7 +602,7 @@ export class KnexSnapshotSyncDestination {
       check()
       await verifyNativeSnapshotSyncSchema(trx)
       const journal = await readSnapshotJournalMaintenanceConfiguration(trx)
-      const user = await this.lockUser(expected.identityKey, trx),
+      const user = await this.lockUser(expected.identityKey, trx, expected.sourceStorageIdentityKey),
         scope = { userId: user.userId, sourceStorageIdentityKey: expected.sourceStorageIdentityKey },
         row = await this.nativeSession(trx, scope)
       if (
@@ -774,7 +775,7 @@ export class KnexSnapshotSyncDestination {
         await k('users')
           .where({ userId: created.user.userId })
           .update({ activeStorage: activeStorage ?? null })
-      const user = await this.lockUser(source.user.identityKey, trx)
+      const user = await this.lockUser(source.user.identityKey, trx, source.sourceStorage.storageIdentityKey)
       const scope = { userId: user.userId, sourceStorageIdentityKey: source.sourceStorage.storageIdentityKey }
       const previous: SessionRow | undefined = await k('snapshot_sync_sessions').where(scope).first()
       if (previous === undefined && maximumSourceScopes !== undefined) {
@@ -895,7 +896,7 @@ export class KnexSnapshotSyncDestination {
       transactionFence?.(nativeTransaction)
       const trx = nativeTransaction as TrxToken
       await verifySnapshotSyncPrimaryFence(nativeTransaction)
-      const user = await this.lockUser(expected.identityKey, trx)
+      const user = await this.lockUser(expected.identityKey, trx, expected.sourceStorageIdentityKey)
       const k = this.storage.toDb(trx)
       const scope = { userId: user.userId, sourceStorageIdentityKey: expected.sourceStorageIdentityKey }
       const row: SessionRow | undefined = await k('snapshot_sync_sessions').where(scope).first()

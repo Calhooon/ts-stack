@@ -1,3 +1,7 @@
+import type { StoragePreparedWalletWriter, StorageWriterAdmission } from './StorageActiveWrite'
+import { runPrimaryHandoffProgram, type PrimaryHandoffParticipant } from './PrimaryHandoffProgram'
+import type { PrimaryHandoffControl, PrimaryHandoffPlan, PrimaryHandoffControlOptions } from './PrimaryHandoffControl'
+import { Random, Utils } from '@bsv/sdk'
 import {
   snapshotJournalDataProvider,
   snapshotJournalDataContentProvider,
@@ -290,6 +294,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
   get isActiveEnabled(): boolean {
     return (
       this.#providerReplacementPending === undefined &&
+      this.#primaryHandoffPending === undefined &&
       this._active !== undefined &&
       (this._active.settings as TableSettings).storageIdentityKey === (this._active.user as TableUser).activeStorage &&
       this._conflictingActives?.length === 0
@@ -457,6 +462,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     return this._stores.map(b => (b.settings as TableSettings).storageIdentityKey)
   }
 
+  #primaryHandoffPending?: { target: string; stores: readonly ManagedStorage[]; identityKey: string }
+  private readonly primaryCopyAdmissions = new WeakMap<object, SnapshotJournalWriterAdmission>()
+  private assertPrimaryHandoffGraph(stores: readonly ManagedStorage[], identityKey: string): void {
+    if (
+      identityKey !== this._authId.identityKey ||
+      stores.length !== this._stores.length ||
+      stores.some((store, index) => store !== this._stores[index])
+    )
+      throw new WERR_INVALID_OPERATION(
+        'Managed participants changed during primary handoff; recover the original handoff'
+      )
+  }
+
   private async withAccess<R>(
     operation: (active: sdk.WalletStorageProvider) => Promise<R>,
     read = false,
@@ -464,6 +482,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
     signal?: AbortSignal
   ): Promise<R> {
     if (signal?.aborted) throw new StorageAccessCancelledError(signal)
+    if (this.#primaryHandoffPending !== undefined)
+      throw new WERR_INVALID_OPERATION('Primary handoff requires forward recovery before ordinary wallet access')
     const leave = this.accessQueue.admit()
     try {
       for (;;) {
@@ -479,6 +499,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
           signal
         )
         try {
+          if (this.#primaryHandoffPending !== undefined)
+            throw new WERR_INVALID_OPERATION('Primary handoff requires forward recovery before ordinary wallet access')
           // A preceding transition can fail after updating a managed store.
           // Reload persisted selection under actual ownership before use.
           if (!this._isAvailable) await this.makeAvailable()
@@ -735,11 +757,39 @@ export class WalletStorageManager implements sdk.WalletStorage {
     })
   }
 
-  /** Keep foreground writer authorization inside the acquired ownership boundary. */
-  private runAsAuthorizedWriter<R>(
+  /** Capture the actual selected writer briefly; rejoin ownership at its financial commits. */
+  private async runAsAuthorizedWriter<R>(
     operation: (writer: sdk.WalletStorageWriter, auth: sdk.AuthId) => Promise<R>
   ): Promise<R> {
-    return this.runAsWriter(async writer => operation(writer, await this.getAuth(true)))
+    const selected = await this.runAsWriter(async writer => ({
+      writer,
+      auth: { ...(await this.getAuth(true)) },
+      generation: this.generation
+    }))
+    const prepared = selected.writer as sdk.WalletStorageWriter & Partial<StoragePreparedWalletWriter>
+    // Probe outside ownership: a remote capability lookup cannot hold the
+    // global queue. Unsupported/older providers retain the exact old dispatch.
+    if (
+      typeof prepared.supportsPreparedWalletWrites !== 'function' ||
+      typeof prepared.withPreparedWalletWrite !== 'function' ||
+      !(await prepared.supportsPreparedWalletWrites())
+    )
+      return await this.runAsWriter(async writer => await operation(writer, await this.getAuth(true)))
+    const admission: StorageWriterAdmission = async <T>(work: () => Promise<T>): Promise<T> =>
+      await this.withAccess(async active => {
+        if (
+          active !== selected.writer ||
+          this.generation !== selected.generation ||
+          this._authId.identityKey !== selected.auth.identityKey
+        )
+          throw new WERR_INVALID_OPERATION('Wallet preparation belongs to an obsolete manager provider or generation')
+        return await work()
+      })
+    return await prepared.withPreparedWalletWrite(
+      selected.auth,
+      admission,
+      async () => await operation(selected.writer, selected.auth)
+    )
   }
 
   runAsReader<R>(reader: (active: sdk.WalletStorageReader) => Promise<R>): Promise<R> {
@@ -935,6 +985,18 @@ export class WalletStorageManager implements sdk.WalletStorage {
 
   async destroy(): Promise<void> {
     if (this._stores.length < 1) return
+    if (this.#primaryHandoffPending !== undefined) {
+      const leave = this.accessQueue.admit(),
+        release = await this.accessQueue.acquire('exclusive')
+      try {
+        this.generation++
+        for (const store of this._stores) await store.storage.destroy()
+      } finally {
+        release()
+        leave()
+      }
+      return
+    }
     return await this.runAsWriter(async _writer => {
       this.generation++
       for (const store of this._stores) await store.storage.destroy()
@@ -985,29 +1047,29 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   prepareNoSendExpiry(args: ValidCreateActionArgs): Promise<sdk.StoragePrepareNoSendExpiryResult> {
-    return this.runAsWriter(async writer => {
+    return this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.prepareNoSendExpiry == null) {
         throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
       }
-      return await writer.prepareNoSendExpiry(await this.getAuth(true), args)
+      return await writer.prepareNoSendExpiry(auth, args)
     })
   }
 
   activateNoSendExpiry(args: sdk.StorageActivateNoSendExpiryArgs): Promise<sdk.StorageActivateNoSendExpiryResult> {
-    return this.runAsWriter(async writer => {
+    return this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.activateNoSendExpiry == null) {
         throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
       }
-      return await writer.activateNoSendExpiry(await this.getAuth(true), args)
+      return await writer.activateNoSendExpiry(auth, args)
     })
   }
 
   async armNoSendExpiry(args: sdk.StorageArmNoSendExpiryArgs): Promise<void> {
-    await this.runAsWriter(async writer => {
+    await this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.armNoSendExpiry == null) {
         throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
       }
-      await writer.armNoSendExpiry(await this.getAuth(true), args)
+      await writer.armNoSendExpiry(auth, args)
     })
   }
 
@@ -1028,11 +1090,11 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   resumeActionBatch(args: sdk.ResumeActionBatchArgs): Promise<sdk.ResumeActionBatchResult> {
-    return this.runAsWriter(async writer => {
+    return this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.resumeActionBatch == null) {
         throw new WERR_NOT_IMPLEMENTED('action batch resume is not available')
       }
-      return await writer.resumeActionBatch(await this.getAuth(true), args)
+      return await writer.resumeActionBatch(auth, args)
     })
   }
 
@@ -1045,11 +1107,11 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   putActionBatchPack(args: sdk.PutActionBatchPackArgs): Promise<void> {
-    return this.runAsWriter(async writer => {
+    return this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.putActionBatchPack == null) {
         throw new WERR_NOT_IMPLEMENTED('packed action batch uploads are not available')
       }
-      await writer.putActionBatchPack(await this.getAuth(true), args)
+      await writer.putActionBatchPack(auth, args)
     })
   }
 
@@ -1058,11 +1120,11 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   commitActionBatchByDigest(args: sdk.CommitActionBatchByDigestArgs): Promise<sdk.CommitActionBatchResult> {
-    return this.runAsWriter(async writer => {
+    return this.runAsAuthorizedWriter(async (writer, auth) => {
       if (writer.commitActionBatchByDigest == null) {
         throw new WERR_NOT_IMPLEMENTED('digest-only action batch commit is not available')
       }
-      return await writer.commitActionBatchByDigest(await this.getAuth(true), args)
+      return await writer.commitActionBatchByDigest(auth, args)
     })
   }
 
@@ -1542,6 +1604,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
     identityKey: string,
     signal?: AbortSignal
   ) {
+    const handoff = this.primaryCopyAdmissions.get(selected)
+    if (handoff !== undefined) return handoff
     const managedReader = this._stores.some(store => Object.is(store.storage, reader))
     const managedWriter = this._stores.some(store => store.storage === writer)
     return <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> =>
@@ -1598,8 +1662,12 @@ export class WalletStorageManager implements sdk.WalletStorage {
     identityKey: string,
     admission: SnapshotJournalWriterAdmission,
     options: SyncSessionOptions,
-    fields = false
+    fields = false,
+    forceCurrentCopy = false
   ): Promise<{ forceBootstrap: boolean; result?: SyncSessionResult }> {
+    // A handoff needs an actual warm capture before retirement, even when an
+    // older content receipt could optimize an ordinary unchanged backup.
+    if (forceCurrentCopy) return { forceBootstrap: false }
     const outside = snapshotJournalDataProvider(writer) && writer.journalDataCommitOutsideManager === true
     const dispatch = async (observe = false): Promise<void> => {
       if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
@@ -1898,7 +1966,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
       identityKey,
       admission,
       options,
-      true
+      true,
+      this.primaryCopyAdmissions.has(selected)
     )
     if (confirmation.result !== undefined) return confirmation.result
     let forceBootstrap = confirmation.forceBootstrap || recoveredBootstrap
@@ -2045,8 +2114,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     onCustody?: (value: JournalCopyCustody) => void,
     onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
-    // Remote primary cutover requires its separate current-endpoint protocol.
-    // Keep that existing serialized path until its actual fences are installed.
+    // Legacy borrowed source custody cannot be replaced with DATA. Durable
+    // primary control uses its own endpoint/status/final-ACK protocol and the
+    // actual selected-provider admission, without this old custody callback.
     if (
       onCustody !== undefined ||
       !snapshotJournalDataProvider(writer) ||
@@ -2074,7 +2144,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
       readerSettings.storageIdentityKey,
       identityKey,
       admission,
-      options
+      options,
+      false,
+      this.primaryCopyAdmissions.has(selected)
     )
     if (confirmation.result !== undefined) return confirmation.result
     let forceBootstrap = confirmation.forceBootstrap
@@ -2306,7 +2378,32 @@ export class WalletStorageManager implements sdk.WalletStorage {
     onRecoveredWindow?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
     if (reader === writer) return undefined
-    if (options.journalFields === true && onCustody === undefined) {
+    // Protocol choice survives warm/final copies and a new manager. Read the
+    // actual authenticated field window; never reinterpret it as a row window.
+    // This is comparison DATA only: the field source/destination still obtain
+    // their original owners and independently verify all financial effects.
+    let recordedFields = false
+    if (
+      onCustody === undefined &&
+      options.journalFields !== true &&
+      snapshotJournalFieldArchiveProvider(reader) &&
+      snapshotJournalFieldProvider(writer) &&
+      (await reader.supportsSnapshotJournalFieldArchive()) &&
+      (await writer.supportsSnapshotJournalFieldSync())
+    ) {
+      const current = selection ?? (await this.captureSyncSelection(options.signal))
+      if (current === undefined || options.signal?.aborted)
+        return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+      const settings = await reader.makeAvailable(),
+        admission = this.journalCopyAdmission(reader, writer, current, this._authId.identityKey, options.signal)
+      if (writer.journalDataCommitOutsideManager === true) await admission(async () => await this.getAuth(), 'observe')
+      recordedFields =
+        (await writer.getSnapshotJournalFieldStatus(this._authId.identityKey, settings.storageIdentityKey, {
+          admission,
+          limits: journalCopyLimits(options.maxItems, options.maxRoughSize)
+        })) !== undefined
+    }
+    if ((options.journalFields === true || recordedFields) && onCustody === undefined) {
       const fields = await this.copyJournalFieldWindow(
         reader,
         writer,
@@ -2317,6 +2414,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
         onRecoveredWindow
       )
       if (fields !== undefined) return fields
+      if (recordedFields)
+        throw new WERR_INVALID_OPERATION('Existing field copy requires its original negotiated field protocol')
     }
     if (!journalSource(reader) || !journalDestination(writer))
       return await this.copyJournalDataWindow(reader, writer, options, selection, onCustody, onDurableProgress)
@@ -2332,7 +2431,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
     // Push/primary callers retain actual custody until their separate current
     // source-selection fence completes. Only a plain pull may return early.
-    if (onCustody === undefined) {
+    if (onCustody === undefined && !this.primaryCopyAdmissions.has(selected)) {
       const confirmation = await this.confirmJournalContentCopy(
         reader,
         writer,
@@ -3018,16 +3117,191 @@ export class WalletStorageManager implements sdk.WalletStorage {
    *
    * @param storageIdentityKey of current backup storage provider that is to become the new active provider.
    */
-  async setActive(storageIdentityKey: string, progLog?: (s: string) => string): Promise<string> {
-    const release = await this.primaryTransitions.acquire('exclusive')
+  async setActive(
+    storageIdentityKey: string,
+    progLog?: (s: string) => string,
+    options: SyncSessionOptions = {}
+  ): Promise<string> {
+    const release = await this.primaryTransitions.acquire('exclusive', 'foreground', options.signal)
     try {
       await this.makeAvailable()
       return (
+        (await this.trySetActiveHandoff(storageIdentityKey, progLog ?? (value => value), options)) ??
         (await this.trySetActiveJournal(storageIdentityKey, progLog ?? (value => value))) ??
         (await this.setActiveLegacy(storageIdentityKey, progLog))
       )
     } finally {
       release()
+    }
+  }
+
+  /** Durable controls and real bounded provider copies. Only short local
+   * commits own this queue; remote controls/copies run outside it. An uncertain
+   * result preserves the inactive barrier and resumes the actual stored plan. */
+  private async trySetActiveHandoff(
+    storageIdentityKey: string,
+    progLog: (value: string) => string,
+    options: SyncSessionOptions = {}
+  ): Promise<string | undefined> {
+    options.signal?.throwIfAborted()
+    const stores = [...this._stores],
+      identityKey = this._authId.identityKey
+    if (stores.length < 2 || stores.length > 9) return undefined
+    const target = stores.find(store => store.settings?.storageIdentityKey === storageIdentityKey)
+    if (target === undefined) throw new WERR_INVALID_PARAMETER('storageIdentityKey', 'a registered storage provider')
+    if (this.#primaryHandoffPending !== undefined) {
+      this.assertPrimaryHandoffGraph(this.#primaryHandoffPending.stores, this.#primaryHandoffPending.identityKey)
+      if (this.#primaryHandoffPending.target !== storageIdentityKey)
+        throw new WERR_INVALID_OPERATION('Resume the pending primary target before choosing another')
+    }
+    const participants: PrimaryHandoffParticipant[] = []
+    let unsupported = false,
+      enrolled = false
+    for (const store of stores) {
+      const provider = store.storage as sdk.WalletStorageProvider & {
+        getPrimaryHandoffControl?: (
+          options?: PrimaryHandoffControlOptions
+        ) => Promise<PrimaryHandoffControl | undefined>
+      }
+      const control = await provider.getPrimaryHandoffControl?.({ signal: options.signal })
+      if (control === undefined) {
+        unsupported = true
+        continue
+      }
+      const { user } = await provider.findOrInsertUser(identityKey)
+      const auth = { identityKey, userId: user.userId }
+      const state = await control.status(auth)
+      enrolled ||= state !== undefined
+      participants.push({
+        storageIdentityKey: store.settings!.storageIdentityKey,
+        activeStorage: user.activeStorage,
+        auth,
+        control
+      })
+    }
+    if (unsupported) {
+      if (options.signal !== undefined)
+        throw new WERR_NOT_IMPLEMENTED('Cancellable primary handoff requires negotiated participant controls')
+      if (enrolled || this.#primaryHandoffPending !== undefined)
+        throw new WERR_INVALID_OPERATION('All enrolled handoff participants require control-aware providers')
+      return undefined
+    }
+    this.assertPrimaryHandoffGraph(stores, identityKey)
+    const generation = this.generation,
+      selected = { active: this.getActive(), generation }
+    const queue = async <T>(operation: () => Promise<T>, observe?: 'observe'): Promise<T> => {
+      const leave = this.accessQueue.admit()
+      let release: (() => void) | undefined
+      try {
+        release = await this.accessQueue.acquire(
+          'exclusive',
+          'background',
+          observe === 'observe' ? undefined : options.signal
+        )
+        this.assertPrimaryHandoffGraph(stores, identityKey)
+        if (this.generation !== generation)
+          throw new WERR_INVALID_OPERATION('Manager generation changed during primary handoff')
+        return await operation()
+      } finally {
+        release?.()
+        leave()
+      }
+    }
+    const ordinary: SnapshotJournalWriterAdmission = <T>(operation: () => Promise<T>, observe?: 'observe') =>
+      queue(operation, observe)
+    this.primaryCopyAdmissions.set(selected, ordinary)
+    let log = progLog(`setActive to ${target.settings?.storageName} using durable primary handoff\n`)
+    try {
+      const pending = await Promise.all(participants.map(async value => await value.control.status(value.auth)))
+      const agreed = participants.every(value => value.activeStorage === storageIdentityKey)
+      if (
+        !agreed ||
+        pending.some(value => value !== undefined && ['prepared', 'retired', 'activated'].includes(value.phase))
+      ) {
+        await runPrimaryHandoffProgram({
+          participants,
+          targetStorageIdentityKey: storageIdentityKey,
+          newOperationId: () => Utils.toHex(Random(16)),
+          arm: async (_plan: PrimaryHandoffPlan) =>
+            await queue(async () => {
+              if (
+                this.#primaryHandoffPending !== undefined &&
+                this.#primaryHandoffPending.target !== storageIdentityKey
+              )
+                throw new WERR_INVALID_OPERATION('Another primary handoff is pending')
+              this.#primaryHandoffPending = { target: storageIdentityKey, stores, identityKey }
+              this._authId.isActive = false
+            }),
+          copy: async (source, destination) => {
+            const reader = stores.find(
+                store => store.settings?.storageIdentityKey === source.storageIdentityKey
+              )!.storage,
+              writer = stores.find(
+                store => store.settings?.storageIdentityKey === destination.storageIdentityKey
+              )!.storage
+            let observerFailure: { error: unknown } | undefined
+            const notify = <T>(callback: ((value: T) => unknown) | undefined, value: T) => {
+              try {
+                return callback?.(value)
+              } catch (error) {
+                observerFailure = { error }
+                throw error
+              }
+            }
+            const copy = async (fields = false) =>
+              await this.tryJournalCopy(
+                reader,
+                writer,
+                {
+                  ...options,
+                  maxRoughSize: options.maxRoughSize ?? 10000000,
+                  ...(fields ? { journalFields: true } : {}),
+                  onProgress: progress => {
+                    notify(options.onProgress, progress)
+                    log += this.committedPageLog(progress, value => notify(progLog, value) as string)
+                  },
+                  onJournalProgress: progress => notify(options.onJournalProgress, progress)
+                },
+                selected,
+                undefined,
+                false
+              )
+            let copied: SyncSessionResult | undefined
+            try {
+              copied = await copy()
+            } catch (error) {
+              if (observerFailure !== undefined && observerFailure.error === error) throw error
+              if (!(error instanceof SnapshotResourceLimitError)) throw error
+              copied = await copy(true)
+              if (copied === undefined) throw error
+            }
+            if (copied?.status === 'cancelled')
+              throw new SnapshotCancelledError('Primary copy stopped; recover actual participant status')
+            if (copied?.status !== 'completed')
+              throw new WERR_INVALID_OPERATION('Durable primary copy did not complete')
+          }
+        })
+      }
+      // Observe actual agreed roles outside ownership, then release the local
+      // lifecycle barrier and refresh selection without holding a queue over HTTP.
+      for (const store of stores) {
+        const { user } = await store.storage.findOrInsertUser(identityKey)
+        if (user.activeStorage !== storageIdentityKey)
+          throw new WERR_INVALID_OPERATION('Primary selection is not agreed by all managed stores')
+      }
+      await queue(async () => {
+        this.#primaryHandoffPending = undefined
+        this.invalidatePrimarySelection()
+      })
+      await this.makeAvailable()
+      if (this.getActiveStore() !== storageIdentityKey || !this.isActiveEnabled)
+        throw new WERR_INVALID_OPERATION('Primary handoff selection did not become available')
+      return log + progLog('DURABLE PRIMARY SELECTION AND PROPAGATION COMPLETE\n')
+    } catch (error) {
+      this.invalidatePrimarySelection()
+      throw error
+    } finally {
+      this.primaryCopyAdmissions.delete(selected)
     }
   }
 

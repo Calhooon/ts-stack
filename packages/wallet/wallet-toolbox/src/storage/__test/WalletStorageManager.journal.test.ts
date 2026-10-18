@@ -306,3 +306,160 @@ test('a cancellation observer cannot mutate the returned journal custody positio
   expect(result.pages).toBeGreaterThan(0)
   expect(result.journalCheckpoint!.sequence).toBeGreaterThanOrEqual(0)
 })
+
+test('a committed activation with a lost reply recovers through a replacement manager without reactivating its source', async () => {
+  await insertBasket('actual recovered primary basket')
+  const targetKey = target.getSettings().storageIdentityKey
+  const original = target.getPrimaryHandoffControl.bind(target)
+  let lose = true
+  jest.spyOn(target, 'getPrimaryHandoffControl').mockImplementation(async () => {
+    const control = await original()
+    if (control === undefined) throw new Error('Actual control unavailable')
+    return {
+      ...control,
+      activateTarget: async (...args) => {
+        const status = await control.activateTarget(...args)
+        if (lose) {
+          lose = false
+          throw new Error('injected lost committed activation reply')
+        }
+        return status
+      }
+    }
+  })
+  await expect(manager.setActive(targetKey)).rejects.toThrow('lost committed activation reply')
+  await expect(manager.runAsStorageProvider(async () => {})).rejects.toThrow('forward recovery')
+  const sourceUser = (await source.findOrInsertUser(identity)).user
+  const targetUser = (await target.findOrInsertUser(identity)).user
+  const sourceControl = await source.getPrimaryHandoffControl(),
+    targetControl = await original()
+  expect((await sourceControl?.status({ identityKey: identity, userId: sourceUser.userId }))?.phase).toBe('retired')
+  expect((await targetControl?.status({ identityKey: identity, userId: targetUser.userId }))?.phase).toBe('activated')
+  await expect(source.activeWriteTransaction(sourceUser)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+  const replacement = new WalletStorageManager(identity, source, [target])
+  await replacement.makeAvailable()
+  await replacement.setActive(targetKey)
+  expect(replacement.getActive()).toBe(target)
+  expect(replacement.isActiveEnabled).toBe(true)
+  expect(await target.findOutputBaskets({ partial: { name: 'actual recovered primary basket' } })).toHaveLength(1)
+  expect((await sourceControl?.status(sourceUser))?.phase).toBe('complete')
+  expect((await targetControl?.status(targetUser))?.phase).toBe('complete')
+  // The interrupted local manager can also reconcile the now-completed durable
+  // state and clear only its own stale lifecycle barrier.
+  await manager.setActive(targetKey)
+  expect(manager.getActive()).toBe(target)
+  expect(manager.isActiveEnabled).toBe(true)
+})
+
+test('cancellation during a genuine warm copy drains and allows the same durable plan to resume', async () => {
+  const entered = gate(),
+    release = gate(),
+    controller = new AbortController()
+  const open = source.openCurrentSnapshotJournalSource.bind(source)
+  let first = true
+  jest.spyOn(source, 'openCurrentSnapshotJournalSource').mockImplementation(async (...args) => {
+    const actual = await open(...args)
+    return new Proxy(actual, {
+      get(object, key) {
+        if (key !== 'readDeltaPage') return Reflect.get(object, key)
+        return async (...request: Parameters<typeof actual.readDeltaPage>) => {
+          if (first) {
+            first = false
+            entered.resolve()
+            await release.promise
+          }
+          return await actual.readDeltaPage(...request)
+        }
+      }
+    })
+  })
+  const targetKey = target.getSettings().storageIdentityKey
+  const transition = manager.setActive(targetKey, undefined, { signal: controller.signal })
+  try {
+    await Promise.race([
+      entered.promise,
+      transition.then(() => {
+        throw new Error('Actual warm copy did not pause')
+      })
+    ])
+    controller.abort(new Error('requested primary cancellation'))
+    release.resolve()
+    await expect(transition).rejects.toBeInstanceOf(Error)
+    await manager.makeAvailable()
+    expect(manager.getActive()).toBe(source)
+    expect(manager.isActiveEnabled).toBe(true)
+    await expect(source.activeWriteTransaction((await source.findOrInsertUser(identity)).user)).resolves.toBeDefined()
+    await manager.setActive(targetKey)
+    expect(manager.getActive()).toBe(target)
+    expect(manager.isActiveEnabled).toBe(true)
+  } finally {
+    release.resolve()
+    await transition.catch(() => undefined)
+  }
+})
+
+test('primary handoff continues through genuine large operational history and retains its exact field provenance', async () => {
+  // The original checkpoint API creates this actual managed-peer history.
+  // It is operational provenance, without a financial placeholder or ACK.
+  await source.getSyncCheckpoint(
+    await manager.getAuth(),
+    target.getSettings().storageIdentityKey,
+    target.getSettings().storageName
+  )
+  const states = await source.findSyncStates({
+    partial: { userId: (await source.findOrInsertUser(identity)).user.userId }
+  })
+  expect(states.length).toBeGreaterThan(0)
+  const state = states[0],
+    originalError = JSON.stringify({
+      name: 'Error',
+      message: 'retained original sync error 雪\u0000' + '🧾'.repeat(40000)
+    })
+  await source.updateSyncState(state.syncStateId, { errorLocal: originalError, updated_at: new Date() })
+  const warm = await manager.syncToWriterResumable(await manager.getAuth(), target, {
+    journalFields: true,
+    maxRoughSize: 65536
+  })
+  expect(warm.status).toBe('completed')
+  // A replacement manager must recover protocol choice from the actual window,
+  // without an in-memory protocol flag or granting authority to status DATA.
+  manager = new WalletStorageManager(identity, source, [target])
+  await manager.makeAvailable()
+  const sourceIdentity = source.getSettings().storageIdentityKey,
+    targetIdentity = target.getSettings().storageIdentityKey
+  await manager.setActive(targetIdentity, undefined, { maxRoughSize: 65536 })
+  expect(manager.getActive()).toBe(target)
+  expect(manager.isActiveEnabled).toBe(true)
+  for (const storage of [source, target]) {
+    expect((await storage.findOrInsertUser(identity)).user.activeStorage).toBe(targetIdentity)
+    expect(
+      await (await storage.getPrimaryHandoffControl())!.status({
+        identityKey: identity,
+        userId: (await storage.findOrInsertUser(identity)).user.userId
+      })
+    ).toMatchObject({ phase: 'complete' })
+  }
+  const window = await sourceWindow()
+  expect(window.fieldEncoding).toBe('wallet-journal-fields/1')
+  const provenance = await manager.readJournalFieldProvenance(sourceIdentity),
+    retained = provenance.page.rows.find(row => row.incomingId === state.syncStateId)
+  expect(retained?.fields.errorLocal.bytes).toBe(Buffer.byteLength(originalError))
+  const reader = await manager.openJournalProvenanceField(sourceIdentity, state.syncStateId, 'errorLocal', {
+      checkpoint: provenance.checkpoint
+    }),
+    actual = Buffer.alloc(Buffer.byteLength(originalError))
+  try {
+    for (let offset = 0; offset < actual.length; offset += 16001) {
+      const chunk = await reader.read(offset, Math.min(16001, actual.length - offset))
+      try {
+        actual.set(chunk, offset)
+      } finally {
+        chunk.fill(0)
+      }
+    }
+    expect(actual.toString('utf8')).toBe(originalError)
+  } finally {
+    actual.fill(0)
+    reader.close()
+  }
+}, 120000)

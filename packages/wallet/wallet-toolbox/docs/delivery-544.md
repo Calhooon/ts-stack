@@ -114,7 +114,10 @@ The supported operational rollback is forward: set `snapshotSync: false`, retain
 the auxiliary schemas/data and use the serialized contract. A native publication
 or primary transition that already committed must follow the named durable
 recovery path; it cannot be undone by changing an in-memory selector. Do not
-downgrade a live database across a migration that explicitly refuses reversal.
+downgrade a live database across a migration that explicitly refuses reversal. Explicit durable-primary enrollment is an additional
+boundary: snapshot disabling retains its role guards and cannot provide unchecked
+legacy dispatch. Keep control-aware providers for enrolled profiles and recover
+retired selections forward; see [durable primary handoff](primary-handoff.md).
 Retain source archives and unselected profiles until recovery and cleanup are
 verified; a failed physical drain retains its concrete cleanup owner and charge.
 

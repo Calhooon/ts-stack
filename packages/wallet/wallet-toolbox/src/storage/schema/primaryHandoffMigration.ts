@@ -9,6 +9,7 @@ import { verifySnapshotSyncPrimaryFence } from './snapshotSyncMigration'
 
 export const PRIMARY_HANDOFF_MIGRATION = '2026-10-18-001 add durable primary handoff control'
 export const PRIMARY_HANDOFF_TABLE = 'wallet_primary_handoffs'
+export const PRIMARY_HANDOFF_COPIES = 'wallet_primary_copy_sources'
 export const PRIMARY_HANDOFF_KEY = 'primary-control-v1'
 const specification = snapshotComparisonReceiptSchema(PRIMARY_HANDOFF_TABLE, 'wallet_primary_handoffs_user', [
   ['userId', 'int', false],
@@ -25,6 +26,17 @@ const specification = snapshotComparisonReceiptSchema(PRIMARY_HANDOFF_TABLE, 'wa
   ['roleGateFrom', 'varchar(130)', true],
   ['roleGateTo', 'varchar(130)', true],
   ['roleGateEpoch', 'varchar(19)', true]
+])
+const copies = snapshotComparisonReceiptSchema(PRIMARY_HANDOFF_COPIES, 'wallet_primary_copy_sources_user', [
+  ['userId', 'int', false],
+  ['sourceKey', 'varchar(64)', false],
+  ['version', 'int', false],
+  ['operationId', 'varchar(32)', false],
+  ['sourceStorageIdentityKey', 'varchar(130)', false],
+  ['sourceEpoch', 'varchar(19)', false],
+  ['activeStorage', 'varchar(130)', false],
+  ['sessionId', 'varchar(64)', false],
+  ['sourceMetadata', 'varchar(64)', false]
 ])
 const guard = 'wallet_primary_control_guard',
   consume = 'wallet_primary_control_consume'
@@ -64,6 +76,12 @@ const definitions = (k: Knex) =>
 export async function verifyPrimaryHandoffSchema(k: Knex): Promise<void> {
   await verifySnapshotSyncPrimaryFence(k)
   await verifySnapshotComparisonReceiptSchema(k, specification)
+  await verifySnapshotComparisonReceiptSchema(k, copies)
+  await verifyPrimaryHandoffTriggers(k)
+}
+/** Exact authored additions only. Partial mode is exclusively the fixed MySQL
+ * forward migration; it still rejects any present altered trigger or context. */
+export async function verifyPrimaryHandoffTriggers(k: Knex, complete = true, migrationContext = false): Promise<void> {
   for (const expected of definitions(k)) {
     if (!remote(k)) {
       const rows = await k('sqlite_master')
@@ -89,8 +107,24 @@ export async function verifyPrimaryHandoffSchema(k: Knex): Promise<void> {
         'SELECT ACTION_STATEMENT,ACTION_TIMING,EVENT_OBJECT_TABLE,EVENT_MANIPULATION,ACTION_ORIENTATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=? AND OCTET_LENGTH(ACTION_STATEMENT)<=4096 LIMIT 2',
         [expected.name]
       )
+      if (rows.length === 0 && !complete) continue
       const row = rows[0],
         normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
+      if (migrationContext) {
+        const [contexts]: Array<Array<Record<string, unknown>>> = await k.raw(
+          'SELECT CURRENT_USER() definer,@@SESSION.sql_mode sqlMode,@@SESSION.character_set_client charset,@@SESSION.collation_connection connectionCollation,@@collation_database databaseCollation'
+        )
+        const [actual]: Array<Array<Record<string, unknown>>> = await k.raw(
+          'SELECT DEFINER definer,SQL_MODE sqlMode,CHARACTER_SET_CLIENT charset,COLLATION_CONNECTION connectionCollation,DATABASE_COLLATION databaseCollation FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=? LIMIT 2',
+          [expected.name]
+        )
+        if (
+          contexts.length !== 1 ||
+          actual.length !== 1 ||
+          Object.keys(contexts[0]).some(key => contexts[0][key] !== actual[0][key])
+        )
+          invalid()
+      }
       if (
         rows.length !== 1 ||
         row.ACTION_TIMING !== expected.timing ||
@@ -105,6 +139,7 @@ export async function verifyPrimaryHandoffSchema(k: Knex): Promise<void> {
 }
 export async function addPrimaryHandoffSchema(k: Knex): Promise<void> {
   if (!(await k.schema.hasTable(PRIMARY_HANDOFF_TABLE))) await k.raw(snapshotComparisonReceiptDdl(k, specification))
+  if (!(await k.schema.hasTable(PRIMARY_HANDOFF_COPIES))) await k.raw(snapshotComparisonReceiptDdl(k, copies))
   for (const expected of definitions(k)) {
     const found = remote(k)
       ? (

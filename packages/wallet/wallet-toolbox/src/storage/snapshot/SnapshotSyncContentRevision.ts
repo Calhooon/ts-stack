@@ -124,7 +124,7 @@ export function snapshotSyncContentSourceKey(input: string): string {
 
 interface ContentMetadataInput {
   sourceStorage: TableSettings
-  user: TableUser
+  user: Omit<TableUser, 'activeStorage'> & { activeStorage?: string | null }
   primaryEpoch: string
 }
 function contentMetadata(input: ContentMetadataInput): unknown[] {
@@ -169,6 +169,18 @@ function contentMetadata(input: ContentMetadataInput): unknown[] {
   return metadata
 }
 
+/** Comparison digest only; this creates no source actor, SQL writer or ACK. */
+export function snapshotSyncContentMetadataDigest(input: ContentMetadataInput & { binding: string }): string {
+  const binding = digest(input.binding)
+  return toHex(
+    sha256(
+      new TextEncoder().encode(
+        'snapshot-sync-content-metadata-v1\n' + JSON.stringify([binding, contentMetadata(input)])
+      )
+    )
+  )
+}
+
 /** Internal DATA derivation only. Its caller must actually own the complete
  * source/schema/profile view used for every supplied value. Clock positions
  * consumed by capture alone are excluded; retention floor and all thirteen
@@ -180,7 +192,7 @@ export function createSnapshotSyncContentRevision(input: {
   highWater: string
   revisions: readonly string[]
   sourceStorage: TableSettings
-  user: TableUser
+  user: Omit<TableUser, 'activeStorage'> & { activeStorage?: string | null }
   primaryEpoch: string
 }): Readonly<SnapshotSyncContentRevision> {
   const binding = digest(input.binding),

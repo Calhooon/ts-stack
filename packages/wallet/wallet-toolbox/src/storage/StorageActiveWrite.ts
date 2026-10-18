@@ -1,4 +1,4 @@
-import type { TrxToken } from '../sdk/WalletStorage.interfaces'
+import type { AuthId, TrxToken } from '../sdk/WalletStorage.interfaces'
 
 /** @internal A captured operation's restrictions, never a serialized authority.
  * No SQL transaction or manager ownership is retained between calls. Callers
@@ -23,4 +23,15 @@ export interface StorageStatusReviewArgs {
   agedLimit: Date
   trx?: TrxToken
   admission?: StorageWriterAdmission
+}
+
+/** Internal provider CODE only. Choosing scheduling never supplies SQL,
+ * financial or SOURCE authority; every actual commit retains its own capture. */
+export interface StoragePreparedWalletWriter {
+  supportsPreparedWalletWrites: () => Promise<boolean>
+  withPreparedWalletWrite: <T>(
+    auth: AuthId,
+    admission: StorageWriterAdmission,
+    operation: () => Promise<T>
+  ) => Promise<T>
 }

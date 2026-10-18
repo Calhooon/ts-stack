@@ -103,7 +103,7 @@ export class StorageClient extends StorageClientBase {
    * @param method The WalletStorage method name to call.
    * @param params The array of parameters to pass to the method in order.
    */
-  protected rpcCall<T>(method: string, params: unknown[]): Promise<T> {
+  protected rpcCall<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
     return this.traceRpcCall(method, params, async rpcSpan => {
       const loggerState = this.startRpcLogging(method, params)
       const { logger } = loggerState
@@ -139,7 +139,8 @@ export class StorageClient extends StorageClientBase {
                   [BINARY_ENCODING_HEADER]: BINARY_ENCODING,
                   ...(requestUsesBinary ? { [BINARY_REQUEST_ENCODING_HEADER]: BINARY_ENCODING } : {})
                 },
-                body: requestBody
+                body: requestBody,
+                signal
               }),
             {
               'http.request.method': 'POST',

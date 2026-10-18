@@ -1,3 +1,11 @@
+import type { PrimaryHandoffPlan } from '../PrimaryHandoffControl'
+import {
+  isPrimaryHandoffMethod,
+  primaryHandoffCapabilities,
+  primaryHandoffRequestBytes,
+  primaryHandoffResponseBytes,
+  type PrimaryHandoffMethod
+} from './PrimaryHandoffProtocol'
 import { StorageKnex } from '../StorageKnex'
 import { KnexSyncTransferStore } from './KnexSyncTransferStore'
 import {
@@ -683,6 +691,16 @@ export class StorageServer {
     )
       ? Buffer.byteLength(JSON.stringify(req.body), 'utf8')
       : undefined
+    const primaryRequestBytes = isPrimaryHandoffMethod(method)
+      ? Buffer.byteLength(JSON.stringify(req.body), 'utf8')
+      : undefined
+    if (primaryRequestBytes !== undefined && primaryRequestBytes > primaryHandoffRequestBytes)
+      return this.sendRpc(
+        res,
+        useBinary,
+        { jsonrpc: '2.0', id, error: { code: -32600, message: 'Primary control request exceeds its transport bound' } },
+        400
+      )
     if (snapshotRequestBytes !== undefined && snapshotRequestBytes > remoteSnapshotSyncRequestBytes)
       return this.sendRpc(
         res,
@@ -703,7 +721,9 @@ export class StorageServer {
     try {
       this.enforceRpcRequestBudgets(method, params)
       let dispatch: RpcDispatchResult
-      if (snapshotArchiveRpcMethods.includes(method as SnapshotArchiveRpcMethod)) {
+      if (isPrimaryHandoffMethod(method)) {
+        dispatch = await this.dispatchPrimaryHandoff(method, params, req, useBinary, id)
+      } else if (snapshotArchiveRpcMethods.includes(method as SnapshotArchiveRpcMethod)) {
         dispatch = await this.dispatchSnapshotArchive(method as SnapshotArchiveRpcMethod, params, req, useBinary, id)
       } else if (remoteSnapshotDestinationRpcMethods.includes(method as RemoteSnapshotDestinationRpcMethod)) {
         dispatch = await this.dispatchRemoteSnapshotSync(
@@ -748,6 +768,8 @@ export class StorageServer {
         Buffer.byteLength(serialized, 'utf8') > remoteSnapshotSyncResponseBytes
       )
         throw new WERR_INVALID_OPERATION('Remote snapshot destination response exceeds its transport limit')
+      if (isPrimaryHandoffMethod(method) && Buffer.byteLength(serialized, 'utf8') > primaryHandoffResponseBytes)
+        throw new WERR_INVALID_OPERATION('Primary control response exceeds its transport bound')
       // Apply the response bound before consulting any client transport preference.
       if (this.maxRpcResponseBytes !== -1 && Buffer.byteLength(serialized, 'utf8') > this.maxRpcResponseBytes) {
         return await this.sendOversizedSyncResponse(req, res, useBinary, method, params, payload)
@@ -1041,7 +1063,16 @@ export class StorageServer {
     const snapshotJournalFields = await this.remoteSnapshotSync?.journalFieldCapabilities()
     const snapshotJournalFieldArchiveRecoveryVersion = await this.snapshotArchives?.journalFieldRecoveryVersion()
     const snapshotJournalFieldRecoveryVersion = await this.remoteSnapshotSync?.journalFieldRecoveryVersion()
+    const primaryHandoff =
+      this.remoteSnapshotSyncEnabled &&
+      snapshotJournalDataContent !== undefined &&
+      snapshotJournalArchive !== undefined &&
+      this.storage instanceof StorageKnex &&
+      (await this.storage.getPrimaryHandoffControl()) !== undefined
+        ? primaryHandoffCapabilities
+        : undefined
     return {
+      ...(primaryHandoff === undefined ? {} : { primaryHandoff }),
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
       ...(snapshotJournalArchive === undefined
         ? {}
@@ -1158,6 +1189,67 @@ export class StorageServer {
     return this.remoteSnapshotSyncEnabled && this.storage instanceof StorageKnex
       ? new KnexRemoteSnapshotSyncRpc(this.storage)
       : undefined
+  }
+
+  private async dispatchPrimaryHandoff(
+    method: PrimaryHandoffMethod,
+    params: unknown[],
+    req: Request,
+    useBinary: boolean,
+    id: unknown
+  ): Promise<RpcDispatchResult> {
+    if (
+      !this.remoteSnapshotSyncEnabled ||
+      this.closing !== undefined ||
+      (await this.remoteSnapshotSync?.journalDataContentCapabilities()) === undefined ||
+      (await this.snapshotArchives?.journalCapabilities()) === undefined
+    )
+      return { found: false }
+    if (
+      !useBinary ||
+      req.header(BINARY_REQUEST_ENCODING_HEADER) !== BINARY_ENCODING ||
+      !Number.isSafeInteger(id) ||
+      Number(id) < 1
+    )
+      throw new WERR_INVALID_OPERATION('Primary control requires bounded compact-binary authenticated RPC')
+    const identityKey = requiredAuthenticatedIdentityKey(req)
+    const expected = method === 'primaryHandoffStatus' ? 1 : method === 'preparePrimaryHandoffSource' ? 3 : 2
+    if (params.length !== expected || params[0] !== identityKey)
+      throw new WERR_UNAUTHORIZED('Primary control identity must match authentication')
+    const control = await this.storage.getPrimaryHandoffControl()
+    if (control === undefined) return { found: false }
+    const auth = await this.authenticatedAuth(req, false)
+    let result: unknown
+    switch (method) {
+      case 'primaryHandoffStatus':
+        result = (await control.status(auth)) ?? null
+        break
+      case 'preparePrimaryHandoffSource':
+        result = await control.prepareSource(auth, params[1] as string, params[2] as string)
+        break
+      case 'preparePrimaryHandoffTarget':
+        result = await control.prepareTarget(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'retirePrimaryHandoffSource':
+        result = await control.retireSource(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'activatePrimaryHandoffTarget':
+        result = await control.activateTarget(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'completePrimaryHandoffSource':
+        result = await control.completeSource(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'completePrimaryHandoffTarget':
+        result = await control.completeTarget(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'followPrimaryHandoffTarget':
+        result = await control.followTarget(auth, params[1] as PrimaryHandoffPlan)
+        break
+      case 'cancelPrimaryHandoff':
+        result = await control.cancel(auth, params[1] as string)
+        break
+    }
+    return { found: true, result }
   }
 
   private async dispatchRemoteSnapshotSync(

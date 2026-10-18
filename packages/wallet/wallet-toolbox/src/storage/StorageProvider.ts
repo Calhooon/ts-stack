@@ -1,4 +1,4 @@
-import type { PrimaryHandoffControl } from './PrimaryHandoffControl'
+import type { PrimaryHandoffControl, PrimaryHandoffControlOptions } from './PrimaryHandoffControl'
 import type { ReqHistoryNote } from '../sdk/types'
 import { StorageReqWrite } from './StorageReqWrite'
 import type { SnapshotSyncStorage } from './snapshot/SnapshotSync'
@@ -227,8 +227,35 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     }
   }
 
+  /** Internal scheduling only. Legacy providers keep serialized preparation. */
+  async supportsPreparedWalletWrites(): Promise<boolean> {
+    return false
+  }
+  async withPreparedWalletWrite<T>(
+    _auth: AuthId,
+    _admission: StorageWriterAdmission,
+    _operation: () => Promise<T>
+  ): Promise<T> {
+    throw new WERR_NOT_IMPLEMENTED('Provider requires serialized wallet preparation')
+  }
+
+  /** Existing DATA writers retain their original authority. Supported stores
+   * additionally serialize them with durable primary retirement. */
+  async assertFinancialDataWriteAdmission(
+    _identityKey: string,
+    _sourceStorageIdentityKey: string | undefined,
+    _trx: TrxToken
+  ): Promise<void> {}
+
+  /** DATA may update profile metadata without granting an enrolled primary. */
+  async activeStorageFromSync(_userId: number, proposed: string, _trx?: TrxToken): Promise<string> {
+    return proposed
+  }
+
   /** Explicit authenticated primary-control capability, separate from copy DATA. */
-  async getPrimaryHandoffControl(): Promise<PrimaryHandoffControl | undefined> {
+  async getPrimaryHandoffControl(
+    _options: PrimaryHandoffControlOptions = {}
+  ): Promise<PrimaryHandoffControl | undefined> {
     return undefined
   }
 
@@ -1572,6 +1599,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     // avoids a transaction startup/commit for every record (especially costly
     // in IndexedDB) and makes the page checkpoint atomic with its data changes.
     return await this.transaction(async trx => {
+      await this.assertFinancialDataWriteAdmission(args.identityKey, args.fromStorageIdentityKey, trx)
       // Serial sorted reads retain deterministic lock ordering on the shared transaction.
       await runInSeries(
         [...expected.values()].sort((left, right) => left.txid.localeCompare(right.txid)),

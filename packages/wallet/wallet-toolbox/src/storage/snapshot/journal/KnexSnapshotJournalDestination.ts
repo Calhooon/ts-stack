@@ -134,6 +134,11 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
             await storage.runSnapshotJournalWriter(
               async (trx, backend) => {
                 if (storage.knex !== root || backend === source.receiptBinding.backend) invalid()
+                await storage.assertFinancialDataWriteAdmission(
+                  source.receiptBinding.identityKey,
+                  source.receiptBinding.storageIdentity,
+                  trx
+                )
                 await verifySnapshotJournalDestinationSchema(trx)
                 await readSnapshotJournalCaptureConfiguration(trx)
                 const mysql = ['mysql', 'mysql2'].includes(String(trx.client.config.client))
@@ -225,7 +230,8 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
                   binding,
                   checkpoint,
                   source.snapshotId,
-                  contentRevision
+                  contentRevision,
+                  { sourceStorage: source.sourceStorage, user: source.user, primary: source.primary }
                 )
                 if (storage.knex !== root) invalid()
                 return { binding, checkpoint, previous: undefined, incremental: false }
@@ -300,7 +306,8 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
           begin.binding,
           next,
           source.snapshotId,
-          contentRevision
+          contentRevision,
+          { sourceStorage: source.sourceStorage, user: source.user, primary: source.primary }
         )
         if (storage.knex !== root) invalid()
         return next
@@ -330,6 +337,12 @@ export class KnexSnapshotJournalDestination implements SnapshotJournalReceiver {
     return await this.storage.runSnapshotJournalWriter(
       async (trx, backend) => {
         if (this.storage.knex !== this.root || backend !== this.binding.destinationBackend) invalid()
+        if (!observe)
+          await this.storage.assertFinancialDataWriteAdmission(
+            this.binding.source.identityKey,
+            this.binding.source.storageIdentity,
+            trx
+          )
         await verifySnapshotJournalDestinationSchema(trx)
         await readSnapshotJournalCaptureConfiguration(trx)
         const result = await apply(trx)

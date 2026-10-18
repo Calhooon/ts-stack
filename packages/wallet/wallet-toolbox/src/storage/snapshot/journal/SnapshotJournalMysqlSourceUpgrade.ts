@@ -1,3 +1,4 @@
+import { verifyPrimaryHandoffTriggers } from '../../schema/primaryHandoffMigration'
 import type { Knex } from 'knex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { snapshotArchiveDatabaseNow } from '../archive/SnapshotArchiveSql'
@@ -139,9 +140,11 @@ async function verifyRecordSchema(k: Knex): Promise<void> {
   )
   await verifySnapshotJournalSharedQuota(k)
 }
-async function read(k: Knex): Promise<State | undefined> {
+async function read(k: Knex, recordId = 1): Promise<State | undefined> {
   await verifyRecordSchema(k)
+  if ((await k(table).whereNotIn('id', [1, 2]).select('id').limit(1)).length) invalid()
   const rows: Array<Record<string, unknown>> = await k(table)
+    .where('id', recordId)
     .select(
       'id',
       'phase',
@@ -160,7 +163,7 @@ async function read(k: Knex): Promise<State | undefined> {
   if (!rows.length) return undefined
   const row = rows[0]
   if (
-    Number(row.id) !== 1 ||
+    Number(row.id) !== recordId ||
     ![1, 2].includes(Number(row.phase)) ||
     typeof row.source !== 'string' ||
     !/^[0-9a-f]{64}$/.test(row.source) ||
@@ -241,13 +244,32 @@ async function verifyPresentIndexes(k: Knex, owned: readonly Index[], complete: 
       invalid()
   }
 }
-async function currentInventory(k: Knex, state: State, owned: readonly Index[]): Promise<string> {
+async function currentInventory(
+  k: Knex,
+  state: State,
+  owned: readonly Index[],
+  primaryControl = false
+): Promise<string> {
   const current = await readSnapshotJournalMysqlSourceInventory(k, k.client.config.migrations)
   if (current.length !== state.inventory.length) invalid()
   for (let i = 0; i < current.length; i++) {
     const previous = state.inventory[i],
       next = current[i]
     if (next.kind !== previous.kind) invalid()
+    if (primaryControl && next.kind === 'triggers') {
+      const names = new Set(['wallet_primary_control_guard', 'wallet_primary_control_consume'])
+      if (previous.rows.some(row => names.has(String(row.name)))) invalid()
+      const originalNames = new Set(previous.rows.map(row => String(row.tableName) + ':' + String(row.name)))
+      const filtered = next.rows.filter(
+        row =>
+          originalNames.has(String(row.tableName) + ':' + String(row.name)) ||
+          row.tableName !== 'users' ||
+          !names.has(String(row.name))
+      )
+      if (JSON.stringify(filtered) !== JSON.stringify(previous.rows)) invalid()
+      await verifyPrimaryHandoffTriggers(k, false, true)
+      continue
+    }
     if (next.kind !== 'indexes') {
       if (JSON.stringify(next.rows) !== JSON.stringify(previous.rows)) invalid()
       continue
@@ -280,14 +302,32 @@ export async function addSnapshotJournalMysqlSourceIndexes(
   statements: readonly string[],
   apply: () => Promise<void>
 ): Promise<void> {
+  return await sourceAddition(k, statements, apply, false)
+}
+/** Fixed primary-control triggers only, independently verified before every
+ * resume. Recovery DATA cannot select the allowed change or execute SQL. */
+export async function addSnapshotJournalMysqlPrimaryControl(k: Knex, apply: () => Promise<void>): Promise<void> {
+  return await sourceAddition(k, [], apply, true)
+}
+async function sourceAddition(
+  k: Knex,
+  statements: readonly string[],
+  apply: () => Promise<void>,
+  primaryControl: boolean
+): Promise<void> {
   if (k.isTransaction || !['mysql', 'mysql2'].includes(String(k.client.config.client))) invalid()
   if (!(await k.schema.hasTable('snapshot_journal_generation'))) {
     await apply()
     return
   }
+  const recordId = primaryControl ? 2 : 1
   const owned = indexes(statements)
+  const verify = async (db: Knex, complete: boolean): Promise<void> => {
+    await verifyPresentIndexes(db, owned, complete)
+    if (primaryControl) await verifyPrimaryHandoffTriggers(db, complete, true)
+  }
   if (!(await k.schema.hasTable(table))) await k.raw(SNAPSHOT_JOURNAL_MYSQL_SOURCE_UPGRADE_DDL)
-  let state = await read(k)
+  let state = await read(k, recordId)
   if (state === undefined) {
     await k.transaction(async trx => {
       await lockGeneration(trx)
@@ -316,13 +356,13 @@ export async function addSnapshotJournalMysqlSourceIndexes(
         ).length
       )
         throw new WERR_INVALID_OPERATION('Drain live journal captures before changing their source indexes')
-      await verifyPresentIndexes(trx, owned, false)
+      await verify(trx, false)
       const inventory = await readSnapshotJournalMysqlSourceInventory(trx, trx.client.config.migrations)
       if (snapshotJournalMysqlInventoryDigest(inventory) !== actual.source) invalid()
       const originalInventory = JSON.stringify(inventory)
       if (Buffer.byteLength(originalInventory, 'utf8') > 1048576) invalid()
       await trx(table).insert({
-        id: 1,
+        id: recordId,
         phase: 1,
         source: actual.source,
         epoch: actual.epoch,
@@ -339,10 +379,10 @@ export async function addSnapshotJournalMysqlSourceIndexes(
       )
         invalid()
     })
-    state = await read(k)
+    state = await read(k, recordId)
     if (state === undefined) invalid()
   }
-  const before = await currentInventory(k, state, owned)
+  const before = await currentInventory(k, state, owned, primaryControl)
   if (state.phase === 2) {
     const actual = await readSnapshotJournalMysqlGeneration(k, state.ceiling, state.policy, k.client.config.migrations)
     if (
@@ -353,7 +393,7 @@ export async function addSnapshotJournalMysqlSourceIndexes(
       actual.source !== before
     )
       invalid()
-    await verifyPresentIndexes(k, owned, true)
+    await verify(k, true)
     await apply()
     return
   }
@@ -373,12 +413,12 @@ export async function addSnapshotJournalMysqlSourceIndexes(
   )
     invalid()
   await apply()
-  const after = await currentInventory(k, state, owned)
-  await verifyPresentIndexes(k, owned, true)
+  const after = await currentInventory(k, state, owned, primaryControl)
+  await verify(k, true)
   const saved = state
   await k.transaction(async trx => {
     await lockGeneration(trx)
-    const current = await read(trx)
+    const current = await read(trx, recordId)
     if (
       current === undefined ||
       current.phase !== 1 ||
@@ -400,7 +440,7 @@ export async function addSnapshotJournalMysqlSourceIndexes(
       !checked.generation.enabled ||
       checked.currentSource !== after ||
       checked.generation.epoch !== saved.epoch ||
-      (await currentInventory(trx, saved, owned)) !== after
+      (await currentInventory(trx, saved, owned, primaryControl)) !== after
     )
       invalid()
     if (
@@ -408,7 +448,7 @@ export async function addSnapshotJournalMysqlSourceIndexes(
         .where({ id: 1, source: saved.source, epoch: saved.epoch, plan: saved.plan, complete: 0 })
         .update({ source: after, complete: 1 })) !== 1 ||
       (await trx(table)
-        .where({ id: 1, phase: 1, source: saved.source, epoch: saved.epoch, plan: saved.plan })
+        .where({ id: recordId, phase: 1, source: saved.source, epoch: saved.epoch, plan: saved.plan })
         .update({ phase: 2 })) !== 1
     )
       invalid()

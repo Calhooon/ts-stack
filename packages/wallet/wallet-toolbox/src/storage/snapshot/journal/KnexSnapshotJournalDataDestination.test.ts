@@ -1,3 +1,4 @@
+import { StorageClient as StorageMobile } from '../../remoting/StorageMobile'
 import { SnapshotJournalFieldArchiveTransport } from './SnapshotJournalFieldArchiveTransport'
 import { encodeSnapshotJournalFieldFrame, decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
 import type { RemoteSnapshotJournalFieldArchive } from './openRemoteSnapshotJournalFieldArchive'
@@ -1346,3 +1347,269 @@ test('ordinary SQL field reuse rehashes actual indexed target bytes and download
     script.fill(0)
   }
 }, 400000)
+
+test('retired actual source refuses an old DATA receiver and fresh BEGIN without advancing intake', async () => {
+  const f = await fixture()
+  let archive: RemoteSnapshotJournalArchive | undefined
+  try {
+    archive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual archive unavailable')
+    const begun = await KnexSnapshotJournalDataDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    const { user } = await f.target.findOrInsertUser(f.source.identityKey)
+    const control = await f.target.getPrimaryHandoffControl()
+    if (control === undefined) throw new Error('Actual control unavailable')
+    const auth = { userId: user.userId, identityKey: f.source.identityKey },
+      operationId = 'ab'.repeat(16)
+    const prepared = await control.prepareSource(auth, operationId, 'next-primary')
+    await control.retireSource(auth, {
+      version: 1,
+      operationId,
+      targetStorageIdentityKey: 'next-primary',
+      sources: [prepared]
+    })
+    const frame = await archive.readFrame(0, async () => {})
+    await expect(
+      begun.destination.stagePacket(
+        begun.checkpoint,
+        encodeSnapshotJournalArchiveFrame(snapshotJournalDestinationStreams[0], frame.page)
+      )
+    ).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    await expect(
+      KnexSnapshotJournalDataDestination.begin(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding,
+        journalCopyLimits(),
+        f.admission
+      )
+    ).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect((await begun.destination.status()).checkpoint).toEqual(begun.checkpoint)
+    expect(await f.target.knex('snapshot_reconciliation_stage_pages')).toEqual([])
+  } finally {
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('actual final HTTP DATA ACK activates the parked target atomically and survives reply recovery', async () => {
+  const f = await fixture()
+  let archive: RemoteSnapshotJournalArchive | undefined
+  try {
+    const { user } = await f.source.storage.findOrInsertUser(f.source.identityKey)
+    await f.source.storage.findOrInsertTxLabel(user.userId, 'actual cold wallet primary handoff label')
+    const { user: targetUser } = await f.target.findOrInsertUser(f.source.identityKey)
+    const sourceControl = await f.source.storage.getPrimaryHandoffControl(),
+      targetControl = await f.target.getPrimaryHandoffControl()
+    if (sourceControl === undefined || targetControl === undefined)
+      throw new Error('Actual primary control unavailable')
+    const auth = { userId: user.userId, identityKey: f.source.identityKey },
+      targetAuth = { userId: targetUser.userId, identityKey: f.source.identityKey }
+    const operationId = 'cd'.repeat(16),
+      targetStorageIdentityKey = f.target.getSettings().storageIdentityKey
+    const prepared = await sourceControl.prepareSource(auth, operationId, targetStorageIdentityKey)
+    const plan = { version: 1 as const, operationId, targetStorageIdentityKey, sources: [prepared] }
+    await targetControl.prepareTarget(targetAuth, plan)
+    // A genuine complete pre-retirement copy is still insufficient.
+    archive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual pre-retirement archive unavailable')
+    const warm = await KnexSnapshotJournalDataDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    await copy(archive, warm.destination, warm.checkpoint)
+    await expect(targetControl.activateTarget(targetAuth, plan)).rejects.toThrow('actual completed')
+    await archive.close()
+    archive = undefined
+    await sourceControl.retireSource(auth, plan)
+    archive = await f.client.openSnapshotJournalArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual final archive unavailable')
+    const final = await KnexSnapshotJournalDataDestination.begin(
+      f.target,
+      f.source.identityKey,
+      archive.manifest.binding,
+      journalCopyLimits(),
+      f.admission
+    )
+    const checkpoint = await copy(archive, final.destination, final.checkpoint)
+    expect(checkpoint.phase).toBe('acknowledged')
+    expect((await targetControl.status(targetAuth))?.phase).toBe('prepared')
+    const before = await f.target.knex('transactions').count({ n: '*' }).first()
+    const activated = await targetControl.activateTarget(targetAuth, plan)
+    expect(activated).toMatchObject({ side: 'target', phase: 'activated', localEpoch: '2' })
+    const replacement = await f.target.getPrimaryHandoffControl()
+    expect(await replacement?.activateTarget(targetAuth, plan)).toEqual(activated)
+    await expect(f.target.activeWriteTransaction(targetAuth)).resolves.toBeDefined()
+    await expect(f.source.storage.activeWriteTransaction(auth)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(await f.target.knex('transactions').count({ n: '*' }).first()).toEqual(before)
+    expect((await sourceControl.completeSource(auth, plan)).phase).toBe('complete')
+    expect((await targetControl.completeTarget(targetAuth, plan)).phase).toBe('complete')
+    await expect(sourceControl.cancel(auth, operationId)).rejects.toThrow('recover forward')
+  } finally {
+    await archive?.close()
+    await f.close()
+  }
+})
+
+test('authenticated primary control RPC resolves the actual profile and refuses forged role or copy authority', async () => {
+  const f = await fixture()
+  try {
+    const control = await f.client.getPrimaryHandoffControl()
+    if (control === undefined) throw new Error('Actual authenticated control unavailable')
+    const auth = { identityKey: f.source.identityKey, userId: 999999, isActive: false }
+    expect(await control.status(auth)).toBeUndefined()
+    const id = 'ef'.repeat(16),
+      target = f.target.getSettings().storageIdentityKey
+    const prepared = await control.prepareSource(auth, id, target)
+    expect(prepared.storageIdentityKey).toBe(f.source.storage.getSettings().storageIdentityKey)
+    expect((await control.status(auth))?.phase).toBe('prepared')
+    await expect(control.status({ ...auth, identityKey: '02' + '33'.repeat(32) })).rejects.toMatchObject({
+      code: 'WERR_UNAUTHORIZED'
+    })
+    await expect(control.prepareSource(auth, 'ab'.repeat(16), target)).rejects.toThrow('conflicts')
+    await expect(
+      control.prepareTarget(auth, {
+        version: 1,
+        operationId: id,
+        targetStorageIdentityKey: prepared.storageIdentityKey,
+        sources: [{ storageIdentityKey: 'fake-source', epoch: '0' }]
+      })
+    ).rejects.toThrow()
+    await expect(
+      control.activateTarget(auth, {
+        version: 1,
+        operationId: id,
+        targetStorageIdentityKey: prepared.storageIdentityKey,
+        sources: [{ storageIdentityKey: 'fake-source', epoch: '0' }]
+      })
+    ).rejects.toThrow()
+    expect((await control.cancel(auth, id)).phase).toBe('cancelled')
+  } finally {
+    await f.close()
+  }
+})
+
+test('wallet manager completes an authenticated HTTP primary handoff in both directions with real destination ACKs', async () => {
+  const f = await fixture()
+  try {
+    const remoteUser = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user
+    const targetUser = (await f.target.findOrInsertUser(f.source.identityKey)).user
+    await f.source.storage.findOrInsertTxLabel(remoteUser.userId, 'actual HTTP source metadata')
+    await f.target.findOrInsertTxLabel(targetUser.userId, 'actual original target metadata')
+    const manager = new WalletStorageManager(f.source.identityKey, f.client, [f.target])
+    await manager.makeAvailable()
+    const targetKey = f.target.getSettings().storageIdentityKey
+    await manager.setActive(targetKey)
+    expect(manager.getActive()).toBe(f.target)
+    expect(manager.isActiveEnabled).toBe(true)
+    expect(await f.target.findTxLabels({ partial: { label: 'actual HTTP source metadata' } })).toHaveLength(1)
+    expect(await f.source.storage.findTxLabels({ partial: { label: 'actual original target metadata' } })).toHaveLength(
+      1
+    )
+    const remoteKey = f.source.storage.getSettings().storageIdentityKey
+    await manager.setActive(remoteKey)
+    expect(manager.getActive()).toBe(f.client)
+    expect(manager.isActiveEnabled).toBe(true)
+    expect((await manager.getAuth(true)).isActive).toBe(true)
+    for (const storage of [f.source.storage, f.target]) {
+      expect((await storage.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe(remoteKey)
+      expect(await storage.findTxLabels({ partial: { label: 'actual HTTP source metadata' } })).toHaveLength(1)
+      expect(await storage.findTxLabels({ partial: { label: 'actual original target metadata' } })).toHaveLength(1)
+    }
+  } finally {
+    await f.close()
+  }
+}, 120000)
+
+test('mobile client negotiates the same authenticated durable control without exposing SQL capabilities', async () => {
+  const f = await fixture()
+  try {
+    const { url } = await f.source.serve()
+    const client = new StorageMobile(f.source.wallet, url, { serverIdentityKey: f.source.serverIdentityKey })
+    const control = await client.getPrimaryHandoffControl()
+    if (control === undefined) throw new Error('Actual mobile control unavailable')
+    const auth = { identityKey: f.source.identityKey, userId: 999999, isActive: true },
+      id = '01'.repeat(16)
+    const prepared = await control.prepareSource(auth, id, 'mobile-target')
+    expect(prepared.storageIdentityKey).toBe(f.source.storage.getSettings().storageIdentityKey)
+    expect((await control.status(auth))?.operationId).toBe(id)
+    expect((await control.cancel(auth, id)).phase).toBe('cancelled')
+  } finally {
+    await f.close()
+  }
+})
+
+test('a control HTTP deadline recovers actual committed retirement without reactivating its source', async () => {
+  const f = await fixture()
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => {
+      release = resolve
+    }),
+    reached = new Promise<void>(resolve => {
+      entered = resolve
+    })
+  let pending: Promise<unknown> | undefined,
+    reachedActual = false
+  const original = f.source.storage.getPrimaryHandoffControl.bind(f.source.storage)
+  try {
+    jest.spyOn(f.source.storage, 'getPrimaryHandoffControl').mockImplementation(async (...options) => {
+      const control = await original(...options)
+      if (control === undefined) return undefined
+      return {
+        ...control,
+        retireSource: async (...args) => {
+          const status = await control.retireSource(...args)
+          reachedActual = true
+          entered()
+          await gate
+          return status
+        }
+      }
+    })
+    const { url } = await f.source.serve()
+    const client = new StorageClient(f.source.wallet, url, {
+      serverIdentityKey: f.source.serverIdentityKey,
+      primaryHandoffRequestTimeoutMs: 1000
+    })
+    await client.makeAvailable()
+    const control = await client.getPrimaryHandoffControl()
+    if (control === undefined) throw new Error('Actual RPC control unavailable')
+    const { user } = await f.source.storage.findOrInsertUser(f.source.identityKey)
+    const auth = { identityKey: f.source.identityKey, userId: user.userId },
+      operationId = '12'.repeat(16),
+      targetStorageIdentityKey = f.target.getSettings().storageIdentityKey
+    const old = await f.source.storage.activeWriteTransaction(auth)
+    const source = await control.prepareSource(auth, operationId, targetStorageIdentityKey)
+    const selected = { version: 1 as const, operationId, targetStorageIdentityKey, sources: [source] }
+    pending = control.retireSource(auth, selected)
+    await Promise.race([
+      reached,
+      pending.then(
+        () => {
+          throw new Error('Actual retirement reply did not pause')
+        },
+        error => {
+          if (!reachedActual) throw error
+        }
+      )
+    ])
+    await expect(pending).rejects.toBeInstanceOf(Error)
+    const actual = await original()
+    expect((await actual?.status(auth))?.phase).toBe('retired')
+    await expect(old.assertCurrent()).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    release()
+    expect((await control.status(auth))?.phase).toBe('retired')
+  } finally {
+    release()
+    await pending?.catch(() => undefined)
+    await f.close()
+  }
+})

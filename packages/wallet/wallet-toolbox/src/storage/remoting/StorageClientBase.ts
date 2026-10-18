@@ -1,8 +1,26 @@
+import type { StorageWriterAdmission } from '../StorageActiveWrite'
+import type { PrimaryHandoffControl, PrimaryHandoffControlOptions } from '../PrimaryHandoffControl'
+import { canonicalPrimaryHandoffPlan } from '../PrimaryHandoffPlan'
+import {
+  isPrimaryHandoffMethod,
+  validatePrimaryHandoffCapabilities,
+  parsePrimaryHandoffStatus,
+  parsePrimaryHandoffSource,
+  primaryHandoffRequestBytes,
+  primaryHandoffResponseBytes,
+  type PrimaryHandoffMethod,
+  primaryHandoffCapabilities
+} from './PrimaryHandoffProtocol'
 import {
   parseSnapshotJournalFieldArchiveReference,
   type SnapshotJournalFieldArchiveReference
 } from '../snapshot/journal/SnapshotJournalReceiptData'
-import { retrySnapshotArchiveOperation } from '../snapshot/archive/SnapshotArchiveTransportFailure'
+import {
+  retrySnapshotArchiveOperation,
+  isSnapshotArchiveTransportFailure,
+  snapshotArchiveRateLimitDelay,
+  waitSnapshotArchiveRateLimit
+} from '../snapshot/archive/SnapshotArchiveTransportFailure'
 import type { SnapshotSyncContentRevision } from '../snapshot/SnapshotSyncContentRevision'
 import { RemoteSnapshotJournalFieldDestination } from '../snapshot/journal/RemoteSnapshotJournalFieldDestination'
 import {
@@ -185,6 +203,7 @@ function isSyncChunkResponseTooLarge(error: unknown): boolean {
 type RemoteStorageSettings = TableSettings & {
   /** Runtime-only RPC advertisement, not a persisted settings-table column. */
   syncCheckpointVersion?: 1
+  primaryHandoff?: typeof primaryHandoffCapabilities
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
@@ -203,6 +222,9 @@ type RemoteStorageSettings = TableSettings & {
 export interface StorageClientOptions {
   /** Disable immutable remote snapshots during a mixed-version rollout. */
   snapshotArchives?: boolean
+  /** Per explicit primary-control HTTP request, including negotiation; default
+   * 30s, configurable1..300000ms. Independent of whole-copy duration. */
+  primaryHandoffRequestTimeoutMs?: number
   /**
    * Send compact tagged binary request values after the server advertises
    * support. Leave disabled during rolling deployments where an endpoint may
@@ -353,6 +375,7 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
   if (properties.syncCheckpointVersion != null && properties.syncCheckpointVersion.value !== 1) {
     throw new Error('Wallet storage returned invalid settings.')
   }
+  if (properties.primaryHandoff != null) validatePrimaryHandoffCapabilities(properties.primaryHandoff.value)
   if (properties.snapshotArchive != null) validateSnapshotArchiveCapabilities(properties.snapshotArchive.value)
   if (
     properties.snapshotJournalArchiveContentVersion != null &&
@@ -407,6 +430,7 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   private authenticatedServerIdentityKey?: string
   private readonly expectedStorageIdentityKey?: string
   private syncChunkRoughSizeLimit?: number
+  private readonly primaryHandoffRequestTimeoutMs: number
   private readonly snapshotArchivesEnabled: boolean
   private readonly snapshotWallet: WalletInterface
   private snapshotAuthClient?: AuthFetch
@@ -421,6 +445,13 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   constructor(wallet: WalletInterface, endpointUrl: string, options: StorageClientOptions = {}) {
     this.authClient = new AuthFetch(wallet)
     this.snapshotWallet = wallet
+    this.primaryHandoffRequestTimeoutMs = options.primaryHandoffRequestTimeoutMs ?? 30000
+    if (
+      !Number.isSafeInteger(this.primaryHandoffRequestTimeoutMs) ||
+      this.primaryHandoffRequestTimeoutMs < 1 ||
+      this.primaryHandoffRequestTimeoutMs > 300000
+    )
+      throw new TypeError('Invalid primary control HTTP deadline')
     this.snapshotArchivesEnabled = options.snapshotArchives !== false
     this.endpointUrl = normalizeStorageEndpointUrl(endpointUrl)
     this.binaryRequests = options.binaryRequests === true
@@ -727,6 +758,104 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     )
   }
 
+  /** Runtime scheduling only. The advertised current server still captures
+   * and validates its actual primary epoch across preparation and SQL commit. */
+  async supportsPreparedWalletWrites(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).primaryHandoff !== undefined
+  }
+  async withPreparedWalletWrite<T>(
+    _auth: AuthId,
+    admission: StorageWriterAdmission,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const dispatched = await admission(async () => {
+      const result = operation()
+      void result.catch(() => undefined)
+      return { result }
+    })
+    const result = await dispatched.result
+    await admission(async () => {})
+    return result
+  }
+
+  /** Authenticated explicit control; supplied auth userId/isActive are never
+   * sent as grants. The server resolves its actual current local user. */
+  async getPrimaryHandoffControl(
+    options: PrimaryHandoffControlOptions = {}
+  ): Promise<PrimaryHandoffControl | undefined> {
+    const signal = options.signal
+    const invoke = async (method: PrimaryHandoffMethod | 'makeAvailable', params: unknown[]): Promise<unknown> => {
+      for (let attempt = 0; ; attempt++) {
+        signal?.throwIfAborted()
+        const controller = new AbortController(),
+          abort = () => controller.abort(signal?.reason)
+        signal?.addEventListener('abort', abort, { once: true })
+        const timer = setTimeout(
+          () => controller.abort(new Error('Primary control HTTP deadline expired')),
+          this.primaryHandoffRequestTimeoutMs
+        )
+        let rateDelay: number | undefined
+        try {
+          return method === 'makeAvailable'
+            ? await this.rpcCall(method, params, controller.signal)
+            : await this.snapshotRpcCall(method, params, controller.signal)
+        } catch (error) {
+          rateDelay = snapshotArchiveRateLimitDelay(error)
+          if (rateDelay === undefined || attempt >= 2) {
+            if (controller.signal.aborted && isSnapshotArchiveTransportFailure(error)) {
+              const cancelled = new SnapshotCancelledError(
+                'Primary control HTTP stopped; recover actual participant status'
+              )
+              Object.defineProperty(cancelled, 'cause', { value: error })
+              throw cancelled
+            }
+            throw error
+          }
+        } finally {
+          clearTimeout(timer)
+          signal?.removeEventListener('abort', abort)
+        }
+        // The response is complete: backoff owns no HTTP or manager writer.
+        // Every subsequent request has a fresh independent I/O deadline.
+        await waitSnapshotArchiveRateLimit(rateDelay, signal)
+      }
+    }
+    const settings = this.settings ?? this.acceptRemoteSettings(await invoke('makeAvailable', []))
+    if (!this.snapshotArchivesEnabled || settings.primaryHandoff === undefined) return undefined
+    const local = normalizeStorageIdentityKey(settings.storageIdentityKey)
+    const call = async (method: PrimaryHandoffMethod, auth: AuthId, ...params: unknown[]): Promise<unknown> =>
+      await invoke(method, [auth.identityKey, ...params])
+    const status = (value: unknown) => {
+      const result = parsePrimaryHandoffStatus(value)
+      if (result.localStorageIdentityKey !== local) throw new TypeError('Primary control storage identity changed')
+      return result
+    }
+    return {
+      status: async auth => {
+        const value = await call('primaryHandoffStatus', auth)
+        return value === null ? undefined : status(value)
+      },
+      prepareSource: async (auth, id, target) => {
+        const value = parsePrimaryHandoffSource(await call('preparePrimaryHandoffSource', auth, id, target))
+        if (value.storageIdentityKey !== local) throw new TypeError('Primary source storage identity changed')
+        return value
+      },
+      prepareTarget: async (auth, plan) =>
+        status(await call('preparePrimaryHandoffTarget', auth, canonicalPrimaryHandoffPlan(plan))),
+      retireSource: async (auth, plan) =>
+        status(await call('retirePrimaryHandoffSource', auth, canonicalPrimaryHandoffPlan(plan))),
+      activateTarget: async (auth, plan) =>
+        status(await call('activatePrimaryHandoffTarget', auth, canonicalPrimaryHandoffPlan(plan))),
+      completeSource: async (auth, plan) =>
+        status(await call('completePrimaryHandoffSource', auth, canonicalPrimaryHandoffPlan(plan))),
+      completeTarget: async (auth, plan) =>
+        status(await call('completePrimaryHandoffTarget', auth, canonicalPrimaryHandoffPlan(plan))),
+      followTarget: async (auth, plan) =>
+        status(await call('followPrimaryHandoffTarget', auth, canonicalPrimaryHandoffPlan(plan))),
+      cancel: async (auth, id) => status(await call('cancelPrimaryHandoff', auth, id))
+    }
+  }
+
   readonly journalDataCommitOutsideManager = true as const
 
   async supportsSnapshotJournalArchive(): Promise<boolean> {
@@ -808,19 +937,26 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       | RemoteSnapshotSyncMethod
       | SnapshotJournalDataMethod
       | SnapshotJournalFieldRpcMethod
+      | PrimaryHandoffMethod
       | 'makeAvailable',
     params: unknown[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    rateAttempt = 0
   ): Promise<unknown> {
     const id = this.nextRequestId()
     const remoteDestination =
       remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) ||
       isSnapshotJournalDataMethod(method) ||
-      isSnapshotJournalFieldRpcMethod(method)
+      isSnapshotJournalFieldRpcMethod(method) ||
+      isPrimaryHandoffMethod(method)
     const body = stringifyJsonRpc({ jsonrpc: '2.0', method, params, id }, true)
     if (
       new TextEncoder().encode(body).length >
-      (remoteDestination ? remoteSnapshotSyncRequestBytes : snapshotArchiveRequestBytes)
+      (isPrimaryHandoffMethod(method)
+        ? primaryHandoffRequestBytes
+        : remoteDestination
+          ? remoteSnapshotSyncRequestBytes
+          : snapshotArchiveRequestBytes)
     )
       throw new TypeError('Snapshot archive request exceeds its transport limit')
     const createAuthClient = (maxResponseBytes: number): AuthFetch =>
@@ -830,7 +966,7 @@ export abstract class StorageClientBase implements WalletStorageProvider {
         undefined,
         undefined,
         { maxResponseBytes },
-        snapshotArchiveFetch(fetch)
+        snapshotArchiveFetch(fetch, true)
       )
     const authClient = remoteDestination
       ? (this.snapshotDestinationAuthClient ??= createAuthClient(remoteSnapshotSyncResponseBytes))
@@ -848,6 +984,11 @@ export abstract class StorageClientBase implements WalletStorageProvider {
         signal
       })
     } catch (error) {
+      const rateDelay = snapshotArchiveRateLimitDelay(error)
+      if (rateDelay !== undefined && !isPrimaryHandoffMethod(method) && rateAttempt < 2) {
+        await waitSnapshotArchiveRateLimit(rateDelay, signal)
+        return await this.snapshotRpcCall(method, params, signal, rateAttempt + 1)
+      }
       // AuthFetch uses its typed cancellation code before a native fetch may
       // exist. Inspect only its own data code here, before RPC/response parsing;
       // this also works with older SDKs that lack the exported error class.
@@ -863,7 +1004,10 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     if (!response.ok) throw this.rpcResponseError(response)
     if (response.headers.get(BINARY_ENCODING_HEADER) !== BINARY_ENCODING)
       throw new TypeError('Snapshot archive requires compact binary responses')
-    const json = validateJsonRpcResponse(parseJsonRpc(await response.text(), true), id)
+    const receivedText = await response.text()
+    if (isPrimaryHandoffMethod(method) && new TextEncoder().encode(receivedText).length > primaryHandoffResponseBytes)
+      throw new TypeError('Primary control response exceeds its transport bound')
+    const json = validateJsonRpcResponse(parseJsonRpc(receivedText, true), id)
     if ('error' in json) throw WalletErrorFromJson(json.error as object)
     return json.result
   }
@@ -926,7 +1070,7 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param method The WalletStorage method name to call.
    * @param params The array of parameters to pass to the method in order.
    */
-  protected abstract rpcCall<T>(method: string, params: unknown[]): Promise<T>
+  protected abstract rpcCall<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T>
 
   /** Share the asynchronous rejection boundary, including custom transports that throw synchronously. */
   private async forwardRpc<T>(method: string, params: unknown[]): Promise<T> {

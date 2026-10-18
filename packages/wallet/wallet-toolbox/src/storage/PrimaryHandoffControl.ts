@@ -17,18 +17,32 @@ export interface PrimaryHandoffStatus {
   operationId: string
   localStorageIdentityKey: string
   targetStorageIdentityKey: string
-  side: 'source' | 'target'
-  phase: 'prepared' | 'retired'
+  side: 'source' | 'target' | 'backup'
+  phase: 'prepared' | 'retired' | 'activated' | 'complete' | 'cancelled'
   localEpoch: string
   sourceEpoch?: string
   plan?: PrimaryHandoffPlan
 }
-/** Durable preparation/retirement. Target activation is deliberately a separate
- * integration: it must verify actual final target financial receipts, not DATA
- * claiming that a source retired or a copy completed. */
+/** Local cancellation CODE, never serialized as permission or plan DATA. */
+export interface PrimaryHandoffControlOptions {
+  signal?: AbortSignal
+}
+
+/** Authenticated durable control. Activation independently verifies actual
+ * final financial receipts inside its own physical destination writer. No
+ * supplied plan/status grants a writer or constitutes a financial ACK. */
 export interface PrimaryHandoffControl {
   status: (auth: AuthId) => Promise<PrimaryHandoffStatus | undefined>
   prepareSource: (auth: AuthId, operationId: string, targetStorageIdentityKey: string) => Promise<PrimaryHandoffSource>
   prepareTarget: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
   retireSource: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
+  activateTarget: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
+  /** Permits target-to-backup DATA only; never reactivates the retired source. */
+  completeSource: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
+  completeTarget: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
+  /** Explicit selection propagation to an already inactive backup. It may
+   * never retire an unaccounted writable root or activate a local primary. */
+  followTarget: (auth: AuthId, plan: PrimaryHandoffPlan) => Promise<PrimaryHandoffStatus>
+  /** Only prepared intents may cancel. A parked target stays inactive. */
+  cancel: (auth: AuthId, operationId: string) => Promise<PrimaryHandoffStatus>
 }
