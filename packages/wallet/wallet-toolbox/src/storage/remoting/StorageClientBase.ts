@@ -1,3 +1,7 @@
+import {
+  parseSnapshotJournalFieldArchiveReference,
+  type SnapshotJournalFieldArchiveReference
+} from '../snapshot/journal/SnapshotJournalReceiptData'
 import { retrySnapshotArchiveOperation } from '../snapshot/archive/SnapshotArchiveTransportFailure'
 import type { SnapshotSyncContentRevision } from '../snapshot/SnapshotSyncContentRevision'
 import { RemoteSnapshotJournalFieldDestination } from '../snapshot/journal/RemoteSnapshotJournalFieldDestination'
@@ -184,6 +188,8 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
+  snapshotJournalFieldArchiveRecoveryVersion?: 1
+  snapshotJournalFieldRecoveryVersion?: 1
   snapshotJournalFields?: typeof snapshotJournalFieldRpcCapabilities
   snapshotJournalFieldArchive?: SnapshotJournalFieldArchiveCapabilities
   snapshotJournalArchiveContentVersion?: 1
@@ -353,6 +359,9 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     (properties.snapshotJournalArchiveContentVersion.value !== 1 || properties.snapshotJournalArchive == null)
   )
     throw new Error('Wallet storage returned invalid journal content settings.')
+  for (const name of ['snapshotJournalFieldArchiveRecoveryVersion', 'snapshotJournalFieldRecoveryVersion'])
+    if (properties[name] !== undefined && properties[name].value !== 1)
+      throw new TypeError('Invalid field recovery capability')
   if (properties.snapshotJournalFields != null)
     validateSnapshotJournalFieldRpcCapabilities(properties.snapshotJournalFields.value)
   if (properties.snapshotJournalDataContent != null)
@@ -536,6 +545,86 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFieldArchive !== undefined
   }
 
+  async supportsSnapshotJournalFieldArchiveRecovery(): Promise<boolean> {
+    const settings = await this.journalFieldRecoverySettings()
+    return (
+      this.snapshotArchivesEnabled &&
+      settings.snapshotJournalFieldArchiveRecoveryVersion === 1 &&
+      settings.snapshotJournalFieldArchive !== undefined
+    )
+  }
+  private async fieldArchiveRecoveryTransport(identityKey: string, signal?: AbortSignal) {
+    const settings = await this.journalFieldRecoverySettings(signal)
+    if (
+      !this.snapshotArchivesEnabled ||
+      settings.snapshotJournalFieldArchiveRecoveryVersion !== 1 ||
+      settings.snapshotJournalFieldArchive === undefined ||
+      this.snapshotSource === undefined
+    )
+      return undefined
+    return new SnapshotJournalFieldArchiveTransport(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      this.snapshotSource.identityKey,
+      this.snapshotSource.chain,
+      settings.snapshotJournalFieldArchive
+    )
+  }
+  async resumeSnapshotJournalFieldArchive(
+    identityKey: string,
+    input: SnapshotJournalFieldArchiveReference,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const reference = parseSnapshotJournalFieldArchiveReference(input),
+      transport = await this.fieldArchiveRecoveryTransport(identityKey, options.signal)
+    if (transport === undefined) return undefined
+    return await openRemoteSnapshotJournalFieldArchive(transport, undefined, options, reference)
+  }
+  async retireSnapshotJournalFieldArchive(
+    identityKey: string,
+    input: SnapshotJournalFieldArchiveReference
+  ): Promise<void> {
+    const reference = parseSnapshotJournalFieldArchiveReference(input),
+      transport = await this.fieldArchiveRecoveryTransport(identityKey)
+    if (transport === undefined) throw new WERR_INVALID_OPERATION('Exact field source retirement is not negotiated')
+    await transport.retire(reference)
+  }
+  async supportsSnapshotJournalFieldRecovery(): Promise<boolean> {
+    const settings = await this.journalFieldRecoverySettings()
+    return (
+      this.snapshotArchivesEnabled &&
+      settings.snapshotJournalFields !== undefined &&
+      settings.snapshotJournalFieldRecoveryVersion === 1
+    )
+  }
+  async findSnapshotJournalFieldUpload(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    const settings = await this.journalFieldRecoverySettings(options.signal)
+    if (
+      !this.snapshotArchivesEnabled ||
+      settings.snapshotJournalFields === undefined ||
+      settings.snapshotJournalFieldRecoveryVersion !== 1
+    )
+      return undefined
+    return await RemoteSnapshotJournalFieldDestination.find(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      options.signal
+    )
+  }
+  private fieldWriterPreflight(options: SnapshotJournalDataOptions): (() => Promise<void>) | undefined {
+    const admission = options.admission
+    return admission === undefined
+      ? undefined
+      : async () => {
+          await admission(async () => this.getSettings())
+        }
+  }
+
   async supportsSnapshotJournalFieldSync(): Promise<boolean> {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFields !== undefined
   }
@@ -588,7 +677,9 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       identityKey,
       normalizeStorageIdentityKey(settings.storageIdentityKey),
       source,
-      options.signal
+      options.signal,
+      undefined,
+      this.fieldWriterPreflight(options)
     )
   }
 
@@ -631,7 +722,8 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       identityKey,
       normalizeStorageIdentityKey(settings.storageIdentityKey),
       resume,
-      options.signal
+      options.signal,
+      this.fieldWriterPreflight(options)
     )
   }
 

@@ -1,3 +1,5 @@
+import { KnexSnapshotArchiveRequestStore } from '../archive/KnexSnapshotArchiveRequestStore'
+import type { SnapshotArchiveRequestOwner } from '../archive/SnapshotArchiveRequest'
 import { KnexSnapshotJournalDataContentReceipts } from './KnexSnapshotJournalDataContentReceipts'
 import type { SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
@@ -58,9 +60,11 @@ export abstract class KnexSnapshotJournalWindowDestination {
     protected readonly limits: SnapshotJournalDestinationLimits,
     protected readonly admission: SnapshotJournalWriterAdmission,
     protected readonly signal: AbortSignal | undefined,
-    originalRoot: Knex
+    originalRoot: Knex,
+    private readonly uploadOwner?: Readonly<SnapshotArchiveRequestOwner>
   ) {
     this.root = originalRoot
+    if (uploadOwner !== undefined) this.uploadOwner = Object.freeze({ ...uploadOwner })
   }
 
   protected static async beginWindow<T extends KnexSnapshotJournalWindowDestination>(
@@ -70,7 +74,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
     limits: SnapshotJournalDestinationLimits,
     admission: SnapshotJournalWriterAdmission,
     create: (binding: SnapshotJournalDestinationBinding, limits: SnapshotJournalDestinationLimits, root: Knex) => T,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    uploadOwner?: Readonly<SnapshotArchiveRequestOwner>
   ): Promise<{ destination: T; checkpoint: SnapshotJournalDestinationCheckpoint }> {
     limits = ownLimits(limits)
     const root = storage.knex
@@ -82,77 +87,117 @@ export abstract class KnexSnapshotJournalWindowDestination {
       async () =>
         await storage.runSnapshotJournalWriter(
           async (trx, backend) => {
-            if (storage.knex !== root || backend === source.journal.source.backend) invalid()
-            await verifySnapshotJournalDestinationSchema(trx)
-            await readSnapshotJournalCaptureConfiguration(trx)
-            const users: Array<{ userId: unknown; activeStorage: unknown; identityKey: unknown }> = await trx('users')
-              .where('identityKey', identityKey)
-              .select(
-                'userId',
-                trx.raw('substr(identityKey,1,131) AS identityKey'),
-                trx.raw('substr(activeStorage,1,257) AS activeStorage')
-              )
-              .limit(2)
-            const settings: Array<{ storageIdentityKey: unknown; chain: unknown }> = await trx('settings')
-              .select(
-                trx.raw('substr(storageIdentityKey,1,257) AS storageIdentityKey'),
-                trx.raw('substr(chain,1,9) AS chain')
-              )
-              .limit(2)
-            if (
-              users.length !== 1 ||
-              settings.length !== 1 ||
-              users[0].identityKey !== identityKey ||
-              !Number.isSafeInteger(Number(users[0].userId)) ||
-              Number(users[0].userId) < 1 ||
-              typeof settings[0].storageIdentityKey !== 'string' ||
-              settings[0].chain !== source.journal.source.chain ||
-              !(users[0].activeStorage === null || typeof users[0].activeStorage === 'string')
-            )
-              invalid()
-            const userId = Number(users[0].userId),
-              mysql = ['mysql', 'mysql2'].includes(String(trx.client.config.client)),
-              epochs: Array<{ epoch: unknown }> = await trx('snapshot_sync_primary_epochs')
-                .where('userId', userId)
-                .select(trx.raw(mysql ? 'CAST(epoch AS CHAR) AS epoch' : 'CAST(epoch AS TEXT) AS epoch'))
+            const uploads = uploadOwner === undefined ? undefined : new KnexSnapshotArchiveRequestStore(trx)
+            if (uploadOwner !== undefined) await uploads!.verifyJournalFieldUploadWriter(uploadOwner, source.journal)
+            try {
+              if (storage.knex !== root || backend === source.journal.source.backend) invalid()
+              await verifySnapshotJournalDestinationSchema(trx)
+              await readSnapshotJournalCaptureConfiguration(trx)
+              const users: Array<{ userId: unknown; activeStorage: unknown; identityKey: unknown }> = await trx('users')
+                .where('identityKey', identityKey)
+                .select(
+                  'userId',
+                  trx.raw('substr(identityKey,1,131) AS identityKey'),
+                  trx.raw('substr(activeStorage,1,257) AS activeStorage')
+                )
                 .limit(2)
-            if (epochs.length > 1) invalid()
-            const binding: SnapshotJournalDestinationBinding = {
-              ...(source.version === 4 ? { fieldEncoding: 'wallet-journal-fields/1' as const } : {}),
-              lineageVersion: 2,
-              ...(source.journal.bootstrap ? { bootstrap: true as const } : {}),
-              source: { ...source.journal.source },
-              receipt: { ...source.journal.receipt },
-              low: source.journal.low,
-              destinationBackend: backend,
-              destinationStorageIdentity: settings[0].storageIdentityKey,
-              destinationUserId: userId,
-              primaryEpoch: snapshotJournalRevision(epochs[0]?.epoch ?? '0'),
-              activeStorage: users[0].activeStorage
-            }
-            const previous = await readSnapshotJournalStoredWindow(trx, binding)
-            // Field windows require their separate complete-field receiver;
-            // the old row controller must not retire or promote their metadata.
-            if (source.version === 3 && previous?.binding.fieldEncoding !== undefined) invalid()
-            if (
-              previous !== undefined &&
-              !previous.retired &&
-              previous.checkpoint.phase === 'acknowledged' &&
-              !source.journal.bootstrap &&
-              (await new KnexSnapshotJournalDataContentReceipts(storage, root).destinationMatches(
-                trx as Knex.Transaction,
-                previous.binding,
-                previous.checkpoint
-              )) === false
-            )
-              throw new SnapshotJournalDataBootstrapRequiredError()
-            if (
-              previous !== undefined &&
-              !previous.retired &&
-              JSON.stringify(previous.binding) === JSON.stringify(binding)
-            ) {
-              const checkpoint = await readSnapshotJournalDestinationWindow(trx, binding)
-              if (checkpoint === undefined) invalid()
+              const settings: Array<{ storageIdentityKey: unknown; chain: unknown }> = await trx('settings')
+                .select(
+                  trx.raw('substr(storageIdentityKey,1,257) AS storageIdentityKey'),
+                  trx.raw('substr(chain,1,9) AS chain')
+                )
+                .limit(2)
+              if (
+                users.length !== 1 ||
+                settings.length !== 1 ||
+                users[0].identityKey !== identityKey ||
+                !Number.isSafeInteger(Number(users[0].userId)) ||
+                Number(users[0].userId) < 1 ||
+                typeof settings[0].storageIdentityKey !== 'string' ||
+                settings[0].chain !== source.journal.source.chain ||
+                !(users[0].activeStorage === null || typeof users[0].activeStorage === 'string')
+              )
+                invalid()
+              const userId = Number(users[0].userId),
+                mysql = ['mysql', 'mysql2'].includes(String(trx.client.config.client)),
+                epochs: Array<{ epoch: unknown }> = await trx('snapshot_sync_primary_epochs')
+                  .where('userId', userId)
+                  .select(trx.raw(mysql ? 'CAST(epoch AS CHAR) AS epoch' : 'CAST(epoch AS TEXT) AS epoch'))
+                  .limit(2)
+              if (epochs.length > 1) invalid()
+              const binding: SnapshotJournalDestinationBinding = {
+                ...(source.version === 4 ? { fieldEncoding: 'wallet-journal-fields/1' as const } : {}),
+                lineageVersion: 2,
+                ...(source.journal.bootstrap ? { bootstrap: true as const } : {}),
+                source: { ...source.journal.source },
+                receipt: { ...source.journal.receipt },
+                low: source.journal.low,
+                destinationBackend: backend,
+                destinationStorageIdentity: settings[0].storageIdentityKey,
+                destinationUserId: userId,
+                primaryEpoch: snapshotJournalRevision(epochs[0]?.epoch ?? '0'),
+                activeStorage: users[0].activeStorage
+              }
+              const previous = await readSnapshotJournalStoredWindow(trx, binding)
+              // Field windows require their separate complete-field receiver;
+              // the old row controller must not retire or promote their metadata.
+              if (source.version === 3 && previous?.binding.fieldEncoding !== undefined) invalid()
+              if (
+                previous !== undefined &&
+                !previous.retired &&
+                previous.checkpoint.phase === 'acknowledged' &&
+                !source.journal.bootstrap &&
+                (await new KnexSnapshotJournalDataContentReceipts(storage, root).destinationMatches(
+                  trx as Knex.Transaction,
+                  previous.binding,
+                  previous.checkpoint
+                )) === false
+              )
+                throw new SnapshotJournalDataBootstrapRequiredError()
+              if (
+                previous !== undefined &&
+                !previous.retired &&
+                JSON.stringify(previous.binding) === JSON.stringify(binding)
+              ) {
+                const checkpoint = await readSnapshotJournalDestinationWindow(trx, binding)
+                if (checkpoint === undefined) invalid()
+                await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
+                  trx as Knex.Transaction,
+                  binding,
+                  checkpoint,
+                  source.snapshotId,
+                  source.journal.contentRevision
+                )
+                return { binding, checkpoint, previous: undefined, incremental: false }
+              }
+              if (previous !== undefined) {
+                if (
+                  previous.binding.lineageVersion !== 2 ||
+                  snapshotJournalLineage(previous.binding) !== snapshotJournalLineage(binding)
+                )
+                  invalid()
+                const incremental =
+                  !source.journal.bootstrap &&
+                  !previous.retired &&
+                  previous.checkpoint.phase === 'acknowledged' &&
+                  snapshotJournalAssociationGeneration(previous.binding) ===
+                    snapshotJournalAssociationGeneration(binding) &&
+                  previous.binding.receipt.highWater === binding.low
+                if (!source.journal.bootstrap && !incremental) throw new SnapshotJournalDataBootstrapRequiredError()
+                return { binding, checkpoint: undefined, previous, incremental }
+              }
+              if (!source.journal.bootstrap) throw new SnapshotJournalDataBootstrapRequiredError()
+              const scopes = await trx('snapshot_reconciliation_windows')
+                .where('userId', userId)
+                .select('sourceStorageIdentity')
+                .limit(9)
+              if (scopes.length >= 8) throw new SnapshotResourceLimitError('Journal DATA source-scope quota reached')
+              const checkpoint = await beginSnapshotJournalDestinationWindow(
+                trx,
+                binding,
+                randomBytes(32).toString('hex')
+              )
+              await beginSnapshotJournalProgress(trx, binding, checkpoint)
               await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
                 trx as Knex.Transaction,
                 binding,
@@ -161,43 +206,9 @@ export abstract class KnexSnapshotJournalWindowDestination {
                 source.journal.contentRevision
               )
               return { binding, checkpoint, previous: undefined, incremental: false }
+            } finally {
+              if (uploadOwner !== undefined) await uploads!.verifyJournalFieldUploadWriter(uploadOwner, source.journal)
             }
-            if (previous !== undefined) {
-              if (
-                previous.binding.lineageVersion !== 2 ||
-                snapshotJournalLineage(previous.binding) !== snapshotJournalLineage(binding)
-              )
-                invalid()
-              const incremental =
-                !source.journal.bootstrap &&
-                !previous.retired &&
-                previous.checkpoint.phase === 'acknowledged' &&
-                snapshotJournalAssociationGeneration(previous.binding) ===
-                  snapshotJournalAssociationGeneration(binding) &&
-                previous.binding.receipt.highWater === binding.low
-              if (!source.journal.bootstrap && !incremental) throw new SnapshotJournalDataBootstrapRequiredError()
-              return { binding, checkpoint: undefined, previous, incremental }
-            }
-            if (!source.journal.bootstrap) throw new SnapshotJournalDataBootstrapRequiredError()
-            const scopes = await trx('snapshot_reconciliation_windows')
-              .where('userId', userId)
-              .select('sourceStorageIdentity')
-              .limit(9)
-            if (scopes.length >= 8) throw new SnapshotResourceLimitError('Journal DATA source-scope quota reached')
-            const checkpoint = await beginSnapshotJournalDestinationWindow(
-              trx,
-              binding,
-              randomBytes(32).toString('hex')
-            )
-            await beginSnapshotJournalProgress(trx, binding, checkpoint)
-            await new KnexSnapshotJournalDataContentReceipts(storage, root).pending(
-              trx as Knex.Transaction,
-              binding,
-              checkpoint,
-              source.snapshotId,
-              source.journal.contentRevision
-            )
-            return { binding, checkpoint, previous: undefined, incremental: false }
           },
           undefined,
           signal
@@ -357,12 +368,17 @@ export abstract class KnexSnapshotJournalWindowDestination {
         await this.storage.runSnapshotJournalWriter(
           async (trx, backend) => {
             this.current()
+            const uploads = this.uploadOwner === undefined ? undefined : new KnexSnapshotArchiveRequestStore(trx)
+            if (this.uploadOwner !== undefined)
+              await uploads!.verifyJournalFieldUploadWriter(this.uploadOwner, this.binding)
             if (backend !== this.binding.destinationBackend) invalid()
             await verifySnapshotJournalDestinationSchema(trx)
             await readSnapshotJournalCaptureConfiguration(trx)
             this.current()
             const result = await apply(trx)
             this.current()
+            if (this.uploadOwner !== undefined)
+              await uploads!.verifyJournalFieldUploadWriter(this.uploadOwner, this.binding)
             return result
           },
           this.binding.destinationBackend,

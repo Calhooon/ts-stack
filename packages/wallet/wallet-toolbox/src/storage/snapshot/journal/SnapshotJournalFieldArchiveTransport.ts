@@ -1,4 +1,8 @@
 import {
+  parseSnapshotJournalFieldArchiveReference,
+  type SnapshotJournalFieldArchiveReference
+} from './SnapshotJournalReceiptData'
+import {
   validateSnapshotArchiveReaderOptions,
   type SnapshotArchiveReaderOptions
 } from '../archive/SnapshotArchiveReaderRequest'
@@ -7,7 +11,7 @@ import {
   validateSnapshotArchiveRequestReceipt,
   type SnapshotArchiveOffer
 } from '../archive/SnapshotArchiveProtocol'
-import { validateSnapshotArchiveCancellation } from '../archive/SnapshotArchiveCleanup'
+import { drainSnapshotArchiveRequest, validateSnapshotArchiveCancellation } from '../archive/SnapshotArchiveCleanup'
 import { verifySnapshotArchivePage } from '../archive/SnapshotArchiveDirectory'
 import type { SnapshotArchiveAdmission } from '../archive/SnapshotArchiveAdmission'
 import type { SnapshotArchiveRequestReceipt } from '../archive/SnapshotArchiveRequest'
@@ -68,6 +72,50 @@ export class SnapshotJournalFieldArchiveTransport {
     parseSnapshotJournalFieldArchiveRpcInput(method, params)
     return await this.rpc(method, params, signal)
   }
+  /** Recovers only the server's actual original READY source request. The
+   * reference is comparison DATA; it cannot mint another owner or renew TTL. */
+  async reopen(input: SnapshotJournalFieldArchiveReference, signal?: AbortSignal) {
+    const reference = parseSnapshotJournalFieldArchiveReference(input)
+    if (
+      reference.source.identityKey !== this.identityKey ||
+      reference.source.storageIdentity !== this.storageIdentityKey ||
+      reference.source.chain !== this.chain
+    )
+      throw new TypeError('Field archive recovery profile/endpoint differs')
+    const value = await this.call('reopenSnapshotJournalFieldArchive', { reference }, signal),
+      outcome =
+        value !== null && typeof value === 'object'
+          ? Object.getOwnPropertyDescriptor(value, 'outcome')?.value
+          : undefined,
+      row = snapshotJournalDataRecord(
+        value,
+        outcome === 'offered' ? ['version', 'outcome', 'offer', 'request'] : ['version', 'outcome']
+      )
+    if (row.version !== 1) throw new TypeError('Invalid field archive recovery offer')
+    if (row.outcome === 'absent') return undefined
+    if (row.outcome !== 'offered') throw new TypeError('Invalid field archive recovery offer')
+    const offer = validateSnapshotArchiveOffer(row.offer, this.storageIdentityKey, this.chain),
+      request = validateSnapshotJournalFieldArchiveReaderRequest(row.request, offer.serverTime)
+    if (request.notAfter > reference.receipt.expiresAt)
+      throw new TypeError('Field archive recovery renewed original expiry')
+    return Object.freeze({ version: 1 as const, outcome: 'offered' as const, offer, request })
+  }
+  async retire(input: SnapshotJournalFieldArchiveReference): Promise<void> {
+    const reference = parseSnapshotJournalFieldArchiveReference(input)
+    if (
+      reference.source.identityKey !== this.identityKey ||
+      reference.source.storageIdentity !== this.storageIdentityKey ||
+      reference.source.chain !== this.chain
+    )
+      throw new TypeError('Field archive retirement profile/endpoint differs')
+    await drainSnapshotArchiveRequest(async signal =>
+      validateSnapshotArchiveCancellation(
+        await this.call('retireSnapshotJournalFieldArchive', { reference }, signal),
+        reference.receipt.requestId
+      )
+    )
+  }
+
   async offer(
     input: SnapshotArchiveReaderOptions,
     inputPosition?: SnapshotJournalArchivePosition,

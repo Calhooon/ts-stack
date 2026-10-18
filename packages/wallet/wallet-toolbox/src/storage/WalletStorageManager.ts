@@ -5,7 +5,10 @@ import {
   snapshotJournalArchiveProvider,
   snapshotJournalFieldArchiveProvider,
   snapshotJournalFieldProvider,
-  snapshotJournalFieldProvenanceProvider
+  snapshotJournalFieldProvenanceProvider,
+  snapshotJournalFieldArchiveRecoveryProvider,
+  snapshotJournalFieldRecoveryProvider,
+  snapshotJournalFieldWindowRecoveryProvider
 } from './snapshot/journal/SnapshotJournalDataProvider'
 import { snapshotJournalDataSourceBinding } from './snapshot/journal/snapshotJournalDataSourceBinding'
 import {
@@ -1665,6 +1668,132 @@ export class WalletStorageManager implements sdk.WalletStorage {
     return { forceBootstrap }
   }
 
+  /** Recover the previous exact immutable window first. A new invocation still
+   * observes/captures a fresh source afterwards, so an old ACK cannot silently
+   * substitute for changes made since the interrupted copy. */
+  private async recoverJournalFieldWindow(
+    reader: sdk.WalletStorageSyncReader &
+      import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldArchiveRecoveryProvider,
+    writer: sdk.WalletStorageProvider &
+      import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldProvider,
+    previous: import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldStatus,
+    options: SyncSessionOptions,
+    admission: SnapshotJournalWriterAdmission,
+    dispatch: (observe?: boolean) => Promise<void>,
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+  ): Promise<{ bootstrap: boolean; recovered?: SnapshotJournalReconciliationProgress }> {
+    const reference = { source: previous.binding.source, receipt: previous.binding.receipt },
+      identityKey = this._authId.identityKey,
+      acknowledged = previous.checkpoint.phase === 'acknowledged',
+      remoteRecovery =
+        snapshotJournalFieldRecoveryProvider(writer) && (await writer.supportsSnapshotJournalFieldRecovery())
+    // Older remote field peers retain their own existing contract. Presence of
+    // modern client methods alone is not proof that their endpoint can recover.
+    if (writer.journalDataCommitOutsideManager === true && !remoteRecovery) return { bootstrap: false }
+    let archive:
+        | import('./snapshot/journal/openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive
+        | undefined,
+      destination: SnapshotJournalFieldDestination | undefined,
+      failure: { cause: unknown } | undefined
+    const cleanup = new Brc38CleanupScope(async () => {
+      const results = await Promise.allSettled([
+          Promise.resolve().then(async () => await destination?.close?.()),
+          Promise.resolve().then(async () => {
+            if (archive !== undefined) await closeSnapshotJournalSource(archive, options.signal)
+          })
+        ]),
+        causes = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+      try {
+        await reader.retireSnapshotJournalFieldArchive(identityKey, reference)
+      } catch (cause) {
+        causes.push(cause)
+      }
+      if (causes.length === 0) return
+      const all = [...(failure === undefined ? [] : [failure.cause]), ...causes]
+      if (all.length === 1) throw all[0]
+      throw new AggregateError(all, 'Field recovery and actual source/upload cleanup failed', { cause: all[0] })
+    })
+    const observer = this.journalCopyProgress(options, onDurableProgress),
+      observe = (value: SnapshotJournalReconciliationProgress) => {
+        if (acknowledged && value.state === 'complete') return
+        // A recovered window is committed; the complete newly requested sync
+        // still needs a fresh source observation/window below.
+        observer(value.state === 'complete' ? { ...value, state: 'committed' } : value)
+      }
+    try {
+      await dispatch(true)
+      const upload =
+        remoteRecovery && snapshotJournalFieldRecoveryProvider(writer)
+          ? await writer.findSnapshotJournalFieldUpload(identityKey, reference.source.storageIdentity, {
+              admission,
+              signal: options.signal
+            })
+          : undefined
+      let iterator:
+        AsyncGenerator<SnapshotJournalReconciliationProgress, SnapshotJournalReconciliationProgress, void> | undefined
+      if (upload !== undefined && snapshotJournalFieldRecoveryProvider(writer)) {
+        if (
+          JSON.stringify(upload.source.journal.source) !== JSON.stringify(reference.source) ||
+          JSON.stringify(upload.source.journal.receipt) !== JSON.stringify(reference.receipt)
+        )
+          throw new WERR_INVALID_OPERATION('Recovered upload differs from the previous actual financial window')
+        await dispatch()
+        const actual = await writer.resumeSnapshotJournalFieldDestination(identityKey, upload, {
+          admission,
+          signal: options.signal,
+          limits: journalCopyLimits(options.maxItems, options.maxRoughSize)
+        })
+        destination = actual
+        if (actual.isUploadReady) iterator = actual.reconcileUploaded({ signal: options.signal, onProgress: observe })
+      }
+      if (iterator === undefined && !acknowledged) {
+        if (destination === undefined && snapshotJournalFieldWindowRecoveryProvider(writer))
+          destination = await writer.resumeSnapshotJournalFieldWindow(identityKey, reference, {
+            admission,
+            signal: options.signal,
+            limits: journalCopyLimits(options.maxItems, options.maxRoughSize)
+          })
+        if (destination === undefined) return { bootstrap: true }
+        archive = await reader.resumeSnapshotJournalFieldArchive(identityKey, reference, {
+          lifetimeMs: options.snapshotLifetimeMs,
+          signal: options.signal
+        })
+        if (archive === undefined) return { bootstrap: true }
+        const actual = destination
+        iterator = runSnapshotJournalFieldArchiveReconciliation(
+          archive,
+          async () => ({
+            status: async () => {
+              await dispatch(true)
+              return await actual.status()
+            },
+            stageArchiveFrame: async (expected, source) => {
+              await dispatch()
+              return await actual.stageArchiveFrame(expected, source)
+            },
+            promote: async (expected, source) => {
+              await dispatch()
+              return await actual.promote(expected, source)
+            },
+            ...(actual.close === undefined ? {} : { close: () => actual.close!() })
+          }),
+          { signal: options.signal, onProgress: observe }
+        )
+      }
+      if (iterator === undefined) return { bootstrap: false }
+      let last: SnapshotJournalReconciliationProgress | undefined
+      for await (const progress of iterator) last = progress
+      if (last === undefined || (last.state !== 'complete' && last.state !== 'stopped'))
+        throw new WERR_INVALID_OPERATION('Recovered field window did not physically drain')
+      return { bootstrap: false, ...(acknowledged && last.state === 'complete' ? {} : { recovered: last }) }
+    } catch (cause) {
+      failure = { cause }
+      throw cause
+    } finally {
+      await cleanup.close()
+    }
+  }
+
   /** Ordinary pulls keep network preparation outside the manager queue. Only
    * concrete target operations obtain the short, current writer admission. */
   private async copyJournalFieldWindow(
@@ -1672,7 +1801,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     writer: sdk.WalletStorageProvider,
     options: SyncSessionOptions,
     selection?: { generation: number; active: sdk.WalletStorageProvider },
-    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void,
+    skipRecovery = false,
+    onRecoveredWindow?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
     if (
       !snapshotJournalFieldArchiveProvider(reader) ||
@@ -1693,6 +1824,67 @@ export class WalletStorageManager implements sdk.WalletStorage {
       if (writer.journalDataCommitOutsideManager === true)
         await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
     }
+    await dispatch(true)
+    const previous = await writer.getSnapshotJournalFieldStatus(identityKey, readerSettings.storageIdentityKey, {
+      admission
+    })
+    let recoveredBootstrap = false
+    if (
+      !skipRecovery &&
+      previous !== undefined &&
+      snapshotJournalFieldArchiveRecoveryProvider(reader) &&
+      (await reader.supportsSnapshotJournalFieldArchiveRecovery())
+    ) {
+      const recovery = await this.recoverJournalFieldWindow(
+        reader,
+        writer,
+        previous,
+        options,
+        admission,
+        dispatch,
+        onDurableProgress
+      )
+      recoveredBootstrap = recovery.bootstrap
+      if (recovery.recovered !== undefined) {
+        const recovered = recovery.recovered
+        if (recovered.state === 'stopped')
+          return {
+            status: 'cancelled',
+            mode: 'paged',
+            pages: recovered.progress.pages,
+            inserts: recovered.progress.inserts,
+            updates: recovered.progress.updates,
+            journalCheckpoint: copyJournalCheckpoint(recovered.checkpoint)
+          }
+        onRecoveredWindow?.(recovered)
+        const next = await this.copyJournalFieldWindow(
+          reader,
+          writer,
+          {
+            ...options,
+            onProgress: value =>
+              options.onProgress?.({
+                ...value,
+                pages: recovered.progress.pages + value.pages,
+                inserts: recovered.progress.inserts + value.inserts,
+                updates: recovered.progress.updates + value.updates
+              })
+          },
+          selected,
+          onDurableProgress,
+          true,
+          onRecoveredWindow
+        )
+        if (next === undefined)
+          throw new WERR_INVALID_OPERATION('Field capability changed after recovery; start a fresh sync')
+        return {
+          ...next,
+          pages: recovered.progress.pages + next.pages,
+          inserts: recovered.progress.inserts + next.inserts,
+          updates: recovered.progress.updates + next.updates
+        }
+      }
+    }
     const confirmation = await this.confirmJournalContentCopy(
       reader,
       writer,
@@ -1703,11 +1895,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
       true
     )
     if (confirmation.result !== undefined) return confirmation.result
-    let forceBootstrap = confirmation.forceBootstrap
-    await dispatch(true)
-    const previous = await writer.getSnapshotJournalFieldStatus(identityKey, readerSettings.storageIdentityKey, {
-      admission
-    })
+    let forceBootstrap = confirmation.forceBootstrap || recoveredBootstrap
     for (let attempt = 0; attempt < 2; attempt++) {
       let archive:
         import('./snapshot/journal/openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined
@@ -1734,7 +1922,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
           lifetimeMs: options.snapshotLifetimeMs,
           signal: options.signal
         })
-        if (archive === undefined) return undefined
+        if (archive === undefined)
+          throw new SnapshotResourceLimitError('Negotiated field source archive capacity is unavailable')
         const source = archive
         if (
           source.manifest.binding.user.identityKey !== identityKey ||
@@ -2006,6 +2195,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
       inserts: 0,
       updates: 0
     }
+    const recoveredTotals = { pages: 0, inserts: 0, updates: 0 }
     let observerFailure: { error: unknown } | undefined
     const observe = <T>(callback: ((value: T) => void) | undefined, value: T): void => {
       try {
@@ -2017,9 +2207,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
     const retain = (value: SnapshotJournalReconciliationProgress): void => {
       partial = {
-        pages: value.progress.pages,
-        inserts: value.progress.inserts,
-        updates: value.progress.updates,
+        pages: recoveredTotals.pages + value.progress.pages,
+        inserts: recoveredTotals.inserts + value.progress.inserts,
+        updates: recoveredTotals.updates + value.progress.updates,
         journalCheckpoint: {
           ...value.checkpoint,
           ...(value.checkpoint.after === undefined ? {} : { after: { ...value.checkpoint.after } })
@@ -2037,7 +2227,22 @@ export class WalletStorageManager implements sdk.WalletStorage {
         },
         selected,
         onCustody,
-        retain
+        retain,
+        value => {
+          if (value.state !== 'complete' || value.checkpoint.phase !== 'acknowledged')
+            throw new WERR_INVALID_OPERATION('Recovered totals require an actual completed window')
+          recoveredTotals.pages += value.progress.pages
+          recoveredTotals.inserts += value.progress.inserts
+          recoveredTotals.updates += value.progress.updates
+          // Keep real aggregate counters separately from the last actual
+          // checkpoint. No cumulative UI counter becomes a financial ACK.
+          partial = {
+            pages: recoveredTotals.pages,
+            inserts: recoveredTotals.inserts,
+            updates: recoveredTotals.updates,
+            journalCheckpoint: copyJournalCheckpoint(value.checkpoint)
+          }
+        }
       )
     } catch (error) {
       // A callback's typed exception is still an observer failure. It cannot
@@ -2091,11 +2296,20 @@ export class WalletStorageManager implements sdk.WalletStorage {
     options: SyncSessionOptions = {},
     selection?: { generation: number; active: sdk.WalletStorageProvider },
     onCustody?: (value: JournalCopyCustody) => void,
-    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void,
+    onRecoveredWindow?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
     if (reader === writer) return undefined
     if (options.journalFields === true && onCustody === undefined) {
-      const fields = await this.copyJournalFieldWindow(reader, writer, options, selection, onDurableProgress)
+      const fields = await this.copyJournalFieldWindow(
+        reader,
+        writer,
+        options,
+        selection,
+        onDurableProgress,
+        false,
+        onRecoveredWindow
+      )
       if (fields !== undefined) return fields
     }
     if (!journalSource(reader) || !journalDestination(writer))

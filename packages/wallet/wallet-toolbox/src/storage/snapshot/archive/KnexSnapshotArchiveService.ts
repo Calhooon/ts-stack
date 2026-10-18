@@ -401,6 +401,13 @@ export class KnexSnapshotArchiveService {
     return await this.archives.readJournalFields(identityKey, archiveId, sequence)
   }
 
+  async findJournalFieldsReader(identityKey: string, reference: unknown, readyOnly: boolean) {
+    this.assertOpen()
+    const found = await this.requests.findJournalFieldsCapture(identityKey, reference, readyOnly)
+    this.assertOpen()
+    return found
+  }
+
   async cancelJournalFieldsReader(identityKey: string, input: unknown): Promise<void> {
     this.assertOpen()
     const request = parseSnapshotJournalFieldArchiveReaderRequest(input)

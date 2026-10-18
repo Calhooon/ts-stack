@@ -145,3 +145,17 @@ export function parseSnapshotJournalArchivePosition(
     highWater: snapshotJournalRevision(row.highWater)
   })
 }
+
+/** Exact comparison with a previous immutable field capture. It supplies no
+ * source actor, renewal, SQL fence, primary authority or financial ACK. */
+export interface SnapshotJournalFieldArchiveReference {
+  readonly source: Readonly<SnapshotJournalReceiptBinding>
+  readonly receipt: Readonly<SnapshotJournalReceipt>
+}
+export function parseSnapshotJournalFieldArchiveReference(
+  input: unknown
+): Readonly<SnapshotJournalFieldArchiveReference> {
+  const row = snapshotJournalDataRecord(input, ['source', 'receipt']),
+    source = parseSnapshotJournalReceiptBindingData(row.source)
+  return Object.freeze({ source, receipt: parseSnapshotJournalReceiptData(row.receipt, source) })
+}

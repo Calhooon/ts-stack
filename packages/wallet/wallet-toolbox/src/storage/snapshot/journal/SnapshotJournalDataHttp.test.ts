@@ -486,3 +486,140 @@ test('authenticated READY field upload resumes with a fresh client/server after 
   if (failures.length > 1)
     throw new AggregateError(failures, 'Actual field recovery and physical cleanup failed', { cause: failures[0] })
 }, 210000)
+
+test('cancelled upload fences a retained actual target writer and a late financial BEGIN from another controller', async () => {
+  const f = await endpoints()
+  let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined,
+    destination: import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination | undefined
+  try {
+    const { KnexSnapshotArchiveRequestStore } = await import('../archive/KnexSnapshotArchiveRequestStore'),
+      { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination'),
+      { journalCopyLimits } = await import('./SnapshotJournalCopyLimits'),
+      server = await f.target.serve(),
+      client = new StorageClient(f.source.wallet, server.url, { serverIdentityKey: f.target.serverIdentityKey })
+    archive = await f.source.storage.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual source unavailable')
+    destination = await client.openSnapshotJournalFieldDestination(f.source.identityKey, archive.manifest.binding)
+    if (destination === undefined) throw new Error('Actual upload unavailable')
+    const resume = destination.uploadResume,
+      requests = new KnexSnapshotArchiveRequestStore(f.target.storage.knex),
+      owner = await requests.journalFieldUploadOwner(f.source.identityKey, resume.request),
+      admission: import('./SnapshotJournalProvider').SnapshotJournalWriterAdmission = operation => operation(),
+      receiver = await KnexSnapshotJournalFieldDestination.resume(
+        f.target.storage,
+        f.source.identityKey,
+        resume.source.sourceStorage.storageIdentityKey,
+        journalCopyLimits(),
+        admission,
+        undefined,
+        undefined,
+        owner
+      )
+    if (receiver === undefined) throw new Error('Actual target window unavailable')
+    const before = await receiver.status()
+    // This is the original concrete receiver retaining its server-private SQL
+    // owner, followed by cancellation through an independent real controller.
+    await new KnexSnapshotArchiveRequestStore(f.target.storage.knex).cancelJournalFieldUpload(
+      f.source.identityKey,
+      resume.request
+    )
+    let entered = false
+    const writer = Reflect.get(receiver, 'writer') as <T>(
+      operation: (trx: import('knex').Knex) => Promise<T>
+    ) => Promise<T>
+    await expect(
+      writer.call(receiver, async trx => {
+        entered = true
+        await trx('tx_labels').insert({
+          userId: receiver.binding.destinationUserId,
+          label: 'forbidden late upload write',
+          created_at: new Date(),
+          updated_at: new Date(),
+          isDeleted: false
+        })
+      })
+    ).rejects.toThrow('unavailable')
+    expect(entered).toBe(false)
+    expect(await f.target.storage.findTxLabels({ partial: { label: 'forbidden late upload write' } })).toHaveLength(0)
+    await expect(
+      KnexSnapshotJournalFieldDestination.begin(
+        f.target.storage,
+        f.source.identityKey,
+        resume.source,
+        journalCopyLimits(),
+        admission,
+        undefined,
+        owner
+      )
+    ).rejects.toThrow('unavailable')
+    expect(
+      await client.getSnapshotJournalFieldStatus(f.source.identityKey, resume.source.sourceStorage.storageIdentityKey)
+    ).toMatchObject({ checkpoint: before.checkpoint })
+    expect(await f.target.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+      archives: 0,
+      reservedBytes: 0
+    })
+  } finally {
+    const drained = await Promise.allSettled([destination?.close(), archive?.close()])
+    await f.close()
+    const failures = drained.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+    if (failures.length)
+      await Promise.reject(new AggregateError(failures, 'Actual cancelled writer owners failed cleanup'))
+  }
+}, 90000)
+
+test('field source recovery preflight owns and drains its original timeout before any reader is issued', async () => {
+  const f = await endpoints(),
+    controller = new AbortController()
+  let guard: ReturnType<typeof setTimeout> | undefined
+  let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined
+  try {
+    const { SnapshotJournalFieldArchiveTransport } = await import('./SnapshotJournalFieldArchiveTransport'),
+      { snapshotJournalFieldArchiveCapabilities } = await import('./SnapshotJournalFieldArchiveProtocol'),
+      { openRemoteSnapshotJournalFieldArchive } = await import('./openRemoteSnapshotJournalFieldArchive'),
+      { SnapshotCancelledError } = await import('../SnapshotCancelledError')
+    archive = await f.source.storage.openSnapshotJournalFieldArchive(f.source.identityKey)
+    if (archive === undefined) throw new Error('Actual source unavailable')
+    const binding = archive.manifest.binding,
+      calls: string[] = []
+    guard = setTimeout(() => controller.abort(new Error('Owned stalled preflight cleanup')), 1000)
+    let settled = false
+    const transport = new SnapshotJournalFieldArchiveTransport(
+      async (method, _params, signal) => {
+        calls.push(method)
+        if (signal === undefined) throw new Error('Recovery has no owned transport signal')
+        return await new Promise((_, reject) => {
+          const stop = () => {
+            settled = true
+            reject(new SnapshotCancelledError('Actual pending preflight aborted'))
+          }
+          if (signal.aborted) stop()
+          else signal.addEventListener('abort', stop, { once: true })
+        })
+      },
+      f.source.identityKey,
+      binding.sourceStorage.storageIdentityKey,
+      'test',
+      snapshotJournalFieldArchiveCapabilities(300000)
+    )
+    await expect(
+      openRemoteSnapshotJournalFieldArchive(
+        transport,
+        undefined,
+        { lifetimeMs: 50, signal: controller.signal },
+        { source: binding.journal.source, receipt: binding.journal.receipt }
+      )
+    ).rejects.toThrow('Remote snapshot expired')
+    expect(settled).toBe(true)
+    expect(controller.signal.aborted).toBe(false)
+    expect(calls).toEqual(['reopenSnapshotJournalFieldArchive'])
+    expect(archive.isOpen).toBe(true)
+    expect(await f.source.storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 1 })
+  } finally {
+    clearTimeout(guard)
+    controller.abort()
+    await archive?.close()
+    await archive?.closed
+    await f.close()
+  }
+}, 30000)

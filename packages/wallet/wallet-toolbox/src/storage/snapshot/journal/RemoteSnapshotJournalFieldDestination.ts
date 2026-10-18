@@ -51,7 +51,7 @@ import {
 import type { SnapshotJournalDestinationBinding, SnapshotJournalDestinationCheckpoint } from './SnapshotJournalTypes'
 
 /** Safe-to-persist comparison DATA. It contains no SQL writer token or source
- * actor; resumption still requires authentication and an actual READY upload. */
+ * actor; resumption still requires authentication and its actual stored upload. */
 export interface SnapshotJournalFieldUploadResume {
   version: 1
   source: SnapshotJournalFieldArchiveBinding
@@ -85,7 +85,8 @@ export class RemoteSnapshotJournalFieldDestination {
     private readonly source: SnapshotJournalFieldArchiveBinding,
     private readonly request: Readonly<SnapshotJournalFieldUploadRequest>,
     private readonly bound: SnapshotJournalDestinationBinding,
-    private readonly signal?: AbortSignal
+    private readonly signal?: AbortSignal,
+    private readonly preflight?: () => Promise<void>
   ) {
     void this.closed.catch(() => undefined)
   }
@@ -113,6 +114,35 @@ export class RemoteSnapshotJournalFieldDestination {
       signal?.removeEventListener('abort', abort)
     }
   }
+  static async find(
+    rpc: SnapshotJournalFieldRpcCall,
+    identityKey: string,
+    sourceStorageIdentity: string,
+    signal?: AbortSignal
+  ) {
+    const input = await this.request(
+      rpc,
+      'findSnapshotJournalFieldUpload',
+      { version: 1, identityKey, sourceStorageIdentity },
+      signal
+    )
+    if (input === null) return undefined
+    const value = snapshotJournalDataRecord(input, ['version', 'source', 'request']),
+      source = parseSnapshotJournalFieldArchiveBinding(value.source),
+      request = parseSnapshotJournalFieldUploadRequest(value.request)
+    if (
+      value.version !== 1 ||
+      source.user.identityKey !== identityKey ||
+      source.sourceStorage.storageIdentityKey !== sourceStorageIdentity ||
+      request.sourceDigest !== snapshotJournalFieldUploadSourceDigest(source)
+    )
+      throw new TypeError('Discovered field upload changed original profile/source')
+    return { version: 1 as const, source, request }
+  }
+  get isUploadReady(): boolean {
+    return this.ready
+  }
+
   static async observe(
     rpc: SnapshotJournalFieldRpcCall,
     identityKey: string,
@@ -172,11 +202,14 @@ export class RemoteSnapshotJournalFieldDestination {
     destinationIdentity: string,
     input: SnapshotJournalFieldArchiveBinding,
     signal?: AbortSignal,
-    inputRequest?: SnapshotJournalFieldUploadRequest
+    inputRequest?: SnapshotJournalFieldUploadRequest,
+    preflight?: () => Promise<void>
   ) {
     const source = parseSnapshotJournalFieldArchiveBinding(input)
     if (source.user.identityKey !== identityKey) throw new TypeError('Field source profile differs')
-    let request: Readonly<SnapshotJournalFieldUploadRequest>
+    await preflight?.()
+    let ready = false,
+      request: Readonly<SnapshotJournalFieldUploadRequest>
     if (inputRequest === undefined) {
       const offered = await this.request(
           rpc,
@@ -218,7 +251,9 @@ export class RemoteSnapshotJournalFieldDestination {
         ),
         request
       )
-      if (actual.state !== 'ready') throw new WERR_INVALID_OPERATION('Field recovery requires its actual READY upload')
+      if (actual.state !== 'ready' && actual.state !== 'building')
+        throw new WERR_INVALID_OPERATION('Field recovery requires its actual READY or building upload')
+      ready = actual.state === 'ready'
     }
     const cleanup = async () => {
       if ((await this.request(rpc, 'cancelSnapshotJournalFieldUpload', { version: 1, identityKey, request })) !== true)
@@ -227,7 +262,7 @@ export class RemoteSnapshotJournalFieldDestination {
     try {
       const value = await this.request(
         rpc,
-        'beginSnapshotJournalFieldUpload',
+        inputRequest === undefined ? 'beginSnapshotJournalFieldUpload' : 'resumeSnapshotJournalFieldUpload',
         { version: 1, identityKey, source, request },
         signal
       )
@@ -252,9 +287,10 @@ export class RemoteSnapshotJournalFieldDestination {
         source,
         request,
         actual.binding,
-        signal
+        signal,
+        preflight
       )
-      destination.ready = inputRequest !== undefined
+      destination.ready = ready
       return destination
     } catch (cause) {
       try {
@@ -277,7 +313,8 @@ export class RemoteSnapshotJournalFieldDestination {
     identityKey: string,
     destinationIdentity: string,
     input: SnapshotJournalFieldUploadResume,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    preflight?: () => Promise<void>
   ) {
     const value = snapshotJournalDataRecord(input, ['version', 'source', 'request'])
     if (value.version !== 1) throw new TypeError('Invalid field upload recovery version')
@@ -287,7 +324,8 @@ export class RemoteSnapshotJournalFieldDestination {
       destinationIdentity,
       parseSnapshotJournalFieldArchiveBinding(value.source),
       signal,
-      parseSnapshotJournalFieldUploadRequest(value.request)
+      parseSnapshotJournalFieldUploadRequest(value.request),
+      preflight
     )
     if (destination === undefined) throw new WERR_INVALID_OPERATION('Actual uploaded field recovery is unavailable')
     return destination
@@ -322,7 +360,8 @@ export class RemoteSnapshotJournalFieldDestination {
       { ...options, signal: options.signal ?? this.signal }
     )
   }
-  private call(method: SnapshotJournalFieldRpcMethod, fields: Record<string, unknown> = {}, cleanup = false) {
+  private async call(method: SnapshotJournalFieldRpcMethod, fields: Record<string, unknown> = {}, cleanup = false) {
+    if (!cleanup) await this.preflight?.()
     return RemoteSnapshotJournalFieldDestination.request(
       this.rpc,
       method,
@@ -443,6 +482,10 @@ export class RemoteSnapshotJournalFieldDestination {
     assertRemoteSnapshotJournalFieldArchive(archive)
     if (snapshotJournalFieldUploadSourceDigest(archive.manifest.binding) !== this.request.sourceDigest)
       throw new WERR_INVALID_OPERATION('Actual field source archive changed')
+    if (this.ready && this.uploaded === undefined) {
+      this.uploaded = archive
+      return
+    }
     if (this.uploaded !== undefined) {
       if (this.uploaded !== archive)
         throw new WERR_INVALID_OPERATION('Field upload belongs to another actual source owner')

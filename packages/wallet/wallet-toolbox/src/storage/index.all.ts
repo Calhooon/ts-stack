@@ -215,3 +215,9 @@ export type {
   SnapshotJournalHashedFieldDescriptor,
   SnapshotJournalHashedFieldPage
 } from './snapshot/journal/SnapshotJournalFieldTypes'
+
+export type { SnapshotJournalFieldArchiveReference } from './snapshot/journal/SnapshotJournalReceiptData'
+export type {
+  SnapshotJournalFieldArchiveRecoveryProvider,
+  SnapshotJournalFieldRecoveryProvider
+} from './snapshot/journal/SnapshotJournalDataProvider'

@@ -766,3 +766,38 @@ identity changes and malformed settings do not trigger that retry. Ordinary
 legacy `makeAvailable()` behavior is unchanged. The row status parser retains
 its strict default namespace; the field endpoint explicitly selects its field
 encoding when validating a field-window status.
+
+### Exact field-window recovery
+
+Field peers advertise source recovery and target upload recovery separately from
+field-copy support. On an opted-in manager pull, an interrupted window resumes
+only its exact stored source receipt. A READY target upload can finish from its
+actual stored bytes; a partial upload or local intake reopens the original source
+capture and replays its bounded packets. Recovery neither creates another capture
+nor extends the original expiry. It cannot begin a replacement financial window.
+If the original source has expired, the manager retires its matching resources
+and requires a fresh bootstrap. Cleanup matches the original source/receipt and
+cannot retire another capture for that profile.
+
+After acknowledging a recovered window, the same manager invocation observes a
+fresh source so changes made after the interrupted view are included. Progress
+counts accumulate across the actual windows; each checkpoint and financial ACK
+remains scoped to its own window. Separate recovery advertisements preserve old
+peer negotiation. Persisted references contain comparison DATA, never SQL source
+or writer authority. These paths do not grant primary selection. Remote primary
+handoff, stale-writer fencing and full-system qualification remain required.
+
+
+Upload financial writers also retain the server-private request owner. Each
+actual transaction locks the same durable row used by cancellation, verifies its
+original profile/source/window and expiry, and rechecks before commit. A cancelled
+or expired owner cannot enter a later financial transaction or BEGIN, including
+through another controller. The short SQL fence contains no HTTP/proof work.
+This fences late financial writes; it does not claim that another process's
+physical reader has exited. Source/reader cleanup still follows its actual
+owned lifetime. No new schema, quota, source actor or primary grant is added.
+
+Exact-source recovery owns its preflight fetch before a reader is issued, using
+the original requested lifetime and a separate 30-second I/O ceiling. Abort or
+expiry drains the actual pending fetch before return. It does not cancel another
+existing capture or renew its original expiry.

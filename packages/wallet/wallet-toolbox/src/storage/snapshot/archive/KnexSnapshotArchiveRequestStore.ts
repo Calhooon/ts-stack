@@ -1,3 +1,4 @@
+import { parseSnapshotJournalFieldArchiveReference } from '../journal/SnapshotJournalReceiptData'
 import {
   parseSnapshotJournalFieldUploadRequest,
   snapshotJournalFieldUploadRequestId,
@@ -178,6 +179,110 @@ export class KnexSnapshotArchiveRequestStore {
     })
   }
 
+  /** Bounded concrete SQL metadata only. No payload BLOB, writer token or
+   * caller-provided callback is used to discover an immutable artifact owner. */
+  private async fieldArtifacts(identityKey: string) {
+    identity(identityKey)
+    const rows: Array<Pick<RequestRow, 'requestId' | 'requestJson' | 'archiveId' | 'state' | 'expiresAt'>> =
+      await this.knex(table)
+        .where({ identityKey, released: false })
+        .whereNotNull('archiveId')
+        .select(
+          'requestId',
+          'archiveId',
+          'state',
+          'expiresAt',
+          this.knex.raw('substr(requestJson,1,8193) AS requestJson')
+        )
+        .limit(snapshotArchiveRequestLimits.perProfile + 1)
+    if (rows.length > snapshotArchiveRequestLimits.perProfile) unavailable()
+    const result: Array<{
+      request: Readonly<SnapshotJournalFieldArchiveReaderRequest | SnapshotJournalFieldUploadRequest>
+      binding: SnapshotJournalFieldArchiveBinding
+      ready: boolean
+      expiresAt: number
+      state: RequestRow['state']
+    }> = []
+    for (const row of rows) {
+      if (typeof row.requestJson !== 'string' || Buffer.byteLength(row.requestJson) > 8192) unavailable()
+      const raw: unknown = JSON.parse(row.requestJson),
+        version =
+          raw !== null && typeof raw === 'object' ? Object.getOwnPropertyDescriptor(raw, 'version')?.value : undefined
+      if (version !== 4 && version !== 5) continue
+      const request =
+        version === 4 ? parseSnapshotJournalFieldArchiveReaderRequest(raw) : parseSnapshotJournalFieldUploadRequest(raw)
+      if (request.requestId !== row.requestId || request.notAfter !== Number(row.expiresAt)) unavailable()
+      const headers: Array<{ binding: unknown; state: unknown; expiresAt: unknown }> = await this.knex(
+        'snapshot_archives'
+      )
+        .where({ identityKey, archiveId: row.archiveId })
+        .select('state', 'expiresAt', this.knex.raw('substr(binding,1,65537) AS binding'))
+        .limit(2)
+      if (headers.length > 1) unavailable()
+      const header = headers[0]
+      if (header === undefined) continue
+      if (typeof header.binding !== 'string' || Buffer.byteLength(header.binding) > snapshotArchiveLimits.bindingBytes)
+        unavailable()
+      const binding = parseSnapshotJournalFieldArchiveBinding(JSON.parse(header.binding))
+      if (
+        binding.user.identityKey !== identityKey ||
+        Number(header.expiresAt) !== request.notAfter ||
+        (request.version === 5 && request.sourceDigest !== snapshotJournalFieldUploadSourceDigest(binding))
+      )
+        unavailable()
+      result.push({
+        request,
+        binding,
+        state: row.state,
+        ready: row.state === 'ready' && header.state === 'ready',
+        expiresAt: request.notAfter
+      })
+    }
+    return result
+  }
+
+  /** Reopen/retire only the actual existing source request matching its exact
+   * captured receipt. Absence does not start another capture or extend a lease. */
+  async findJournalFieldsCapture(identityKey: string, input: unknown, readyOnly: boolean) {
+    const reference = parseSnapshotJournalFieldArchiveReference(input)
+    if (reference.source.identityKey !== identityKey) unavailable()
+    const matches = (await this.fieldArtifacts(identityKey)).filter(
+      value =>
+        value.request.version === 4 &&
+        JSON.stringify(value.binding.journal.source) === JSON.stringify(reference.source) &&
+        JSON.stringify(value.binding.journal.receipt) === JSON.stringify(reference.receipt)
+    )
+    if (matches.length > 1) unavailable()
+    const found = matches[0]
+    if (
+      found === undefined ||
+      (readyOnly && (!found.ready || found.expiresAt <= (await snapshotArchiveDatabaseNow(this.knex))))
+    )
+      return undefined
+    if (found.request.version !== 4) unavailable()
+    return { ...found, request: found.request }
+  }
+
+  /** Target upload discovery is not a writer/ACK. Its caller additionally
+   * matches the actual current financial window before offering recovery. */
+  async findJournalFieldUpload(identityKey: string, sourceStorageIdentity: string) {
+    const matches = (await this.fieldArtifacts(identityKey)).filter(
+      value => value.request.version === 5 && value.binding.sourceStorage.storageIdentityKey === sourceStorageIdentity
+    )
+    if (matches.length > 1) unavailable()
+    const found = matches[0]
+    if (found === undefined) return undefined
+    if (found.request.version !== 5) unavailable()
+    if (
+      !['capturing', 'ready'].includes(found.state) ||
+      found.expiresAt <= (await snapshotArchiveDatabaseNow(this.knex))
+    ) {
+      await this.cancelJournalFieldUpload(identityKey, found.request)
+      return undefined
+    }
+    return { version: 1 as const, source: found.binding, request: found.request }
+  }
+
   async offerJournalFieldUpload(identityKey: string, source: SnapshotJournalFieldArchiveBinding) {
     const binding = parseSnapshotJournalFieldArchiveBinding(source)
     if (binding.user.identityKey !== identityKey) unavailable()
@@ -268,6 +373,44 @@ export class KnexSnapshotArchiveRequestStore {
         .first()
     if (row === undefined || row.requestJson !== JSON.stringify(request)) unavailable()
     return await this.receipt(this.knex, row)
+  }
+
+  /** Actual transaction fence shared with cancellation on every replica.
+   * The private SQL claim token is never accepted from a wire request. This
+   * protects a target operation, not a current-source or primary grant. */
+  async verifyJournalFieldUploadWriter(
+    owner: Readonly<SnapshotArchiveRequestOwner>,
+    expected: {
+      source: Readonly<import('../journal/SnapshotJournalTypes').SnapshotJournalReceiptBinding>
+      receipt: Readonly<import('../journal/SnapshotJournalTypes').SnapshotJournalReceipt>
+      low: string
+      bootstrap?: boolean
+    }
+  ): Promise<void> {
+    if (!this.knex.isTransaction || owner.identityKey !== expected.source.identityKey) unavailable()
+    await lockSnapshotArchiveCapacity(this.knex)
+    const row = await this.owned(this.knex, owner),
+      request = this.journalRequest(row)
+    if (request?.version !== 5 || !['capturing', 'ready'].includes(row.state) || row.archiveId === null) unavailable()
+    const headers: Array<{ binding: unknown }> = await this.knex('snapshot_archives')
+      .where({ identityKey: owner.identityKey, archiveId: row.archiveId })
+      .select(this.knex.raw('substr(binding,1,65537) AS binding'))
+      .limit(2)
+    if (
+      headers.length !== 1 ||
+      typeof headers[0].binding !== 'string' ||
+      Buffer.byteLength(headers[0].binding) > snapshotArchiveLimits.bindingBytes
+    )
+      unavailable()
+    const binding = parseSnapshotJournalFieldArchiveBinding(JSON.parse(headers[0].binding))
+    if (
+      request.sourceDigest !== snapshotJournalFieldUploadSourceDigest(binding) ||
+      JSON.stringify(binding.journal.source) !== JSON.stringify(expected.source) ||
+      JSON.stringify(binding.journal.receipt) !== JSON.stringify(expected.receipt) ||
+      binding.journal.low !== expected.low ||
+      binding.journal.bootstrap !== (expected.bootstrap === true)
+    )
+      unavailable()
   }
 
   async cancelJournalFieldUpload(identityKey: string, input: unknown): Promise<void> {

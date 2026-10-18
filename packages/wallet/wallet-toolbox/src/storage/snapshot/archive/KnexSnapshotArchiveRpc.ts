@@ -103,6 +103,10 @@ export class KnexSnapshotArchiveRpc {
     )
   }
 
+  async journalFieldRecoveryVersion(): Promise<1 | undefined> {
+    return (await this.journalFieldCapabilities()) === undefined ? undefined : 1
+  }
+
   private async sourceOffer(serverTime?: number): Promise<SnapshotArchiveOffer> {
     const chain = this.storage.chain
     if (chain !== 'main' && chain !== 'test') throw new WERR_INVALID_OPERATION('Snapshot archive chain is unavailable')
@@ -273,6 +277,51 @@ export class KnexSnapshotArchiveRpc {
     if ((await this.journalFieldCapabilities()) === undefined)
       throw new WERR_INVALID_OPERATION('Journal archive transport is unavailable')
     const identityKey = authenticatedIdentityKey
+    if (input.method === 'reopenSnapshotJournalFieldArchive' || input.method === 'retireSnapshotJournalFieldArchive') {
+      const found = await this.service.findJournalFieldsReader(
+        identityKey,
+        input.reference,
+        input.method === 'reopenSnapshotJournalFieldArchive'
+      )
+      if (input.method === 'retireSnapshotJournalFieldArchive') {
+        if (found !== undefined) {
+          try {
+            await this.service.cancelJournalFieldsReader(identityKey, found.request)
+          } catch (cause) {
+            if (!(cause instanceof SnapshotArchiveCleanupPendingError)) throw cause
+            return {
+              version: 1,
+              outcome: 'cleanup-pending',
+              requestId: input.reference.receipt.requestId
+            } satisfies SnapshotArchiveCleanupPending
+          }
+        }
+        return true
+      }
+      if (found === undefined) return { version: 1, outcome: 'absent' }
+      const chain = this.storage.chain,
+        settings = this.storage.getSettings()
+      if (
+        this.stopped ||
+        this.storage.knex !== this.database ||
+        (chain !== 'main' && chain !== 'test') ||
+        found.binding.sourceStorage.storageIdentityKey !== settings.storageIdentityKey ||
+        found.binding.sourceStorage.chain !== chain
+      )
+        throw new WERR_INVALID_OPERATION('Original field artifact endpoint changed')
+      return {
+        version: 1,
+        outcome: 'offered',
+        request: found.request,
+        offer: {
+          version: 1,
+          sourceStorageIdentityKey: settings.storageIdentityKey,
+          sourceSchema: found.binding.sourceSchema,
+          chain,
+          serverTime: await snapshotArchiveDatabaseNow(this.database)
+        }
+      }
+    }
     switch (input.method) {
       case 'getSnapshotJournalFieldArchiveReaderOffer': {
         const offer = await this.sourceOffer(),

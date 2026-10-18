@@ -1,3 +1,4 @@
+import type { SnapshotArchiveRequestOwner } from '../archive/SnapshotArchiveRequest'
 import type { Knex } from 'knex'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { SnapshotJournalDelta } from './SnapshotJournalTypes'
@@ -60,7 +61,8 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
     input: SnapshotJournalFieldArchiveBinding,
     limits: SnapshotJournalDestinationLimits,
     admission: SnapshotJournalWriterAdmission,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    uploadOwner?: Readonly<SnapshotArchiveRequestOwner>
   ): Promise<{ destination: KnexSnapshotJournalFieldDestination; checkpoint: SnapshotJournalDestinationCheckpoint }> {
     const source = parseSnapshotJournalFieldArchiveBinding(input)
     return await this.beginWindow(
@@ -70,8 +72,9 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
       limits,
       admission,
       (binding, ownedLimits, root) =>
-        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root),
-      signal
+        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root, uploadOwner),
+      signal,
+      uploadOwner
     )
   }
   static async resume(
@@ -81,7 +84,8 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
     limits: SnapshotJournalDestinationLimits,
     admission: SnapshotJournalWriterAdmission,
     signal?: AbortSignal,
-    allowPreviousRowForFieldNegotiation?: true
+    allowPreviousRowForFieldNegotiation?: true,
+    uploadOwner?: Readonly<SnapshotArchiveRequestOwner>
   ): Promise<KnexSnapshotJournalFieldDestination | undefined> {
     return await this.resumeWindow(
       storage,
@@ -91,7 +95,7 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
       admission,
       'wallet-journal-fields/1',
       (binding, ownedLimits, root) =>
-        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root),
+        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root, uploadOwner),
       allowPreviousRowForFieldNegotiation
     )
   }

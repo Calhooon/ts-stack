@@ -110,6 +110,9 @@ export class KnexRemoteSnapshotSyncRpc {
     this.current()
     return remoteSnapshotSyncCapabilities
   }
+  async journalFieldRecoveryVersion(): Promise<1 | undefined> {
+    return (await this.journalFieldCapabilities()) === undefined ? undefined : 1
+  }
   async journalFieldCapabilities() {
     this.current()
     if ((await this.capabilities()) === undefined) return undefined

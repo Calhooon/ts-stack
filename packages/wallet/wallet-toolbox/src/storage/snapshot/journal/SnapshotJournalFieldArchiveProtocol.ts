@@ -1,3 +1,7 @@
+import {
+  parseSnapshotJournalFieldArchiveReference,
+  type SnapshotJournalFieldArchiveReference
+} from './SnapshotJournalReceiptData'
 import { snapshotArchiveLimits } from '../archive/SnapshotArchive'
 import { snapshotArchiveRequestBytes, snapshotArchiveResponseBytes } from '../archive/SnapshotArchiveProtocol'
 import {
@@ -18,6 +22,8 @@ import {
 
 export const snapshotJournalFieldArchiveMethods = Object.freeze([
   'getSnapshotJournalFieldArchiveReaderOffer',
+  'reopenSnapshotJournalFieldArchive',
+  'retireSnapshotJournalFieldArchive',
   'admitSnapshotJournalFieldArchive',
   'getSnapshotJournalFieldArchiveStatus',
   'getSnapshotJournalFieldArchiveDirectory',
@@ -80,6 +86,11 @@ export function validateSnapshotJournalFieldArchiveCapabilities(
 }
 export type SnapshotJournalFieldArchiveRpcInput =
   | {
+      method: 'reopenSnapshotJournalFieldArchive' | 'retireSnapshotJournalFieldArchive'
+      identityKey: string
+      reference: Readonly<SnapshotJournalFieldArchiveReference>
+    }
+  | {
       method: 'getSnapshotJournalFieldArchiveReaderOffer'
       identityKey: string
       options: Readonly<SnapshotArchiveReaderOptions>
@@ -121,13 +132,15 @@ export function parseSnapshotJournalFieldArchiveRpcInput(
   const parameter = Object.getOwnPropertyDescriptor(params, '0')
   if (parameter === undefined || !Object.hasOwn(parameter, 'value') || !parameter.enumerable) invalid()
   const extra =
-      method === 'getSnapshotJournalFieldArchiveReaderOffer'
-        ? ['options', 'position']
-        : method === 'readSnapshotJournalFieldArchivePage'
-          ? ['request', 'archiveId', 'sequence']
-          : method === 'getSnapshotJournalFieldArchiveDirectory'
-            ? ['request', 'archiveId']
-            : ['request'],
+      method === 'reopenSnapshotJournalFieldArchive' || method === 'retireSnapshotJournalFieldArchive'
+        ? ['reference']
+        : method === 'getSnapshotJournalFieldArchiveReaderOffer'
+          ? ['options', 'position']
+          : method === 'readSnapshotJournalFieldArchivePage'
+            ? ['request', 'archiveId', 'sequence']
+            : method === 'getSnapshotJournalFieldArchiveDirectory'
+              ? ['request', 'archiveId']
+              : ['request'],
     value = snapshotJournalDataRecord(parameter.value, ['version', 'identityKey', ...extra])
   if (
     value.version !== 1 ||
@@ -143,6 +156,8 @@ export function parseSnapshotJournalFieldArchiveRpcInput(
       options: validateSnapshotArchiveReaderOptions(value.options),
       position: parseSnapshotJournalArchivePosition(value.position)
     }
+  if (method === 'reopenSnapshotJournalFieldArchive' || method === 'retireSnapshotJournalFieldArchive')
+    return { method, identityKey, reference: parseSnapshotJournalFieldArchiveReference(value.reference) }
   const request = parseSnapshotJournalFieldArchiveReaderRequest(value.request)
   switch (method) {
     case 'admitSnapshotJournalFieldArchive':

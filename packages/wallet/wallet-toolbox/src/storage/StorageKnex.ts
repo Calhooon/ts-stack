@@ -1,3 +1,7 @@
+import {
+  parseSnapshotJournalFieldArchiveReference,
+  type SnapshotJournalFieldArchiveReference
+} from './snapshot/journal/SnapshotJournalReceiptData'
 import { KnexSnapshotJournalDataContentReceipts } from './snapshot/journal/KnexSnapshotJournalDataContentReceipts'
 import { KnexSnapshotJournalDataDestination } from './snapshot/journal/KnexSnapshotJournalDataDestination'
 import type {
@@ -663,10 +667,43 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     )
     return opening
   }
+  async supportsSnapshotJournalFieldArchiveRecovery(): Promise<boolean> {
+    return (await (await this.localJournalFieldArchiveRpc()).journalFieldRecoveryVersion()) === 1
+  }
+  resumeSnapshotJournalFieldArchive(
+    identityKey: string,
+    input: SnapshotJournalFieldArchiveReference,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const reference = parseSnapshotJournalFieldArchiveReference(input),
+      opening = this.openLocalSnapshotJournalFieldArchive(identityKey, undefined, options, reference)
+    this.localJournalFieldArchiveOpenings.add(opening)
+    void opening.then(
+      () => this.localJournalFieldArchiveOpenings.delete(opening),
+      () => this.localJournalFieldArchiveOpenings.delete(opening)
+    )
+    return opening
+  }
+  async retireSnapshotJournalFieldArchive(
+    identityKey: string,
+    input: SnapshotJournalFieldArchiveReference
+  ): Promise<void> {
+    const reference = parseSnapshotJournalFieldArchiveReference(input),
+      rpc = await this.localJournalFieldArchiveRpc()
+    const { drainSnapshotArchiveRequest, validateSnapshotArchiveCancellation } =
+      await import('./snapshot/archive/SnapshotArchiveCleanup')
+    await drainSnapshotArchiveRequest(async () =>
+      validateSnapshotArchiveCancellation(
+        await rpc.dispatch('retireSnapshotJournalFieldArchive', [{ version: 1, identityKey, reference }], identityKey),
+        reference.receipt.requestId
+      )
+    )
+  }
   private async openLocalSnapshotJournalFieldArchive(
     identityKey: string,
     position?: import('./snapshot/journal/SnapshotJournalReceiptData').SnapshotJournalArchivePosition,
-    options: WalletReadSnapshotOptions = {}
+    options: WalletReadSnapshotOptions = {},
+    reference?: SnapshotJournalFieldArchiveReference
   ) {
     const root = this.knex,
       rpc = await this.localJournalFieldArchiveRpc(),
@@ -694,7 +731,7 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       settings.chain,
       capabilities
     )
-    const archive = await openRemoteSnapshotJournalFieldArchive(transport, position, options)
+    const archive = await openRemoteSnapshotJournalFieldArchive(transport, position, options, reference)
     if (archive !== undefined) {
       if (this.snapshotAdmissionStopped || this.knex !== root) {
         await archive.close()
@@ -732,6 +769,28 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       true
     )
   }
+  async resumeSnapshotJournalFieldWindow(
+    identityKey: string,
+    input: SnapshotJournalFieldArchiveReference,
+    options: SnapshotJournalFieldOptions = {}
+  ) {
+    const reference = parseSnapshotJournalFieldArchiveReference(input)
+    if (reference.source.identityKey !== identityKey)
+      throw new WERR_INVALID_OPERATION('Field window recovery profile differs')
+    const destination = await this.resumeSnapshotJournalFieldDestination(
+      identityKey,
+      reference.source.storageIdentity,
+      options
+    )
+    if (destination === undefined) return undefined
+    if (
+      JSON.stringify(destination.binding.source) !== JSON.stringify(reference.source) ||
+      JSON.stringify(destination.binding.receipt) !== JSON.stringify(reference.receipt)
+    )
+      throw new WERR_INVALID_OPERATION('Field window recovery cannot replace its original financial window')
+    return destination
+  }
+
   async getSnapshotJournalFieldStatus(
     identityKey: string,
     sourceStorageIdentity: string,

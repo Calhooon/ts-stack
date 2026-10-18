@@ -263,3 +263,206 @@ test.each([
   },
   510000
 )
+
+test.each([
+  ['full', StorageClient],
+  ['mobile', StorageMobile]
+] as const)(
+  'field recovery %s resumes an exact local window then captures changes made after the interrupted source',
+  async (_variant, Client) => {
+    const f = await fixture(),
+      controller = new AbortController(),
+      timer = setTimeout(() => controller.abort(new Error('Owned local field recovery deadline')), 180000)
+    let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined
+    try {
+      const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination'),
+        user = (await f.remote.storage.findOrInsertUser(f.remote.identityKey)).user,
+        client = new Client(f.remote.wallet, f.served.url, { serverIdentityKey: f.remote.serverIdentityKey })
+      await f.remote.storage.findOrInsertTxLabel(user.userId, 'original interrupted local window')
+      archive = await client.openSnapshotJournalFieldArchive(f.remote.identityKey, undefined, {
+        lifetimeMs: 180000,
+        signal: controller.signal
+      })
+      if (archive === undefined) throw new Error('Actual interrupted source unavailable')
+      const reference = {
+          source: archive.manifest.binding.journal.source,
+          receipt: archive.manifest.binding.journal.receipt
+        },
+        originalId = archive.manifest.archiveId,
+        originalExpiry = archive.manifest.expiresAt,
+        admission: import('./SnapshotJournalProvider').SnapshotJournalWriterAdmission = async operation =>
+          await f.manager.runAsSync(async () => await operation()),
+        initial = await KnexSnapshotJournalFieldDestination.begin(
+          f.storage,
+          f.remote.identityKey,
+          archive.manifest.binding,
+          journalCopyLimits(),
+          admission,
+          controller.signal
+        )
+      await initial.destination.stageArchiveFrame(initial.checkpoint, archive)
+      const interrupted = await initial.destination.status(),
+        events: SnapshotJournalReconciliationProgress[] = [],
+        reopened: Array<{ id: string; expiresAt: number }> = [],
+        originalReopen = client.resumeSnapshotJournalFieldArchive.bind(client)
+      jest.spyOn(client, 'resumeSnapshotJournalFieldArchive').mockImplementation(async (...args) => {
+        const actual = await originalReopen(...args)
+        if (actual !== undefined) reopened.push({ id: actual.manifest.archiveId, expiresAt: actual.manifest.expiresAt })
+        return actual
+      })
+      expect(interrupted.checkpoint.phase).not.toBe('acknowledged')
+      await f.remote.storage.findOrInsertTxLabel(user.userId, 'new data after interrupted local view')
+      const result = await f.manager.syncFromReaderResumable(f.remote.identityKey, client, {
+        journalFields: true,
+        signal: controller.signal,
+        snapshotLifetimeMs: 180000,
+        onJournalProgress: value => events.push(value)
+      })
+      expect(result).toMatchObject({ status: 'completed', mode: 'paged', journalCheckpoint: { phase: 'acknowledged' } })
+      expect(reopened).toEqual([{ id: originalId, expiresAt: originalExpiry }])
+      expect(
+        events.some(
+          value =>
+            value.checkpoint.sessionId === interrupted.checkpoint.sessionId &&
+            value.checkpoint.phase === 'acknowledged' &&
+            value.state === 'committed'
+        )
+      ).toBe(true)
+      for (const label of ['original interrupted local window', 'new data after interrupted local view'])
+        expect(await f.storage.findTxLabels({ partial: { label } })).toHaveLength(1)
+      expect(result.pages).toBeGreaterThan(archive.frameCount)
+      expect((await f.storage.findOrInsertUser(f.remote.identityKey)).user.activeStorage).toBe('local-journal-data')
+      expect(await f.remote.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+        archives: 0,
+        reservedBytes: 0
+      })
+      // Changing only the reference cannot retire another actual live capture.
+      const unrelated = await client.openSnapshotJournalFieldArchive(f.remote.identityKey, undefined, {
+        lifetimeMs: 180000,
+        signal: controller.signal
+      })
+      if (unrelated === undefined) throw new Error('Independent actual source unavailable')
+      try {
+        await client.retireSnapshotJournalFieldArchive(f.remote.identityKey, reference)
+        expect((await unrelated.readFrame(0, () => undefined)).ordinal).toBe(0)
+        expect(await f.remote.storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 1 })
+      } finally {
+        await unrelated.close()
+        await unrelated.closed
+      }
+    } finally {
+      clearTimeout(timer)
+      await archive?.close()
+      await archive?.closed
+      await f.close()
+    }
+  },
+  210000
+)
+
+test.each([
+  ['full READY', StorageClient, true],
+  ['mobile READY', StorageMobile, true],
+  ['full partial', StorageClient, false],
+  ['mobile partial', StorageMobile, false]
+] as const)(
+  'field recovery %s automatically resumes its durable authenticated upload and then copies a fresh view',
+  async (_variant, Client, ready) => {
+    const f = await fixture(),
+      controller = new AbortController(),
+      timer = setTimeout(() => controller.abort(new Error('Owned remote manager recovery deadline')), 180000)
+    let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined,
+      destination: import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination | undefined,
+      manager: import('../../WalletStorageManager').WalletStorageManager | undefined
+    try {
+      const { WalletStorageManager } = await import('../../WalletStorageManager'),
+        { KnexSnapshotArchiveRequestStore } = await import('../archive/KnexSnapshotArchiveRequestStore'),
+        targetUser = (await f.remote.storage.findOrInsertUser(f.remote.identityKey)).user,
+        sourceUser = (await f.storage.findOrInsertUser(f.remote.identityKey)).user
+      // Copying data does not grant primary selection; both fixture roles are
+      // established independently and must remain unchanged by this operation.
+      await f.remote.storage.updateUser(targetUser.userId, { activeStorage: 'remote-journal-data' })
+      await f.storage.findOrInsertTxLabel(sourceUser.userId, 'original durable remote window')
+      archive = await f.storage.openSnapshotJournalFieldArchive(f.remote.identityKey, undefined, {
+        lifetimeMs: 180000,
+        signal: controller.signal
+      })
+      if (archive === undefined) throw new Error('Actual local source unavailable')
+      const target = new Client(f.remote.wallet, f.served.url, { serverIdentityKey: f.remote.serverIdentityKey })
+      destination = await target.openSnapshotJournalFieldDestination(f.remote.identityKey, archive.manifest.binding, {
+        signal: controller.signal
+      })
+      if (destination === undefined) throw new Error('Actual upload unavailable')
+      const before = await destination.status(),
+        upload = destination.uploadResume,
+        originalAppend = KnexSnapshotArchiveRequestStore.prototype.appendJournalFields
+      let interruptedPacket = false
+      const hook = jest
+        .spyOn(KnexSnapshotArchiveRequestStore.prototype, 'appendJournalFields')
+        .mockImplementation(async function (
+          this: import('../archive/KnexSnapshotArchiveRequestStore').KnexSnapshotArchiveRequestStore,
+          owner,
+          writer,
+          page
+        ) {
+          await originalAppend.call(this, owner, writer, page)
+          if (!ready && !interruptedPacket && owner.requestId === upload.request.requestId) {
+            interruptedPacket = true
+            throw new Error('Owned interruption after a real upload packet committed')
+          }
+        })
+      if (ready) {
+        await destination.stageArchiveFrame(before.checkpoint, archive)
+        await archive.close()
+        await archive.closed
+      } else {
+        await expect(destination.stageArchiveFrame(before.checkpoint, archive)).rejects.toThrow()
+        expect(interruptedPacket).toBe(true)
+      }
+      hook.mockRestore()
+      expect(
+        await f.remote.storage.knex('snapshot_archive_requests').where('requestId', upload.request.requestId).first()
+      ).toMatchObject({ state: ready ? 'ready' : 'capturing' })
+      await f.storage.findOrInsertTxLabel(sourceUser.userId, 'new data after durable remote view')
+      manager = new WalletStorageManager(f.remote.identityKey, target)
+      await manager.makeAvailable()
+      const events: SnapshotJournalReconciliationProgress[] = [],
+        result = await manager.syncFromReaderResumable(f.remote.identityKey, f.storage, {
+          journalFields: true,
+          snapshotLifetimeMs: 180000,
+          signal: controller.signal,
+          onJournalProgress: value => events.push(value)
+        })
+      expect(result).toMatchObject({ status: 'completed', mode: 'paged', journalCheckpoint: { phase: 'acknowledged' } })
+      expect(
+        events.some(
+          value =>
+            value.checkpoint.sessionId === before.checkpoint.sessionId &&
+            value.checkpoint.phase === 'acknowledged' &&
+            value.state === 'committed'
+        )
+      ).toBe(true)
+      for (const label of ['original durable remote window', 'new data after durable remote view'])
+        expect(await f.remote.storage.findTxLabels({ partial: { userId: targetUser.userId, label } })).toHaveLength(1)
+      expect(result.pages).toBeGreaterThan(archive.frameCount)
+      expect((await f.remote.storage.findOrInsertUser(f.remote.identityKey)).user.activeStorage).toBe(
+        'remote-journal-data'
+      )
+      expect((await f.storage.findOrInsertUser(f.remote.identityKey)).user.activeStorage).toBe('local-journal-data')
+      for (const storage of [f.storage, f.remote.storage]) {
+        expect(await storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 0, reservedBytes: 0 })
+        expect(await storage.knex('snapshot_archives')).toHaveLength(0)
+        expect(await storage.knex('sync_transfers').whereNotNull('transferId')).toHaveLength(0)
+      }
+      expect(await target.findSnapshotJournalFieldUpload(f.remote.identityKey, 'local-journal-data')).toBeUndefined()
+    } finally {
+      clearTimeout(timer)
+      const resources = await Promise.allSettled([destination?.close(), archive?.close(), manager?.destroy()])
+      await f.close()
+      const failures = resources.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+      if (failures.length)
+        await Promise.reject(new AggregateError(failures, 'Actual manager recovery owners did not drain'))
+    }
+  },
+  210000
+)

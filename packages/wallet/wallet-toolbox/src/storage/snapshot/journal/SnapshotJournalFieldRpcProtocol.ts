@@ -16,6 +16,8 @@ export const snapshotJournalFieldRpcMethods = Object.freeze([
   'offerSnapshotJournalFieldUpload',
   'beginSnapshotJournalFieldUpload',
   'getSnapshotJournalFieldUploadStatus',
+  'findSnapshotJournalFieldUpload',
+  'resumeSnapshotJournalFieldUpload',
   'appendSnapshotJournalFieldPacket',
   'sealSnapshotJournalFieldUpload',
   'getSnapshotJournalFieldStatus',
@@ -96,7 +98,9 @@ export function parseSnapshotJournalFieldRpcInput(
   const extra =
       method === 'offerSnapshotJournalFieldUpload'
         ? ['source']
-        : method === 'getSnapshotJournalFieldStatus' || method === 'getSnapshotJournalFieldContentReceipt'
+        : method === 'getSnapshotJournalFieldStatus' ||
+            method === 'getSnapshotJournalFieldContentReceipt' ||
+            method === 'findSnapshotJournalFieldUpload'
           ? ['sourceStorageIdentity']
           : method === 'confirmSnapshotJournalFieldContentReceipt'
             ? ['sourceStorageIdentity', 'revision']

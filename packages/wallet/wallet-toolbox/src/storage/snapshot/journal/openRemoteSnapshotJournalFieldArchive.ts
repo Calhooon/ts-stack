@@ -1,3 +1,8 @@
+import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
+import {
+  parseSnapshotJournalFieldArchiveReference,
+  type SnapshotJournalFieldArchiveReference
+} from './SnapshotJournalReceiptData'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { retrySnapshotArchiveOperation } from '../archive/SnapshotArchiveTransportFailure'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -82,24 +87,70 @@ export function assertRemoteSnapshotJournalFieldFrame(
 export async function openRemoteSnapshotJournalFieldArchive(
   transport: SnapshotJournalFieldArchiveTransport,
   inputPosition?: SnapshotJournalArchivePosition,
-  options: WalletReadSnapshotOptions = {}
+  options: WalletReadSnapshotOptions = {},
+  inputReference?: SnapshotJournalFieldArchiveReference
 ): Promise<RemoteSnapshotJournalFieldArchive | undefined> {
-  const position = parseSnapshotJournalArchivePosition(inputPosition ?? null),
+  const reference =
+      inputReference === undefined ? undefined : parseSnapshotJournalFieldArchiveReference(inputReference),
+    reopenedAt = performance.now(),
+    reopenOriginal = async () => {
+      if (reference === undefined) return undefined
+      // Own preflight I/O before an artifact reader exists. There is no new
+      // server request to cancel, but the actual pending fetch must settle.
+      const opening = new OwnedRemoteSnapshotLease<SnapshotJournalFieldArchiveReaderRequest>(
+          transport,
+          options,
+          parseSnapshotJournalFieldArchiveReaderRequest
+        ),
+        timer = setTimeout(() => {
+          void opening
+            .close(new SnapshotResourceLimitError('Field recovery original I/O deadline reached'))
+            .catch(() => undefined)
+        }, 30000)
+      try {
+        return await opening.runIdempotent(signal => transport.reopen(reference, signal))
+      } finally {
+        clearTimeout(timer)
+        await opening.close()
+        await opening.closed
+      }
+    },
+    reopened = await reopenOriginal(),
+    reopenElapsed = reference === undefined ? 0 : Math.ceil(performance.now() - reopenedAt)
+  if (reference !== undefined && reopened === undefined) return undefined
+  const position = parseSnapshotJournalArchivePosition(reopened?.request.position ?? inputPosition ?? null),
     lease = new OwnedRemoteSnapshotLease<SnapshotJournalFieldArchiveReaderRequest>(
       transport,
-      options,
+      reopened === undefined
+        ? options
+        : {
+            ...options,
+            lifetimeMs: Math.max(
+              1,
+              Math.min(
+                options.lifetimeMs ?? 300000,
+                reopened.request.notAfter - reopened.offer.serverTime - reopenElapsed
+              )
+            )
+          },
       parseSnapshotJournalFieldArchiveReaderRequest
     )
   try {
-    const offered = await lease.run(signal =>
-      transport.offer({ lifetimeMs: lease.lifetimeMs, maxBytes: snapshotArchiveLimits.archiveBytes }, position, signal)
-    )
+    const offered =
+      reopened ??
+      (await lease.run(signal =>
+        transport.offer(
+          { lifetimeMs: lease.lifetimeMs, maxBytes: snapshotArchiveLimits.archiveBytes },
+          position,
+          signal
+        )
+      ))
     if (offered.outcome === 'resource-limited') {
       await lease.close()
       return undefined
     }
     const { offer, request } = offered
-    lease.bindServerTime(offer.serverTime)
+    lease.bindServerTime(offer.serverTime + reopenElapsed)
     lease.own(request)
     const admitted = await lease.runIdempotent(signal => transport.admit(request, signal))
     if (admitted.outcome === 'resource-limited') {
@@ -127,6 +178,12 @@ export async function openRemoteSnapshotJournalFieldArchive(
         transport.directory(request, receipt, offer, lease.now(), signal)
       ),
       content = new Map<string, Array<{ sequence: number; index: Readonly<SnapshotJournalFieldContentIndex> }>>()
+    if (
+      reference !== undefined &&
+      (JSON.stringify(directory.manifest.binding.journal.source) !== JSON.stringify(reference.source) ||
+        JSON.stringify(directory.manifest.binding.journal.receipt) !== JSON.stringify(reference.receipt))
+    )
+      throw new TypeError('Actual reopened field archive differs from its original receipt')
     let contentBytes = 0
     for (const entry of directory.receipts) {
       if (entry.content === null) continue

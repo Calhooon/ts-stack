@@ -125,6 +125,28 @@ export class KnexSnapshotJournalFieldRpc {
         sourceIdentity === this.storage.getSettings().storageIdentityKey)
     )
       throw new WERR_UNAUTHORIZED('Field upload endpoint/network differs')
+    if (method === 'findSnapshotJournalFieldUpload') {
+      const found = await this.requests.findJournalFieldUpload(identityKey, sourceIdentity)
+      if (found === undefined) return null
+      const destination = await KnexSnapshotJournalFieldDestination.resume(
+        this.storage,
+        identityKey,
+        sourceIdentity,
+        journalCopyLimits(),
+        admission
+      )
+      if (
+        destination === undefined ||
+        JSON.stringify(destination.binding.source) !== JSON.stringify(found.source.journal.source) ||
+        JSON.stringify(destination.binding.receipt) !== JSON.stringify(found.source.journal.receipt) ||
+        destination.binding.low !== found.source.journal.low ||
+        (destination.binding.bootstrap === true) !== found.source.journal.bootstrap
+      )
+        throw new WERR_INVALID_OPERATION('Stored upload differs from its actual current financial window')
+      await destination.status()
+      current()
+      return found
+    }
     if (method === 'getSnapshotJournalFieldStatus') {
       const result = await this.storage.getSnapshotJournalFieldStatus(identityKey, sourceIdentity, options)
       current()
@@ -161,25 +183,52 @@ export class KnexSnapshotJournalFieldRpc {
         ? { version: 1, outcome: 'resource-limited' }
         : { version: 1, outcome: 'offered', ...offer }
     }
+    // Claim the real durable upload before any financial BEGIN. Cancellation
+    // and every financial writer share its transaction fence across replicas.
+    const writer = await this.requests.beginJournalFieldUpload(identityKey, input.request!, input.source!),
+      owner = await this.requests.journalFieldUploadOwner(identityKey, input.request!)
     let destination: KnexSnapshotJournalFieldDestination
     try {
-      destination = (
-        await KnexSnapshotJournalFieldDestination.begin(
+      if (method === 'resumeSnapshotJournalFieldUpload') {
+        const existing = await KnexSnapshotJournalFieldDestination.resume(
           this.storage,
           identityKey,
-          input.source!,
+          sourceIdentity,
           journalCopyLimits(),
-          admission
+          admission,
+          undefined,
+          undefined,
+          owner
         )
-      ).destination
+        if (
+          existing === undefined ||
+          JSON.stringify(existing.binding.source) !== JSON.stringify(input.source!.journal.source) ||
+          JSON.stringify(existing.binding.receipt) !== JSON.stringify(input.source!.journal.receipt) ||
+          existing.binding.low !== input.source!.journal.low ||
+          (existing.binding.bootstrap === true) !== input.source!.journal.bootstrap
+        )
+          throw new WERR_INVALID_OPERATION('Field upload recovery cannot replace its original financial window')
+        await this.requests.journalFieldUploadOwner(identityKey, input.request!)
+        destination = existing
+      } else {
+        destination = (
+          await KnexSnapshotJournalFieldDestination.begin(
+            this.storage,
+            identityKey,
+            input.source!,
+            journalCopyLimits(),
+            admission,
+            undefined,
+            owner
+          )
+        ).destination
+      }
     } catch (cause) {
       if (method === 'beginSnapshotJournalFieldUpload' && cause instanceof SnapshotJournalDataBootstrapRequiredError)
         return { version: 1, outcome: 'bootstrap-required' }
       throw cause
     }
-    const writer = await this.requests.beginJournalFieldUpload(identityKey, input.request!, input.source!),
-      owner = await this.requests.journalFieldUploadOwner(identityKey, input.request!),
-      status = async () => {
+    const status = async () => {
         const actual = await destination.status()
         current()
         return { version: 1, binding: destination.binding, ...actual }
@@ -214,7 +263,8 @@ export class KnexSnapshotJournalFieldRpc {
         current()
         return true
       }
-    if (method === 'beginSnapshotJournalFieldUpload') return await status()
+    if (method === 'beginSnapshotJournalFieldUpload' || method === 'resumeSnapshotJournalFieldUpload')
+      return await status()
     if (method === 'appendSnapshotJournalFieldPacket') return await append(input.packet!)
     if (method === 'beginSnapshotJournalFieldTransfer')
       return await this.transfers.beginWrite(

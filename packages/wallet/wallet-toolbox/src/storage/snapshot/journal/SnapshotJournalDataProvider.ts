@@ -198,3 +198,72 @@ export function snapshotJournalFieldProvenanceProvider(
     typeof provider.openSnapshotJournalProvenanceField === 'function'
   )
 }
+
+/** Optional exact immutable-source recovery, separately negotiated from the
+ * original field advertisement. It never returns a wallet SQL/source fence. */
+export interface SnapshotJournalFieldArchiveRecoveryProvider extends SnapshotJournalFieldArchiveProvider {
+  supportsSnapshotJournalFieldArchiveRecovery: () => Promise<boolean>
+  resumeSnapshotJournalFieldArchive: (
+    identityKey: string,
+    reference: import('./SnapshotJournalReceiptData').SnapshotJournalFieldArchiveReference,
+    options?: WalletReadSnapshotOptions
+  ) => Promise<import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined>
+  retireSnapshotJournalFieldArchive: (
+    identityKey: string,
+    reference: import('./SnapshotJournalReceiptData').SnapshotJournalFieldArchiveReference
+  ) => Promise<void>
+}
+export function snapshotJournalFieldArchiveRecoveryProvider(
+  value: unknown
+): value is SnapshotJournalFieldArchiveRecoveryProvider {
+  const provider = value as Partial<SnapshotJournalFieldArchiveRecoveryProvider> | null
+  return (
+    snapshotJournalFieldArchiveProvider(value) &&
+    provider != null &&
+    typeof provider.supportsSnapshotJournalFieldArchiveRecovery === 'function' &&
+    typeof provider.resumeSnapshotJournalFieldArchive === 'function' &&
+    typeof provider.retireSnapshotJournalFieldArchive === 'function'
+  )
+}
+export interface SnapshotJournalFieldRecoveryProvider extends SnapshotJournalFieldProvider {
+  supportsSnapshotJournalFieldRecovery: () => Promise<boolean>
+  findSnapshotJournalFieldUpload: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options?: SnapshotJournalFieldOptions
+  ) => Promise<import('./RemoteSnapshotJournalFieldDestination').SnapshotJournalFieldUploadResume | undefined>
+  resumeSnapshotJournalFieldDestination: (
+    identityKey: string,
+    resume: import('./RemoteSnapshotJournalFieldDestination').SnapshotJournalFieldUploadResume,
+    options?: SnapshotJournalFieldOptions
+  ) => Promise<import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination>
+}
+export function snapshotJournalFieldRecoveryProvider(value: unknown): value is SnapshotJournalFieldRecoveryProvider {
+  const provider = value as Partial<SnapshotJournalFieldRecoveryProvider> | null
+  return (
+    snapshotJournalFieldProvider(value) &&
+    provider != null &&
+    typeof provider.supportsSnapshotJournalFieldRecovery === 'function' &&
+    typeof provider.findSnapshotJournalFieldUpload === 'function' &&
+    typeof provider.resumeSnapshotJournalFieldDestination === 'function'
+  )
+}
+
+/** Resume an existing actual local financial window without BEGIN/replacement.
+ * The reference is comparison DATA, not admission or an SQL source actor. */
+export interface SnapshotJournalFieldWindowRecoveryProvider extends SnapshotJournalFieldProvider {
+  resumeSnapshotJournalFieldWindow: (
+    identityKey: string,
+    reference: import('./SnapshotJournalReceiptData').SnapshotJournalFieldArchiveReference,
+    options?: SnapshotJournalFieldOptions
+  ) => Promise<import('./runSnapshotJournalArchiveReconciliation').SnapshotJournalFieldDestination | undefined>
+}
+export function snapshotJournalFieldWindowRecoveryProvider(
+  value: unknown
+): value is SnapshotJournalFieldWindowRecoveryProvider {
+  return (
+    snapshotJournalFieldProvider(value) &&
+    typeof (value as Partial<SnapshotJournalFieldWindowRecoveryProvider>).resumeSnapshotJournalFieldWindow ===
+      'function'
+  )
+}

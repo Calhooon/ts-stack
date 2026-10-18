@@ -6314,3 +6314,24 @@ immutable byte readiness and durable financial acknowledgment are separate;
 completion drains source and upload owners. See [journal artifact transport](docs/journal-artifact-transport.md)
 for limits, restart/cancellation behavior and the separate remote primary-handoff
 requirement. This candidate route remains subject to full integration qualification.
+
+
+### Exact field-window recovery
+
+Field peers advertise source recovery and target upload recovery separately from
+field-copy support. On an opted-in manager pull, an interrupted window resumes
+only its exact stored source receipt. A READY target upload can finish from its
+actual stored bytes; a partial upload or local intake reopens the original source
+capture and replays its bounded packets. Recovery neither creates another capture
+nor extends the original expiry. It cannot begin a replacement financial window.
+If the original source has expired, the manager retires its matching resources
+and requires a fresh bootstrap. Cleanup matches the original source/receipt and
+cannot retire another capture for that profile.
+
+After acknowledging a recovered window, the same manager invocation observes a
+fresh source so changes made after the interrupted view are included. Progress
+counts accumulate across the actual windows; each checkpoint and financial ACK
+remains scoped to its own window. Separate recovery advertisements preserve old
+peer negotiation. Persisted references contain comparison DATA, never SQL source
+or writer authority. These paths do not grant primary selection. Remote primary
+handoff, stale-writer fencing and full-system qualification remain required.
