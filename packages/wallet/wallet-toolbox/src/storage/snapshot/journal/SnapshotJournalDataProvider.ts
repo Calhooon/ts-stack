@@ -166,7 +166,7 @@ export interface SnapshotJournalFieldReadOptions extends SnapshotJournalFieldOpt
 }
 export interface SnapshotJournalFieldProvenanceRead {
   checkpoint: import('./SnapshotJournalTypes').SnapshotJournalDestinationCheckpoint
-  page: import('./SnapshotJournalProvenance').SnapshotJournalFieldProvenancePage
+  page: import('./SnapshotJournalFieldTypes').SnapshotJournalFieldProvenancePage
 }
 export interface SnapshotJournalStoredFieldReader {
   readonly descriptor: Readonly<{ kind: 'binary' | 'utf8'; bytes: number; sha256: string }>

@@ -58,3 +58,16 @@ export type SnapshotJournalHashedFieldDelta =
 export interface SnapshotJournalHashedFieldPage extends Omit<SnapshotJournalFieldPage, 'changes'> {
   readonly changes: readonly SnapshotJournalHashedFieldDelta[]
 }
+
+/** Portable original-source field metadata, never an SQL or financial capability. */
+export interface SnapshotJournalFieldProvenancePage {
+  rows: ReadonlyArray<{
+    incomingId: number
+    revision: string
+    small: Readonly<Record<string, unknown>>
+    fields: Readonly<Record<string, SnapshotJournalHashedFieldDescriptor>>
+  }>
+  after?: number
+  complete: boolean
+  payloadBytes: number
+}

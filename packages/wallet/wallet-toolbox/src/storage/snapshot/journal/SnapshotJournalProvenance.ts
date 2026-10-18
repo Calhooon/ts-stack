@@ -1,3 +1,4 @@
+import type { SnapshotJournalFieldProvenancePage } from './SnapshotJournalFieldTypes'
 import {
   writeSnapshotJournalPayloadRow,
   readSnapshotJournalPayloadRow,
@@ -853,17 +854,7 @@ export interface SnapshotJournalProvenancePage {
   complete: boolean
   payloadBytes: number
 }
-export interface SnapshotJournalFieldProvenancePage {
-  rows: ReadonlyArray<{
-    incomingId: number
-    revision: string
-    small: Readonly<Record<string, unknown>>
-    fields: Readonly<Record<string, import('./SnapshotJournalFieldTypes').SnapshotJournalHashedFieldDescriptor>>
-  }>
-  after?: number
-  complete: boolean
-  payloadBytes: number
-}
+export type { SnapshotJournalFieldProvenancePage } from './SnapshotJournalFieldTypes'
 
 /** Read original source rows after durable acknowledgement, in bounded keyset
  * pages. Authenticated provider/profile/backend checks belong to the actual

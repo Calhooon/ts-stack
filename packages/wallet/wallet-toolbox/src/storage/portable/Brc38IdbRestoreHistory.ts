@@ -4,7 +4,7 @@ import {
   type Brc38IdbImportMappingRequest
 } from './Brc38IdbImportJournal'
 import { boundedJson, digest, type Brc38ImportJournalReceipt } from './Brc38ImportJournalContract'
-import type { Brc38ImportHistoryProjection } from './Brc38ImportHistory'
+import type { Brc38ImportHistoryProjection } from './Brc38IdbRestoreMetadata'
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
 import { chargeBrc38ImportDecodedValue } from './Brc38ImportDecodedBudget'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'

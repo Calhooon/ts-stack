@@ -1,7 +1,11 @@
 import { brc38Utf8ByteLength } from '../../portable/Brc38Utf8Length'
 import type { WalletSnapshotTable } from '../WalletReadSnapshot'
-import type { SnapshotJournalDelta, SnapshotJournalDeltaPage } from './SnapshotJournalDeltaPage'
-import type { SnapshotJournalMetadata, SnapshotJournalPosition } from './SnapshotJournalPage'
+import type {
+  SnapshotJournalDelta,
+  SnapshotJournalDeltaPage,
+  SnapshotJournalMetadata,
+  SnapshotJournalPosition
+} from './SnapshotJournalTypes'
 import { compareSnapshotJournalRevisions, snapshotJournalRevision } from './SnapshotJournalRevision'
 
 export const SNAPSHOT_JOURNAL_DELTA_FRAME_BYTES = 1048576
