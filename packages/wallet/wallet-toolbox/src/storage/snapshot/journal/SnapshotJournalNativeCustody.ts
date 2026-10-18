@@ -39,6 +39,10 @@ export async function readSnapshotJournalNativeCustody(
   const mysql = ['mysql', 'mysql2'].includes(String(k.client.config.client))
   if (!mysql && !['sqlite3', 'better-sqlite3'].includes(String(k.client.config.client)) && !isOwnedNativeSqlite(k))
     invalid()
+  // Custody callers may pass a structural membership/retirement record. Only
+  // the physical three-cell key identifies the row; bookkeeping must not alter
+  // its generation hash or escape into returned parent identity coordinates.
+  local = { id1: local.id1, id2: local.id2, exactText: local.exactText }
   const actual = await readSnapshotJournalNativeOwnedRow(k, tableId, userId, local, allocation)
   if (actual === undefined) return undefined
   const policyRows: Array<{ receiptLimit: unknown; receiptLifetimeMs: unknown }> = await k('snapshot_journal_retention')

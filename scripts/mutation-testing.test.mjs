@@ -747,3 +747,33 @@ test('native browser delivery controls select genuine browser execution without 
     assert.deepEqual(selectAffectedMutationTargets(targets, [file + '.extra']), [])
   }
 })
+
+test('field remote upload retains the existing mutation owner and owns every new runtime boundary', () => {
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  const owner = targets['wallet-snapshot-remote-http']
+  for (const name of [
+    'KnexSnapshotJournalFieldRpc',
+    'RemoteSnapshotJournalFieldDestination',
+    'SnapshotJournalFieldRpcProtocol',
+    'SnapshotJournalFieldUploadRequest',
+    'openStoredSnapshotJournalFieldArchive'
+  ]) {
+    const path = `src/storage/snapshot/journal/${name}.ts`
+    assert.ok(owner.mutate.includes(path))
+    assert.ok(
+      selectAffectedMutationTargets(targets, [`packages/wallet/wallet-toolbox/${path}`]).includes(
+        'wallet-snapshot-remote-http'
+      )
+    )
+  }
+  assert.ok(
+    owner.runnerOptions.jest.config.testMatch.includes(
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalData*.test.ts'
+    )
+  )
+  assert.ok(
+    owner.runnerOptions.jest.config.testMatch.includes(
+      '<rootDir>/src/storage/snapshot/journal/SnapshotJournalFieldArchiveRequest.test.ts'
+    )
+  )
+})

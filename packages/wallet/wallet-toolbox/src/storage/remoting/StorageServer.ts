@@ -1038,6 +1038,7 @@ export class StorageServer {
     const snapshotSyncContent = await this.remoteSnapshotSync?.contentCapabilities()
     const snapshotJournalData = await this.remoteSnapshotSync?.journalDataCapabilities()
     const snapshotJournalDataContent = await this.remoteSnapshotSync?.journalDataContentCapabilities()
+    const snapshotJournalFields = await this.remoteSnapshotSync?.journalFieldCapabilities()
     return {
       ...(snapshotArchive === undefined ? {} : { snapshotArchive, snapshotArchiveReaderVersion: 1 }),
       ...(snapshotJournalArchive === undefined
@@ -1047,7 +1048,8 @@ export class StorageServer {
       ...(snapshotSyncDestination === undefined ? {} : { snapshotSyncDestination }),
       ...(snapshotSyncContent === undefined ? {} : { snapshotSyncContent }),
       ...(snapshotJournalData === undefined ? {} : { snapshotJournalData }),
-      ...(snapshotJournalDataContent === undefined ? {} : { snapshotJournalDataContent })
+      ...(snapshotJournalDataContent === undefined ? {} : { snapshotJournalDataContent }),
+      ...(snapshotJournalFields === undefined ? {} : { snapshotJournalFields })
     }
   }
 

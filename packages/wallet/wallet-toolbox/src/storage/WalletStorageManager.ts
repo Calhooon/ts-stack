@@ -2,7 +2,10 @@ import {
   snapshotJournalDataProvider,
   snapshotJournalDataContentProvider,
   snapshotJournalPrimaryContentProvider,
-  snapshotJournalArchiveProvider
+  snapshotJournalArchiveProvider,
+  snapshotJournalFieldArchiveProvider,
+  snapshotJournalFieldProvider,
+  snapshotJournalFieldProvenanceProvider
 } from './snapshot/journal/SnapshotJournalDataProvider'
 import { snapshotJournalDataSourceBinding } from './snapshot/journal/snapshotJournalDataSourceBinding'
 import {
@@ -11,6 +14,8 @@ import {
 } from './snapshot/journal/SnapshotJournalDataBootstrapRequiredError'
 import {
   runSnapshotJournalArchiveReconciliation,
+  runSnapshotJournalFieldArchiveReconciliation,
+  type SnapshotJournalFieldDestination,
   type SnapshotJournalDataDestination
 } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
 import { runSnapshotJournalSourceDataReconciliation } from './snapshot/journal/runSnapshotJournalSourceDataReconciliation'
@@ -1583,7 +1588,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
     sourceStorageIdentity: string,
     identityKey: string,
     admission: SnapshotJournalWriterAdmission,
-    options: SyncSessionOptions
+    options: SyncSessionOptions,
+    fields = false
   ): Promise<{ forceBootstrap: boolean; result?: SyncSessionResult }> {
     const outside = snapshotJournalDataProvider(writer) && writer.journalDataCommitOutsideManager === true
     const dispatch = async (observe = false): Promise<void> => {
@@ -1593,13 +1599,16 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const observer = reader.getSnapshotSync?.()
     if (
       snapshotJournalDataContentProvider(writer) &&
-      (await writer.supportsSnapshotJournalDataContent()) &&
+      (fields
+        ? snapshotJournalFieldProvider(writer) && (await writer.supportsSnapshotJournalFieldSync())
+        : await writer.supportsSnapshotJournalDataContent()) &&
       observer?.observeContentRevision !== undefined
     ) {
       await dispatch(true)
-      const prior = await writer.getSnapshotJournalDataContentReceipt(identityKey, sourceStorageIdentity, {
-        admission
-      })
+      const prior =
+        fields && snapshotJournalFieldProvider(writer)
+          ? await writer.getSnapshotJournalFieldContentReceipt(identityKey, sourceStorageIdentity, { admission })
+          : await writer.getSnapshotJournalDataContentReceipt(identityKey, sourceStorageIdentity, { admission })
       if (options.signal?.aborted)
         return {
           forceBootstrap: false,
@@ -1617,12 +1626,14 @@ export class WalletStorageManager implements sdk.WalletStorage {
           }
         if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
           await dispatch()
-          const confirmed = await writer.confirmSnapshotJournalDataContentReceipt(
-            identityKey,
-            sourceStorageIdentity,
-            observed,
-            { admission }
-          )
+          const confirmed =
+            fields && snapshotJournalFieldProvider(writer)
+              ? await writer.confirmSnapshotJournalFieldContentReceipt(identityKey, sourceStorageIdentity, observed, {
+                  admission
+                })
+              : await writer.confirmSnapshotJournalDataContentReceipt(identityKey, sourceStorageIdentity, observed, {
+                  admission
+                })
           if (confirmed !== undefined) {
             if (
               JSON.stringify(confirmed.checkpoint) !== JSON.stringify(prior.checkpoint) ||
@@ -1652,6 +1663,181 @@ export class WalletStorageManager implements sdk.WalletStorage {
       }
     }
     return { forceBootstrap }
+  }
+
+  /** Ordinary pulls keep network preparation outside the manager queue. Only
+   * concrete target operations obtain the short, current writer admission. */
+  private async copyJournalFieldWindow(
+    reader: sdk.WalletStorageSyncReader,
+    writer: sdk.WalletStorageProvider,
+    options: SyncSessionOptions,
+    selection?: { generation: number; active: sdk.WalletStorageProvider },
+    onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
+  ): Promise<SyncSessionResult | undefined> {
+    if (
+      !snapshotJournalFieldArchiveProvider(reader) ||
+      !snapshotJournalFieldProvider(writer) ||
+      !(await reader.supportsSnapshotJournalFieldArchive()) ||
+      !(await writer.supportsSnapshotJournalFieldSync())
+    )
+      return undefined
+    const selected = selection ?? (await this.captureSyncSelection(options.signal))
+    if (selected === undefined || options.signal?.aborted)
+      return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
+    const identityKey = this._authId.identityKey,
+      readerSettings = await reader.makeAvailable(),
+      writerSettings = await writer.makeAvailable()
+    assertSyncNetwork(readerSettings, writerSettings)
+    const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
+    const dispatch = async (observe = false): Promise<void> => {
+      if (writer.journalDataCommitOutsideManager === true)
+        await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+    }
+    const confirmation = await this.confirmJournalContentCopy(
+      reader,
+      writer,
+      readerSettings.storageIdentityKey,
+      identityKey,
+      admission,
+      options,
+      true
+    )
+    if (confirmation.result !== undefined) return confirmation.result
+    let forceBootstrap = confirmation.forceBootstrap
+    await dispatch(true)
+    const previous = await writer.getSnapshotJournalFieldStatus(identityKey, readerSettings.storageIdentityKey, {
+      admission
+    })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let archive:
+        import('./snapshot/journal/openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined
+      let admissionRefusal: SnapshotJournalDataBootstrapRequiredError | undefined
+      let failure: { error: unknown } | undefined
+      const cleanup = new Brc38CleanupScope(async () => {
+        if (archive === undefined) return
+        try {
+          await closeSnapshotJournalSource(archive, options.signal)
+        } catch (error) {
+          if (failure !== undefined && failure.error !== error)
+            throw new AggregateError([failure.error, error], 'Journal fields and actual archive cleanup failed', {
+              cause: failure.error
+            })
+          throw error
+        }
+      })
+      try {
+        const position =
+          !forceBootstrap && previous?.checkpoint.phase === 'acknowledged'
+            ? { binding: previous.binding.receipt.binding, highWater: previous.binding.receipt.highWater }
+            : undefined
+        archive = await reader.openSnapshotJournalFieldArchive(identityKey, position, {
+          lifetimeMs: options.snapshotLifetimeMs,
+          signal: options.signal
+        })
+        if (archive === undefined) return undefined
+        const source = archive
+        if (
+          source.manifest.binding.user.identityKey !== identityKey ||
+          source.manifest.binding.sourceStorage.storageIdentityKey !== readerSettings.storageIdentityKey ||
+          source.manifest.binding.sourceStorage.chain !== readerSettings.chain
+        )
+          throw new WERR_UNAUTHORIZED()
+        const open = async (): Promise<SnapshotJournalFieldDestination> => {
+          await dispatch()
+          try {
+            const destination = await writer.openSnapshotJournalFieldDestination(identityKey, source.manifest.binding, {
+              admission,
+              signal: options.signal,
+              limits: journalCopyLimits(options.maxItems, options.maxRoughSize)
+            })
+            if (destination === undefined) throw new WERR_INVALID_OPERATION('Negotiated field destination disappeared')
+            const actual = destination
+            return {
+              status: async () => {
+                await dispatch(true)
+                return await actual.status()
+              },
+              stageArchiveFrame: async (expected, archive) => {
+                await dispatch()
+                return await actual.stageArchiveFrame(expected, archive)
+              },
+              promote: async (expected, archive) => {
+                await dispatch()
+                return await actual.promote(expected, archive)
+              },
+              ...(actual.close === undefined ? {} : { close: async () => await actual.close!() })
+            }
+          } catch (error) {
+            if (isSnapshotJournalDataBootstrapRequiredError(error)) admissionRefusal = error
+            throw error
+          }
+        }
+        let last: SnapshotJournalReconciliationProgress | undefined
+        for await (const progress of runSnapshotJournalFieldArchiveReconciliation(source, open, {
+          signal: options.signal,
+          onProgress: this.journalCopyProgress(options, onDurableProgress)
+        }))
+          last = progress
+        if (last === undefined || (last.state !== 'complete' && last.state !== 'stopped'))
+          throw new WERR_INVALID_OPERATION('Journal fields did not reach a physically drained terminal state')
+        return {
+          status: last.state === 'complete' ? 'completed' : 'cancelled',
+          mode: 'paged',
+          pages: last.progress.pages,
+          inserts: last.progress.inserts,
+          updates: last.progress.updates,
+          journalCheckpoint: copyJournalCheckpoint(last.checkpoint)
+        }
+      } catch (error) {
+        failure = { error }
+        if (attempt === 0 && admissionRefusal !== undefined && error === admissionRefusal) {
+          forceBootstrap = true
+          continue
+        }
+        throw error
+      } finally {
+        await cleanup.close()
+      }
+    }
+    throw new WERR_INVALID_OPERATION('Journal field bootstrap retry was exhausted')
+  }
+
+  /** Original source operational history, separately labelled and bound to an
+   * actual acknowledged local field copy. It is never a replica sync cursor. */
+  async readJournalFieldProvenance(
+    sourceStorageIdentity: string,
+    options: import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldReadOptions = {}
+  ) {
+    const selected = await this.captureSyncSelection(options.signal)
+    if (selected === undefined) throw new SnapshotCancelledError()
+    const active = selected.active
+    if (!snapshotJournalFieldProvenanceProvider(active))
+      throw new WERR_INVALID_OPERATION('The active provider does not expose acknowledged field provenance')
+    const admission = this.journalCopyAdmission(active, active, selected, this._authId.identityKey, options.signal)
+    return await active.readSnapshotJournalFieldProvenance(this._authId.identityKey, sourceStorageIdentity, {
+      ...options,
+      admission
+    })
+  }
+  async openJournalProvenanceField(
+    sourceStorageIdentity: string,
+    incomingId: number,
+    fieldName: string,
+    options: import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldReadOptions = {}
+  ) {
+    const selected = await this.captureSyncSelection(options.signal)
+    if (selected === undefined) throw new SnapshotCancelledError()
+    const active = selected.active
+    if (!snapshotJournalFieldProvenanceProvider(active))
+      throw new WERR_INVALID_OPERATION('The active provider does not expose acknowledged field provenance')
+    const admission = this.journalCopyAdmission(active, active, selected, this._authId.identityKey, options.signal)
+    return await active.openSnapshotJournalProvenanceField(
+      this._authId.identityKey,
+      sourceStorageIdentity,
+      incomingId,
+      fieldName,
+      { ...options, admission }
+    )
   }
 
   /** Explicit DATA peers keep their actual endpoint/SQL source owners. A remote
@@ -1908,6 +2094,10 @@ export class WalletStorageManager implements sdk.WalletStorage {
     onDurableProgress?: (value: SnapshotJournalReconciliationProgress) => void
   ): Promise<SyncSessionResult | undefined> {
     if (reader === writer) return undefined
+    if (options.journalFields === true && onCustody === undefined) {
+      const fields = await this.copyJournalFieldWindow(reader, writer, options, selection, onDurableProgress)
+      if (fields !== undefined) return fields
+    }
     if (!journalSource(reader) || !journalDestination(writer))
       return await this.copyJournalDataWindow(reader, writer, options, selection, onCustody, onDurableProgress)
     if (!(await reader.supportsSnapshotJournalSync()) || !(await writer.supportsSnapshotJournalSync())) return undefined

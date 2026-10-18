@@ -114,6 +114,11 @@ const walletDataAdditions = {
     mutate: [
       'src/storage/snapshot/RemoteSnapshotSyncContentProtocol.ts',
       'src/storage/snapshot/journal/KnexSnapshotJournalDataRpc.ts',
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldRpc.ts',
+      'src/storage/snapshot/journal/RemoteSnapshotJournalFieldDestination.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldRpcProtocol.ts',
+      'src/storage/snapshot/journal/SnapshotJournalFieldUploadRequest.ts',
+      'src/storage/snapshot/journal/openStoredSnapshotJournalFieldArchive.ts',
       'src/storage/snapshot/journal/RemoteSnapshotJournalDataDestination.ts',
       'src/storage/snapshot/journal/SnapshotJournalArchiveProtocol.ts',
       'src/storage/snapshot/journal/SnapshotJournalArchiveTransport.ts',

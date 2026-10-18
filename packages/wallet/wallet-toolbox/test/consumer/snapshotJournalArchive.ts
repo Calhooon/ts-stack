@@ -85,3 +85,40 @@ export async function inspectJournalFields(client: StorageClient, identityKey: s
     await archive.close()
   }
 }
+
+import type {
+  WalletStorageManager,
+  SnapshotJournalFieldReadOptions,
+  SnapshotJournalStoredFieldReader
+} from '@bsv/wallet-toolbox'
+
+/** Original operational provenance remains distinct from financial sync state.
+ * All buffers are streamed and erased; a changed window rejects continuation. */
+export async function inspectCopiedJournalProvenance(manager: WalletStorageManager, sourceStorageIdentity: string) {
+  let options: SnapshotJournalFieldReadOptions = {},
+    bytesObserved = 0
+  for (;;) {
+    const result = await manager.readJournalFieldProvenance(sourceStorageIdentity, options)
+    for (const row of result.page.rows)
+      for (const field of Object.keys(row.fields)) {
+        const reader: SnapshotJournalStoredFieldReader = await manager.openJournalProvenanceField(
+          sourceStorageIdentity,
+          row.incomingId,
+          field,
+          { checkpoint: result.checkpoint }
+        )
+        try {
+          for (let offset = 0; offset < reader.descriptor.bytes; offset += 16384) {
+            const part = await reader.read(offset, Math.min(16384, reader.descriptor.bytes - offset))
+            bytesObserved += part.length
+            part.fill(0)
+          }
+        } finally {
+          reader.close()
+        }
+      }
+    if (result.page.complete) return bytesObserved
+    if (result.page.after === undefined) throw new Error('Provenance keyset did not advance')
+    options = { checkpoint: result.checkpoint, after: result.page.after }
+  }
+}

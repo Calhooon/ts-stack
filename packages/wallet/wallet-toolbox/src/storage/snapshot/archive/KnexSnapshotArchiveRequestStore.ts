@@ -1,4 +1,10 @@
 import {
+  parseSnapshotJournalFieldUploadRequest,
+  snapshotJournalFieldUploadRequestId,
+  snapshotJournalFieldUploadSourceDigest,
+  type SnapshotJournalFieldUploadRequest
+} from '../journal/SnapshotJournalFieldUploadRequest'
+import {
   parseSnapshotJournalFieldArchiveReaderRequest,
   validateSnapshotJournalFieldArchiveReaderRequest,
   snapshotJournalFieldArchiveReaderRequestId,
@@ -105,7 +111,7 @@ export class KnexSnapshotArchiveRequestStore {
         archive =
           this.journalRequest(row) === undefined
             ? await store.inspect(row.identityKey, row.archiveId)
-            : this.journalRequest(row)?.version === 4
+            : [4, 5].includes(this.journalRequest(row)?.version ?? 0)
               ? await store.inspectJournalFields(row.identityKey, row.archiveId)
               : await store.inspectJournal(row.identityKey, row.archiveId)
       return { ...base, state: 'ready', archiveId: archive.archiveId, digest: archive.digest }
@@ -172,9 +178,110 @@ export class KnexSnapshotArchiveRequestStore {
     })
   }
 
+  async offerJournalFieldUpload(identityKey: string, source: SnapshotJournalFieldArchiveBinding) {
+    const binding = parseSnapshotJournalFieldArchiveBinding(source)
+    if (binding.user.identityKey !== identityKey) unavailable()
+    const now = await snapshotArchiveDatabaseNow(this.knex),
+      lifetimeMs = Math.min(300000, binding.journal.receipt.expiresAt - now - 1000)
+    if (lifetimeMs < 1) unavailable()
+    return await this.offerReader(
+      identityKey,
+      { lifetimeMs, maxBytes: snapshotArchiveLimits.archiveBytes },
+      (time, options) => {
+        const fields = {
+          version: 5 as const,
+          nonce: Utils.toHex(Random(32)),
+          notAfter: time + options.lifetimeMs,
+          maxBytes: options.maxBytes,
+          position: binding.journal.bootstrap
+            ? null
+            : { binding: binding.journal.receipt.binding, highWater: binding.journal.low },
+          sourceDigest: snapshotJournalFieldUploadSourceDigest(binding)
+        }
+        if (fields.notAfter > binding.journal.receipt.expiresAt) unavailable()
+        return parseSnapshotJournalFieldUploadRequest(
+          { ...fields, requestId: snapshotJournalFieldUploadRequestId(fields) },
+          time
+        )
+      }
+    )
+  }
+
+  /** Resume only a genuine authenticated upload owner. Token recovery stays
+   * inside this SQL service and never crosses the RPC boundary. */
+  async beginJournalFieldUpload(identityKey: string, input: unknown, source: SnapshotJournalFieldArchiveBinding) {
+    const request = parseSnapshotJournalFieldUploadRequest(input),
+      binding = parseSnapshotJournalFieldArchiveBinding(source)
+    if (
+      binding.user.identityKey !== identityKey ||
+      request.sourceDigest !== snapshotJournalFieldUploadSourceDigest(binding)
+    )
+      unavailable()
+    await this.claimRequest(identityKey, request, true)
+    const owner = await this.journalFieldUploadOwner(identityKey, request)
+    const row: RequestRow = await this.knex(table).where(owner).first()
+    if (row.state === 'claimed') {
+      try {
+        return await this.beginJournalFields(owner, binding)
+      } catch (cause) {
+        // A concurrent replica may have completed the same BEGIN. Its actual
+        // assigned archive, not the lost reply, decides whether this is success.
+        const actual = await this.journalFieldUploadOwner(identityKey, request)
+        const current: RequestRow = await this.knex(table).where(actual).first()
+        if (!['capturing', 'ready'].includes(current.state)) throw cause
+      }
+    }
+    const current: RequestRow = await this.knex(table).where(owner).first()
+    if (!['capturing', 'ready'].includes(current.state) || current.archiveId === null) unavailable()
+    const archive = await this.knex('snapshot_archives')
+      .where({ identityKey, archiveId: current.archiveId })
+      .whereRaw('length(binding) BETWEEN 1 AND ?', [snapshotArchiveLimits.bindingBytes])
+      .first('archiveId', 'writerToken', 'binding')
+    if (archive === undefined || archive.binding !== JSON.stringify(binding)) unavailable()
+    return { archiveId: archive.archiveId as string, writerToken: archive.writerToken as string }
+  }
+
+  async journalFieldUploadOwner(identityKey: string, input: unknown): Promise<SnapshotArchiveRequestOwner> {
+    identity(identityKey)
+    const request = parseSnapshotJournalFieldUploadRequest(input),
+      row: RequestRow | undefined = await this.knex(table)
+        .where({ identityKey, requestId: request.requestId })
+        .whereRaw('length(requestJson) BETWEEN 1 AND 8192')
+        .first()
+    if (
+      row === undefined ||
+      row.requestJson !== JSON.stringify(request) ||
+      row.released ||
+      !['claimed', 'capturing', 'ready'].includes(row.state) ||
+      Number(row.expiresAt) <= (await snapshotArchiveDatabaseNow(this.knex))
+    )
+      unavailable()
+    identifier(row.claimToken)
+    return { identityKey, requestId: row.requestId, claimToken: row.claimToken }
+  }
+
+  async journalFieldUploadStatus(identityKey: string, input: unknown) {
+    const request = parseSnapshotJournalFieldUploadRequest(input),
+      row: RequestRow | undefined = await this.knex(table)
+        .where({ identityKey, requestId: request.requestId })
+        .whereRaw('length(requestJson) BETWEEN 1 AND 8192')
+        .first()
+    if (row === undefined || row.requestJson !== JSON.stringify(request)) unavailable()
+    return await this.receipt(this.knex, row)
+  }
+
+  async cancelJournalFieldUpload(identityKey: string, input: unknown): Promise<void> {
+    const request = parseSnapshotJournalFieldUploadRequest(input)
+    await this.markReaderRequestCancellation(identityKey, request)
+    await this.close(identityKey, request.requestId)
+  }
+
   private async offerReader<
     T extends
-      SnapshotArchiveReaderRequest | SnapshotJournalArchiveReaderRequest | SnapshotJournalFieldArchiveReaderRequest
+      | SnapshotArchiveReaderRequest
+      | SnapshotJournalArchiveReaderRequest
+      | SnapshotJournalFieldArchiveReaderRequest
+      | SnapshotJournalFieldUploadRequest
   >(
     identityKey: string,
     input: SnapshotArchiveReaderOptions,
@@ -251,6 +358,7 @@ export class KnexSnapshotArchiveRequestStore {
       | SnapshotArchiveReaderRequest
       | SnapshotJournalArchiveReaderRequest
       | SnapshotJournalFieldArchiveReaderRequest
+      | SnapshotJournalFieldUploadRequest
     >,
     reader: boolean
   ): Promise<{ receipt: SnapshotArchiveRequestReceipt; owner?: SnapshotArchiveRequestOwner }> {
@@ -258,7 +366,8 @@ export class KnexSnapshotArchiveRequestStore {
     return await this.knex.transaction(async trx => {
       const capacity = await lockSnapshotArchiveCapacity(trx)
       const now = await snapshotArchiveDatabaseNow(trx)
-      if (request.version === 4) validateSnapshotJournalFieldArchiveReaderRequest(request, now)
+      if (request.version === 5) parseSnapshotJournalFieldUploadRequest(request, now)
+      else if (request.version === 4) validateSnapshotJournalFieldArchiveReaderRequest(request, now)
       else if (request.version === 3) validateSnapshotJournalArchiveReaderRequest(request, now)
       else if (reader) validateSnapshotArchiveReaderRequest(request, now)
       else validateSnapshotArchiveRequest(request, now)
@@ -357,7 +466,12 @@ export class KnexSnapshotArchiveRequestStore {
       if (binding.version === 3 || binding.version === 4) {
         if (
           journal === undefined ||
-          journal.version !== binding.version ||
+          (journal.version !== binding.version &&
+            !(
+              journal.version === 5 &&
+              binding.version === 4 &&
+              journal.sourceDigest === snapshotJournalFieldUploadSourceDigest(binding)
+            )) ||
           Number(row.expiresAt) > binding.journal.receipt.expiresAt
         )
           unavailable()
@@ -443,7 +557,9 @@ export class KnexSnapshotArchiveRequestStore {
       if (
         row.state !== 'capturing' ||
         row.archiveId !== captured.archiveId ||
-        (this.journalRequest(row)?.version === 4 ? 'fields' : this.journalRequest(row) !== undefined) !== journal
+        ([4, 5].includes(this.journalRequest(row)?.version ?? 0)
+          ? 'fields'
+          : this.journalRequest(row) !== undefined) !== journal
       )
         unavailable()
     }
@@ -505,7 +621,7 @@ export class KnexSnapshotArchiveRequestStore {
       if (
         !['capturing', 'ready'].includes(row.state) ||
         row.archiveId !== captured.archiveId ||
-        this.journalRequest(row)?.version !== 4
+        ![4, 5].includes(this.journalRequest(row)?.version ?? 0)
       )
         unavailable()
       if (await hasSnapshotArchiveOwner(trx, { identityKey: row.identityKey, requestId: row.requestId }))
@@ -518,18 +634,26 @@ export class KnexSnapshotArchiveRequestStore {
 
   private journalRequest(
     row: RequestRow
-  ): Readonly<SnapshotJournalArchiveReaderRequest | SnapshotJournalFieldArchiveReaderRequest> | undefined {
+  ):
+    | Readonly<
+        | SnapshotJournalArchiveReaderRequest
+        | SnapshotJournalFieldArchiveReaderRequest
+        | SnapshotJournalFieldUploadRequest
+      >
+    | undefined {
     const decoded: unknown = JSON.parse(row.requestJson)
     if (
       decoded === null ||
       typeof decoded !== 'object' ||
-      ![3, 4].includes(Object.getOwnPropertyDescriptor(decoded, 'version')?.value)
+      ![3, 4, 5].includes(Object.getOwnPropertyDescriptor(decoded, 'version')?.value)
     )
       return undefined
     const request =
-      Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 4
-        ? parseSnapshotJournalFieldArchiveReaderRequest(decoded)
-        : parseSnapshotJournalArchiveReaderRequest(decoded)
+      Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 5
+        ? parseSnapshotJournalFieldUploadRequest(decoded)
+        : Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 4
+          ? parseSnapshotJournalFieldArchiveReaderRequest(decoded)
+          : parseSnapshotJournalArchiveReaderRequest(decoded)
     if (request.requestId !== row.requestId || request.notAfter !== Number(row.expiresAt)) unavailable()
     return request
   }
@@ -612,7 +736,10 @@ export class KnexSnapshotArchiveRequestStore {
   private async markReaderRequestCancellation(
     identityKey: string,
     request:
-      SnapshotArchiveReaderRequest | SnapshotJournalArchiveReaderRequest | SnapshotJournalFieldArchiveReaderRequest
+      | SnapshotArchiveReaderRequest
+      | SnapshotJournalArchiveReaderRequest
+      | SnapshotJournalFieldArchiveReaderRequest
+      | SnapshotJournalFieldUploadRequest
   ): Promise<void> {
     await this.knex.transaction(async trx => {
       await lockSnapshotArchiveCapacity(trx)
@@ -637,11 +764,13 @@ export class KnexSnapshotArchiveRequestStore {
     )
       return
     const request =
-      Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 4
-        ? parseSnapshotJournalFieldArchiveReaderRequest(decoded)
-        : Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 3
-          ? parseSnapshotJournalArchiveReaderRequest(decoded)
-          : parseSnapshotArchiveReaderRequest(decoded)
+      Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 5
+        ? parseSnapshotJournalFieldUploadRequest(decoded)
+        : Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 4
+          ? parseSnapshotJournalFieldArchiveReaderRequest(decoded)
+          : Object.getOwnPropertyDescriptor(decoded, 'version')?.value === 3
+            ? parseSnapshotJournalArchiveReaderRequest(decoded)
+            : parseSnapshotArchiveReaderRequest(decoded)
     if (request.requestId !== row.requestId || request.notAfter !== Number(row.expiresAt)) unavailable()
     await k(table).where({ identityKey: row.identityKey, requestId: row.requestId, released: true }).delete()
   }

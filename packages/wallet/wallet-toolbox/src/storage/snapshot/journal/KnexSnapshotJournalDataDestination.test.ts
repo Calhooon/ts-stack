@@ -1,3 +1,4 @@
+import { SnapshotJournalFieldArchiveTransport } from './SnapshotJournalFieldArchiveTransport'
 import { encodeSnapshotJournalFieldFrame, decodeSnapshotJournalFieldFrame } from './SnapshotJournalDeltaFrame'
 import type { RemoteSnapshotJournalFieldArchive } from './openRemoteSnapshotJournalFieldArchive'
 import {
@@ -944,7 +945,7 @@ test('actual field provenance retains complete UTF8 bytes after archive closure 
       }
     })
   let archive: RemoteSnapshotJournalFieldArchive | undefined,
-    reader: SnapshotJournalProvenanceFieldReader | undefined,
+    reader: import('./SnapshotJournalDataProvider').SnapshotJournalStoredFieldReader | undefined,
     restoreWriter = () => undefined as void
   const text = 'independent provenance 雪\u0000' + '🧾'.repeat(9000),
     bytes = Buffer.from(text, 'utf8'),
@@ -1078,14 +1079,14 @@ test('actual field provenance retains complete UTF8 bytes after archive closure 
       }
     })
     expect(Object.hasOwn(page.rows[0].small, 'syncMap')).toBe(false)
-    reader = await SnapshotJournalProvenanceFieldReader.open(
-      f.target,
-      begun.destination.binding,
-      state,
-      incomingId,
-      'syncMap',
-      f.admission
-    )
+    const sourceIdentity = f.source.storage.getSettings().storageIdentityKey,
+      managedPage = await f.manager.readJournalFieldProvenance(sourceIdentity, { checkpoint: state })
+    expect(managedPage.checkpoint).toEqual(state)
+    expect(managedPage.page).toEqual(page)
+    await expect(
+      f.manager.readJournalFieldProvenance(sourceIdentity, { checkpoint: { ...state, sequence: state.sequence + 1 } })
+    ).rejects.toThrow('actual completed window')
+    reader = await f.manager.openJournalProvenanceField(sourceIdentity, incomingId, 'syncMap', { checkpoint: state })
     const result = Buffer.alloc(bytes.length)
     try {
       for (let offset = 0; offset < bytes.length; offset += 16001) {
@@ -1249,3 +1250,99 @@ test('actual field promotion refuses changed captured identity DATA and resumes 
     await f.close()
   }
 })
+
+test('ordinary SQL field reuse rehashes actual indexed target bytes and downloads a changed field through the authentic source', async () => {
+  const { KnexSnapshotJournalFieldDestination } = await import('./KnexSnapshotJournalFieldDestination'),
+    f = await fixture(),
+    script = [0x6a, 0x4e, 0x70, 0x11, 0x01, 0x00, ...Array.from({ length: 70000 }, (_v, at) => at % 251)],
+    tx = new Transaction(1, [], [{ satoshis: 1, lockingScript: LockingScript.fromBinary(script) }], 0),
+    raw = Buffer.from(tx.toBinary()),
+    originalPage = SnapshotJournalFieldArchiveTransport.prototype.page,
+    rawHash = createHash('sha256').update(raw).digest('hex'),
+    changedDescription = 'actual newer source field 雪\u0000',
+    changedHash = createHash('sha256').update(changedDescription, 'utf8').digest('hex')
+  let archive: RemoteSnapshotJournalFieldArchive | undefined,
+    observe = false,
+    rawReads = 0,
+    changedReads = 0
+  const page = jest.spyOn(SnapshotJournalFieldArchiveTransport.prototype, 'page').mockImplementation(async function (
+    this: SnapshotJournalFieldArchiveTransport,
+    ...args
+  ) {
+    const digest = args[1].receipts[args[2]]?.content?.descriptor.sha256
+    if (observe && digest === rawHash) rawReads++
+    if (observe && digest === changedHash) changedReads++
+    return await Reflect.apply(originalPage, this, args)
+  })
+  const copyFields = async (position?: import('./SnapshotJournalReceiptData').SnapshotJournalArchivePosition) => {
+    const controller = new AbortController(),
+      timer = setTimeout(() => controller.abort(new Error('Owned field reuse phase expired')), 180000)
+    try {
+      archive = await f.client.openSnapshotJournalFieldArchive(f.source.identityKey, position, {
+        lifetimeMs: 180000,
+        signal: controller.signal
+      })
+      if (archive === undefined) throw new Error('Actual field reuse artifact unavailable')
+      const opened = await KnexSnapshotJournalFieldDestination.begin(
+        f.target,
+        f.source.identityKey,
+        archive.manifest.binding,
+        journalCopyLimits(),
+        f.admission,
+        controller.signal
+      )
+      let state = opened.checkpoint
+      for (let ordinal = 0; ordinal < archive.frameCount; ordinal++)
+        state = await opened.destination.stageArchiveFrame(state, archive)
+      while (state.phase !== 'acknowledged') state = (await opened.destination.promote(state, archive)).checkpoint
+      return archive.manifest.binding.journal.receipt
+    } finally {
+      clearTimeout(timer)
+      await archive?.close()
+      await archive?.closed
+    }
+  }
+  try {
+    const sourceUser = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user.userId,
+      stamp = Date.now()
+    await f.source.storage.knex('transactions').insert({
+      created_at: stamp,
+      updated_at: stamp,
+      transactionId: 11,
+      userId: sourceUser,
+      status: 'unprocessed',
+      reference: 'ordinary-field-cache',
+      isOutgoing: 0,
+      satoshis: 1,
+      txid: tx.id('hex'),
+      version: 1,
+      lockTime: 0,
+      description: 'original source field',
+      rawTx: raw
+    })
+    const receipt = await copyFields()
+    const actual = await f.target.knex('transactions').where('txid', tx.id('hex')).first()
+    expect(actual.rawTx).toEqual(raw)
+    await f.source.storage
+      .knex('transactions')
+      .where('transactionId', 11)
+      .update({ description: changedDescription, updated_at: stamp + 1000 })
+    observe = true
+    await copyFields({ binding: receipt.binding, highWater: receipt.highWater })
+    expect(rawReads).toBe(0)
+    expect(changedReads).toBeGreaterThan(0)
+    expect(await f.target.knex('transactions').where('transactionId', actual.transactionId).first()).toMatchObject({
+      rawTx: raw,
+      description: changedDescription
+    })
+    expect((await f.target.findOrInsertUser(f.source.identityKey)).user.activeStorage).toBe('journal-data-target')
+    expect(await f.source.storage.knex('snapshot_archive_owners')).toHaveLength(0)
+  } finally {
+    observe = false
+    await archive?.close()
+    await f.close()
+    page.mockRestore()
+    raw.fill(0)
+    script.fill(0)
+  }
+}, 400000)

@@ -22,6 +22,9 @@ export interface SyncSessionOptions {
   signal?: AbortSignal
   /** Local snapshot retention, default five minutes and at most one hour. Expiry requires a new view. */
   snapshotLifetimeMs?: number
+  /** Prefer separately negotiated authenticated field artifacts for ordinary
+   * pulls. Existing row/legacy negotiation remains the default and fallback. */
+  journalFields?: boolean
   /** Additional page ceilings; defaults are 1,000 rows and 262,144 rough encoded bytes. */
   maxItems?: number
   maxRoughSize?: number

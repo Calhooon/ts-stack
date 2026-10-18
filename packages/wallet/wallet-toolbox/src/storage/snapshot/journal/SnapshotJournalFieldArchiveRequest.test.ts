@@ -202,3 +202,48 @@ test('a field journal offer cannot become a row capture or silently adopt a diff
     await requests.close(identityKey, issued.request.requestId)
   }
 })
+
+test('actual field upload request recovers its SQL owner across controllers and permanently fences a cancelled admission until original expiry', async () => {
+  const f = await fixture(),
+    source = await f.open(),
+    manifest = await captureSnapshotJournalFieldArchiveSource(source, f.store),
+    binding = manifest.binding,
+    first = new KnexSnapshotArchiveRequestStore(f.storage.knex),
+    second = new KnexSnapshotArchiveRequestStore(f.storage.knex),
+    { parseSnapshotJournalFieldUploadRequest } = await import('./SnapshotJournalFieldUploadRequest')
+  await f.store.close(identityKey, manifest.archiveId)
+  const cancelled = await first.offerJournalFieldUpload(identityKey, binding)
+  if (cancelled === undefined) throw new Error('Actual upload offer unavailable')
+  expect(cancelled.request.version).toBe(5)
+  expect(() => parseSnapshotJournalFieldArchiveReaderRequest(cancelled.request)).toThrow()
+  await expect(second.claimJournalFieldsReader(identityKey, cancelled.request)).rejects.toThrow()
+  await second.cancelJournalFieldUpload(identityKey, cancelled.request)
+  await expect(first.beginJournalFieldUpload(identityKey, cancelled.request, binding)).rejects.toThrow('unavailable')
+  expect(await f.storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 0, reservedBytes: 0 })
+  const retained = await f.storage
+    .knex('snapshot_archive_requests')
+    .where('requestId', cancelled.request.requestId)
+    .first()
+  expect(retained).toMatchObject({ state: 'closed', released: 1, expiresAt: cancelled.request.notAfter })
+  const issued = await first.offerJournalFieldUpload(identityKey, binding)
+  if (issued === undefined) throw new Error('Second actual upload offer unavailable')
+  expect(parseSnapshotJournalFieldUploadRequest(issued.request)).toEqual(issued.request)
+  await expect(second.beginJournalFieldUpload(foreignKey, issued.request, binding)).rejects.toThrow()
+  await expect(
+    second.beginJournalFieldUpload(identityKey, issued.request, { ...binding, snapshotId: '44'.repeat(32) })
+  ).rejects.toThrow('unavailable')
+  const original = await first.beginJournalFieldUpload(identityKey, issued.request, binding),
+    recovered = await second.beginJournalFieldUpload(identityKey, issued.request, binding)
+  expect(recovered).toEqual(original)
+  expect(await f.storage.knex('snapshot_archive_owners')).toHaveLength(0)
+  expect(await f.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+    archives: 1,
+    reservedBytes: issued.request.maxBytes
+  })
+  await second.cancelJournalFieldUpload(identityKey, issued.request)
+  await expect(first.journalFieldUploadOwner(identityKey, issued.request)).rejects.toThrow('unavailable')
+  await expect(first.beginJournalFieldUpload(identityKey, issued.request, binding)).rejects.toThrow('unavailable')
+  await second.cancelJournalFieldUpload(identityKey, issued.request)
+  expect(await f.storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 0, reservedBytes: 0 })
+  expect(await f.storage.knex('snapshot_archives')).toHaveLength(0)
+}, 90000)

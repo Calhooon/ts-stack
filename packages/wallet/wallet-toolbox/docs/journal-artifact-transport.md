@@ -488,9 +488,10 @@ feeds the cryptographic reader, permitting real cache reuse; source reentry
 still touches both original field descriptors through the authenticated lease.
 Prepared ownership and physical cleanup remain real and retryable on failure.
 
-The full native request/history/notification and provenance
-components, ordinary SQL large-field custody, manager field integration and
-remote primary handoff remain implementation work. Unsupported field effects
+Native request/history/notification, complete provenance custody and bounded
+ordinary SQL field merges are implemented below, together with explicit manager
+field pulls. Ordinary verified cache/large-record continuation, remote field
+destinations and remote primary handoff remain implementation work. Unsupported field effects
 refuse without advancing their financial cursor. This component is not a claim
 of complete field support or final-system qualification.
 
@@ -533,8 +534,9 @@ mapped physical certificate plus exact field name. No full snapshot is invented
 from archive metadata. The existing native financial assertions additionally
 cover large certificate/field UTF8 replacement and preserved commission payloads
 and physical IDs. Those assertions remain authored but unexecuted pending pinned
-native qualification. Request structured fields, complete provenance, ordinary
-SQL field storage, manager routing and remote primary recovery remain unfinished.
+native qualification. Request structured fields and complete provenance are
+implemented below. Ordinary verified cache/large-record continuation, remote
+field destinations and remote primary recovery remain unfinished.
 
 The private native restore registry now includes an additive auxiliary journal
 mapping fence. Actual SQL triggers observe changes to transaction/proof parent
@@ -567,8 +569,10 @@ Original full-snapshot I/O/session checks, policies and finite limits remain.
 The original selected native financial fixtures now author request postimages,
 copied-owner refusal, a committed captured-reference away-and-back event after
 preparation, no request effect/cursor advance on refusal, and genuine resume.
-These new native assertions remain unexecuted. Full provenance, ordinary SQL
-field storage, manager routing and remote primary recovery remain unfinished.
+These new native assertions remain unexecuted. Complete provenance and bounded
+ordinary field promotion/explicit manager routing are implemented below.
+Ordinary verified cache/large-record continuation, remote field destinations and
+remote primary recovery remain unfinished.
 
 An additive field-custody migration installs source-owned auxiliary budgets,
 version headers and bounded BLOB chunks for complete sync-state provenance.
@@ -622,7 +626,7 @@ Ordinary field preparation retains one effect per commit to bound combined
 retained rows; native streaming effects preserve their existing path. Records
 that exceed the original ordinary allocation allowance still refuse explicitly.
 This does not establish arbitrary-size ordinary SQL field support or replace
-full native/backend qualification. Manager field routing, remote field delivery
+full native/backend qualification. Remote field destination delivery
 and primary recovery remain unfinished.
 
 Immutable field packet and EOF status reads retry at most one native connection
@@ -638,3 +642,127 @@ real invalid-proof validator before mutation/ACK. Their timers bound each owned
 phase and include cleanup; the combined cold/incremental case has two phase
 allowances. Initial socket/capacity/test-observer failures are retained. These
 new case guards do not change any existing case or production deadline.
+
+Ordinary manager pulls can explicitly prefer the separate field artifact path:
+`syncFromReaderResumable(identityKey, reader, { journalFields: true })`. Both
+actual endpoints must freshly support it. Existing row/legacy negotiation stays
+the default for callers that do not request fields. A verified older row window
+can migrate through a fresh full field artifact; its old receipt is never
+reinterpreted as a field ACK. Once a field window exists, continue selecting
+fields: the row receiver deliberately refuses to downgrade or promote it.
+
+The manager uses field-specific status and content-receipt methods on the actual
+local target, preserves manager generation/profile admission for short physical
+writes, and delegates cancellation, uncertain ACK observation and physical archive
+close to the existing coordinator. Source reads and complete-field preparation
+run outside the manager writer. An unchanged copy requires fresh source and
+actual destination postimage confirmation; target drift forces a new full
+artifact. This does not expose field SQL ownership over RPC or implement remote
+primary cutover. Full system and native/backend qualification remain pending.
+
+Physical custody hashes project exactly `id1`, `id2`, and `exactText` before
+reading and hashing a local key. A structural membership or retirement record
+must identify the same actual row as its bare key. Original creation ownership,
+current generation, full postimage, parent and reference checks remain required
+before deletion. A pre-existing local row does not become deletable through a
+row-to-field migration.
+
+Target primary epoch drift requires a fresh full source. A same-revision changed
+financial postimage retains the original custody refusal; bootstrap cannot
+silently bless those bytes or overwrite them outside the original merge policy.
+A newer actual source event can be reconciled through a fresh window. Such a
+refusal is distinct from a completed no-change ACK and physically drains the
+source artifact.
+
+Ordinary SQL field preparation can reuse bytes already present in the actual
+indexed target row. A short, freshly admitted lookup resolves real captured
+parents and the original natural-key order; bounded reads use the real current
+window and at most 16 KiB per extent. A complete independent SHA-256 match is
+required before skipping a source payload. The actual immutable source still
+confirms EOF under its original lease. Cache lookup allocation exhaustion,
+absence, changed length or a different digest takes the normal verified source
+path. Authority, schema and custody errors remain errors.
+
+This reuses persisted target content rather than maintaining a second complete
+blob store or a cached hash verdict. No source SQL actor, native enrollment or
+financial approval is reconstructed. Full current proof validation and the
+original final writer/identity/generation/postimage/merge checks still run. The
+ordinary combined allocation ceiling and all native/transport limits remain.
+
+After an actual local field copy has financially acknowledged, consumers can
+read separately labelled original operational provenance through
+`manager.readJournalFieldProvenance(sourceStorageIdentity, options)`. It returns
+an actual acknowledged checkpoint and bounded small cells/field descriptors.
+Pass that checkpoint back with the next keyset page or field open to reject a
+concurrently replaced window. `manager.openJournalProvenanceField(source, id,
+field, { checkpoint, signal })` returns the genuine stored-field reader: opening
+rehashes all stored bytes; reads are bounded to 16 KiB; callers close it in
+`finally`. The manager keeps its profile/provider/generation admission on every
+short physical read, including reads after the original source archive closes.
+These are local CODE capabilities, not RPC methods or constructed SQL actors.
+They do not turn source operational history into financial replica cursors or
+activate a primary. Pending, retired, changed, unowned or replaced windows refuse.
+
+### Authenticated field destinations
+
+`snapshotJournalFields` separately negotiates the field receiver on
+`StorageServer` and both full and mobile clients. With `journalFields: true`,
+manager copies can use a local SQL source, an authenticated remote source, a
+local field destination, or an authenticated remote field destination. The
+existing row protocol and default sync options retain their original behavior.
+
+The target first issues a version-five upload request bound to the authenticated
+profile and the exact version-four source binding. The original archive request
+store owns the reservation, server-private SQL writer token, expiry, cancellation
+fence and physical deletion. A second server process recovers those actual SQL
+owners; it does not accept a token or writer implementation from the caller.
+Closed upload tuples remain terminal until their original deadline. Source reader
+requests cannot be used to start an upload, or the reverse.
+
+The client re-encodes the actual opened source's identity prefixes, distinct
+content extents and fifteen ordered frame streams. Every distinct field is
+rehash-checked and its source EOF/lease is confirmed. Large packets use the
+existing compact binary transfer with a separate request/sequence/stream context;
+small packets remain inline. Packet retries must match persisted bytes. This
+uses the existing one-MiB packet, 32-MiB per-artifact, 128-MiB global archive,
+4096-packet and eight-archive limits, and the existing transfer slot/part limits.
+No additional payload store or quota increase is installed.
+
+READY means that immutable bytes are staged. Each intake or promotion reopens
+that actual READY artifact on the original SQL root and uses the existing
+field/identity/financial validator and short current-target writer. Network I/O
+and proof preparation happen outside the SQL writer and manager queue. Only the
+actual destination's durable acknowledged checkpoint establishes financial
+completion. A post-commit lost reply is recovered from that status.
+
+Before terminal progress is emitted, the coordinator drains both the actual
+source artifact and the target upload. Authenticated cleanup is idempotent and
+expiry-tolerant; it cannot admit another financial window. A failed cleanup is
+reported, retaining a retry operation. Local SQL source readers are tracked and
+drained before their service or storage is destroyed.
+
+This transport does not implement remote primary handoff or manufacture a
+current source fence from uploaded metadata. Those require the separate durable
+source-role and target-activation protocol. The newly authored upload and
+consumer routes still require integration, fault, backend and full-program
+qualification; these API notes are not a readiness claim.
+
+For restart after upload READY, persist the returned destination's `uploadResume`
+comparison data in the owning profile's recovery state. A fresh full/mobile
+client calls `resumeSnapshotJournalFieldDestination(identityKey, resume)` and
+iterates `reconcileUploaded()`. The server must still own that exact READY SQL
+artifact under its original expiry and the actual financial window/current
+target fences. The original source reader can already be physically closed.
+No source actor or primary fence is reconstructed. Forged, changed, cancelled,
+expired or already-deleted uploads are refused. `close()`/`closed` observe the
+actual authenticated upload deletion; a repeated resume cannot resurrect a
+cancelled upload. Recovery does not select a primary or renew a source lease.
+
+Recovery settings negotiation uses the same bounded, mutually authenticated
+snapshot fetch as its subsequent requests, including one genuine pre-response
+connection-loss retry under one 30-second deadline. This also covers the first
+request to an endpoint restarted at its existing address. Authentication,
+identity changes and malformed settings do not trigger that retry. Ordinary
+legacy `makeAvailable()` behavior is unchanged. The row status parser retains
+its strict default namespace; the field endpoint explicitly selects its field
+encoding when validating a field-window status.

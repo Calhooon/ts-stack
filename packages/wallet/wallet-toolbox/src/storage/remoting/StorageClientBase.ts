@@ -1,3 +1,12 @@
+import { retrySnapshotArchiveOperation } from '../snapshot/archive/SnapshotArchiveTransportFailure'
+import type { SnapshotSyncContentRevision } from '../snapshot/SnapshotSyncContentRevision'
+import { RemoteSnapshotJournalFieldDestination } from '../snapshot/journal/RemoteSnapshotJournalFieldDestination'
+import {
+  isSnapshotJournalFieldRpcMethod,
+  validateSnapshotJournalFieldRpcCapabilities,
+  type SnapshotJournalFieldRpcMethod,
+  snapshotJournalFieldRpcCapabilities
+} from '../snapshot/journal/SnapshotJournalFieldRpcProtocol'
 import {
   validateSnapshotJournalFieldArchiveCapabilities,
   type SnapshotJournalFieldArchiveCapabilities,
@@ -175,6 +184,7 @@ type RemoteStorageSettings = TableSettings & {
   syncTransfer?: SyncTransferCapabilities
   snapshotArchive?: SnapshotArchiveCapabilities
   snapshotJournalArchive?: SnapshotJournalArchiveCapabilities
+  snapshotJournalFields?: typeof snapshotJournalFieldRpcCapabilities
   snapshotJournalFieldArchive?: SnapshotJournalFieldArchiveCapabilities
   snapshotJournalArchiveContentVersion?: 1
   snapshotJournalData?: SnapshotJournalDataCapabilities
@@ -343,6 +353,8 @@ function validateRemoteStorageSettings(value: unknown): RemoteStorageSettings {
     (properties.snapshotJournalArchiveContentVersion.value !== 1 || properties.snapshotJournalArchive == null)
   )
     throw new Error('Wallet storage returned invalid journal content settings.')
+  if (properties.snapshotJournalFields != null)
+    validateSnapshotJournalFieldRpcCapabilities(properties.snapshotJournalFields.value)
   if (properties.snapshotJournalDataContent != null)
     validateSnapshotJournalDataContentCapabilities(properties.snapshotJournalDataContent.value)
   if (properties.snapshotJournalData != null)
@@ -524,6 +536,105 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFieldArchive !== undefined
   }
 
+  async supportsSnapshotJournalFieldSync(): Promise<boolean> {
+    return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFields !== undefined
+  }
+  async getSnapshotJournalFieldStatus(identityKey: string, sourceStorageIdentity: string) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalFields === undefined) return undefined
+    return await RemoteSnapshotJournalFieldDestination.observe(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey)
+    )
+  }
+  async getSnapshotJournalFieldContentReceipt(identityKey: string, sourceStorageIdentity: string) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalFields === undefined) return undefined
+    return await RemoteSnapshotJournalFieldDestination.contentReceipt(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey)
+    )
+  }
+  async confirmSnapshotJournalFieldContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: SnapshotSyncContentRevision
+  ) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalFields === undefined) return undefined
+    return await RemoteSnapshotJournalFieldDestination.contentReceipt(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      sourceStorageIdentity,
+      normalizeStorageIdentityKey(settings.storageIdentityKey),
+      revision
+    )
+  }
+  async openSnapshotJournalFieldDestination(
+    identityKey: string,
+    source: import('../snapshot/journal/SnapshotJournalArchiveBinding').SnapshotJournalFieldArchiveBinding,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    const settings = await this.makeAvailable()
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalFields === undefined) return undefined
+    if (source.sourceStorage.chain !== settings.chain)
+      throw new WERR_INVALID_OPERATION('Field source and destination networks differ')
+    return await RemoteSnapshotJournalFieldDestination.open(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      normalizeStorageIdentityKey(settings.storageIdentityKey),
+      source,
+      options.signal
+    )
+  }
+
+  /** Read-only recovery negotiation uses the dedicated bounded fetch marker.
+   * A stopped/restarted endpoint can lose one native socket before its first
+   * settings response. Authentication, identity and malformed replies never retry. */
+  private async journalFieldRecoverySettings(signal?: AbortSignal): Promise<RemoteStorageSettings> {
+    if (this.settings !== undefined) return this.settings
+    if (signal?.aborted) throw new SnapshotCancelledError('Field recovery negotiation cancelled')
+    const controller = new AbortController(),
+      abort = () => controller.abort(signal?.reason),
+      timer = setTimeout(
+        () => controller.abort(new WERR_INVALID_OPERATION('Field recovery negotiation I/O deadline reached')),
+        snapshotJournalFieldRpcCapabilities.maxIoMs
+      )
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      const settings = await retrySnapshotArchiveOperation(
+        async () => await this.snapshotRpcCall('makeAvailable', [], controller.signal)
+      )
+      return this.acceptRemoteSettings(settings)
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+
+  async resumeSnapshotJournalFieldDestination(
+    identityKey: string,
+    resume: import('../snapshot/journal/RemoteSnapshotJournalFieldDestination').SnapshotJournalFieldUploadResume,
+    options: SnapshotJournalDataOptions = {}
+  ) {
+    const settings = await this.journalFieldRecoverySettings(options.signal)
+    if (!this.snapshotArchivesEnabled || settings.snapshotJournalFields === undefined)
+      throw new WERR_INVALID_OPERATION('Field upload recovery is not negotiated')
+    if (resume.source.sourceStorage.chain !== settings.chain)
+      throw new WERR_INVALID_OPERATION('Field recovery network differs')
+    return await RemoteSnapshotJournalFieldDestination.resume(
+      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+      identityKey,
+      normalizeStorageIdentityKey(settings.storageIdentityKey),
+      resume,
+      options.signal
+    )
+  }
+
   readonly journalDataCommitOutsideManager = true as const
 
   async supportsSnapshotJournalArchive(): Promise<boolean> {
@@ -603,13 +714,17 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       | SnapshotJournalArchiveMethod
       | SnapshotJournalFieldArchiveMethod
       | RemoteSnapshotSyncMethod
-      | SnapshotJournalDataMethod,
+      | SnapshotJournalDataMethod
+      | SnapshotJournalFieldRpcMethod
+      | 'makeAvailable',
     params: unknown[],
     signal?: AbortSignal
   ): Promise<unknown> {
     const id = this.nextRequestId()
     const remoteDestination =
-      remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) || isSnapshotJournalDataMethod(method)
+      remoteSnapshotSyncMethods.includes(method as RemoteSnapshotSyncMethod) ||
+      isSnapshotJournalDataMethod(method) ||
+      isSnapshotJournalFieldRpcMethod(method)
     const body = stringifyJsonRpc({ jsonrpc: '2.0', method, params, id }, true)
     if (
       new TextEncoder().encode(body).length >
@@ -759,7 +874,11 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    */
   async makeAvailable(): Promise<RemoteStorageSettings> {
     if (this.settings != null) return this.settings
-    const settings = validateRemoteStorageSettings(await this.rpcCall<RemoteStorageSettings>('makeAvailable', []))
+    return this.acceptRemoteSettings(await this.rpcCall<RemoteStorageSettings>('makeAvailable', []))
+  }
+
+  private acceptRemoteSettings(input: unknown): RemoteStorageSettings {
+    const settings = validateRemoteStorageSettings(input)
     const descriptor = Object.getOwnPropertyDescriptor(settings, 'storageIdentityKey')
     const storageIdentityKey = normalizeStorageIdentityKey(
       descriptor != null && 'value' in descriptor ? descriptor.value : undefined

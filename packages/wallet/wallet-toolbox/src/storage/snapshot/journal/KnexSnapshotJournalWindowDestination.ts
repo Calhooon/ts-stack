@@ -118,8 +118,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
                 .limit(2)
             if (epochs.length > 1) invalid()
             const binding: SnapshotJournalDestinationBinding = {
-              lineageVersion: 2,
               ...(source.version === 4 ? { fieldEncoding: 'wallet-journal-fields/1' as const } : {}),
+              lineageVersion: 2,
               ...(source.journal.bootstrap ? { bootstrap: true as const } : {}),
               source: { ...source.journal.source },
               receipt: { ...source.journal.receipt },
@@ -274,7 +274,8 @@ export abstract class KnexSnapshotJournalWindowDestination {
     limits: SnapshotJournalDestinationLimits,
     admission: SnapshotJournalWriterAdmission,
     fieldEncoding: 'wallet-journal-fields/1' | undefined,
-    create: (binding: SnapshotJournalDestinationBinding, limits: SnapshotJournalDestinationLimits, root: Knex) => T
+    create: (binding: SnapshotJournalDestinationBinding, limits: SnapshotJournalDestinationLimits, root: Knex) => T,
+    allowPreviousRowForFieldNegotiation?: true
   ): Promise<T | undefined> {
     if (typeof admission !== 'function') invalid()
     const root = storage.knex,
@@ -302,7 +303,15 @@ export abstract class KnexSnapshotJournalWindowDestination {
           )
             invalid()
           const value = JSON.parse(rows[0].bindingJson) as SnapshotJournalDestinationBinding
-          if (value.fieldEncoding !== fieldEncoding) invalid()
+          if (
+            value.fieldEncoding !== fieldEncoding &&
+            !(
+              allowPreviousRowForFieldNegotiation === true &&
+              fieldEncoding === 'wallet-journal-fields/1' &&
+              value.fieldEncoding === undefined
+            )
+          )
+            invalid()
           if (
             value.source.identityKey !== identityKey ||
             value.source.storageIdentity !== sourceStorageIdentity ||
@@ -312,6 +321,9 @@ export abstract class KnexSnapshotJournalWindowDestination {
             invalid()
           const actual = await readSnapshotJournalStoredWindow(trx, value)
           if (actual === undefined || actual.retired) invalid()
+          // An actual verified row window is not a field receipt. Negotiation
+          // may request a fresh full field artifact; row controllers stay strict.
+          if (value.fieldEncoding !== fieldEncoding) return undefined
           return actual.binding
         }),
       'observe'

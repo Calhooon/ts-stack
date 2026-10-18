@@ -107,10 +107,15 @@ export function parseSnapshotJournalDataCheckpoint(input: unknown): SnapshotJour
     ...(after === undefined ? {} : { after })
   }
 }
-export function parseSnapshotJournalDataBinding(input: unknown): SnapshotJournalDestinationBinding {
-  const bootstrap = input !== null && typeof input === 'object' && Object.hasOwn(input, 'bootstrap'),
+export function parseSnapshotJournalDataBinding(
+  input: unknown,
+  encoding?: 'wallet-journal-fields/1'
+): SnapshotJournalDestinationBinding {
+  const fieldEncoding = input !== null && typeof input === 'object' && Object.hasOwn(input, 'fieldEncoding'),
+    bootstrap = input !== null && typeof input === 'object' && Object.hasOwn(input, 'bootstrap'),
     row = snapshotJournalDataRecord(input, [
       'lineageVersion',
+      ...(fieldEncoding ? ['fieldEncoding'] : []),
       ...(bootstrap ? ['bootstrap'] : []),
       'source',
       'receipt',
@@ -121,7 +126,13 @@ export function parseSnapshotJournalDataBinding(input: unknown): SnapshotJournal
       'primaryEpoch',
       'activeStorage'
     ])
-  if (row.lineageVersion !== 2 || (bootstrap && row.bootstrap !== true)) invalid()
+  if (
+    fieldEncoding !== (encoding === 'wallet-journal-fields/1') ||
+    row.lineageVersion !== 2 ||
+    (fieldEncoding && row.fieldEncoding !== 'wallet-journal-fields/1') ||
+    (bootstrap && row.bootstrap !== true)
+  )
+    invalid()
   const source = parseSnapshotJournalReceiptBindingData(row.source),
     receipt = parseSnapshotJournalReceiptData(row.receipt, source),
     low = snapshotJournalRevision(row.low),
@@ -136,6 +147,7 @@ export function parseSnapshotJournalDataBinding(input: unknown): SnapshotJournal
   )
     invalid()
   return {
+    ...(fieldEncoding ? { fieldEncoding: 'wallet-journal-fields/1' as const } : {}),
     lineageVersion: 2,
     ...(bootstrap ? { bootstrap: true as const } : {}),
     source: { ...source },
@@ -152,7 +164,8 @@ export function snapshotJournalDataBindingDigest(input: SnapshotJournalDestinati
   return toHex(
     sha256(
       new TextEncoder().encode(
-        'snapshot-journal-destination-window-v1\n' + JSON.stringify(parseSnapshotJournalDataBinding(input))
+        'snapshot-journal-destination-window-v1\n' +
+          JSON.stringify(parseSnapshotJournalDataBinding(input, input.fieldEncoding))
       )
     )
   )
@@ -174,10 +187,11 @@ export function parseSnapshotJournalDataStatus(
   input: unknown,
   identityKey: string,
   sourceStorageIdentity: string,
-  destinationStorageIdentity: string
+  destinationStorageIdentity: string,
+  encoding?: 'wallet-journal-fields/1'
 ): SnapshotJournalDataStatus {
   const row = snapshotJournalDataRecord(input, ['version', 'binding', 'checkpoint', 'progress']),
-    binding = parseSnapshotJournalDataBinding(row.binding),
+    binding = parseSnapshotJournalDataBinding(row.binding, encoding),
     checkpoint = parseSnapshotJournalDataCheckpoint(row.checkpoint),
     progress = snapshotJournalDataRecord(row.progress, [
       'commits',

@@ -1,3 +1,9 @@
+import { KnexSnapshotJournalFieldRpc } from './journal/KnexSnapshotJournalFieldRpc'
+import {
+  snapshotJournalFieldRpcMethods,
+  isSnapshotJournalFieldRpcMethod,
+  type SnapshotJournalFieldRpcMethod
+} from './journal/SnapshotJournalFieldRpcProtocol'
 import { KnexSnapshotJournalDataRpc } from './journal/KnexSnapshotJournalDataRpc'
 import {
   snapshotJournalDataMethods,
@@ -40,20 +46,24 @@ import { isSyncChain } from '../sync/syncFailure'
 
 export const remoteSnapshotDestinationRpcMethods = Object.freeze([
   ...remoteSnapshotSyncMethods,
-  ...snapshotJournalDataMethods
+  ...snapshotJournalDataMethods,
+  ...snapshotJournalFieldRpcMethods
 ])
-export type RemoteSnapshotDestinationRpcMethod = RemoteSnapshotSyncMethod | SnapshotJournalDataMethod
+export type RemoteSnapshotDestinationRpcMethod =
+  RemoteSnapshotSyncMethod | SnapshotJournalDataMethod | SnapshotJournalFieldRpcMethod
 
 /** Stateless authenticated destination controller. Sessions, mappings, primary
  * fencing and page ACKs belong to the existing SQL transaction/schema, so any
  * replica can observe the actual outcome after a lost HTTP acknowledgement. */
 export class KnexRemoteSnapshotSyncRpc {
+  private readonly journalFields: KnexSnapshotJournalFieldRpc
   private readonly journalData: KnexSnapshotJournalDataRpc
   private readonly database: Knex
   private readonly transfers: KnexSyncTransferStore
   private stopped = false
   private readonly operations = new Set<Promise<unknown>>()
   constructor(private readonly storage: StorageKnex) {
+    this.journalFields = new KnexSnapshotJournalFieldRpc(storage)
     this.journalData = new KnexSnapshotJournalDataRpc(storage)
     this.database = storage.knex
     this.transfers = new KnexSyncTransferStore(this.database, {
@@ -99,6 +109,11 @@ export class KnexRemoteSnapshotSyncRpc {
       throw new WERR_INVALID_OPERATION('Remote snapshot transfer quota owner is unavailable')
     this.current()
     return remoteSnapshotSyncCapabilities
+  }
+  async journalFieldCapabilities() {
+    this.current()
+    if ((await this.capabilities()) === undefined) return undefined
+    return await this.journalFields.capabilities()
   }
   async journalDataCapabilities() {
     this.current()
@@ -174,9 +189,11 @@ export class KnexRemoteSnapshotSyncRpc {
       throw new TypeError('Unknown remote snapshot destination method')
     if (this.operations.size >= 8)
       throw new SnapshotResourceLimitError('Remote snapshot controller operation quota reached')
-    const operation = isSnapshotJournalDataMethod(method)
-      ? this.journalData.dispatch(method, params, authenticatedIdentity)
-      : this.execute(method, params, authenticatedIdentity)
+    const operation = isSnapshotJournalFieldRpcMethod(method)
+      ? this.journalFields.dispatch(method, params, authenticatedIdentity)
+      : isSnapshotJournalDataMethod(method)
+        ? this.journalData.dispatch(method, params, authenticatedIdentity)
+        : this.execute(method, params, authenticatedIdentity)
     this.operations.add(operation)
     void operation.then(
       () => this.operations.delete(operation),
@@ -334,6 +351,6 @@ export class KnexRemoteSnapshotSyncRpc {
   }
   async close(): Promise<void> {
     this.stopped = true
-    await Promise.allSettled([...this.operations, this.journalData.close()])
+    await Promise.allSettled([...this.operations, this.journalData.close(), this.journalFields.close()])
   }
 }

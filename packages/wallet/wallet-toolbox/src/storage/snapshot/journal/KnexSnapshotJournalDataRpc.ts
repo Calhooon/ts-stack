@@ -22,7 +22,7 @@ import {
 } from './SnapshotJournalDataProtocol'
 
 const queues = new WeakMap<Knex, StorageAccessQueue>()
-function queueFor(root: Knex): StorageAccessQueue {
+export function snapshotJournalRpcQueueFor(root: Knex): StorageAccessQueue {
   let queue = queues.get(root)
   if (queue === undefined) {
     queue = new StorageAccessQueue()
@@ -42,7 +42,7 @@ export class KnexSnapshotJournalDataRpc {
   private stopped = false
   constructor(private readonly storage: StorageKnex) {
     this.root = storage.knex
-    this.queue = queueFor(this.root)
+    this.queue = snapshotJournalRpcQueueFor(this.root)
     this.transfers = new KnexSyncTransferStore(this.root, {
       version: 1,
       maxBytes: snapshotJournalArchivePacketBytes,

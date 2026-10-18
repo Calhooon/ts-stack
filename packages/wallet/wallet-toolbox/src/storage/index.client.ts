@@ -102,9 +102,27 @@ export type { RemoteSnapshotJournalArchive } from './snapshot/journal/openRemote
 export type { SnapshotJournalArchivePosition } from './snapshot/journal/SnapshotJournalReceiptData'
 export type { SnapshotJournalArchiveCapabilities } from './snapshot/journal/SnapshotJournalArchiveProtocol'
 
-export { runSnapshotJournalArchiveReconciliation } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
-export type { SnapshotJournalDataDestination } from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+export {
+  runSnapshotJournalArchiveReconciliation,
+  runSnapshotJournalFieldArchiveReconciliation
+} from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+export type {
+  SnapshotJournalDataDestination,
+  SnapshotJournalFieldDestination
+} from './snapshot/journal/runSnapshotJournalArchiveReconciliation'
+export type {
+  SnapshotJournalFieldOptions,
+  SnapshotJournalFieldReadOptions,
+  SnapshotJournalFieldStatus,
+  SnapshotJournalFieldProvenanceRead,
+  SnapshotJournalStoredFieldReader
+} from './snapshot/journal/SnapshotJournalDataProvider'
 export type { RemoteSnapshotJournalDataDestination } from './snapshot/journal/RemoteSnapshotJournalDataDestination'
+export type {
+  RemoteSnapshotJournalFieldDestination,
+  SnapshotJournalFieldUploadResume
+} from './snapshot/journal/RemoteSnapshotJournalFieldDestination'
+export type { SnapshotJournalFieldRpcCapabilities } from './snapshot/journal/SnapshotJournalFieldRpcProtocol'
 export type {
   SnapshotJournalDataCapabilities,
   SnapshotJournalDataStatus

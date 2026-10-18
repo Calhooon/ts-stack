@@ -1,3 +1,4 @@
+import type { Brc38ImportTargetIndex } from '../../portable/Brc38ImportTargetIndexes'
 import type { SyncMap } from '../../schema/entities/EntityBase'
 import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
 import type { SnapshotJournalPreparedPromotionEffect } from './KnexSnapshotJournalDestination'
@@ -12,7 +13,7 @@ import { readSnapshotJournalDestinationFieldPromotionPage } from './SnapshotJour
 import { requireSnapshotJournalCapturedFrame } from './SnapshotJournalCapturedIdentities'
 import { snapshotJournalDeltaSources, fieldColumns } from './SnapshotJournalFieldSql'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
-import type { SnapshotJournalDestinationLimits } from './SnapshotJournalProvider'
+import type { SnapshotJournalDestinationLimits, SnapshotJournalWriterAdmission } from './SnapshotJournalProvider'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../../StorageKnex'
@@ -48,6 +49,7 @@ import {
   chargeSnapshotJournalAllocation,
   normalizeSnapshotJournalNativeRow,
   readSnapshotJournalNativeEntityRows,
+  snapshotJournalIndexedEntityQuery,
   snapshotJournalNativeFindTable,
   verifySnapshotJournalEntityIndexes,
   type SnapshotJournalAllocationBudget,
@@ -211,6 +213,192 @@ async function invalidateProofArtifacts(
   return await storage.invalidatePreparedBeefs(k)
 }
 
+class OrdinaryFieldReuseMiss extends Error {}
+
+type OrdinaryFieldLookup = Readonly<{
+  index: Brc38ImportTargetIndex
+  partial: Readonly<Record<string, string | number>>
+}>
+
+/** Indexed byte reuse only. A matching hash never substitutes for current
+ * identity/parent/proof/financial checks in the original merge below. */
+function ordinaryFieldLookups(
+  tableId: number,
+  change: Extract<SnapshotJournalHashedFieldDelta, { present: true }>,
+  userId: number,
+  map?: SyncMap
+): readonly OrdinaryFieldLookup[] {
+  const row = change.row,
+    text = (name: string, maximum = 400): string | undefined => {
+      const value = row[name]
+      return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= maximum ? value : undefined
+    },
+    parent = (entity: 'transaction' | 'certificate', name: string): number | undefined => {
+      const incoming = row[name]
+      if (!Number.isSafeInteger(incoming) || Number(incoming) < 1) return undefined
+      const local = map?.[entity].idMap[Number(incoming)]
+      return typeof local === 'number' && Number.isSafeInteger(local) && local > 0 ? local : undefined
+    },
+    result: OrdinaryFieldLookup[] = []
+  const add = (index: Brc38ImportTargetIndex, partial: Record<string, string | number | undefined>) => {
+    if (Object.values(partial).every(value => value !== undefined))
+      result.push({ index, partial: partial as Record<string, string | number> })
+  }
+  if (tableId === 0) {
+    if (text('txid', 64)) add('transactions', { userId, txid: text('txid', 64) })
+    if (text('reference', 128)) add('transactionReference', { userId, reference: text('reference', 128) })
+  } else if (tableId === 1 && Number.isSafeInteger(row.vout) && Number(row.vout) >= 0)
+    add('outputs', { userId, transactionId: parent('transaction', 'transactionId'), vout: Number(row.vout) })
+  else if (tableId === 2)
+    add('certificates', { userId, certifier: text('certifier', 130), serialNumber: text('serialNumber') })
+  else if (tableId === 3) add('txLabels', { userId, label: text('label') })
+  else if (tableId === 4) add('outputBaskets', { userId, name: text('name') })
+  else if (tableId === 5) add('outputTags', { userId, tag: text('tag') })
+  else if (tableId === 6) add('commissions', { userId, transactionId: parent('transaction', 'transactionId') })
+  else if (tableId === 8 || tableId === 9) add(tableId === 8 ? 'provenTxs' : 'provenTxReqs', { txid: text('txid', 64) })
+  else if (tableId === 12)
+    add('certificateFields', {
+      userId,
+      certificateId: parent('certificate', 'certificateId'),
+      fieldName: change.metadata.exactText
+    })
+  return result
+}
+
+/** An actual target's already persisted cells serve as a discardable byte
+ * cache. Every <=16KiB extent is read under a fresh real target/window grant;
+ * only a full independent hash match may avoid the source payload download.
+ * No extra blob copy, persisted hash verdict, schema cache or SQL actor exists. */
+async function prepareOrdinaryFieldReuse(
+  storage: StorageKnex,
+  binding: SnapshotJournalDestinationBinding,
+  state: SnapshotJournalDestinationCheckpoint,
+  receipt: SnapshotJournalDestinationStageReceipt,
+  changeIndex: number,
+  frame: RemoteSnapshotJournalFieldFrame,
+  limits: SnapshotJournalDestinationLimits,
+  admission: SnapshotJournalWriterAdmission,
+  check: () => void,
+  signal?: AbortSignal
+): Promise<
+  ((field: string, bytes: number, offset: number, length: number) => Promise<Uint8Array | undefined>) | undefined
+> {
+  const root = storage.knex,
+    change = frame.page.changes[changeIndex]
+  if (!change?.present || typeof admission !== 'function') invalid()
+  const writer = async <T>(apply: (trx: Knex) => Promise<T>): Promise<T> => {
+    check()
+    return await admission(
+      async () =>
+        await storage.runSnapshotJournalWriter(
+          async (trx, backend) => {
+            check()
+            if (storage.knex !== root || backend !== binding.destinationBackend) invalid()
+            const owner = require('./SnapshotJournalOwnedWriter') as typeof import('./SnapshotJournalOwnedWriter')
+            owner.requireSnapshotJournalOwnedWriter(trx, root, backend)
+            await (
+              require('./SnapshotJournalDestinationSchema') as typeof import('./SnapshotJournalDestinationSchema')
+            ).verifySnapshotJournalDestinationSchema(trx)
+            await (
+              require('./SnapshotJournalLifecycle') as typeof import('./SnapshotJournalLifecycle')
+            ).readSnapshotJournalCaptureConfiguration(trx)
+            return await withSnapshotJournalDestinationWindowFence(trx, binding, state, async fenced => {
+              await requireSnapshotJournalCapturedFrame(
+                fenced,
+                binding,
+                state,
+                receipt.digest,
+                frame.page.changes.length
+              )
+              await verifySnapshotJournalEntityIndexes(fenced)
+              const result = await apply(fenced)
+              check()
+              return result
+            })
+          },
+          binding.destinationBackend,
+          signal
+        )
+    )
+  }
+  let selected: OrdinaryFieldLookup | undefined
+  try {
+    selected = await writer(async trx => {
+      // This optional lookup uses the already charged fixed metadata allowance.
+      // Exhausting it is a cache miss, never a change to financial admission.
+      let map: SyncMap | undefined
+      if ([1, 6, 12].includes(receipt.tableId)) {
+        const references = readSnapshotJournalEntityFrameIdentities(trx, binding, state, receipt.digest, changeIndex)
+        async function* boundedReferences() {
+          let count = 0
+          for await (const batch of references) {
+            count += batch.length
+            if (count > 16) throw new OrdinaryFieldReuseMiss()
+            yield batch
+          }
+        }
+        map = (
+          await loadSnapshotJournalDestinationParents(trx, binding, state, boundedReferences(), limits, {
+            remaining: 65536
+          })
+        ).map
+      }
+      for (const lookup of ordinaryFieldLookups(receipt.tableId, change, binding.destinationUserId, map)) {
+        const rows = await snapshotJournalIndexedEntityQuery(trx, lookup.index, lookup.partial).select(
+          trx.raw('1 AS present')
+        )
+        if (rows.length > 1) invalid()
+        if (rows.length === 1)
+          return Object.freeze({ index: lookup.index, partial: Object.freeze({ ...lookup.partial }) })
+      }
+      return undefined
+    })
+  } catch (error) {
+    if (error instanceof SnapshotResourceLimitError || error instanceof OrdinaryFieldReuseMiss) return undefined
+    throw error
+  }
+  if (selected === undefined) return undefined
+  const lookup = selected
+  return async (field, bytes, offset, length) => {
+    if (
+      !Object.hasOwn(change.fields, field) ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > 16384 ||
+      offset + length > bytes ||
+      change.fields[field].bytes !== bytes
+    )
+      invalid()
+    return await writer(async trx => {
+      const mysql = ['mysql', 'mysql2'].includes(String(trx.client.config.client)),
+        descriptor = change.fields[field],
+        valid = mysql ? '1' : `typeof(??)='${descriptor.kind === 'binary' ? 'blob' : 'text'}'`,
+        size = mysql ? 'octet_length(??)' : 'length(CAST(?? AS BLOB))',
+        slice = mysql ? 'substr(CAST(?? AS BINARY),?,?)' : 'substr(CAST(?? AS BLOB),?,?)',
+        rows: Array<{ payload: unknown }> = await snapshotJournalIndexedEntityQuery(
+          trx,
+          lookup.index,
+          lookup.partial
+        ).select(
+          trx.raw(`CASE WHEN ${valid} AND ${size}=? THEN ${slice} ELSE NULL END AS payload`, [
+            ...(mysql ? [] : [field]),
+            field,
+            bytes,
+            field,
+            offset + 1,
+            length
+          ])
+        )
+      if (rows.length > 1) invalid()
+      if (rows.length === 0 || rows[0].payload === null) return undefined
+      if (!(rows[0].payload instanceof Uint8Array) || rows[0].payload.length !== length) invalid()
+      return rows[0].payload
+    })
+  }
+}
+
 /** Internal, one-use prepared data. It confers no source, provider or destination
  * authority. The coordinator supplies the actual authenticated staged change
  * and a freshly verified source lease; the writer independently checks the
@@ -291,6 +479,7 @@ export class SnapshotJournalPreparedEntityMerge {
     archive: RemoteSnapshotJournalFieldArchive,
     frame: RemoteSnapshotJournalFieldFrame,
     inputLimits: SnapshotJournalDestinationLimits,
+    admission: SnapshotJournalWriterAdmission,
     signal?: AbortSignal
   ): Promise<SnapshotJournalPreparedPromotionEffect<SnapshotJournalHashedFieldDelta>> {
     const limits = Object.freeze({ ...inputLimits }),
@@ -387,29 +576,69 @@ export class SnapshotJournalPreparedEntityMerge {
         if (descriptor.kind !== (allowed.binary(name) ? 'binary' : 'utf8')) invalid()
         chargeSnapshotJournalAllocation(budget, 16 * descriptor.bytes + 512)
       }
+      const reuse = await prepareOrdinaryFieldReuse(
+        storage,
+        binding,
+        state,
+        receipt,
+        changeIndex,
+        frame,
+        limits,
+        admission,
+        check,
+        signal
+      )
       completeRow = { ...change.row }
       for (const name of names) {
         const descriptor = change.fields[name],
-          bytes = new Uint8Array(descriptor.bytes),
-          hash = createHash('sha256')
+          bytes = new Uint8Array(descriptor.bytes)
         buffers.add(bytes)
-        let offset = 0
-        while (offset < bytes.length) {
-          check()
-          const length = Math.min(16384, bytes.length - offset),
-            part = await archive.readFieldExtent(frame, changeIndex, name, offset, length)
-          try {
-            if (part.length !== length) invalid()
-            bytes.set(part, offset)
-            hash.update(part)
-            offset += part.length
-          } finally {
-            part.fill(0)
+        let reused = reuse !== undefined,
+          offset = 0,
+          hash = createHash('sha256')
+        if (reuse !== undefined) {
+          while (offset < bytes.length) {
+            check()
+            const length = Math.min(16384, bytes.length - offset),
+              part = await reuse(name, bytes.length, offset, length)
+            if (part === undefined) {
+              reused = false
+              break
+            }
+            try {
+              bytes.set(part, offset)
+              hash.update(part)
+              offset += part.length
+            } finally {
+              part.fill(0)
+            }
           }
+          // A current target is optional cached DATA. Mutation, disappearance
+          // or a different digest selects a real source read, never a verdict.
+          reused = reused && offset === bytes.length && hash.digest('hex') === descriptor.sha256
+        }
+        hash = createHash('sha256')
+        if (!reused) {
+          bytes.fill(0)
+          offset = 0
+          while (offset < bytes.length) {
+            check()
+            const length = Math.min(16384, bytes.length - offset),
+              part = await archive.readFieldExtent(frame, changeIndex, name, offset, length)
+            try {
+              if (part.length !== length) invalid()
+              bytes.set(part, offset)
+              hash.update(part)
+              offset += part.length
+            } finally {
+              part.fill(0)
+            }
+          }
+          if (hash.digest('hex') !== descriptor.sha256) invalid()
         }
         const eof = await archive.readFieldExtent(frame, changeIndex, name, bytes.length, 0)
         try {
-          if (eof.length !== 0 || hash.digest('hex') !== descriptor.sha256) invalid()
+          if (eof.length !== 0) invalid()
         } finally {
           eof.fill(0)
         }

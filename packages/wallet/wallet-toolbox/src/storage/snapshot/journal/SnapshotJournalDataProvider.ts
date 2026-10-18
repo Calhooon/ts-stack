@@ -116,3 +116,85 @@ export function snapshotJournalFieldArchiveProvider(value: unknown): value is Sn
     typeof provider.openSnapshotJournalFieldArchive === 'function'
   )
 }
+
+/** Local field receiver CODE. These methods are deliberately separate from the
+ * version-three row RPC: method presence cannot mint an archive or SQL grant. */
+export interface SnapshotJournalFieldOptions extends SnapshotJournalDataOptions {
+  limits?: SnapshotJournalDestinationLimits
+}
+export interface SnapshotJournalFieldStatus {
+  binding: Readonly<import('./SnapshotJournalTypes').SnapshotJournalDestinationBinding>
+  checkpoint: import('./SnapshotJournalTypes').SnapshotJournalDestinationCheckpoint
+  progress: import('./SnapshotJournalTypes').SnapshotJournalProgress
+}
+export interface SnapshotJournalFieldProvider extends SnapshotJournalDataContentProvider {
+  supportsSnapshotJournalFieldSync: () => Promise<boolean>
+  getSnapshotJournalFieldStatus: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options?: SnapshotJournalFieldOptions
+  ) => Promise<SnapshotJournalFieldStatus | undefined>
+  openSnapshotJournalFieldDestination: (
+    identityKey: string,
+    source: import('./SnapshotJournalArchiveBinding').SnapshotJournalFieldArchiveBinding,
+    options?: SnapshotJournalFieldOptions
+  ) => Promise<import('./runSnapshotJournalArchiveReconciliation').SnapshotJournalFieldDestination | undefined>
+  getSnapshotJournalFieldContentReceipt: SnapshotJournalDataContentProvider['getSnapshotJournalDataContentReceipt']
+  confirmSnapshotJournalFieldContentReceipt: SnapshotJournalDataContentProvider['confirmSnapshotJournalDataContentReceipt']
+}
+export function snapshotJournalFieldProvider(value: unknown): value is SnapshotJournalFieldProvider {
+  const provider = value as Partial<SnapshotJournalFieldProvider> | null
+  return (
+    snapshotJournalDataProvider(value) &&
+    snapshotJournalDataContentProvider(value) &&
+    provider != null &&
+    typeof provider.supportsSnapshotJournalFieldSync === 'function' &&
+    typeof provider.getSnapshotJournalFieldStatus === 'function' &&
+    typeof provider.openSnapshotJournalFieldDestination === 'function' &&
+    typeof provider.getSnapshotJournalFieldContentReceipt === 'function' &&
+    typeof provider.confirmSnapshotJournalFieldContentReceipt === 'function'
+  )
+}
+
+/** Local acknowledged provenance only. A caller checkpoint is comparison DATA,
+ * never a writer grant or a substitute for the actual current SQL window. */
+export interface SnapshotJournalFieldReadOptions extends SnapshotJournalFieldOptions {
+  checkpoint?: import('./SnapshotJournalTypes').SnapshotJournalDestinationCheckpoint
+  after?: number
+  maximumRows?: number
+  maximumMetadataBytes?: number
+}
+export interface SnapshotJournalFieldProvenanceRead {
+  checkpoint: import('./SnapshotJournalTypes').SnapshotJournalDestinationCheckpoint
+  page: import('./SnapshotJournalProvenance').SnapshotJournalFieldProvenancePage
+}
+export interface SnapshotJournalStoredFieldReader {
+  readonly descriptor: Readonly<{ kind: 'binary' | 'utf8'; bytes: number; sha256: string }>
+  read: (offset: number, length: number) => Promise<Uint8Array>
+  close: () => void
+}
+export interface SnapshotJournalFieldProvenanceProvider extends SnapshotJournalFieldProvider {
+  readSnapshotJournalFieldProvenance: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options?: SnapshotJournalFieldReadOptions
+  ) => Promise<SnapshotJournalFieldProvenanceRead>
+  openSnapshotJournalProvenanceField: (
+    identityKey: string,
+    sourceStorageIdentity: string,
+    incomingId: number,
+    fieldName: string,
+    options?: SnapshotJournalFieldReadOptions
+  ) => Promise<SnapshotJournalStoredFieldReader>
+}
+export function snapshotJournalFieldProvenanceProvider(
+  value: unknown
+): value is SnapshotJournalFieldProvenanceProvider {
+  const provider = value as Partial<SnapshotJournalFieldProvenanceProvider> | null
+  return (
+    snapshotJournalFieldProvider(value) &&
+    provider != null &&
+    typeof provider.readSnapshotJournalFieldProvenance === 'function' &&
+    typeof provider.openSnapshotJournalProvenanceField === 'function'
+  )
+}

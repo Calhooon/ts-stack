@@ -287,9 +287,10 @@ export class KnexSyncTransferStore {
     identityKey: string,
     digest: string,
     totalBytes: number,
-    originalExpiresAt?: number
+    originalExpiresAt?: number,
+    context: string = digest
   ): Promise<SyncTransferManifest & { receivedBytes: number }> {
-    const { row } = await this.allocate(identityKey, digest, 'write', totalBytes, digest, originalExpiresAt)
+    const { row } = await this.allocate(identityKey, context, 'write', totalBytes, digest, originalExpiresAt)
     if (Number(row.totalBytes) !== totalBytes || row.digest !== digest)
       throw new Error('Wallet sync transfer metadata changed')
     return { ...this.manifest(row), receivedBytes: Number(row.receivedBytes) }
@@ -317,9 +318,17 @@ export class KnexSyncTransferStore {
     })
   }
 
-  async write(identityKey: string, transferId: string, offset: number, bytes: Uint8Array): Promise<number> {
+  async write(
+    identityKey: string,
+    transferId: string,
+    offset: number,
+    bytes: Uint8Array,
+    expectedContext?: string
+  ): Promise<number> {
     return await this.locked(async trx => {
       const row = await this.row(trx, identityKey, transferId)
+      if (expectedContext !== undefined && row.context !== expectedContext)
+        throw new WERR_INVALID_OPERATION('Wallet sync transfer differs from its actual protocol owner')
       if (
         row.direction !== 'write' ||
         row.state !== 'ready' ||
@@ -348,9 +357,15 @@ export class KnexSyncTransferStore {
     })
   }
 
-  async loadWrite(identityKey: string, transferId: string): Promise<{ bytes: Uint8Array; result?: unknown }> {
+  async loadWrite(
+    identityKey: string,
+    transferId: string,
+    expectedContext?: string
+  ): Promise<{ bytes: Uint8Array; result?: unknown }> {
     return await this.locked(async trx => {
       const row = await this.row(trx, identityKey, transferId)
+      if (expectedContext !== undefined && row.context !== expectedContext)
+        throw new WERR_INVALID_OPERATION('Wallet sync transfer differs from its actual protocol owner')
       if (row.direction !== 'write' || Number(row.receivedBytes) !== Number(row.totalBytes))
         throw new Error('Wallet sync transfer is incomplete')
       if (row.state === 'complete') return { bytes: new Uint8Array(), result: JSON.parse(row.result!) }

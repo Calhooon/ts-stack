@@ -262,3 +262,227 @@ test(
   },
   twoEndpointCaseMs
 )
+
+test.each([StorageClient, StorageMobile])(
+  'authenticated field %p uploads real immutable bytes, recovers a lost stage reply and drains both actual roots',
+  async Client => {
+    const f = await endpoints(),
+      controller = new AbortController(),
+      timer = setTimeout(() => controller.abort(new Error('Owned remote field integration deadline')), 180000)
+    let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined,
+      destination: import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination | undefined,
+      lost = false,
+      failure: { cause: unknown } | undefined
+    try {
+      const user = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user
+      await f.source.storage.findOrInsertTxLabel(user.userId, 'actual remote field upload')
+      const { Transaction, LockingScript } = await import('@bsv/sdk'),
+        script = [0x6a, 0x4e, 0x70, 0x11, 0x01, 0x00, ...Array.from({ length: 70000 }, (_value, index) => index % 251)],
+        transaction = new Transaction(1, [], [{ satoshis: 1, lockingScript: LockingScript.fromBinary(script) }], 0),
+        raw = Buffer.from(transaction.toBinary()),
+        stamp = Date.now(),
+        description = 'remote immutable field 雪\u0000'.repeat(1200)
+      await f.source.storage.knex('transactions').insert({
+        created_at: stamp,
+        updated_at: stamp,
+        transactionId: 11,
+        userId: user.userId,
+        status: 'unprocessed',
+        reference: 'actual-remote-field',
+        isOutgoing: 0,
+        satoshis: 1,
+        txid: transaction.id('hex'),
+        version: 1,
+        lockTime: 0,
+        description,
+        rawTx: raw
+      })
+
+      const sourceServer = await f.source.serve(),
+        targetServer = await f.target.serve(),
+        from = new Client(f.source.wallet, sourceServer.url, { serverIdentityKey: f.source.serverIdentityKey }),
+        to = new Client(f.source.wallet, targetServer.url, { serverIdentityKey: f.target.serverIdentityKey }),
+        { snapshotJournalFieldRpcCapabilities } = await import('./SnapshotJournalFieldRpcProtocol'),
+        { runSnapshotJournalFieldArchiveReconciliation } = await import('./runSnapshotJournalArchiveReconciliation')
+      expect((await to.makeAvailable()).snapshotJournalFields).toEqual(snapshotJournalFieldRpcCapabilities)
+      // Keep actual dispatch/SQL behavior. Only the post-commit response is lost.
+      const controllerType = await import('./KnexSnapshotJournalFieldRpc'),
+        original = controllerType.KnexSnapshotJournalFieldRpc.prototype.dispatch
+      jest.spyOn(controllerType.KnexSnapshotJournalFieldRpc.prototype, 'dispatch').mockImplementation(async function (
+        this: import('./KnexSnapshotJournalFieldRpc').KnexSnapshotJournalFieldRpc,
+        method,
+        params,
+        identity
+      ) {
+        const result = await original.call(this, method, params, identity)
+        if (!lost && method === 'stageSnapshotJournalFieldFrame') {
+          lost = true
+          throw new SnapshotArchiveTransportFailure('Synthetic lost real field stage response')
+        }
+        return result
+      })
+      archive = await from.openSnapshotJournalFieldArchive(f.source.identityKey, undefined, {
+        signal: controller.signal,
+        lifetimeMs: 180000
+      })
+      if (archive === undefined) throw new Error('Actual remote field source unavailable')
+      const binding = archive.manifest.binding
+      destination = await to.openSnapshotJournalFieldDestination(f.source.identityKey, binding, {
+        signal: controller.signal
+      })
+      if (destination === undefined) throw new Error('Actual remote field destination unavailable')
+      const actual = destination
+      const admitted = await actual.status(),
+        { parseSnapshotJournalDataStatus } = await import('./SnapshotJournalDataProtocol')
+      expect(() =>
+        parseSnapshotJournalDataStatus(
+          admitted,
+          f.source.identityKey,
+          binding.sourceStorage.storageIdentityKey,
+          'http-journal-target'
+        )
+      ).toThrow()
+      expect(
+        parseSnapshotJournalDataStatus(
+          admitted,
+          f.source.identityKey,
+          binding.sourceStorage.storageIdentityKey,
+          'http-journal-target',
+          'wallet-journal-fields/1'
+        )
+      ).toEqual(admitted)
+      let last: SnapshotJournalReconciliationProgress | undefined
+      for await (const progress of runSnapshotJournalFieldArchiveReconciliation(archive, async () => actual, {
+        signal: controller.signal
+      }))
+        last = progress
+      expect(last?.state).toBe('complete')
+      expect(last?.checkpoint.phase).toBe('acknowledged')
+      expect(lost).toBe(true)
+      const targetUser = (await f.target.storage.findOrInsertUser(f.source.identityKey)).user
+      expect(
+        await f.target.storage.findTxLabels({
+          partial: { userId: targetUser.userId, label: 'actual remote field upload' }
+        })
+      ).toHaveLength(1)
+      expect(targetUser.activeStorage).toBe('http-journal-target')
+      expect(await f.target.storage.knex('transactions').where('txid', transaction.id('hex')).first()).toMatchObject({
+        rawTx: raw,
+        description
+      })
+
+      expect(
+        await to.getSnapshotJournalFieldStatus(f.source.identityKey, binding.sourceStorage.storageIdentityKey)
+      ).toMatchObject({ checkpoint: last?.checkpoint })
+      for (const storage of [f.source.storage, f.target.storage]) {
+        expect(await storage.knex('snapshot_archive_capacity').first()).toMatchObject({ archives: 0, reservedBytes: 0 })
+        expect(await storage.knex('sync_transfers').whereNotNull('transferId')).toHaveLength(0)
+      }
+      expect(archive.isOpen).toBe(false)
+      await archive.closed
+      // A new authenticated controller reads the same actual durable financial
+      // ACK after the separate transient upload has been physically deleted.
+      await targetServer.server.close()
+      const replacement = await f.target.serve(),
+        client = new Client(f.source.wallet, replacement.url, { serverIdentityKey: f.target.serverIdentityKey })
+      expect(
+        await client.getSnapshotJournalFieldStatus(f.source.identityKey, binding.sourceStorage.storageIdentityKey)
+      ).toMatchObject({ checkpoint: last?.checkpoint })
+    } catch (cause) {
+      failure = { cause }
+    }
+    clearTimeout(timer)
+    const owners = await Promise.allSettled([destination?.close(), archive?.close()]),
+      roots = await Promise.allSettled([f.close()]),
+      results = [...owners, ...roots],
+      failures = [
+        ...(failure === undefined ? [] : [failure.cause]),
+        ...results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+      ]
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1)
+      throw new AggregateError(failures, 'Actual remote field test and owner cleanup failed', { cause: failures[0] })
+  },
+  210000
+)
+
+test('authenticated READY field upload resumes with a fresh client/server after its actual source reader has physically closed', async () => {
+  const f = await endpoints(),
+    controller = new AbortController(),
+    timer = setTimeout(() => controller.abort(new Error('Owned uploaded-field recovery deadline')), 180000)
+  let archive: import('./openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive | undefined,
+    destination: import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination | undefined,
+    resumed: import('./RemoteSnapshotJournalFieldDestination').RemoteSnapshotJournalFieldDestination | undefined,
+    failure: { cause: unknown } | undefined
+  try {
+    const user = (await f.source.storage.findOrInsertUser(f.source.identityKey)).user
+    await f.source.storage.findOrInsertTxLabel(user.userId, 'durable field upload recovery')
+    const targetServer = await f.target.serve(),
+      to = new StorageClient(f.source.wallet, targetServer.url, { serverIdentityKey: f.target.serverIdentityKey })
+    // This exercises the genuine local source provider, without an archive-
+    // shaped stand-in or a source SQL fence manufactured from uploaded DATA.
+    archive = await f.source.storage.openSnapshotJournalFieldArchive(f.source.identityKey, undefined, {
+      lifetimeMs: 180000,
+      signal: controller.signal
+    })
+    if (archive === undefined) throw new Error('Actual local field archive unavailable')
+    destination = await to.openSnapshotJournalFieldDestination(f.source.identityKey, archive.manifest.binding, {
+      signal: controller.signal
+    })
+    if (destination === undefined) throw new Error('Actual field upload destination unavailable')
+    const before = await destination.status()
+    await destination.stageArchiveFrame(before.checkpoint, archive)
+    const copied = await destination.status(),
+      recovery = destination.uploadResume
+    expect(copied.checkpoint.sequence).toBeGreaterThan(before.checkpoint.sequence)
+    expect(copied.checkpoint.phase).not.toBe('acknowledged')
+    await archive.close()
+    await archive.closed
+    expect(archive.isOpen).toBe(false)
+    await targetServer.server.close()
+    // A real controller restart retains the public endpoint address. This also
+    // lets the old authenticated client observe the new owner's idempotent cleanup.
+    const replacement = await f.target.serve({ port: Number(new URL(targetServer.url).port) }),
+      client = new StorageClient(f.source.wallet, replacement.url, { serverIdentityKey: f.target.serverIdentityKey })
+    await expect(
+      client.resumeSnapshotJournalFieldDestination(f.source.identityKey, {
+        ...recovery,
+        source: { ...recovery.source, snapshotId: '55'.repeat(32) }
+      })
+    ).rejects.toThrow('original source')
+    resumed = await client.resumeSnapshotJournalFieldDestination(f.source.identityKey, recovery, {
+      signal: controller.signal
+    })
+    expect(await resumed.status()).toEqual(copied)
+    let last: SnapshotJournalReconciliationProgress | undefined
+    for await (const progress of resumed.reconcileUploaded({ signal: controller.signal })) last = progress
+    expect(last?.state).toBe('complete')
+    expect(last?.checkpoint.phase).toBe('acknowledged')
+    await resumed.closed
+    const targetUser = (await f.target.storage.findOrInsertUser(f.source.identityKey)).user
+    expect(
+      await f.target.storage.findTxLabels({
+        partial: { userId: targetUser.userId, label: 'durable field upload recovery' }
+      })
+    ).toHaveLength(1)
+    expect(targetUser.activeStorage).toBe('http-journal-target')
+    expect(await f.target.storage.knex('snapshot_archives')).toHaveLength(0)
+    expect(await f.target.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+      archives: 0,
+      reservedBytes: 0
+    })
+    await expect(client.resumeSnapshotJournalFieldDestination(f.source.identityKey, recovery)).rejects.toThrow('READY')
+  } catch (cause) {
+    failure = { cause }
+  }
+  clearTimeout(timer)
+  const owners = await Promise.allSettled([resumed?.close(), destination?.close(), archive?.close()]),
+    roots = await Promise.allSettled([f.close()]),
+    failures = [
+      ...(failure === undefined ? [] : [failure.cause]),
+      ...[...owners, ...roots].flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+    ]
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'Actual field recovery and physical cleanup failed', { cause: failures[0] })
+}, 210000)

@@ -52,6 +52,8 @@ function invalid(): never {
  * Staged metadata is not a financial completion/primary-selection ACK. This
  * class deliberately does not inherit the version-3 row staging/promoter. */
 export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWindowDestination {
+  declare readonly close?: () => Promise<void>
+
   static async begin(
     storage: StorageKnex,
     identityKey: string,
@@ -78,7 +80,8 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
     sourceStorageIdentity: string,
     limits: SnapshotJournalDestinationLimits,
     admission: SnapshotJournalWriterAdmission,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    allowPreviousRowForFieldNegotiation?: true
   ): Promise<KnexSnapshotJournalFieldDestination | undefined> {
     return await this.resumeWindow(
       storage,
@@ -88,7 +91,8 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
       admission,
       'wallet-journal-fields/1',
       (binding, ownedLimits, root) =>
-        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root)
+        new KnexSnapshotJournalFieldDestination(storage, binding, ownedLimits, admission, signal, root),
+      allowPreviousRowForFieldNegotiation
     )
   }
 
@@ -326,6 +330,7 @@ export class KnexSnapshotJournalFieldDestination extends KnexSnapshotJournalWind
                 archive,
                 frame,
                 this.limits,
+                this.admission,
                 this.signal
               )
             if ([0, 1].includes(receipt.tableId))

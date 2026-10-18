@@ -1,6 +1,11 @@
 import { KnexSnapshotJournalDataContentReceipts } from './snapshot/journal/KnexSnapshotJournalDataContentReceipts'
 import { KnexSnapshotJournalDataDestination } from './snapshot/journal/KnexSnapshotJournalDataDestination'
-import type { SnapshotJournalDataOptions } from './snapshot/journal/SnapshotJournalDataProvider'
+import type {
+  SnapshotJournalFieldOptions,
+  SnapshotJournalFieldReadOptions,
+  SnapshotJournalFieldStatus,
+  SnapshotJournalDataOptions
+} from './snapshot/journal/SnapshotJournalDataProvider'
 import type { SnapshotJournalDataStatus } from './snapshot/journal/SnapshotJournalDataProtocol'
 import type { SnapshotJournalArchiveBinding } from './snapshot/journal/SnapshotJournalArchiveBinding'
 import { journalCopyLimits } from './snapshot/journal/SnapshotJournalCopyLimits'
@@ -274,6 +279,11 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
   private snapshotJournalMaintenance?: SnapshotJournalMaintenanceTask<SnapshotJournalMaintenanceResult>
   private snapshotJournalMaintenanceFailure?: SnapshotJournalConnectionCleanupError
   private snapshotArchiveRecovery?: Promise<void>
+  private localJournalFieldArchives?: import('./snapshot/archive/KnexSnapshotArchiveRpc').KnexSnapshotArchiveRpc
+  private readonly localJournalFieldArchiveOpenings = new Set<Promise<unknown>>()
+  private readonly localJournalFieldArchiveReaders = new Set<
+    import('./snapshot/journal/openRemoteSnapshotJournalFieldArchive').RemoteSnapshotJournalFieldArchive
+  >()
   private guardedSnapshotFailure?: { error: unknown }
   private retainedReadSnapshot?: RetainedReadSnapshotLifetime
   private retainedReadSnapshotsStopped = false
@@ -546,6 +556,13 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     // Retain all actual causes instead of overwriting them in nested finally.
     await drain(async () => await this.stopAutomaticSnapshotJournalRetention())
     await drain(async () => await this.snapshotArchiveRecovery)
+    await Promise.allSettled(this.localJournalFieldArchiveOpenings)
+    for (const archive of this.localJournalFieldArchiveReaders)
+      await drain(async () => {
+        await archive.close()
+        await archive.closed
+      })
+    await drain(async () => await this.localJournalFieldArchives?.close())
     await drain(async () => await this.snapshotJournalCapture?.close())
     await drain(async () => await this.snapshotJournalMaintenance?.close())
     await this.snapshotSyncOpening?.catch(() => undefined)
@@ -619,6 +636,248 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       signal,
       bootstrap,
       preferIncremental
+    )
+  }
+
+  /** Actual SQL field source and receiver. The authenticated field RPC remains
+   * a separate namespace from the original row protocol. */
+  private async localJournalFieldArchiveRpc() {
+    if (this.snapshotAdmissionStopped) throw new WERR_INVALID_OPERATION('Local field source admission stopped')
+    const { KnexSnapshotArchiveRpc } = await import('./snapshot/archive/KnexSnapshotArchiveRpc')
+    if (this.snapshotAdmissionStopped) throw new WERR_INVALID_OPERATION('Local field source admission stopped')
+    return (this.localJournalFieldArchives ??= new KnexSnapshotArchiveRpc(this))
+  }
+  async supportsSnapshotJournalFieldArchive(): Promise<boolean> {
+    return (await (await this.localJournalFieldArchiveRpc()).journalFieldCapabilities()) !== undefined
+  }
+  openSnapshotJournalFieldArchive(
+    identityKey: string,
+    position?: import('./snapshot/journal/SnapshotJournalReceiptData').SnapshotJournalArchivePosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const opening = this.openLocalSnapshotJournalFieldArchive(identityKey, position, options)
+    this.localJournalFieldArchiveOpenings.add(opening)
+    void opening.then(
+      () => this.localJournalFieldArchiveOpenings.delete(opening),
+      () => this.localJournalFieldArchiveOpenings.delete(opening)
+    )
+    return opening
+  }
+  private async openLocalSnapshotJournalFieldArchive(
+    identityKey: string,
+    position?: import('./snapshot/journal/SnapshotJournalReceiptData').SnapshotJournalArchivePosition,
+    options: WalletReadSnapshotOptions = {}
+  ) {
+    const root = this.knex,
+      rpc = await this.localJournalFieldArchiveRpc(),
+      capabilities = await rpc.journalFieldCapabilities()
+    if (capabilities === undefined) return undefined
+    const { SnapshotJournalFieldArchiveTransport } =
+        await import('./snapshot/journal/SnapshotJournalFieldArchiveTransport'),
+      { openRemoteSnapshotJournalFieldArchive } =
+        await import('./snapshot/journal/openRemoteSnapshotJournalFieldArchive'),
+      settings = this.getSettings()
+    if (this.knex !== root || this.snapshotAdmissionStopped || (settings.chain !== 'main' && settings.chain !== 'test'))
+      throw new WERR_INVALID_OPERATION('Actual local field source changed')
+    const transport = new SnapshotJournalFieldArchiveTransport(
+      async (method, params, signal) => {
+        signal?.throwIfAborted()
+        if (
+          this.knex !== root ||
+          (this.snapshotAdmissionStopped && method !== 'cancelSnapshotJournalFieldArchiveRequest')
+        )
+          throw new WERR_INVALID_OPERATION('Actual local field source stopped or replaced')
+        return await rpc.dispatch(method, params, identityKey)
+      },
+      identityKey,
+      settings.storageIdentityKey,
+      settings.chain,
+      capabilities
+    )
+    const archive = await openRemoteSnapshotJournalFieldArchive(transport, position, options)
+    if (archive !== undefined) {
+      if (this.snapshotAdmissionStopped || this.knex !== root) {
+        await archive.close()
+        await archive.closed
+        throw new WERR_INVALID_OPERATION('Actual local field source stopped during opening')
+      }
+      this.localJournalFieldArchiveReaders.add(archive)
+      void archive.closed.then(
+        () => this.localJournalFieldArchiveReaders.delete(archive),
+        () => this.localJournalFieldArchiveReaders.delete(archive)
+      )
+    }
+    return archive
+  }
+
+  async supportsSnapshotJournalFieldSync(): Promise<boolean> {
+    return await this.supportsSnapshotJournalSync()
+  }
+  private async resumeSnapshotJournalFieldDestination(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalFieldOptions
+  ) {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal field observation requires actual current manager admission')
+    const { KnexSnapshotJournalFieldDestination } =
+      await import('./snapshot/journal/KnexSnapshotJournalFieldDestination')
+    return await KnexSnapshotJournalFieldDestination.resume(
+      this,
+      identityKey,
+      sourceStorageIdentity,
+      options.limits ?? journalCopyLimits(),
+      options.admission,
+      options.signal,
+      true
+    )
+  }
+  async getSnapshotJournalFieldStatus(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalFieldOptions = {}
+  ): Promise<SnapshotJournalFieldStatus | undefined> {
+    const destination = await this.resumeSnapshotJournalFieldDestination(identityKey, sourceStorageIdentity, options)
+    return destination === undefined ? undefined : { binding: destination.binding, ...(await destination.status()) }
+  }
+  async getSnapshotJournalFieldContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    options: SnapshotJournalFieldOptions = {}
+  ) {
+    const destination = await this.resumeSnapshotJournalFieldDestination(identityKey, sourceStorageIdentity, options)
+    return await destination?.previousContentReceipt()
+  }
+  async confirmSnapshotJournalFieldContentReceipt(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    revision: import('./snapshot/SnapshotSyncContentRevision').SnapshotSyncContentRevision,
+    options: SnapshotJournalFieldOptions = {}
+  ) {
+    const destination = await this.resumeSnapshotJournalFieldDestination(identityKey, sourceStorageIdentity, options)
+    return await destination?.confirmContentReceipt(revision)
+  }
+  async openSnapshotJournalFieldDestination(
+    identityKey: string,
+    source: import('./snapshot/journal/SnapshotJournalArchiveBinding').SnapshotJournalFieldArchiveBinding,
+    options: SnapshotJournalFieldOptions = {}
+  ) {
+    if (this.snapshotAdmissionStopped || options.admission === undefined)
+      throw new WERR_INVALID_OPERATION('Journal field writers require actual current manager admission')
+    const { KnexSnapshotJournalFieldDestination } =
+      await import('./snapshot/journal/KnexSnapshotJournalFieldDestination')
+    return (
+      await KnexSnapshotJournalFieldDestination.begin(
+        this,
+        identityKey,
+        source,
+        options.limits ?? journalCopyLimits(),
+        options.admission,
+        options.signal
+      )
+    ).destination
+  }
+
+  private async acknowledgedSnapshotJournalFieldRead(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    input: SnapshotJournalFieldReadOptions
+  ) {
+    const root = this.knex,
+      limits = { ...(input.limits ?? journalCopyLimits()) },
+      supplied = input.checkpoint === undefined ? undefined : structuredClone(input.checkpoint),
+      options = { ...input, checkpoint: supplied, limits, admission: input.admission, signal: input.signal },
+      wanted =
+        supplied === undefined
+          ? undefined
+          : (await import('./snapshot/journal/SnapshotJournalDataProtocol')).parseSnapshotJournalDataCheckpoint(
+              supplied
+            ),
+      destination = await this.resumeSnapshotJournalFieldDestination(identityKey, sourceStorageIdentity, options)
+    if (destination === undefined || options.admission === undefined || this.knex !== root)
+      throw new WERR_INVALID_OPERATION('Acknowledged field provenance requires its actual current receiver')
+    const status = await destination.status()
+    if (
+      status.checkpoint.phase !== 'acknowledged' ||
+      (wanted !== undefined && JSON.stringify(wanted) !== JSON.stringify(status.checkpoint))
+    )
+      throw new WERR_INVALID_OPERATION('Field provenance checkpoint is not the actual completed window')
+    return { options, root, destination, checkpoint: status.checkpoint }
+  }
+  async readSnapshotJournalFieldProvenance(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    input: SnapshotJournalFieldReadOptions = {}
+  ): Promise<import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalFieldProvenanceRead> {
+    const { options, root, destination, checkpoint } = await this.acknowledgedSnapshotJournalFieldRead(
+        identityKey,
+        sourceStorageIdentity,
+        input
+      ),
+      admission = options.admission!,
+      maximumBytes = Math.min(
+        options.maximumMetadataBytes ?? 1048576,
+        Math.floor((options.limits.maximumAllocationBytes - 131072) / 16)
+      )
+    if (maximumBytes < 1) throw new WERR_INVALID_OPERATION('Field provenance metadata allocation is too small')
+    const { readSnapshotJournalFieldProvenancePage } = await import('./snapshot/journal/SnapshotJournalProvenance')
+    const page = await admission(
+      async () =>
+        await this.runSnapshotJournalWriter(
+          async (trx, backend) => {
+            options.signal?.throwIfAborted()
+            if (
+              this.knex !== root ||
+              backend !== destination.binding.destinationBackend ||
+              this.snapshotAdmissionStopped
+            )
+              throw new WERR_INVALID_OPERATION('Field provenance target was replaced or stopped')
+            await (
+              await import('./snapshot/journal/SnapshotJournalDestinationSchema')
+            ).verifySnapshotJournalDestinationSchema(trx)
+            await (
+              await import('./snapshot/journal/SnapshotJournalLifecycle')
+            ).readSnapshotJournalCaptureConfiguration(trx)
+            const page = await readSnapshotJournalFieldProvenancePage(
+              trx,
+              destination.binding,
+              checkpoint,
+              options.after,
+              options.maximumRows ?? 32,
+              maximumBytes
+            )
+            if (this.knex !== root) throw new WERR_INVALID_OPERATION('Field provenance target changed during its read')
+            return page
+          },
+          destination.binding.destinationBackend,
+          options.signal
+        )
+    )
+    return { checkpoint, page }
+  }
+  async openSnapshotJournalProvenanceField(
+    identityKey: string,
+    sourceStorageIdentity: string,
+    incomingId: number,
+    fieldName: string,
+    input: SnapshotJournalFieldReadOptions = {}
+  ): Promise<import('./snapshot/journal/SnapshotJournalDataProvider').SnapshotJournalStoredFieldReader> {
+    const { options, root, destination, checkpoint } = await this.acknowledgedSnapshotJournalFieldRead(
+        identityKey,
+        sourceStorageIdentity,
+        input
+      ),
+      { SnapshotJournalProvenanceFieldReader } = await import('./snapshot/journal/SnapshotJournalProvenance')
+    if (this.knex !== root) throw new WERR_INVALID_OPERATION('Field provenance target was replaced')
+    return await SnapshotJournalProvenanceFieldReader.open(
+      this,
+      destination.binding,
+      checkpoint,
+      incomingId,
+      fieldName,
+      options.admission!,
+      options.limits.maximumAllocationBytes,
+      options.signal
     )
   }
 
