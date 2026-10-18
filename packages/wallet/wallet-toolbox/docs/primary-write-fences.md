@@ -61,6 +61,18 @@ entry point retain their original behavior. Caller-supplied transaction overload
 retain their legacy contract; the new first-party network path passes no SQL
 token to transport.
 
+Mined-proof completion now carries the original participating profile captures
+through per-profile notification and failed-transaction recovery. UTXO output
+observations precede SQL writers; an obsolete profile's recovery rolls back and
+is omitted from committed recovery logs, while current peers proceed. The request
+remains unnotified until every actual financial copy has the selected proof.
+Late copies stay visible for fresh reconciliation. An obsolete operation cannot
+reuse a capture with a different provider. The authenticated proof endpoint
+captures before proof validation; the proof checker and SSE mined-proof producer
+capture before external proof observation. Unfail also captures before its proof
+fetch and keeps the exact-request authenticated-proof custody check. Old
+serialized adapters retain their existing dispatch and malformed-proof errors.
+
 These checks are restrictions on real SQL operations. `AuthId.isActive` supplied
 by a caller does not grant permission; user ID and identity must match the actual
 current row. Another profile's role change does not revoke this profile's write.
@@ -85,9 +97,11 @@ The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
 Background batch cleanup and expiry/proof-monitor writers still need their own
-original-epoch integration, including cross-user mined-proof notifications,
-failed-proof recovery and publication follow-up. Broadcast result fencing does
-not establish that these remaining monitor writers are fenced. Previously committed old-primary work
+original-epoch integration for their remaining scheduling/status/history,
+terminal input quarantine and publication phases. Central mined-proof fan-out
+and recovery fences do not fence every surrounding monitor mutation. Some legacy
+monitor wrappers also retain manager ownership during external preparation;
+completing the supported-provider scheduling split remains required. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a
 new financial acknowledgement or permission to undo it on another primary.
 

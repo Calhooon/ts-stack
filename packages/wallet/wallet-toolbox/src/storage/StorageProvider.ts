@@ -1,4 +1,5 @@
-import type { StorageReqWrite } from './StorageReqWrite'
+import type { ReqHistoryNote } from '../sdk/types'
+import { StorageReqWrite } from './StorageReqWrite'
 import type { SnapshotSyncStorage } from './snapshot/SnapshotSync'
 import type { WalletReadSnapshot, WalletReadSnapshotOptions } from './snapshot/WalletReadSnapshot'
 import type { RetainedReadSnapshot, RetainedReadSnapshotOptions } from './snapshot/RetainedReadSnapshot'
@@ -1437,7 +1438,8 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   async relinquishCertificate(auth: AuthId, args: RelinquishCertificateArgs): Promise<number> {
-    const write = await this.activeWriteTransaction(auth)
+    const write =
+      typeof this.activeWriteTransaction === 'function' ? await this.activeWriteTransaction(auth) : undefined
     const vargs = validateRelinquishCertificateArgs(args)
     const cert = verifyOne(
       await this.findCertificates({
@@ -1449,6 +1451,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
         }
       })
     )
+    if (write == null) return await this.updateCertificate(cert.certificateId, { isDeleted: true })
     return await write.transaction(
       async trx =>
         await this.updateCertificate(
@@ -1612,47 +1615,44 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
    */
   async updateProvenTxReqWithNewProvenTx(
     args: UpdateProvenTxReqWithNewProvenTxArgs,
-    validatedCandidate?: TableProvenTx
+    validatedCandidate?: TableProvenTx,
+    capturedWrites?: StorageReqWrite
   ): Promise<UpdateProvenTxReqWithNewProvenTxResult> {
     const req = await EntityProvenTxReq.fromStorageId(this, args.provenTxReqId)
     if (req.txid.toLowerCase() !== args.txid.toLowerCase()) {
       throw new WERR_INVALID_PARAMETER('args.txid', 'the transaction id of the selected proof request')
     }
-    let proven: EntityProvenTx
-    if (req.provenTxId != null && req.provenTxId > 0) {
-      // Someone beat us to it, grab what we need for results...
-      proven = new EntityProvenTx(verifyOne(await this.findProvenTxs({ partial: { txid: args.txid } })))
-      if (req.status !== 'completed' || req.provenTxId !== proven.provenTxId) {
-        req.status = 'completed'
-        req.provenTxId = proven.provenTxId
-        await req.updateStorageDynamicProperties(this)
-      }
-    } else {
-      const candidate = validatedCandidate ?? {
-        created_at: new Date(),
-        updated_at: new Date(),
-        provenTxId: 0,
-        txid: args.txid,
-        height: args.height,
-        index: args.index,
-        merklePath: args.merklePath,
-        rawTx: req.rawTx,
-        blockHash: args.blockHash,
-        merkleRoot: args.merkleRoot
-      }
-      proven = await this.transaction(async trx => {
-        const { proven: api } = await this.findOrInsertProvenTx(candidate, trx)
-        const found = new EntityProvenTx(api)
-        if (req.status !== 'completed' || req.provenTxId !== found.provenTxId) {
-          req.status = 'completed'
-          req.provenTxId = found.provenTxId
-          await req.updateStorageDynamicProperties(this, trx)
+    const writes = capturedWrites ?? (await StorageReqWrite.capture(this, [req.txid]))
+    writes.assertProvider(this)
+    await writes.assertCurrent()
+    let proven: EntityProvenTx | undefined
+    const applied = await writes.request(req, async (current, trx) => {
+      let api: TableProvenTx
+      if (current.provenTxId != null && current.provenTxId > 0) {
+        api = verifyOne(await this.findProvenTxs({ partial: { txid: args.txid }, trx }))
+      } else {
+        const candidate = validatedCandidate ?? {
+          created_at: new Date(),
+          updated_at: new Date(),
+          provenTxId: 0,
+          txid: args.txid,
+          height: args.height,
+          index: args.index,
+          merklePath: args.merklePath,
+          rawTx: current.rawTx,
+          blockHash: args.blockHash,
+          merkleRoot: args.merkleRoot
         }
-        return found
-      })
-    }
-
-    await this.reconcileProvenTxReqTransactions(req, proven)
+        api = (await this.findOrInsertProvenTx(candidate, trx)).proven
+      }
+      proven = new EntityProvenTx(api)
+      current.status = 'completed'
+      current.provenTxId = proven.provenTxId
+      // Completion remains pending until all actual financial copies agree.
+      current.notified = false
+    })
+    if (!applied || proven == null) throw new WERR_NOT_ACTIVE('Proof completion lost its captured primary profiles')
+    await this.reconcileProvenTxReqTransactions(req, proven, writes)
 
     const r: UpdateProvenTxReqWithNewProvenTxResult = {
       status: req.status,
@@ -1669,6 +1669,8 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     auth: AuthId,
     args: UpdateProvenTxReqWithNewProvenTxArgs
   ): Promise<UpdateProvenTxReqWithNewProvenTxResult> {
+    const write =
+      typeof this.activeWriteTransaction === 'function' ? await this.activeWriteTransaction(auth) : undefined
     const userId = verifyId(auth.userId)
     const req = await EntityProvenTxReq.fromStorageId(this, args.provenTxReqId)
     if (req.txid.toLowerCase() !== args.txid.toLowerCase()) {
@@ -1692,8 +1694,9 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
       blockHash: args.blockHash,
       merkleRoot: args.merkleRoot
     }
+    const writes = write == null ? undefined : await StorageReqWrite.capture(this, [req.txid], { userId, write })
     await validateSyncProof(this, candidate)
-    return await this.updateProvenTxReqWithNewProvenTx(args, candidate)
+    return await this.updateProvenTxReqWithNewProvenTx(args, candidate, writes)
   }
 
   /**
@@ -1855,112 +1858,88 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   async unfailTransactionsForProof(
     req: EntityProvenTxReq,
     indent = 0,
-    requestUpdate?: Pick<TableProvenTxReqDynamics, 'status' | 'attempts'>
+    requestUpdate?: Pick<TableProvenTxReqDynamics, 'status' | 'attempts'>,
+    capturedWrites?: StorageReqWrite
   ): Promise<string> {
-    const transactions = await this.findTransactions({
-      partial: { txid: req.txid },
-      noRawTx: true
-    })
-    const transactionsToRepair = transactions.filter(
-      transaction => requestUpdate != null || transaction.status === 'failed'
-    )
-    // Proof completion is the hot path. If no failed transaction needs repair,
-    // notification reconciliation below will perform the required atomic work;
-    // avoid an otherwise empty refresh/write transaction here.
+    const writes = capturedWrites ?? (await StorageReqWrite.capture(this, [req.txid]))
+    writes.assertProvider(this)
+    await writes.assertCurrent()
+    const transactions = await this.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+    const transactionsToRepair = transactions.filter(tx => requestUpdate != null || tx.status === 'failed')
     if (transactionsToRepair.length === 0 && requestUpdate == null) return ''
-
-    // Refresh only after deciding recovery is required, while the caller has
-    // not yet applied an intended request transition. TaskUnFail passes that
-    // transition separately so it is persisted atomically with bookkeeping.
-    await req.refreshFromStorage(this)
-    const preparedTransactionIds = new Set(transactionsToRepair.map(transaction => transaction.transactionId))
-    const bsvtx = transactionsToRepair.length > 0 ? Transaction.fromBinary(req.rawTx) : undefined
-
-    // UTXO checks can call external services. Complete every check before
-    // opening the write transaction so network latency never holds DB locks.
+    const preparedTransactionIds = new Set(transactionsToRepair.map(tx => tx.transactionId))
+    const bsvtx = transactionsToRepair.length ? Transaction.fromBinary(req.rawTx) : undefined
     const outputVerdicts = await this.prepareProofRecoveryOutputVerdicts(transactionsToRepair)
-
-    return await this.transaction(async trx => {
-      let log = ''
-      await req.refreshFromStorage(this, trx)
-      const currentTransactions = await this.findTransactions({
-        partial: { txid: req.txid },
-        noRawTx: true,
-        trx
-      })
-      const knownNotificationIds = new Set(req.notify.transactionIds ?? [])
-
-      if (requestUpdate != null) {
-        req.status = requestUpdate.status
-        req.attempts = requestUpdate.attempts
+    const logs = await writes.forEachUser(async (userId, trx) => {
+      let committedLog = ''
+      const current = await this.findTransactions({ partial: { txid: req.txid, userId }, noRawTx: true, trx })
+      for (const tx of current) {
+        if (tx.provenTxId != null) continue
+        if (requestUpdate == null && tx.status !== 'failed') continue
+        committedLog += await this.restoreTransactionForProof(
+          tx,
+          bsvtx,
+          preparedTransactionIds,
+          outputVerdicts,
+          indent,
+          trx
+        )
       }
-
-      for (const tx of currentTransactions) {
-        if (!knownNotificationIds.has(tx.transactionId)) {
-          req.addNotifyTransactionId(tx.transactionId)
-          knownNotificationIds.add(tx.transactionId)
-        }
-        const shouldRepair = requestUpdate != null || tx.status === 'failed'
-        if (!shouldRepair) continue
-        log += await this.restoreTransactionForProof(tx, bsvtx, preparedTransactionIds, outputVerdicts, indent, trx)
-      }
-
-      await req.updateStorageDynamicProperties(this, trx)
-      return log
+      return committedLog
     })
+    const recorded = await writes.request(req, async (current, trx) => {
+      if (requestUpdate != null && current.status !== 'completed') {
+        current.status = requestUpdate.status
+        current.attempts = requestUpdate.attempts
+      }
+      const rows = await this.findTransactions({ partial: { txid: req.txid }, noRawTx: true, trx })
+      for (const tx of rows) current.addNotifyTransactionId(tx.transactionId)
+    })
+    if (!recorded) throw new WERR_NOT_ACTIVE('Proof recovery lost its captured primary profiles')
+    return logs.join('')
   }
 
-  private async reconcileProvenTxReqTransactions(req: EntityProvenTxReq, proven: EntityProvenTx): Promise<void> {
-    // A transaction can be internalized concurrently by several users. Their
-    // transaction rows share a txid but race while merging the JSON notify
-    // list, so a last-writer-wins update can omit one local copy. A valid proof
-    // is authoritative for every local transaction with this txid: discover
-    // them from the indexed transaction table and atomically heal both the
-    // durable notify set and any row that missed the original completion.
-    // Keep the clean proof-completion path identical to the normal notification
-    // transaction. Only leave it when failed rows require external UTXO checks,
-    // which must run without an open transaction.
-    let repairAttempts = 0
-    for (;;) {
-      const needsRepair = await this.transaction(async trx => {
-        await req.refreshFromStorage(this, trx)
-        const transactions = await this.findTransactions({ partial: { txid: req.txid }, trx })
-        if (transactions.some(transaction => transaction.status === 'failed')) return true
-
-        const knownNotificationIds = new Set(req.notify.transactionIds ?? [])
-        for (const transaction of transactions) {
-          if (!knownNotificationIds.has(transaction.transactionId)) {
-            req.addNotifyTransactionId(transaction.transactionId)
-            knownNotificationIds.add(transaction.transactionId)
-          }
-        }
-        const transactionIdsNeedingProof = transactions
-          .filter(transaction => transaction.status !== 'completed' || transaction.provenTxId !== proven.provenTxId)
-          .map(transaction => transaction.transactionId)
-        const updatesSucceeded = await notifyTransactionsOfProof(
-          transactionIdsNeedingProof,
+  private async reconcileProvenTxReqTransactions(
+    req: EntityProvenTxReq,
+    proven: EntityProvenTx,
+    capturedWrites?: StorageReqWrite
+  ): Promise<void> {
+    const writes = capturedWrites ?? (await StorageReqWrite.capture(this, [req.txid]))
+    writes.assertProvider(this)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const committed = await writes.forEachUser(async (userId, trx) => {
+        const notes: ReqHistoryNote[] = []
+        const current = await EntityProvenTxReq.fromStorageId(this, req.id, trx)
+        if (current.provenTxId !== proven.provenTxId) return { needsRepair: false, notes }
+        const rows = await this.findTransactions({ partial: { txid: req.txid, userId }, noRawTx: true, trx })
+        if (rows.some(tx => tx.status === 'failed')) return { needsRepair: true, notes }
+        await notifyTransactionsOfProof(
+          rows
+            .filter(tx => tx.status !== 'completed' || tx.provenTxId !== proven.provenTxId)
+            .map(tx => tx.transactionId),
           proven.provenTxId,
-          note => req.addHistoryNote(note),
+          note => notes.push(note),
           async (id, update) => {
             await this.updateTransaction(id, update, trx)
           }
         )
-        const completedTransactions = await this.findTransactions({ partial: { txid: req.txid }, trx })
-        req.notified =
-          updatesSucceeded &&
-          completedTransactions.every(
-            transaction => transaction.status === 'completed' && transaction.provenTxId === proven.provenTxId
-          )
-        await req.updateStorageDynamicProperties(this, trx)
-        return false
+        return { needsRepair: false, notes }
       })
-
-      if (!needsRepair) return
-      if (repairAttempts >= 2) {
-        throw new WERR_INTERNAL(`Transactions for ${req.txid} repeatedly changed to failed during proof recovery.`)
+      if (committed.some(value => value.needsRepair)) {
+        if (attempt === 2)
+          throw new WERR_INTERNAL(`Transactions for ${req.txid} repeatedly changed to failed during proof recovery.`)
+        await this.unfailTransactionsForProof(req, 0, undefined, writes)
+        continue
       }
-      repairAttempts++
-      await this.unfailTransactionsForProof(req)
+      await writes.request(req, async (current, trx) => {
+        const rows = await this.findTransactions({ partial: { txid: req.txid }, noRawTx: true, trx })
+        for (const tx of rows) current.addNotifyTransactionId(tx.transactionId)
+        for (const note of committed.flatMap(value => value.notes)) current.addHistoryNote(note)
+        current.notified =
+          current.provenTxId === proven.provenTxId &&
+          rows.every(tx => tx.status === 'completed' && tx.provenTxId === proven.provenTxId)
+      })
+      return
     }
   }
 

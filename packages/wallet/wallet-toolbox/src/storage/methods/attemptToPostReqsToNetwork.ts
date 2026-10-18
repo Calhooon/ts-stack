@@ -32,6 +32,7 @@ export async function attemptToPostReqsToNetwork(
           reqs.map(req => req.txid)
         )
       : undefined)
+  writes?.assertProvider(storage)
   writes?.assertRequests(reqs)
   await writes?.assertCurrent()
   // initialize results, validate reqs ready to post, txids are of the transactions in the beef that we care about.

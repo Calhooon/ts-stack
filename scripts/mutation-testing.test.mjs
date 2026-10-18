@@ -783,6 +783,9 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
   for (const source of [
     'src/storage/KnexActiveWriteFence.ts',
     'src/storage/StorageReqWrite.ts',
+    'src/monitor/tasks/TaskCheckForProofs.ts',
+    'src/monitor/tasks/TaskArcSSE.ts',
+    'src/monitor/tasks/TaskUnFail.ts',
     'src/storage/methods/processAction.ts',
     'src/storage/methods/attemptToPostReqsToNetwork.ts',
     'src/storage/methods/reconcileFailedTransactionInputs.ts',

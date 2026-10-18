@@ -4,7 +4,7 @@ import type { TrxToken } from '../sdk/WalletStorage.interfaces'
 import type { TransactionStatus } from '../sdk/types'
 import { EntityProvenTxReq } from './schema/entities/EntityProvenTxReq'
 import { WalletError } from '../sdk/WalletError'
-import { WERR_NOT_ACTIVE, WERR_UNAUTHORIZED } from '../sdk/WERR_errors'
+import { WERR_INVALID_OPERATION, WERR_NOT_ACTIVE, WERR_UNAUTHORIZED } from '../sdk/WERR_errors'
 import { verifyOne } from '../utility/utilityHelpers'
 
 /** @internal Captures real participating profiles before asynchronous work.
@@ -86,6 +86,24 @@ export class StorageReqWrite {
       if (!isObsolete(error)) throw error
       return false
     }
+  }
+
+  assertProvider(storage: StorageProvider): void {
+    if (storage !== this.storage) throw new WERR_INVALID_OPERATION('Request preparation belongs to another provider')
+  }
+
+  async forEachUser<T>(apply: (userId: number, trx: TrxToken) => Promise<T>): Promise<T[]> {
+    const results: T[] = []
+    for (const userId of this.profiles.keys()) {
+      let result!: T
+      if (
+        await this.forUser(userId, async trx => {
+          result = await apply(userId, trx)
+        })
+      )
+        results.push(result)
+    }
+    return results
   }
 
   /** Refresh under the actual writable row lock. Late history/notification

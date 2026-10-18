@@ -1,3 +1,5 @@
+import { StorageReqWrite } from '../../storage/StorageReqWrite'
+import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import { Monitor } from '../Monitor'
 import { WalletMonitorTask } from './WalletMonitorTask'
 import { TableProvenTxReq } from '../../storage/schema/tables'
@@ -24,17 +26,22 @@ export class TaskUnFail extends WalletMonitorTask {
    */
   private static checkNowRequested = false
   private readonly authenticatedRequests = new WeakSet<EntityProvenTxReq>()
-  static get checkNow (): boolean { return this.checkNowRequested }
-  static set checkNow (value: boolean) { this.checkNowRequested = value }
+  private readonly writeCaptures = new WeakMap<EntityProvenTxReq, StorageReqWrite>()
+  static get checkNow(): boolean {
+    return this.checkNowRequested
+  }
+  static set checkNow(value: boolean) {
+    this.checkNowRequested = value
+  }
 
-  constructor (
+  constructor(
     monitor: Monitor,
     public triggerMsecs = Monitor.oneMinute * 10
   ) {
     super(monitor, TaskUnFail.taskName)
   }
 
-  trigger (nowMsecsSinceEpoch: number): { run: boolean } {
+  trigger(nowMsecsSinceEpoch: number): { run: boolean } {
     return {
       run:
         TaskUnFail.checkNow ||
@@ -42,7 +49,7 @@ export class TaskUnFail extends WalletMonitorTask {
     }
   }
 
-  async runTask (): Promise<string> {
+  async runTask(): Promise<string> {
     let log = ''
     TaskUnFail.checkNow = false
 
@@ -66,12 +73,21 @@ export class TaskUnFail extends WalletMonitorTask {
     return log
   }
 
-  async unfail (reqs: TableProvenTxReq[], indent = 0): Promise<{ log: string }> {
+  async unfail(reqs: TableProvenTxReq[], indent = 0): Promise<{ log: string }> {
     let log = ''
     for (const reqApi of reqs) {
       const req = new EntityProvenTxReq(reqApi)
       log += ' '.repeat(indent)
       log += `reqId ${reqApi.provenTxReqId} txid ${reqApi.txid}: `
+      const writes =
+        typeof this.storage.runAsStorageProvider === 'function'
+          ? await this.storage.runAsStorageProvider(async sp =>
+              typeof sp.activeWriteTransaction === 'function'
+                ? await StorageReqWrite.capture(sp, [req.txid])
+                : undefined
+            )
+          : undefined
+      await writes?.assertCurrent()
       const r = await this.monitor.services.getMerklePath(req.txid)
       try {
         if (r.merklePath == null || r.header == null) throw new Error('No proof was returned.')
@@ -82,12 +98,21 @@ export class TaskUnFail extends WalletMonitorTask {
       } catch {
         req.status = 'invalid'
         req.addHistoryNote({ what: 'unfailProofRejected' }, true)
-        log += 'proof unavailable or rejected; returned to status \'invalid\'\n'
-        await req.updateStorageDynamicProperties(this.storage)
+        log += "proof unavailable or rejected; returned to status 'invalid'\n"
+        if (writes == null) await req.updateStorageDynamicProperties(this.storage)
+        else if (
+          !(await writes.request(req, async current => {
+            if (current.status !== 'unfail') return
+            current.status = 'invalid'
+            current.addHistoryNote({ what: 'unfailProofRejected' }, true)
+          }))
+        )
+          throw new WERR_NOT_ACTIVE('Unfail observation lost its captured primary profiles')
         continue
       }
       this.authenticatedRequests.add(req)
-      log += 'authenticated and unfailed. status is now \'unmined\'\n'
+      if (writes != null) this.writeCaptures.set(req, writes)
+      log += "authenticated and unfailed. status is now 'unmined'\n"
       log += await this.unfailReq(req, indent + 2)
     }
     return { log }
@@ -102,12 +127,16 @@ export class TaskUnFail extends WalletMonitorTask {
    * @param indent
    * @returns
    */
-  async unfailReq (req: EntityProvenTxReq, indent: number): Promise<string> {
+  async unfailReq(req: EntityProvenTxReq, indent: number): Promise<string> {
     if (!this.authenticatedRequests.delete(req)) {
       throw new WERR_INVALID_OPERATION('Unfail requires a proof authenticated for this exact request.')
     }
+    const writes = this.writeCaptures.get(req)
+    this.writeCaptures.delete(req)
     return await this.storage.runAsStorageProvider(async sp =>
-      await sp.unfailTransactionsForProof(req, indent, { status: 'unmined', attempts: 0 })
+      writes == null
+        ? await sp.unfailTransactionsForProof(req, indent, { status: 'unmined', attempts: 0 })
+        : await sp.unfailTransactionsForProof(req, indent, { status: 'unmined', attempts: 0 }, writes)
     )
   }
 }

@@ -1,3 +1,4 @@
+import { StorageReqWrite } from '../../storage/StorageReqWrite'
 import { ProvenTxReqTerminalStatus, ReqHistoryNote } from '../../sdk/types'
 import { EntityProvenTx } from '../../storage/schema/entities'
 import { EntityProvenTxReq } from '../../storage/schema/entities/EntityProvenTxReq'
@@ -311,6 +312,9 @@ export class TaskArcadeSSE extends WalletMonitorTask {
     let log = `  req ${req.id} MINED/IMMUTABLE — fetching proof from configured services\n`
 
     try {
+      const writes = await this.storage.runAsStorageProvider(async sp =>
+        typeof sp.activeWriteTransaction === 'function' ? await StorageReqWrite.capture(sp, [txid]) : undefined
+      )
       const proof = await getCanonicalMerklePath(
         this.monitor.services,
         this.monitor.chaintracksWithEvents || this.monitor.chaintracks,
@@ -332,7 +336,7 @@ export class TaskArcadeSSE extends WalletMonitorTask {
       const { provenTxReqId, status, attempts, history } = req.toApi()
       const { index, height, blockHash, merklePath, merkleRoot } = ptx.toApi()
       const r = await this.storage.runAsStorageProvider(async sp => {
-        return await sp.updateProvenTxReqWithNewProvenTx({
+        const args = {
           provenTxReqId,
           status,
           txid,
@@ -343,7 +347,10 @@ export class TaskArcadeSSE extends WalletMonitorTask {
           blockHash,
           merklePath,
           merkleRoot
-        })
+        }
+        return writes == null
+          ? await sp.updateProvenTxReqWithNewProvenTx(args)
+          : await sp.updateProvenTxReqWithNewProvenTx(args, undefined, writes)
       })
       req.status = r.status
       req.apiHistory = r.history

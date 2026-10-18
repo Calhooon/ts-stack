@@ -1,3 +1,4 @@
+import { StorageReqWrite } from '../../storage/StorageReqWrite'
 import { GetMerklePathResult } from '../../sdk'
 import { EntityProvenTx, EntityProvenTxReq } from '../../storage/schema/entities'
 import { TableProvenTxReq } from '../../storage/schema/tables'
@@ -160,14 +161,15 @@ async function applyProofTimeout(
 async function applyProvenTransaction(
   task: WalletMonitorTask,
   req: EntityProvenTxReq,
-  provenTx: EntityProvenTx
+  provenTx: EntityProvenTx,
+  writes: StorageReqWrite | undefined
 ): Promise<void> {
   await req.updateStorageDynamicProperties(task.storage)
   await req.refreshFromStorage(task.storage)
   const { provenTxReqId, status, txid, attempts, history } = req.toApi()
   const { index, height, blockHash, merklePath, merkleRoot } = provenTx.toApi()
   const result = await task.storage.runAsStorageProvider(async provider => {
-    return await provider.updateProvenTxReqWithNewProvenTx({
+    const args = {
       provenTxReqId,
       status,
       txid,
@@ -178,7 +180,10 @@ async function applyProvenTransaction(
       blockHash,
       merklePath,
       merkleRoot
-    })
+    }
+    return writes == null
+      ? await provider.updateProvenTxReqWithNewProvenTx(args)
+      : await provider.updateProvenTxReqWithNewProvenTx(args, undefined, writes)
   })
   req.status = result.status
   req.apiHistory = result.history
@@ -222,6 +227,9 @@ async function processProofRequest(
   const timedOut = await applyProofTimeout(task, req, reqApi, ignoreStatus, log)
   if (timedOut != null) return timedOut
 
+  const writes = await task.storage.runAsStorageProvider(async sp =>
+    typeof sp.activeWriteTransaction === 'function' ? await StorageReqWrite.capture(sp, [req.txid]) : undefined
+  )
   const since = new Date()
   const merklePathResult: GetMerklePathResult = await getCanonicalMerklePath(
     task.monitor.services,
@@ -242,7 +250,7 @@ async function processProofRequest(
     task.monitor.chaintracks
   )
   if (provenTx != null) {
-    await applyProvenTransaction(task, req, provenTx)
+    await applyProvenTransaction(task, req, provenTx, writes)
   } else if (
     countsAsAttempt &&
     req.attempts === attemptsBefore &&

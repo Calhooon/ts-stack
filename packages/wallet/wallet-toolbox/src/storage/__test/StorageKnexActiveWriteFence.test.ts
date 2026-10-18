@@ -1,3 +1,4 @@
+import { TaskUnFail } from '../../monitor/tasks/TaskUnFail'
 import { markConfirmedStaleReqInputs } from '../methods/reconcileFailedTransactionInputs'
 import { StorageReqWrite } from '../StorageReqWrite'
 import { EntityProvenTxReq } from '../schema/entities/EntityProvenTxReq'
@@ -722,6 +723,67 @@ test('positive spent evidence cannot authorize an input update after an actual p
     expect(result.staleConfirmed).toBe(0)
     expect(result.staleOutpoints).toEqual([])
     expect(update).not.toHaveBeenCalled()
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('failed-proof recovery retains each actual profile epoch across external output observation', async () => {
+  const { ctx, req, second, rows } = await sharedRequestFixture('shared-proof-recovery-ABA')
+  try {
+    const storage = ctx.activeStorage
+    const writes = await StorageReqWrite.capture(storage, [req.txid])
+    await writes.request(req, async current => {
+      current.status = 'invalid'
+    })
+    await writes.status(req, 'failed')
+    const before = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+    expect(before.every(row => row.status === 'failed')).toBe(true)
+    let observed = false
+    jest.spyOn(ctx.services, 'getUtxoStatus').mockImplementation(async () => {
+      if (!observed) {
+        observed = true
+        const identity = storage.getSettings().storageIdentityKey
+        await storage.updateUser(ctx.userId, { activeStorage: 'away' })
+        await storage.updateUser(ctx.userId, { activeStorage: identity })
+      }
+      return { name: 'proof-recovery-output-observer', status: 'success', isUtxo: true, details: [] }
+    })
+    const log = await storage.unfailTransactionsForProof(req)
+    expect(observed).toBe(true)
+    const current = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+    expect(current.find(row => row.userId === ctx.userId)?.status).toBe('failed')
+    expect(current.find(row => row.userId === second.userId)?.status).toBe('unproven')
+    expect(log).not.toContain(`transaction ${rows.find(row => row.userId === ctx.userId)!.transactionId} status is now`)
+    expect(log).toContain(`transaction ${rows.find(row => row.userId === second.userId)!.transactionId} status is now`)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('a rejected unfail proof cannot invalidate a newer actual primary generation', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('unfail-proof-observation-ABA', 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'real unfail observation epoch',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'unfail observation output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing actual signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual proof request')
+    await ctx.activeStorage.updateProvenTxReq(req.id, { status: 'unfail' })
+    await req.refreshFromStorage(ctx.activeStorage)
+    jest.spyOn(ctx.monitor.services, 'getMerklePath').mockImplementationOnce(async () => {
+      const identity = ctx.activeStorage.getSettings().storageIdentityKey
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'away' })
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: identity })
+      return { name: 'unavailable-proof-after-ABA' }
+    })
+    const task = new TaskUnFail(ctx.monitor)
+    await expect(task.unfail([req.toApi()])).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect((await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)).status).toBe('unfail')
   } finally {
     await ctx.wallet.destroy()
   }
