@@ -581,3 +581,20 @@ test('an enrolled actual profile cannot downgrade control when its journal backe
     await f.close()
   }
 })
+
+test('explicit full data deletion erases enrolled control while ordinary downgrade remains refused', async () => {
+  const f = await fixture()
+  try {
+    await f.control.prepareSource(f.auth, operationId, 'target')
+    const before = await f.storage.knex(PRIMARY_HANDOFF_TABLE).first()
+    await expect(removePrimaryHandoffSchema(f.storage.knex)).rejects.toThrow('forward recovery')
+    expect(await f.storage.knex(PRIMARY_HANDOFF_TABLE).first()).toEqual(before)
+    await f.storage.dropAllData()
+    for (const table of ['users', 'wallet_primary_handoffs', 'wallet_primary_copy_sources'])
+      expect(await f.storage.knex.schema.hasTable(table)).toBe(false)
+    expect(await f.storage.knex('knex_migrations')).toEqual([])
+    await f.storage.dropAllData()
+  } finally {
+    await f.close()
+  }
+})

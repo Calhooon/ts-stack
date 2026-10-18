@@ -165,3 +165,17 @@ export async function removePrimaryHandoffSchema(k: Knex): Promise<void> {
   // enrollment through trigger removal; keep the guard and recover forward.
   throw new WERR_INVALID_OPERATION('Primary control requires forward recovery; preserve handoff intent and guards')
 }
+
+/** Explicit full wallet erasure only, after the provider drains its owners.
+ * Ordinary migration rollback remains forward-only, even for empty controls.
+ * Verify every current definition before deleting this auxiliary family. */
+export async function dropPrimaryHandoffForDataDeletion(k: Knex): Promise<void> {
+  if (!(await k.schema.hasTable(PRIMARY_HANDOFF_TABLE))) {
+    if (await k.schema.hasTable(PRIMARY_HANDOFF_COPIES)) invalid()
+    return
+  }
+  await verifyPrimaryHandoffSchema(k)
+  for (const definition of definitions(k)) await k.raw('DROP TRIGGER ??', [definition.name])
+  await k.schema.dropTable(PRIMARY_HANDOFF_COPIES)
+  await k.schema.dropTable(PRIMARY_HANDOFF_TABLE)
+}

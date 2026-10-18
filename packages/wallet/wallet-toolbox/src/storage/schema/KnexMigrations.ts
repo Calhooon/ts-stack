@@ -320,11 +320,11 @@ export class KnexMigrations implements MigrationSource<string> {
         if (String(knex.client.config.client).includes('mysql')) await addSnapshotJournalDestinationSchema(knex)
         else if (knex.isTransaction) {
           await addSnapshotJournalDestinationSchema(knex)
-          await migrateSnapshotJournalSqliteSignedProvenance(knex)
+          await migrateSnapshotJournalSqliteSignedProvenance(knex, knex.client.config.migrations)
         } else
           await knex.transaction(async trx => {
             await addSnapshotJournalDestinationSchema(trx)
-            await migrateSnapshotJournalSqliteSignedProvenance(trx)
+            await migrateSnapshotJournalSqliteSignedProvenance(trx, knex.client.config.migrations)
           })
       }),
       down: forSnapshotSqlDialect(async () => {

@@ -1,3 +1,4 @@
+import { PRIMARY_HANDOFF_MIGRATION, dropPrimaryHandoffForDataDeletion } from './schema/primaryHandoffMigration'
 import { KnexWalletWriteAdmission } from './KnexWalletWriteAdmission'
 import { parseSnapshotJournalDataCheckpoint } from './snapshot/journal/SnapshotJournalDataProtocol'
 import {
@@ -1455,11 +1456,16 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       throw new WERR_INVALID_OPERATION('This provider already has a snapshot source or maintenance opening or active')
     this.snapshotSyncBusy = true
     let lifetime: SnapshotJournalMaintenanceTask<SnapshotJournalMaintenanceResult>
+    let admissionRefusal: WERR_INVALID_OPERATION | undefined
     try {
       lifetime = startSnapshotJournalMaintenance(
         async () => {
-          if (this.snapshotAdmissionStopped)
-            throw new WERR_INVALID_OPERATION('Snapshot journal maintenance is unavailable after destruction begins')
+          if (this.snapshotAdmissionStopped) {
+            admissionRefusal = new WERR_INVALID_OPERATION(
+              'Snapshot journal maintenance is unavailable after destruction begins'
+            )
+            throw admissionRefusal
+          }
           return await this.concurrentSnapshotReaderConfig()
         },
         request,
@@ -1470,14 +1476,28 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       this.snapshotSyncBusy = false
       throw error
     }
-    this.snapshotJournalMaintenance = lifetime
+    const owner: SnapshotJournalMaintenanceTask<SnapshotJournalMaintenanceResult> = {
+      result: lifetime.result,
+      closed: lifetime.closed,
+      async close() {
+        try {
+          await lifetime.close()
+        } catch (error) {
+          // This exact refusal precedes configuration and every native allocation.
+          // Preserve it for the operation; destruction has no physical owner to
+          // recover. All other causes, including aggregated cleanup errors, escape.
+          if (admissionRefusal === undefined || error !== admissionRefusal) throw error
+        }
+      }
+    }
+    this.snapshotJournalMaintenance = owner
     const release = (error?: unknown): void => {
       if (error instanceof SnapshotJournalConnectionCleanupError) {
         this.snapshotJournalMaintenanceFailure = error
         this.retainedReadSnapshotsStopped = true
         return
       }
-      if (this.snapshotJournalMaintenance === lifetime) {
+      if (this.snapshotJournalMaintenance === owner) {
         this.snapshotJournalMaintenance = undefined
         this.snapshotSyncBusy = false
       }
@@ -3896,6 +3916,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       await this.stopPreparedBeefTasks()
       // Only using migrations to migrate down, don't need valid properties for settings table.
       const migrationSource = new KnexMigrations('test', '', '', 1024)
+      migrationSource.migrations[PRIMARY_HANDOFF_MIGRATION].down = forSnapshotSqlDialect(
+        dropPrimaryHandoffForDataDeletion
+      )
       migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION].down = dropGenerationForDataDeletion
       migrationSource.migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION].down = forSnapshotSqlDialect(
         dropSnapshotJournalDestinationForDataDeletion

@@ -547,13 +547,14 @@ describe('action batch reservations', () => {
     const batch = await ctx.activeStorage.findActionBatch(ctx.userId, begun.batchId)
     expect(batch).toBeDefined()
     await ctx.activeStorage.updateActionBatch(batch!.actionBatchId, { expiresAt: new Date(Date.now() - 60_000) })
-    const findExpired = ctx.activeStorage.findExpiredActionBatches.bind(ctx.activeStorage)
-    jest.spyOn(ctx.activeStorage, 'findExpiredActionBatches').mockImplementationOnce(async now => {
-      const candidates = await findExpired(now)
-      await ctx.activeStorage.updateActionBatch(batch!.actionBatchId, {
-        expiresAt: new Date(Date.now() + 60_000)
-      })
-      return candidates
+    const findExpired = ctx.activeStorage.expiredActionBatchCandidates.bind(ctx.activeStorage)
+    jest.spyOn(ctx.activeStorage, 'expiredActionBatchCandidates').mockImplementationOnce(async function* (now) {
+      for await (const candidate of findExpired(now)) {
+        await ctx.activeStorage.updateActionBatch(batch!.actionBatchId, {
+          expiresAt: new Date(Date.now() + 60_000)
+        })
+        yield candidate
+      }
     })
 
     expect(await cleanupExpiredActionBatches(ctx.activeStorage)).toBe(0)
