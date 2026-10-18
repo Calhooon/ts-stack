@@ -725,7 +725,7 @@ export class Brc38PrivateLocalCandidate {
       // Bound the sequence with the existing admitted row allowance; every
       // primitive keeps its original atomic checkpoint and drains its fields.
       let receipt = await copy()
-      await runInSeries(new Array(this.#options.maximumStepRows - 1).keys(), async () => {
+      await runInSeries(Array.from({ length: this.#options.maximumStepRows - 1 }).keys(), async () => {
         if (!receipt.complete) receipt = await copy()
       })
       const afterFacts = await Brc38NativeLocalBaselineSource.facts(this.#source),
