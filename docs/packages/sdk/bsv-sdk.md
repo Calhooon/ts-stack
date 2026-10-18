@@ -3,9 +3,9 @@ id: bsv-sdk
 title: '@bsv/sdk'
 kind: package
 domain: sdk
-version: '3.2.1'
+version: '3.3.0'
 npm: '@bsv/sdk'
-last_updated: '2026-10-07'
+last_updated: '2026-10-18'
 last_verified: '2026-10-07'
 review_cadence_days: 30
 status: stable
@@ -15,7 +15,7 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk'
 
 # @bsv/sdk
 
-The unpublished 3.0 candidate adds bounded BRC-118 payment transport to `AuthFetch` and corrects recipient-side BRC-29 derivation. See the [BRC-118 integration and migration guide](../../guides/brc118-payments.md) for preparation, negotiation, exact-byte authentication and uncertain-payment recovery. Existing nonempty non-multipart signing preimages and the 8 KiB header selection default are preserved.
+The unpublished 3.3.0 candidate adds bounded BRC-118 payment transport to `AuthFetch` and retains recipient-side BRC-29 derivation. See the [BRC-118 integration and migration guide](../../guides/brc118-payments.md) for preparation, negotiation, exact-byte authentication and uncertain-payment recovery. Existing nonempty non-multipart signing preimages and the 8 KiB header selection default are preserved.
 
 Ordinary HTTP fallback retains native text, URLSearchParams, typed Blob and
 FormData serialization and inferred Content-Type, including cached peers.
