@@ -399,16 +399,24 @@ async function updateCapturedResults(
   for (const txid of txids) {
     const ar = apbrs[txid]
     const req = ar.vreq.req
+    const broadcastStatus = ar.status,
+      broadcastCompetingTxs = ar.competingTxs
     // Confirmation may perform several external observations. The original
     // profile captures precede all of them; no SQL writer spans these awaits.
-    if (ar.status === 'doubleSpend' && services != null) await confirmDoubleSpend(ar, r.beef, storage, services, logger)
+    // As in the legacy path, an advanced request preserves this broadcast's
+    // actual outcome. Its earlier success cannot turn a negative reply into
+    // permission to credit a new recipient.
+    if (!['completed', 'unmined'].includes(req.status) && ar.status === 'doubleSpend' && services != null)
+      await confirmDoubleSpend(ar, r.beef, storage, services, logger)
     const observed = req.toApi()
     let financialStatus: sdk.TransactionStatus | undefined
     const applied = await writes.request(req, async current => {
       current.mergeHistory(observed, undefined, true)
-      if (current.status === 'completed') return
-      if (current.status === 'unmined') {
-        financialStatus = 'unproven'
+      if (current.status === 'completed' || current.status === 'unmined') {
+        // The durable state may advance during confirmation as well.
+        ar.status = broadcastStatus
+        ar.competingTxs = broadcastCompetingTxs
+        if (current.status === 'unmined') financialStatus = 'unproven'
         return
       }
       const note: ReqHistoryNote = {

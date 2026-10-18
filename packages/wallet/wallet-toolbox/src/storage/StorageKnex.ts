@@ -561,6 +561,11 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     // Fence admission before any asynchronous cleanup can yield. A view whose
     // close releases the capacity slot must not permit reopening during destroy.
     if (permanent) this.retainedReadSnapshotsStopped = true
+    // Capture owned lifetimes before cleanup yields. A rejected opening may
+    // release its admission slot while earlier dependencies are draining.
+    const capture = this.snapshotJournalCapture,
+      maintenance = this.snapshotJournalMaintenance,
+      retained = this.retainedReadSnapshot
     const failures: unknown[] = []
     const drain = async (work: () => Promise<unknown>): Promise<void> => {
       try {
@@ -580,11 +585,11 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
         await archive.closed
       })
     await drain(async () => await this.localJournalFieldArchives?.close())
-    await drain(async () => await this.snapshotJournalCapture?.close())
-    await drain(async () => await this.snapshotJournalMaintenance?.close())
+    await drain(async () => await capture?.close())
+    await drain(async () => await maintenance?.close())
     await this.snapshotSyncOpening?.catch(() => undefined)
     await drain(async () => await this.snapshotSyncSource?.destroy())
-    await drain(async () => await this.retainedReadSnapshot?.close())
+    await drain(async () => await retained?.close())
     await Promise.allSettled(this.snapshotJournalWriters)
     if (this.snapshotJournalWriterFailure !== undefined && !failures.includes(this.snapshotJournalWriterFailure))
       failures.push(this.snapshotJournalWriterFailure)
