@@ -21,7 +21,9 @@ const entries = [
 test('Postgres snapshot auxiliary migrations never execute SQLite or MySQL SQL', async () => {
   const k = knex({ client: 'pg', connection: { database: 'unused' }, pool: { min: 0, max: 1 } })
   const source = new KnexMigrations('test', 'postgres compatibility', '1'.repeat(64), 10000)
-  const names = (await source.getMigrations()).filter(name => name.includes('snapshot'))
+  const names = (await source.getMigrations()).filter(
+    name => name.includes('snapshot') || name === SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION
+  )
   expect(names).toHaveLength(13)
   expect(names).toEqual(expect.arrayContaining(entries))
   const query = jest.spyOn(k.client, 'query').mockRejectedValue(new Error('Snapshot SQL reached Postgres'))
