@@ -48,7 +48,11 @@ export function parseArguments(argv) {
     throw new Error('--project is required')
   }
   if (options.pullRequest === undefined) throw new Error('--pull-request is required')
-  if (!/^[0-9a-f]{40}$/i.test(options.revision ?? '')) {
+  if (
+    typeof options.revision !== 'string' ||
+    options.revision.length !== 40 ||
+    !/^[0-9a-f]{40}$/i.test(options.revision)
+  ) {
     throw new Error('--revision must be a full 40-character commit SHA')
   }
   const baseUrl = new URL(options.baseUrl)

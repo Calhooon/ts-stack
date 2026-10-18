@@ -4,6 +4,10 @@ import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { readFileSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parseArguments } from './sonar-pr-gate.mjs'
 import test from 'node:test'
 import {
   evaluateSonarBudget,
@@ -626,5 +630,80 @@ test('actual CLI completes module loading and preserves strict pass and failure 
     })
   } finally {
     await new Promise(resolve => server.close(resolve))
+  }
+})
+
+test('exact SHA parsing refuses a trailing newline before any artifact path is formed', () => {
+  assert.throws(
+    () =>
+      parseArguments([
+        '--project',
+        SONAR_BUDGET.project,
+        '--pull-request',
+        '569',
+        '--revision',
+        SHA + '\n'
+      ]),
+    /full 40-character commit SHA/
+  )
+})
+
+test('real evidence files retain remote JSON as private data and cannot overwrite an earlier collection', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sonar-evidence-'))
+  const original = process.cwd()
+  process.chdir(directory)
+  try {
+    const f = fixture()
+    delete f.dependencies.persist
+    f.s.issues[0].key = '../../untrusted-name.js'
+    f.s.issues[0].message = '</script>\nRemote text remains JSON data.'
+    const verdict = await run(f)
+    assert.equal(verdict.scopedBudgetSatisfied, true)
+    const root = join(directory, '.sonar-policy', `pr-569-${SHA}`)
+    const snapshotBytes = await readFile(join(root, 'snapshot.json'), 'utf8')
+    const snapshotData = JSON.parse(snapshotBytes)
+    assert.deepEqual(snapshotData.issues, f.s.issues)
+    const names = await readdir(root)
+    assert.ok(names.includes('snapshot.json') && names.includes('verdict.json'))
+    for (const name of names) {
+      assert.match(name, /^[a-z0-9-]+\.json$/)
+      const info = await stat(join(root, name))
+      assert.equal(info.isFile(), true)
+      if (process.platform !== 'win32') assert.equal(info.mode & 0o777, 0o600)
+      assert.ok(!(await readFile(join(root, name), 'utf8')).includes('fixture-read-token'))
+    }
+    if (process.platform !== 'win32') assert.equal((await stat(root)).mode & 0o777, 0o700)
+    const repeated = fixture()
+    delete repeated.dependencies.persist
+    await assert.rejects(run(repeated), { code: 'EEXIST' })
+    assert.equal(await readFile(join(root, 'snapshot.json'), 'utf8'), snapshotBytes)
+    await assert.rejects(stat(join(directory, 'untrusted-name.js')), { code: 'ENOENT' })
+  } finally {
+    process.chdir(original)
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('real evidence creation refuses a preexisting file symlink without modifying its target', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sonar-evidence-link-'))
+  const original = process.cwd()
+  process.chdir(directory)
+  try {
+    const root = join(directory, '.sonar-policy', `pr-569-${SHA}`)
+    await mkdir(root, { recursive: true })
+    const target = join(directory, 'retained.json')
+    await writeFile(target, 'original evidence')
+    await symlink(
+      target,
+      join(root, 'github-pr-before.json'),
+      process.platform === 'win32' ? 'file' : undefined
+    )
+    const f = fixture()
+    delete f.dependencies.persist
+    await assert.rejects(run(f), { code: 'EEXIST' })
+    assert.equal(await readFile(target, 'utf8'), 'original evidence')
+  } finally {
+    process.chdir(original)
+    await rm(directory, { recursive: true, force: true })
   }
 })

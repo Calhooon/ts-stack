@@ -14,7 +14,9 @@ function candidate(options, env, now) {
     options.project === SONAR_BUDGET.project &&
     options.pullRequest === SONAR_BUDGET.pullRequest &&
     options.baseUrl === 'https://sonarcloud.io' &&
-    /^[0-9a-f]{40}$/.test(options.revision ?? '') &&
+    typeof options.revision === 'string' &&
+    options.revision.length === 40 &&
+    /^[0-9a-f]{40}$/.test(options.revision) &&
     env.GITHUB_ACTIONS === 'true' &&
     env.GITHUB_EVENT_NAME === 'pull_request' &&
     env.GITHUB_REPOSITORY === SONAR_BUDGET.repository &&
@@ -97,8 +99,20 @@ export async function enforceRepositorySonarGate(options, dependencies = {}) {
   const persist =
     dependencies.persist ??
     (async (name, payload) => {
-      await mkdir(directory, { recursive: true })
-      await writeFile(join(directory, `${name}.json`), `${JSON.stringify(payload, null, 2)}\n`)
+      // Remote values are evidence DATA only. They never select a filename,
+      // become executable files or replace an earlier collection's evidence.
+      if (
+        typeof name !== 'string' ||
+        name.length < 1 ||
+        name.length > 128 ||
+        /[^a-z0-9-]/.test(name)
+      )
+        throw new Error('Invalid controlled Sonar evidence filename')
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      await writeFile(join(directory, `${name}.json`), `${JSON.stringify(payload, null, 2)}\n`, {
+        flag: 'wx',
+        mode: 0o600
+      })
     })
   const summary =
     dependencies.summary ??

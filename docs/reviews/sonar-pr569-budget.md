@@ -64,7 +64,11 @@ produce a scoped pass. The authorization is checked again after collection.
 
 Raw GitHub/analysis responses, every issue/hotspot page, the full snapshot,
 both policy verdicts and collection failures are retained under `.sonar-policy/`
-and uploaded by an always-run artifact step. The Actions summary reports both
+and uploaded by an always-run artifact step. Evidence filenames come only from
+controller labels, never remote keys or messages. JSON files use exclusive
+creation with private file/directory permissions so an earlier collection or a
+preexisting file symlink cannot be overwritten. Raw records remain untrusted
+data; no artifact is imported or executed as source. The Actions summary reports both
 verdicts and counts; a scoped pass is never labeled a zero-findings pass. Tokens
 and request authorization headers are not written. The only additional token
 permission is read access to pull requests for this job. The workflow uses the
