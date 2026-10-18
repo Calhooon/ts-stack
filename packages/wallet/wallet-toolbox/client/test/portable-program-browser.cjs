@@ -68,8 +68,8 @@ async function runPortableBrowserProgram(executablePath, selection) {
     }
   }
   const initial = sourceInventory()
-  assert.equal(initial.files.length, 19)
-  assert.equal(initial.cases.length, 60)
+  assert.equal(initial.files.length, 20)
+  assert.equal(initial.cases.length, 61)
   // The normal entry still executes the complete original catalogue. An exact
   // component selection is local feedback and cannot report full qualification.
   let selectedIds
@@ -78,7 +78,7 @@ async function runPortableBrowserProgram(executablePath, selection) {
   const context = { mutantCoverage: { static: {}, perTest: {} } }
   if (selection !== undefined) {
     assert.ok(selection && typeof selection === 'object')
-    assert.ok(Array.isArray(selection.caseIds) && selection.caseIds.length > 0 && selection.caseIds.length <= 60)
+    assert.ok(Array.isArray(selection.caseIds) && selection.caseIds.length > 0 && selection.caseIds.length <= 61)
     selectedIds = [...selection.caseIds]
     assert.equal(new Set(selectedIds).size, selectedIds.length)
     for (const id of selectedIds) assert.ok(initial.cases.some(entry => entry.id === id))
@@ -215,7 +215,7 @@ async function runPortableBrowserProgram(executablePath, selection) {
     const cases = await page.evaluate(() => globalThis.portableBrowserProgram.cases)
     assert.equal(
       cases.length,
-      60,
+      61,
       'Every current native-browser case must be registered; additions require a fresh catalogue'
     )
     assert.equal(new Set(cases.map(entry => entry.id)).size, cases.length)
@@ -282,7 +282,7 @@ async function runPortableBrowserProgram(executablePath, selection) {
     throw error
   }
   if (failure !== undefined) throw failure
-  assert.equal(reports.length, selectedIds?.length ?? 60)
+  assert.equal(reports.length, selectedIds?.length ?? 61)
   // The original primary browser child has emitted close. Its helper tree and
   // the esbuild service still require the outer supervisor's independent group
   // absence proof; this result deliberately supplies no kernel/resource verdict.
@@ -369,7 +369,7 @@ if (require.main === module) {
           if (
             Number.isSafeInteger(failure.completedCaseCount) &&
             failure.completedCaseCount >= 0 &&
-            failure.completedCaseCount <= 60
+            failure.completedCaseCount <= 61
           ) {
             process.stderr.write('Native browser completed cases: ' + failure.completedCaseCount + '\n')
           }
