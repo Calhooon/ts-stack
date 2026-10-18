@@ -4652,6 +4652,15 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/StorageKnex.ts',
         'src/storage/KnexActiveWriteFence.ts',
         'src/storage/StorageReqWrite.ts',
+        'src/storage/KnexPrimaryHandoffControl.ts',
+        'src/storage/schema/primaryHandoffMigration.ts',
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/schema/KnexMigrations.ts',
+          'migrations[PRIMARY_HANDOFF_MIGRATION] = {',
+          'migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION] = {'
+        ),
         'src/monitor/tasks/WalletMonitorTask.ts',
         'src/monitor/tasks/TaskSendWaiting.ts',
         'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
@@ -4782,6 +4791,7 @@ function currentWalletMutationTargets(repositoryRoot) {
       ],
       additionalInputs: [
         'src/storage/StorageActiveWrite.ts',
+        'src/storage/PrimaryHandoffControl.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -4806,6 +4816,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'jest.config.cjs',
         [
           '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
+          '<rootDir>/src/storage/__test/KnexPrimaryHandoffControl.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskSendWaiting.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReviewUtxos.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReviewDoubleSpends.test.ts',

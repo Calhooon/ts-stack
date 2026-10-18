@@ -1,3 +1,4 @@
+import type { PrimaryHandoffControl } from './PrimaryHandoffControl'
 import type { ReqHistoryNote } from '../sdk/types'
 import { StorageReqWrite } from './StorageReqWrite'
 import type { SnapshotSyncStorage } from './snapshot/SnapshotSync'
@@ -224,6 +225,11 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
       transaction: async (scope, trx) => await this.transaction(scope, trx),
       assertCurrent: async () => {}
     }
+  }
+
+  /** Explicit authenticated primary-control capability, separate from copy DATA. */
+  async getPrimaryHandoffControl(): Promise<PrimaryHandoffControl | undefined> {
+    return undefined
   }
 
   /** Scheduling negotiation only; each actual write still captures/checks its role. */

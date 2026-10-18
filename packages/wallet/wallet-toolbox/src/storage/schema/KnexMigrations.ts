@@ -1,3 +1,8 @@
+import {
+  PRIMARY_HANDOFF_MIGRATION,
+  addPrimaryHandoffSchema,
+  removePrimaryHandoffSchema
+} from './primaryHandoffMigration'
 import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from './snapshotSqlMigration'
 import { migrateSnapshotJournalSqliteSignedProvenance } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import {
@@ -268,6 +273,15 @@ export class KnexMigrations implements MigrationSource<string> {
       config: { transaction: true },
       up: forSnapshotSqlDialect(addSnapshotSyncTables),
       down: forSnapshotSqlDialect(removeSnapshotSyncTables)
+    }
+
+    migrations[PRIMARY_HANDOFF_MIGRATION] = {
+      config: { transaction: false },
+      up: forSnapshotSqlDialect(async knex => {
+        if (String(knex.client.config.client).includes('mysql')) await addPrimaryHandoffSchema(knex)
+        else await knex.transaction(async trx => await addPrimaryHandoffSchema(trx))
+      }),
+      down: forSnapshotSqlDialect(removePrimaryHandoffSchema)
     }
 
     migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION] = {

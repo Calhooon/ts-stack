@@ -1,3 +1,5 @@
+import { createKnexPrimaryHandoffControl } from './KnexPrimaryHandoffControl'
+import type { PrimaryHandoffControl } from './PrimaryHandoffControl'
 import { SNAPSHOT_SYNC_MIGRATION, verifySnapshotSyncPrimaryFence } from './schema/snapshotSyncMigration'
 import { captureKnexActiveWrite } from './KnexActiveWriteFence'
 import type { StorageActiveWrite, StorageStatusReviewArgs, StorageWriterAdmission } from './StorageActiveWrite'
@@ -3963,6 +3965,11 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     if (!installed || entries.length !== 1)
       throw new WERR_INVALID_OPERATION('Active wallet primary fence migration is incomplete')
     return true
+  }
+
+  override async getPrimaryHandoffControl(): Promise<PrimaryHandoffControl | undefined> {
+    if (!(await this.supportsPrimaryWriteFences())) return undefined
+    return await createKnexPrimaryHandoffControl(this)
   }
 
   override async supportsPrimaryWriteFences(): Promise<boolean> {

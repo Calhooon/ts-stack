@@ -174,6 +174,9 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
+The [local handoff control component](primary-handoff.md) now supplies durable
+preparation/retirement and enrolled-profile database guards; actual target
+financial activation and manager/RPC/recovery integration are still incomplete.
 The integrated lifecycle and maintenance paths still require original full
 backend/native/platform and concurrency qualification. A complete remaining-writer
 audit must accompany primary handoff integration. These implemented monitor paths do not imply that every surrounding
