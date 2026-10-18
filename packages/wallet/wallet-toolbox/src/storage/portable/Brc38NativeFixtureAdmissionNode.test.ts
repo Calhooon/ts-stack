@@ -20,7 +20,11 @@ import {
   readSnapshotJournalSqliteGeneration
 } from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import { snapshotJournalRevision, MAX_SNAPSHOT_JOURNAL_REVISION } from '../snapshot/journal/SnapshotJournalRevision'
+import * as sqliteGeneration from '../snapshot/journal/SnapshotJournalSqliteGeneration'
 import type { Knex } from 'knex'
+import { KnexMigrations } from '../schema/KnexMigrations'
+import { PRIMARY_HANDOFF_MIGRATION } from '../schema/primaryHandoffMigration'
+import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 
 /** Independent complete catalogue observation in one genuine retained view.
  * Metadata pages and exact BLOB windows keep the native response bounded;
@@ -122,22 +126,120 @@ test('the original four-MiB native allowance refuses the complete layout and ret
   let verifiedRollback = false,
     nativeOrigin: unknown,
     migrationFailure: unknown
+  const observation: { store?: KnexBrc38StagingStore } = {}
+  let expectedFailure: unknown = stopped,
+    primaryAttempts = 0,
+    primaryRunning = false,
+    verifiedActiveWriter = false,
+    earlyTransactionalFailure = false
+  const state = async (k: Knex.Transaction) => ({
+    schema: await catalogue(k),
+    baseline: (await hasBrc38NativeLocalBaselineGenerationSchema(k))
+      ? await readBrc38NativeLocalBaselineGeneration(k)
+      : undefined,
+    packed: await hasBrc38NativeLocalPackedLayout(k),
+    settings: await k('settings').select('*'),
+    pages: await k.raw('PRAGMA page_count'),
+    maximum: await k.raw('PRAGMA max_page_count')
+  })
+  // Observe the real current migration and genuine admitted owner. The full
+  // candidate still attempts every current migration under the original limit;
+  // newer tables may exhaust that limit before the before-journal callback.
+  const admit = KnexBrc38StagingStore.prototype.assertPrivateNativeDestination,
+    migration = KnexMigrations.prototype.getMigration
+  const admissionObserver = jest
+    .spyOn(KnexBrc38StagingStore.prototype, 'assertPrivateNativeDestination')
+    .mockImplementation(function (this: KnexBrc38StagingStore, database) {
+      admit.call(this, database)
+      observation.store = this
+    })
+  const addition = sqliteGeneration.migrateSnapshotJournalSqliteSourceAddition
+  const additionObserver = jest
+    .spyOn(sqliteGeneration, 'migrateSnapshotJournalSqliteSourceAddition')
+    .mockImplementation(async (database, apply, config) => {
+      if (!primaryRunning) return await addition(database, apply, config)
+      const store = observation.store
+      if (store === undefined) throw new Error('Actual admitted primary migration owner missing')
+      expect(database.isTransaction).toBe(true)
+      store.assertPrivateNativeWriteTransaction(database as Knex.Transaction)
+      try {
+        return await addition(database, apply, config)
+      } catch (cause) {
+        const origin = cause instanceof Error ? (cause.cause ?? cause) : cause
+        expect(origin).toMatchObject({
+          code: 'SQLITE_FULL',
+          nativeCode: 13,
+          nativeAutocommit: false,
+          nativeConnectionFenced: false
+        })
+        nativeOrigin = origin
+        expect(await database.raw('SELECT 1 AS retained')).toEqual([{ retained: 1 }])
+        verifiedActiveWriter = true
+        throw cause
+      }
+    })
+  const migrationObserver = jest.spyOn(KnexMigrations.prototype, 'getMigration').mockImplementation(async function (
+    this: KnexMigrations,
+    name
+  ) {
+    const actual = await migration.call(this, name)
+    if (name !== PRIMARY_HANDOFF_MIGRATION) return actual
+    return {
+      ...actual,
+      up: async database => {
+        primaryAttempts++
+        const store = observation.store
+        if (store === undefined) throw new Error('Actual admitted small-budget owner missing')
+        expect(store.limits.maximumPhysicalBytes).toBe(4194304)
+        expect(store.limits.maximumRowBytes).toBe(65536)
+        expect(store.limits.maximumRowAllocationBytes).toBe(65536)
+        const read = async <T>(work: (trx: Knex.Transaction) => Promise<T>): Promise<T> =>
+          await store.withPrivateNativeDatabase(
+            true,
+            async owner =>
+              await owner.transaction(async trx => {
+                store.assertPrivateNativeReadTransaction(trx)
+                return await work(trx)
+              })
+          )
+        const before = await read(state)
+        expect(before.maximum).toEqual([{ max_page_count: 336 }])
+        primaryRunning = true
+        try {
+          await actual.up(database)
+        } catch (cause) {
+          const origin = cause instanceof Error ? (cause.cause ?? cause) : cause
+          expect(origin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13 })
+          nativeOrigin = origin
+          // A fresh actual read-only slot verifies the entire committed
+          // preimage after the failed migration transaction has rolled back.
+          await read(async trx => {
+            expect(await catalogue(trx)).toEqual(before.schema)
+            expect((await state(trx)).baseline).toEqual(before.baseline)
+            expect(await trx('settings').select('*')).toEqual(before.settings)
+            expect(await trx.raw('PRAGMA page_count')).toEqual(before.pages)
+            expect(await trx.raw('PRAGMA max_page_count')).toEqual(before.maximum)
+            expect(await hasBrc38NativeLocalPackedLayout(trx)).toBe(before.packed)
+            expect(await trx.schema.hasTable('snapshot_journal_generation')).toBe(false)
+            expect(await trx.schema.hasTable('wallet_primary_handoffs')).toBe(false)
+            expect(await trx.schema.hasTable('wallet_primary_copy_sources')).toBe(false)
+          })
+          expectedFailure = cause
+          earlyTransactionalFailure = true
+          verifiedRollback = true
+          throw cause
+        } finally {
+          primaryRunning = false
+        }
+      }
+    }
+  })
   try {
     await withBrc38NativePrivateContractFixture(
       async fixture => {
         expect(fixture.store.limits.maximumPhysicalBytes).toBe(4194304)
         expect(fixture.store.limits.maximumRowBytes).toBe(65536)
         expect(fixture.store.limits.maximumRowAllocationBytes).toBe(65536)
-        const state = async (k: Knex.Transaction) => ({
-          schema: await catalogue(k),
-          baseline: (await hasBrc38NativeLocalBaselineGenerationSchema(k))
-            ? await readBrc38NativeLocalBaselineGeneration(k)
-            : undefined,
-          packed: await hasBrc38NativeLocalPackedLayout(k),
-          settings: await k('settings').select('*'),
-          pages: await k.raw('PRAGMA page_count'),
-          maximum: await k.raw('PRAGMA max_page_count')
-        })
         const before = await fixture.withRead(state)
         expect(before.maximum).toEqual([{ max_page_count: 336 }])
         let failure: unknown
@@ -176,18 +278,35 @@ test('the original four-MiB native allowance refuses the complete layout and ret
     )
   } catch (cause) {
     migrationFailure = cause
+  } finally {
+    additionObserver.mockRestore()
+    migrationObserver.mockRestore()
+    admissionObserver.mockRestore()
   }
-  // SQL_FULL's automatic rollback fences the original writer permanently.
-  // Migration rollback and FK restoration must retain that concrete refusal,
-  // rather than turning the independently verified small admission into success.
+  expect(primaryAttempts).toBe(1)
   expect(verifiedRollback).toBe(true)
+  if (earlyTransactionalFailure) {
+    // This DDL error leaves SQLite's actual transaction active. Knex rolls
+    // it back before the independent fresh read proves the complete preimage.
+    expect(nativeOrigin).toMatchObject({
+      code: 'SQLITE_FULL',
+      nativeCode: 13,
+      nativeAutocommit: false,
+      nativeConnectionFenced: false
+    })
+    expect(verifiedActiveWriter).toBe(true)
+    expect(migrationFailure).toBe(expectedFailure)
+    return
+  }
+  // Late journal exhaustion automatically rolls back and fences its writer.
+  // Retain that distinct cleanup outcome and its concrete original causes.
   expect(migrationFailure).toBeInstanceOf(AggregateError)
   if (!(migrationFailure instanceof AggregateError)) throw new Error('Actual fenced migration cleanup missing')
   expect(migrationFailure.message).toBe('Private native migration retains foreign-key restoration failure')
   expect(migrationFailure.errors).toHaveLength(2)
   expect(nativeOrigin).toMatchObject({ code: 'SQLITE_FULL', nativeCode: 13, nativeAutocommit: true })
-  expect(migrationFailure.cause).toBe(stopped)
-  expect(migrationFailure.errors[0]).toBe(stopped)
+  expect(migrationFailure.cause).toBe(expectedFailure)
+  expect(migrationFailure.errors[0]).toBe(expectedFailure)
   for (const failure of migrationFailure.errors.slice(1)) {
     expect(failure).toMatchObject({
       code: 'SQLITE_ABORT',

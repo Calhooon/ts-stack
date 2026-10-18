@@ -73,6 +73,16 @@ transaction configs, complete DDL rollback and replacement retry as the private 
 point. Ordinary migration order/configs, source SQL, native ownership and all admitted
 limits remain unchanged. This correction requires complete current-head qualification.
 
+The original 4 MiB negative admission attempts the complete current migration
+layout. If primary-copy DDL reaches disk capacity before journal setup, its
+actual inner writer and original SQLite error are observed, followed by a fresh
+complete schema/settings/page-geometry rollback comparison. Later journal
+exhaustion retains its distinct fenced-writer cleanup assertions. Authenticated
+HTTP tests retain the version-one archive cancellation/checkpoint oracle against
+an archive-only advertisement, and separately cover current full/mobile journal
+negotiation, cancelled durable intake, occupied-profile resume and physical cleanup.
+These fixture corrections change no production quota, protocol or timeout.
+
 The finite implementation inventory covers the original 24 required behavior
 families, including #542 and #543. Integration, consumer entry points and
 delivery/rollback documentation are present. Native whole-profile recovery now

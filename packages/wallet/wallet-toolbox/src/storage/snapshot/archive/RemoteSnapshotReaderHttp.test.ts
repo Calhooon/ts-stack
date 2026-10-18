@@ -373,7 +373,12 @@ test.each([StorageClient, StorageMobile])(
       })
     })
     try {
-      const { url } = await serveReader(fixture)
+      const { server, url } = await serveReader(fixture)
+      // Preserve this version-one archive oracle against a peer that does not
+      // advertise the newer journal transport. Current negotiation is separate.
+      const rpc = Reflect.get(server, 'snapshotArchives') as KnexSnapshotArchiveRpc
+      jest.spyOn(rpc, 'journalCapabilities').mockResolvedValue(undefined)
+      jest.spyOn(rpc, 'journalFieldCapabilities').mockResolvedValue(undefined)
       const sourceUser = (await fixture.storage.findUserByIdentityKey(fixture.identityKey))!
       await fixture.storage.updateUser(sourceUser.userId, { activeStorage: 'http-snapshot-source' })
       for (let index = 0; index < 5; index++) {
@@ -396,6 +401,10 @@ test.each([StorageClient, StorageMobile])(
       const manager = new WalletStorageManager(fixture.identityKey, destination)
       await manager.makeAvailable()
       const reader = new Client(fixture.wallet, url)
+      const settings = await reader.makeAvailable()
+      expect(settings.snapshotArchiveReaderVersion).toBe(1)
+      expect(settings.snapshotJournalArchive).toBeUndefined()
+      expect(settings.snapshotJournalFieldArchive).toBeUndefined()
       const legacy = jest.spyOn(destination, 'processSyncChunk')
       const controller = new AbortController()
       const partial = await manager.syncFromReaderResumable(fixture.identityKey, reader, {
@@ -434,6 +443,84 @@ test.each([StorageClient, StorageMobile])(
       await destination.destroy()
       await fixture.close()
       await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
+
+test.each([StorageClient, StorageMobile])(
+  'authenticated %p negotiates current journal sync, retains cancelled custody and resumes into an occupied profile',
+  async Client => {
+    const source = await snapshotHttpFixture(true, false)
+    const destination = await snapshotHttpFixture(true, false, 'test', 'http-journal-destination')
+    try {
+      const { url } = await source.serve()
+      const { user: original } = await source.storage.findOrInsertUser(source.identityKey)
+      await source.storage.updateUser(original.userId, { activeStorage: 'http-snapshot-source' })
+      for (let index = 0; index < 5; index++)
+        await source.storage.findOrInsertTxLabel(original.userId, `journal-label-${index}`)
+      const { user } = await destination.storage.findOrInsertUser(source.identityKey)
+      await destination.storage.updateUser(user.userId, { activeStorage: 'http-journal-destination' })
+      const { user: foreign } = await destination.storage.findOrInsertUser(destination.identityKey)
+      await destination.storage.findOrInsertTxLabel(foreign.userId, 'foreign-existing')
+      const manager = new WalletStorageManager(source.identityKey, destination.storage)
+      await manager.makeAvailable()
+      const reader = new Client(source.wallet, url, { serverIdentityKey: source.serverIdentityKey })
+      const settings = await reader.makeAvailable()
+      expect(settings.snapshotArchiveReaderVersion).toBe(1)
+      expect(settings.snapshotJournalArchive?.version).toBe(1)
+      const legacy = jest.spyOn(destination.storage, 'processSyncChunk')
+      const archive = jest.spyOn(source.storage, 'openSnapshotArchiveSource')
+      const controller = new AbortController()
+      const partial = await manager.syncFromReaderResumable(source.identityKey, reader, {
+        maxItems: 2,
+        signal: controller.signal,
+        onProgress: progress => {
+          if (progress.state === 'committed' && progress.journalCheckpoint?.phase === 'intake') controller.abort()
+        }
+      })
+      expect(partial.status).toBe('cancelled')
+      expect(partial.snapshotCheckpoint).toBeUndefined()
+      expect(partial.journalCheckpoint).toMatchObject({ phase: 'intake' })
+      expect(partial.journalCheckpoint!.sequence).toBeGreaterThan(0)
+      const held = await destination.storage
+        .knex('snapshot_reconciliation_windows')
+        .where({ userId: user.userId, sourceStorageIdentity: 'http-snapshot-source' })
+        .first()
+      expect(JSON.parse(held.stateJson)).toEqual(partial.journalCheckpoint)
+      expect(await destination.storage.findTxLabels({ partial: { userId: user.userId } })).toHaveLength(0)
+      expect(await source.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+        archives: 0,
+        reservedBytes: 0
+      })
+      const complete = await manager.syncFromReaderResumable(source.identityKey, reader, { maxItems: 2 })
+      expect(complete.status).toBe('completed')
+      expect(complete.snapshotCheckpoint).toBeUndefined()
+      expect(complete.journalCheckpoint?.phase).toBe('acknowledged')
+      expect(
+        (await destination.storage.findTxLabels({ partial: { userId: user.userId } })).map(row => row.label).sort()
+      ).toEqual(Array.from({ length: 5 }, (_, index) => `journal-label-${index}`))
+      expect(
+        (await destination.storage.findTxLabels({ partial: { userId: foreign.userId } })).map(row => row.label)
+      ).toEqual(['foreign-existing'])
+      expect((await destination.storage.findUserByIdentityKey(source.identityKey))!.activeStorage).toBe(
+        'http-journal-destination'
+      )
+      expect(legacy).not.toHaveBeenCalled()
+      expect(archive).not.toHaveBeenCalled()
+      expect(await source.storage.knex('snapshot_archive_requests')).toHaveLength(0)
+      expect(await source.storage.knex('snapshot_archive_capacity').first()).toMatchObject({
+        archives: 0,
+        reservedBytes: 0
+      })
+    } finally {
+      await Promise.allSettled([source.close(), destination.close()]).then(closed => {
+        const failures = closed.filter(value => value.status === 'rejected')
+        if (failures.length !== 0)
+          throw new AggregateError(
+            failures.map(value => value.reason),
+            'Journal HTTP fixtures did not drain'
+          )
+      })
     }
   }
 )
