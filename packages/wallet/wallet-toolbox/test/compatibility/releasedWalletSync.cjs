@@ -297,11 +297,15 @@ async function installation(root, version, sdkMajor) {
   }
 }
 
-async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor) {
+async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor, options = {}) {
   assert.ok(sdkMajor === 2 || sdkMajor === 3)
+  assert.ok(options !== null && typeof options === 'object' && !Array.isArray(options))
+  assert.ok(options.continueOnCaseFailure === undefined || typeof options.continueOnCaseFailure === 'boolean')
+  assert.ok(options.onCaseResult === undefined || typeof options.onCaseResult === 'function')
   const released = await installation(releasedRoot, versions.released, sdkMajor),
     candidate = await installation(candidateRoot, versions.candidate, sdkMajor),
-    reports = []
+    reports = [],
+    failures = []
   assert.notEqual(released.directories[0], candidate.directories[0])
   const { WalletStorageManager } = candidate.modules[0]
   const { PrivateKey, ProtoWallet } = candidate.sdk
@@ -507,11 +511,41 @@ async function runReleasedWalletSync(releasedRoot, candidateRoot, sdkMajor) {
               failed ? [failure, ...cleanup] : cleanup,
               'Released compatibility retains original cleanup owners'
             )
-          if (failed) throw failure
+          if (failed) {
+            if (options.onCaseResult !== undefined) {
+              const result = {
+                sdkMajor,
+                sdkVersion: sdkVersions[sdkMajor],
+                serverLine,
+                clientLine,
+                clientPackage: packages[index],
+                requestEncoding: binaryRequests ? 'compact-base64' : 'numeric-json',
+                status: 'failed',
+                physicalOwnersDrained: drained,
+                error:
+                  failure instanceof Error
+                    ? { name: failure.name, message: failure.message, stack: failure.stack }
+                    : failure
+              }
+              try {
+                await options.onCaseResult(result)
+              } catch (observation) {
+                throw new AggregateError([failure, observation], 'Compatibility failure and result observation failed')
+              }
+            }
+            if (options.continueOnCaseFailure === true) {
+              failures.push(failure)
+              continue
+            }
+            throw failure
+          }
+          if (options.onCaseResult !== undefined)
+            await options.onCaseResult({ ...reports.at(-1), status: 'passed', physicalOwnersDrained: drained })
         }
       }
     }
   }
+  if (failures.length !== 0) throw new AggregateError(failures, `${failures.length} compatibility combinations failed`)
   assert.equal(reports.length, 24)
   return {
     versions,

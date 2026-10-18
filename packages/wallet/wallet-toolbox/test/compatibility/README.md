@@ -13,8 +13,11 @@ not become a replica cursor. The synthetic header is a local fixture oracle;
 these results do not establish a connection to a production chain provider.
 This Node-hosted matrix does not qualify a browser or a physical mobile device.
 
-All new controller source is authored and unrun. Finish the implementation and
-source wiring before running it. Build the final graph, freeze the actual pack
+The controller's first source574 qualification attempts found an SDK2 peer
+resolution refusal and a released-server structural-limit refusal for the
+original large numeric-array request. These failures remain recorded; the full
+48-combination programme is not qualified. Finish the implementation and source
+wiring before running it. Build the final graph, freeze the actual pack
 outputs and dependencies, and prepare four separate installations. Do not use
 workspace symlinks or silently replace released artifacts with source aliases.
 The selected versions are wallet packages 2.14.5 and candidate 2.15.0, SDK 2.8.11
@@ -38,6 +41,14 @@ After the complete source graph is admitted for qualification, run:
 ```sh
 pnpm qualify:released-sync --cohorts /absolute/cohorts.json
 ```
+
+The exported `runReleasedWalletSync` also accepts an optional fourth argument,
+`{ continueOnCaseFailure: true, onCaseResult }`, for complete failure inventory.
+It retains the original case order, payloads, assertions and bounds. Each result
+callback runs after the original physical-owner cleanup. Any failed case still
+rejects the run; cleanup failure stops execution immediately. Default and CLI
+behavior still stop at the first failure. A partial SDK3 inventory does not
+qualify the original SDK2/SDK3 matrix.
 
 Before installation, verify the released npm tarballs against these independently
 read registry integrity values. Freeze candidate tarballs from the actual final
