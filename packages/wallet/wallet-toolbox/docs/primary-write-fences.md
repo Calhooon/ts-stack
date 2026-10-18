@@ -122,6 +122,42 @@ failures are logged. Expired batch cleanup also retains original actual profile
 captures and rechecks the locked expiry state. It never frees an inactive
 profile's reservations, manifest or blobs and counts only committed releases.
 
+UTXO release captures the actual user role before script or provider work and
+rechecks the exact outpoint, amount, basket and reservation state inside the
+original writer. Read-only review remains available on inactive profiles. Both
+full atomic and bounded conclusive monitor entry points release manager ownership
+for provider calls; physical commits rejoin background admission and reject a
+replaced provider. Existing candidate/provider/timeout and unknown-result limits
+remain. The internal optional admission callback only schedules SQL; it is not
+wire data or a primary grant. The change-parameter spec-op also uses the actual
+original user writer.
+
+Double-spend review captures actual participating profiles before each network
+observation and refreshes current locked request metadata before marking it for
+proof recovery. A late proof, newer record, durable input conflict or obsolete
+profile is retained for fresh reconciliation. Only committed `unfail` changes
+are reported. This cache state never substitutes for validated financial proof
+recovery. Older providers retain the original serialized/batched path.
+
+Expiry lifecycle captures each page's actual profiles before height/status/UTXO
+observations. Cancellation, observed-target metadata, revocation/conflict CAS,
+reclaim activation, retry and proof-winner finalization all use the original
+actual writer. Supported monitor preparation releases manager ownership and
+physical SQL rejoins background admission. Primary retirement/ABA defers without
+counting a financial result. Reclaim activation rechecks the current target and
+actual anchor custody before claiming it. Posting carries the original actor and
+pre-observation peer captures; after activation, only that actor's committed
+row IDs for a predeclared signed txid may be refreshed under its original epoch.
+No newly appearing peer or new primary role is captured after I/O.
+
+Expired batch candidates use 100-row SQL keysets and only lease metadata; each
+writer rechecks current expiry without hydrating manifests, results or blobs.
+Background cleanup releases manager ownership between actual commits. Providers
+whose SQL reservation predicates already honor logical expiry skip global
+physical cleanup in foreground batch begin/extend/resume. Older/custom providers
+retain their original physical-cleanup requirement and serialized scan. These
+changes preserve expiry/reclaim financial semantics and original resource gates.
+
 ## Migration and compatibility
 
 No new schema, wire field, native ABI, quota or persisted authority is added.
@@ -138,9 +174,9 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-Expiry lifecycle and UTXO review/recovery writers still require the remaining
-original-epoch and scheduling integration. Batch cleanup still uses the existing
-expired-batch scan; bounded large-record selection remains to be completed. These implemented monitor paths do not imply that every surrounding
+The integrated lifecycle and maintenance paths still require original full
+backend/native/platform and concurrency qualification. A complete remaining-writer
+audit must accompany primary handoff integration. These implemented monitor paths do not imply that every surrounding
 maintenance writer is fenced. Remaining supported-provider and large-record
 routing, full primary handoff and whole-system qualification are still required. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a

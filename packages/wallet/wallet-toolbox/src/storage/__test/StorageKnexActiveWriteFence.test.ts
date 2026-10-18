@@ -1,3 +1,8 @@
+import { TaskCleanupActionBatches } from '../../monitor/tasks/TaskCleanupActionBatches'
+import { reviewUtxoOutputs } from '../methods/reviewUtxoOutputs'
+import { TaskReviewUtxos } from '../../monitor/tasks/TaskReviewUtxos'
+import { TaskReviewDoubleSpends } from '../../monitor/tasks/TaskReviewDoubleSpends'
+import { specOpSetWalletChangeParams } from '../../sdk/types'
 import { TaskFailAbandoned } from '../../monitor/tasks/TaskFailAbandoned'
 import { cleanupExpiredActionBatches } from '../methods/actionBatch'
 import { captureMonitorReqWrite } from '../../monitor/tasks/WalletMonitorTask'
@@ -1228,6 +1233,258 @@ test('expired batch cleanup cannot release actual reservations across a primary 
     expect((await storage.findActionBatch(ctx.userId, begun.batchId))?.status).toBe(batch.status)
     expect(await storage.findActionBatchOutputIds(batch.actionBatchId)).toEqual(reservations)
     expect(await cleanupExpiredActionBatches(storage)).toBe(1)
+    expect((await storage.findActionBatch(ctx.userId, begun.batchId))?.status).toBe('expired')
+    expect(await storage.findActionBatchOutputIds(batch.actionBatchId)).toEqual([])
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test.each(['atomic', 'conclusive'] as const)(
+  'UTXO release retains the actual role from before provider work, mode=%s',
+  async mode => {
+    const ctx = await _tu.createLegacyWalletSQLiteCopy('utxo-review-original-epoch-' + mode, 'legacy')
+    try {
+      const storage = ctx.activeStorage
+      const basket = (await storage.findOutputBaskets({ partial: { userId: ctx.userId, name: 'default' } }))[0]
+      const outputs = await storage.findOutputs({
+        partial: { userId: ctx.userId, spendable: true, basketId: basket.basketId },
+        txStatus: ['completed'],
+        paged: { limit: 1, offset: 0 }
+      })
+      expect(outputs).toHaveLength(1)
+      const auth = { userId: ctx.userId, identityKey: ctx.identityKey }
+      jest
+        .spyOn(ctx.services, 'getUtxoStatus')
+        .mockImplementationOnce(async () => {
+          await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+          await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey })
+          return { name: 'actual-role-race', status: 'success', details: [], isUtxo: false }
+        })
+        .mockResolvedValue({ name: 'fresh-spent-verdict', status: 'success', details: [], isUtxo: false })
+      await expect(reviewUtxoOutputs(storage, auth, outputs, mode)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+      expect((await storage.findOutputs({ partial: { outputId: outputs[0].outputId } }))[0].spendable).toBe(true)
+      const fresh = await reviewUtxoOutputs(storage, auth, outputs, mode)
+      expect(fresh.diagnostics.released).toBe(1)
+      expect((await storage.findOutputs({ partial: { outputId: outputs[0].outputId } }))[0].spendable).toBe(false)
+    } finally {
+      await ctx.wallet.destroy()
+    }
+  }
+)
+
+test('read-only UTXO review does not require the actual primary role', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('utxo-readonly-inactive', 'legacy')
+  try {
+    const storage = ctx.activeStorage
+    const basket = (await storage.findOutputBaskets({ partial: { userId: ctx.userId, name: 'default' } }))[0]
+    const outputs = await storage.findOutputs({
+      partial: { userId: ctx.userId, spendable: true, basketId: basket.basketId },
+      txStatus: ['completed'],
+      paged: { limit: 1, offset: 0 }
+    })
+    expect(outputs).toHaveLength(1)
+    await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+    const capture = jest.spyOn(storage, 'activeWriteTransaction')
+    jest
+      .spyOn(ctx.services, 'getUtxoStatus')
+      .mockResolvedValue({ name: 'readonly-verdict', status: 'success', details: [], isUtxo: false })
+    const review = await reviewUtxoOutputs(storage, { userId: ctx.userId, identityKey: ctx.identityKey }, outputs)
+    expect(review.diagnostics).toMatchObject({ confirmedSpent: 1, released: 0 })
+    expect(capture).not.toHaveBeenCalled()
+    expect((await storage.findOutputs({ partial: { outputId: outputs[0].outputId } }))[0].spendable).toBe(true)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test.each(['full', 'page'] as const)(
+  'actual UTXO monitor provider work allows foreground SQL, entry=%s',
+  async entry => {
+    const ctx = await _tu.createLegacyWalletSQLiteCopy('utxo-monitor-foreground-' + entry, 'legacy')
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let entered!: () => void
+    const reached = new Promise<void>(resolve => {
+      entered = resolve
+    })
+    let pending: Promise<unknown> | undefined
+    let foreground: Promise<unknown> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      jest.spyOn(ctx.services, 'getUtxoStatus').mockImplementation(async () => {
+        entered()
+        await gate
+        return { name: 'controlled-utxo-review', status: 'success', details: [], isUtxo: false }
+      })
+      const task = new TaskReviewUtxos(ctx.monitor)
+      pending =
+        entry === 'full'
+          ? task.reviewByIdentityKey(ctx.identityKey, 'change', true)
+          : task.reviewPageByIdentityKey(ctx.identityKey, 'change', true, 1)
+      await Promise.race([
+        reached,
+        pending.then(() => {
+          throw new Error('UTXO monitor never reached provider observation')
+        })
+      ])
+      const basket = (
+        await ctx.activeStorage.findOutputBaskets({ partial: { userId: ctx.userId, name: 'default' } })
+      )[0]
+      foreground = ctx.storage.runAsStorageProvider(async sp => {
+        await sp.updateOutputBasket(basket.basketId, { numberOfDesiredUTXOs: 8 })
+        return (await sp.findOutputBaskets({ partial: { basketId: basket.basketId } }))[0].numberOfDesiredUTXOs
+      })
+      await expect(
+        Promise.race([
+          foreground,
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('Foreground SQL blocked by UTXO provider observation')), 1500)
+          })
+        ])
+      ).resolves.toBe(8)
+      release()
+      await pending
+      expect(
+        (await ctx.activeStorage.findOutputBaskets({ partial: { basketId: basket.basketId } }))[0].numberOfDesiredUTXOs
+      ).toBe(8)
+    } finally {
+      if (timer != null) clearTimeout(timer)
+      release()
+      await Promise.allSettled([pending, foreground])
+      await ctx.wallet.destroy()
+    }
+  }
+)
+
+test.each(['ABA', 'late-conflict', 'advanced'] as const)(
+  'double-spend review preserves original role and fresh metadata, race=%s',
+  async race => {
+    const ctx = await _tu.createLegacyWalletSQLiteCopy('double-spend-review-current-' + race, 'legacy')
+    try {
+      await _tu.installOfflineLegacyChainTracker(ctx)
+      const created = await ctx.wallet.createAction({
+        description: 'real double-spend review input',
+        outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'review output' }],
+        options: { noSend: true, randomizeOutputs: false }
+      })
+      if (created.txid == null) throw new Error('Missing actual signed action')
+      const storage = ctx.activeStorage
+      const req = await EntityProvenTxReq.fromStorageTxid(storage, created.txid)
+      if (req == null) throw new Error('Missing actual request')
+      await storage.updateProvenTxReq(req.id, { status: 'doubleSpend', updated_at: new Date(0) })
+      const find = ctx.storage.findProvenTxReqs.bind(ctx.storage)
+      jest
+        .spyOn(ctx.storage, 'findProvenTxReqs')
+        .mockImplementation(async args => (await find(args)).filter(row => row.provenTxReqId === req.id))
+      jest
+        .spyOn(ctx.monitor.services, 'getStatusForTxids')
+        .mockImplementationOnce(async () => {
+          if (race === 'ABA') {
+            await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+            await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey })
+          } else if (race === 'advanced') {
+            await storage.updateProvenTxReq(req.id, { status: 'unmined' })
+          } else {
+            const current = await EntityProvenTxReq.fromStorageId(storage, req.id)
+            current.addHistoryNote({ what: 'arcSSETerminalRejection', inputConflict: true })
+            await current.updateStorageDynamicProperties(storage)
+            await storage.updateProvenTxReq(req.id, { updated_at: new Date(0) })
+          }
+          return {
+            name: 'controlled-double-spend-review',
+            status: 'success',
+            results: [{ txid: req.txid, status: 'known', depth: undefined }]
+          }
+        })
+        .mockResolvedValue({
+          name: 'fresh-double-spend-review',
+          status: 'success',
+          results: [{ txid: req.txid, status: 'known', depth: undefined }]
+        })
+      const task = new TaskReviewDoubleSpends(ctx.monitor, 0, 100, 0)
+      const reviewed = JSON.parse(await task.runTask())
+      expect(reviewed.unfails).toBe(0)
+      expect((await EntityProvenTxReq.fromStorageId(storage, req.id)).status).toBe(
+        race === 'advanced' ? 'unmined' : 'doubleSpend'
+      )
+      if (race === 'ABA') {
+        expect(JSON.parse(await task.runTask()).unfails).toBe(1)
+        expect((await EntityProvenTxReq.fromStorageId(storage, req.id)).status).toBe('unfail')
+      } else if (race === 'late-conflict') {
+        expect(JSON.parse(await task.runTask()).unfails).toBe(0)
+        expect((await EntityProvenTxReq.fromStorageId(storage, req.id)).history.notes).toEqual(
+          expect.arrayContaining([expect.objectContaining({ inputConflict: true })])
+        )
+      }
+    } finally {
+      await ctx.wallet.destroy()
+    }
+  }
+)
+
+test('change-parameter spec-op uses the original actual profile epoch', async () => {
+  const f = await fixture()
+  try {
+    const args = Validation.validateListOutputsArgs({ basket: specOpSetWalletChangeParams, tags: ['7', '100'] })
+    const capture = f.storage.activeWriteTransaction.bind(f.storage)
+    const spy = jest.spyOn(f.storage, 'activeWriteTransaction').mockImplementationOnce(async auth => {
+      const write = await capture(auth)
+      await f.peer.updateUser(f.user.userId, { activeStorage: 'another-primary' })
+      await f.peer.updateUser(f.user.userId, { activeStorage: storageIdentity })
+      return write
+    })
+    await expect(f.storage.listOutputs(f.auth, args)).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(
+      (await f.storage.findOutputBaskets({ partial: { basketId: f.basket.basketId } }))[0].numberOfDesiredUTXOs
+    ).toBe(f.basket.numberOfDesiredUTXOs)
+    spy.mockRestore()
+    await f.storage.listOutputs(f.auth, args)
+    expect((await f.storage.findOutputBaskets({ partial: { basketId: f.basket.basketId } }))[0]).toMatchObject({
+      numberOfDesiredUTXOs: 7,
+      minimumDesiredUTXOValue: 100
+    })
+  } finally {
+    await f.close()
+  }
+})
+
+test('foreground batch planning avoids global expiry scans and background cleanup reads only lease metadata', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('batch-expiry-bounded-metadata')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const storage = ctx.activeStorage
+    const scan = jest.spyOn(storage, 'expiredActionBatchCandidates')
+    const legacy = jest.spyOn(storage, 'findExpiredActionBatches')
+    const begin = jest.spyOn(ctx.storage, 'beginActionBatch')
+    await ctx.wallet.createAction({
+      description: 'actual batch before metadata expiry',
+      outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'batch output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    expect(scan).not.toHaveBeenCalled()
+    expect(legacy).not.toHaveBeenCalled()
+    const begun = await begin.mock.results[0].value
+    const batch = await storage.findActionBatch(ctx.userId, begun.batchId)
+    if (batch == null) throw new Error('Missing actual batch')
+    expect((await storage.findActionBatchOutputIds(batch.actionBatchId)).length).toBeGreaterThan(0)
+    await storage.updateActionBatch(batch.actionBatchId, { expiresAt: new Date(0) })
+    const reads: string[] = []
+    const record = (query: { sql: string }) => {
+      if (/^select\b/i.test(query.sql) && /from [`"]?action_batches[`"]?/i.test(query.sql)) reads.push(query.sql)
+    }
+    storage.knex.on('query', record)
+    try {
+      expect(await new TaskCleanupActionBatches(ctx.monitor).runTask()).toContain('released 1')
+    } finally {
+      storage.knex.removeListener('query', record)
+    }
+    expect(reads.length).toBeGreaterThan(0)
+    expect(reads.some(sql => /limit \?/i.test(sql))).toBe(true)
+    expect(reads.every(sql => !/\*|manifest|uploadDigests|\bresult\b|\bbytes\b/i.test(sql))).toBe(true)
+    expect(legacy).not.toHaveBeenCalled()
     expect((await storage.findActionBatch(ctx.userId, begun.batchId))?.status).toBe('expired')
     expect(await storage.findActionBatchOutputIds(batch.actionBatchId)).toEqual([])
   } finally {

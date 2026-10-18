@@ -55,6 +55,29 @@ export class StorageReqWrite {
     return captured
   }
 
+  /** A predeclared signed transaction may be inserted by this same actual
+   * actor after preparation. Refresh only that actor's committed row IDs under
+   * its original epoch; never capture a newly appearing peer or a new role. */
+  async refreshCommittedActorTransactions(txid: string): Promise<void> {
+    const actor = this.actor
+    const users = this.transactions.get(txid)
+    if (actor == null || users == null || this.profiles.get(actor.userId) !== actor.write)
+      throw new WERR_INVALID_OPERATION('Transaction was not declared by this captured actor')
+    const ids = await this.admit(
+      async () =>
+        await actor.write.transaction(async trx => {
+          const rows = await this.storage.findTransactions({
+            partial: { txid, userId: actor.userId },
+            noRawTx: true,
+            trx
+          })
+          if (rows.length === 0) throw new WERR_UNAUTHORIZED('No committed transaction belongs to the original actor')
+          return rows.map(row => row.transactionId)
+        })
+    )
+    users.set(actor.userId, ids)
+  }
+
   assertRequests(reqs: EntityProvenTxReq[]): void {
     if (this.actor == null) return
     for (const req of reqs) {

@@ -1,3 +1,5 @@
+import { EntityProvenTxReq } from '../../storage/schema/entities/EntityProvenTxReq'
+import { WalletError } from '../../sdk/WalletError'
 import { TableProvenTxReq } from '../../storage/schema/tables'
 import { Monitor } from '../Monitor'
 import {
@@ -7,7 +9,7 @@ import {
   optionalMonitorInteger,
   requireMonitorInteger
 } from '../monitorValidation'
-import { WalletMonitorTask } from './WalletMonitorTask'
+import { WalletMonitorTask, captureMonitorReqWrite } from './WalletMonitorTask'
 
 function hasDurableInputConflict(req: TableProvenTxReq): boolean {
   try {
@@ -114,28 +116,59 @@ export class TaskReviewDoubleSpends extends WalletMonitorTask {
 
     const reviewed: TableProvenTxReq[] = []
     const unfails: number[] = []
+    const legacyUnfails: number[] = []
     let log = ''
     let lastRetainedDoubleSpendIndex = -1
     let retainedDoubleSpendCount = 0
 
     for (const req of reqs) {
-      const gsr = await this.monitor.services.getStatusForTxids([req.txid])
-      const status = gsr.status === 'success' ? gsr.results.find(result => result.txid === req.txid)?.status : undefined
-      const durableInputConflict = hasDurableInputConflict(req)
       reviewed.push(req)
-      const canUnfail = status === 'mined' || (status === 'known' && !durableInputConflict)
-      if (!canUnfail) {
+      let retained = true
+      try {
+        const writes = await captureMonitorReqWrite(this, [req.txid])
+        if (writes != null) await writes.assertCurrent()
+        const gsr = await this.monitor.services.getStatusForTxids([req.txid])
+        const status =
+          gsr.status === 'success' ? gsr.results.find(result => result.txid === req.txid)?.status : undefined
+        let durableInputConflict = hasDurableInputConflict(req)
+        let canUnfail = status === 'mined' || (status === 'known' && !durableInputConflict)
+        if (writes == null) {
+          if (canUnfail) legacyUnfails.push(req.provenTxReqId)
+          retained = !canUnfail
+        } else {
+          const entity = new EntityProvenTxReq(req)
+          let changed = false
+          const committed = await writes.request(entity, async current => {
+            changed = false
+            // A late proof, terminal input conflict or newer review cannot be
+            // overwritten by the pre-observation snapshot. This callback only
+            // updates cache metadata; validated proof recovery owns finances.
+            durableInputConflict = hasDurableInputConflict(current.api)
+            canUnfail = status === 'mined' || (status === 'known' && !durableInputConflict)
+            if (current.status !== 'doubleSpend' || current.updated_at > updatedBefore || !canUnfail) return false
+            current.status = 'unfail'
+            changed = true
+          })
+          canUnfail = committed && changed
+          retained = !committed || entity.status === 'doubleSpend'
+        }
+        if (canUnfail) {
+          unfails.push(req.provenTxReqId)
+          log += `unfail ${req.provenTxReqId} ${req.txid} status:${status} durableInputConflict:${String(durableInputConflict)}\n`
+        }
+      } catch (error) {
+        if (WalletError.fromUnknown(error).code !== 'WERR_NOT_ACTIVE') throw error
+        log += `review ${req.provenTxReqId} deferred to its current primary\n`
+      }
+      if (retained) {
         lastRetainedDoubleSpendIndex = reviewed.length - 1
-        retainedDoubleSpendCount += 1
-      } else {
-        unfails.push(req.provenTxReqId)
-        log += `unfail ${req.provenTxReqId} ${req.txid} status:${status} durableInputConflict:${String(durableInputConflict)}\n`
+        retainedDoubleSpendCount++
       }
     }
 
-    if (unfails.length > 0) {
+    if (legacyUnfails.length > 0) {
       await this.storage.runAsStorageProvider(async sp => {
-        await sp.updateProvenTxReq(unfails, { status: 'unfail' })
+        await sp.updateProvenTxReq(legacyUnfails, { status: 'unfail' })
       })
     }
 

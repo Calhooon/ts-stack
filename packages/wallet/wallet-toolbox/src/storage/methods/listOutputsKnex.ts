@@ -1,3 +1,4 @@
+import type { StorageWriterAdmission } from '../StorageActiveWrite'
 import { applyBrc38NativeManagedChangeText } from '../portable/Brc38NativeManagedChangeTextNode'
 import { hasBrc38NativePackedTextSchema } from '../portable/Brc38NativePackedTextSchemaNode'
 import {
@@ -252,7 +253,8 @@ export async function listOutputs(
   dsk: StorageKnex,
   auth: AuthId,
   vargs: ValidListOutputsArgs,
-  _originator?: OriginatorDomainNameStringUnder250Bytes
+  _originator?: OriginatorDomainNameStringUnder250Bytes,
+  admission?: StorageWriterAdmission
 ): Promise<ListOutputsResult> {
   const trx: TrxToken | undefined = undefined
   const userId = verifyId(auth.userId)
@@ -265,7 +267,7 @@ export async function listOutputs(
   if (resolvedBasketId === null) return result
   const { tags, specOpTags, basketId } = resolveKnexListTags(specOp, sourceTags, resolvedBasketId)
   if (specOp?.resultFromTags != null) {
-    return specOp.resultFromTags(dsk, auth, vargs, specOpTags)
+    return specOp.resultFromTags(dsk, auth, vargs, specOpTags, admission)
   }
   const tagIds = await findKnexTagIds(k, userId, tags)
   const isQueryModeAll = vargs.tagQueryMode === 'all'
@@ -338,7 +340,7 @@ export async function listOutputs(
   }
   if (specOp != null) {
     if (specOp.filterOutputs != null) {
-      outputs = await specOp.filterOutputs(dsk, auth, vargs, specOpTags, outputs)
+      outputs = await specOp.filterOutputs(dsk, auth, vargs, specOpTags, outputs, admission)
     }
     if (specOp.resultFromOutputs != null) {
       return specOp.resultFromOutputs(dsk, auth, vargs, specOpTags, outputs)

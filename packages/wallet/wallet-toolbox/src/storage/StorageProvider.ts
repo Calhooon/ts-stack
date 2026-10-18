@@ -377,7 +377,11 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   abstract getTagsForOutputId(outputId: number, trx?: TrxToken): Promise<TableOutputTag[]>
 
   abstract listActions(auth: AuthId, args: ValidListActionsArgs): Promise<ListActionsResult>
-  abstract listOutputs(auth: AuthId, args: ValidListOutputsArgs): Promise<ListOutputsResult>
+  abstract listOutputs(
+    auth: AuthId,
+    args: ValidListOutputsArgs,
+    admission?: StorageWriterAdmission
+  ): Promise<ListOutputsResult>
 
   abstract countChangeInputs(userId: number, basketId: number, excludeSending: boolean): Promise<number>
 
@@ -390,13 +394,19 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   async findActionBatchForUpdate(
     userId: number,
     batchId: string,
-    trx: TrxToken
+    trx: TrxToken,
+    _leaseOnly = false
   ): Promise<TableActionBatch | undefined> {
     return await this.findActionBatch(userId, batchId, trx)
   }
 
   async findExpiredActionBatches(_now: Date, _trx?: TrxToken): Promise<TableActionBatch[]> {
     throw new WERR_NOT_IMPLEMENTED()
+  }
+  /** Metadata-only expiry candidates where supported. Older providers retain
+   * their original scan through this serialized compatibility iterator. */
+  async *expiredActionBatchCandidates(now: Date): AsyncIterable<Pick<TableActionBatch, 'userId' | 'batchId'>> {
+    for (const row of await this.findExpiredActionBatches(now)) yield { userId: row.userId, batchId: row.batchId }
   }
   async updateActionBatch(
     _actionBatchId: number,
@@ -580,6 +590,12 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
 
   protected supportsActionBatchPersistence(): boolean {
     return false
+  }
+
+  /** @internal Logical-lease providers need no service-wide physical cleanup
+   * during a foreground batch operation. Older adapters keep that requirement. */
+  requiresActionBatchReservationCleanup(): boolean {
+    return this.requiresActionBatchCleanupBeforeCreateAction()
   }
 
   /** Custom providers may require physical expiry cleanup before reservations are queried. */

@@ -1,3 +1,6 @@
+import type { StorageProvider } from '../../storage/StorageProvider'
+import type { StorageWriterAdmission } from '../../storage/StorageActiveWrite'
+import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import { type ValidListOutputsArgs } from '@bsv/sdk/wallet/validationHelpers'
 import { WalletOutput } from '@bsv/sdk'
 import { specOpInvalidChange } from '../../sdk'
@@ -103,14 +106,15 @@ export class TaskReviewUtxos extends WalletMonitorTask {
       knownTxids: []
     }
 
-    return await this.storage.runAsStorageProvider(async sp => {
+    return await this.reviewWithProvider(async (sp, admission) => {
       const user = (await sp.findUsers({ partial: { identityKey } }))[0]
       if (!user) {
         return `identityKey ${identityKey} was not found\n`
       }
 
       const auth = { userId: user.userId, identityKey: user.identityKey }
-      const result = await sp.listOutputs(auth, vargs)
+      const result =
+        admission == null ? await sp.listOutputs(auth, vargs) : await sp.listOutputs(auth, vargs, admission)
       if (result.totalOutputs === 0) {
         return `userId ${user.userId}: no invalid utxos found, ${user.identityKey}\n`
       }
@@ -133,7 +137,7 @@ export class TaskReviewUtxos extends WalletMonitorTask {
     pageLimit = requireMonitorInteger(pageLimit, 'pageLimit', 1, REVIEW_PAGE_MAX_LIMIT)
     offset = requireMonitorInteger(offset, 'offset', 0, MAX_MONITOR_OFFSET - pageLimit)
 
-    return await this.storage.runAsStorageProvider(async sp => {
+    return await this.reviewWithProvider(async (sp, admission) => {
       const user = (await sp.findUsers({ partial: { identityKey } }))[0]
       if (!user) {
         return {
@@ -183,7 +187,7 @@ export class TaskReviewUtxos extends WalletMonitorTask {
       })
       const candidates = sourceOutputs.filter(output => output.basketId != null)
       const auth = { userId: user.userId, identityKey: user.identityKey }
-      const review = await reviewUtxoOutputs(sp, auth, candidates, release ? 'conclusive' : 'none')
+      const review = await reviewUtxoOutputs(sp, auth, candidates, release ? 'conclusive' : 'none', admission)
       const complete = sourceOutputs.length < pageLimit
       const nextOffset = complete ? undefined : offset + sourceOutputs.length - review.diagnostics.released
       const target = mode === 'all' ? 'spendable utxos' : 'spendable change utxos'
@@ -215,6 +219,23 @@ export class TaskReviewUtxos extends WalletMonitorTask {
         log
       }
     })
+  }
+
+  private async reviewWithProvider<T>(
+    review: (provider: StorageProvider, admission?: StorageWriterAdmission) => Promise<T>
+  ): Promise<T> {
+    const provider = await this.storage.runAsStorageProvider(
+      async sp =>
+        typeof sp.supportsPrimaryWriteFences === 'function' && (await sp.supportsPrimaryWriteFences()) ? sp : undefined,
+      true
+    )
+    if (provider == null) return await this.storage.runAsStorageProvider(async sp => await review(sp))
+    const admission: StorageWriterAdmission = async operation =>
+      await this.storage.runAsStorageProvider(async current => {
+        if (current !== provider) throw new WERR_NOT_ACTIVE('UTXO review belongs to a replaced provider')
+        return await operation()
+      }, true)
+    return await review(provider, admission)
   }
 
   private emptyPage(

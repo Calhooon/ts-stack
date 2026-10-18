@@ -4656,6 +4656,13 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/monitor/tasks/TaskSendWaiting.ts',
         'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
         'src/monitor/tasks/TaskReviewStatus.ts',
+        'src/monitor/tasks/TaskReviewUtxos.ts',
+        'src/monitor/tasks/TaskReviewDoubleSpends.ts',
+        'src/monitor/tasks/TaskNoSendExpiry.ts',
+        'src/monitor/tasks/TaskCleanupActionBatches.ts',
+        'src/storage/methods/noSendExpiryLifecycle.ts',
+        'src/storage/methods/reviewUtxoOutputs.ts',
+        'src/storage/methods/ListOutputsSpecOp.ts',
         'src/monitor/tasks/TaskFailAbandoned.ts',
         'src/storage/methods/reviewStatus.ts',
         sourceLineRange(
@@ -4800,6 +4807,9 @@ function currentWalletMutationTargets(repositoryRoot) {
         [
           '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskSendWaiting.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests/TaskReviewUtxos.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests/TaskReviewDoubleSpends.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests__/TaskNoSendExpiry.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskFailAbandoned.test.ts',
           '<rootDir>/test/Wallet/action/actionBatch.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReconcilePendingTransactions.test.ts',

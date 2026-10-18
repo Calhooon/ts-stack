@@ -1,6 +1,6 @@
 import { SNAPSHOT_SYNC_MIGRATION, verifySnapshotSyncPrimaryFence } from './schema/snapshotSyncMigration'
 import { captureKnexActiveWrite } from './KnexActiveWriteFence'
-import type { StorageActiveWrite, StorageStatusReviewArgs } from './StorageActiveWrite'
+import type { StorageActiveWrite, StorageStatusReviewArgs, StorageWriterAdmission } from './StorageActiveWrite'
 import {
   parseSnapshotJournalFieldArchiveReference,
   type SnapshotJournalFieldArchiveReference
@@ -2300,9 +2300,13 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     return await listActions(this, auth, vargs)
   }
 
-  override async listOutputs(auth: AuthId, vargs: ValidListOutputsArgs): Promise<ListOutputsResult> {
+  override async listOutputs(
+    auth: AuthId,
+    vargs: ValidListOutputsArgs,
+    admission?: StorageWriterAdmission
+  ): Promise<ListOutputsResult> {
     if (auth.userId == null) throw new WERR_UNAUTHORIZED()
-    return await listOutputs(this, auth, vargs)
+    return await listOutputs(this, auth, vargs, undefined, admission)
   }
 
   /** The explicit native packed layout keeps metadata and logical bytes in
@@ -2624,8 +2628,27 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
   override async findActionBatchForUpdate(
     userId: number,
     batchId: string,
-    trx: TrxToken
+    trx: TrxToken,
+    leaseOnly = false
   ): Promise<TableActionBatch | undefined> {
+    if (leaseOnly) {
+      const rows = await this.toDb(trx)<TableActionBatch>('action_batches')
+        .where({ userId, batchId })
+        .select(
+          'actionBatchId',
+          'userId',
+          'batchId',
+          'status',
+          'expiresAt',
+          'hardExpiresAt',
+          'created_at',
+          'updated_at'
+        )
+        .forUpdate()
+        .limit(1)
+      return rows[0] == null ? undefined : this.validateEntity(rows[0], ['expiresAt', 'hardExpiresAt'])
+    }
+
     const row = (
       await this.readLocalPackedWalletRows<TableActionBatch>(
         'action_batches',
@@ -2650,6 +2673,30 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
           })
     )
     return this.validateEntities(rows, ['expiresAt', 'hardExpiresAt'])
+  }
+
+  override async *expiredActionBatchCandidates(now: Date): AsyncIterable<Pick<TableActionBatch, 'userId' | 'batchId'>> {
+    let after = 0
+    for (;;) {
+      const rows: Array<Pick<TableActionBatch, 'actionBatchId' | 'userId' | 'batchId'>> = await this.knex(
+        'action_batches'
+      )
+        .select('actionBatchId', 'userId', 'batchId')
+        .where('actionBatchId', '>', after)
+        .whereIn('status', ['active', 'prepared'])
+        .andWhere(builder => {
+          void builder
+            .where('expiresAt', '<=', this.validateDateForWhere(now))
+            .orWhere('hardExpiresAt', '<=', this.validateDateForWhere(now))
+        })
+        .orderBy('actionBatchId')
+        .limit(100)
+      if (!rows.length) return
+      for (const row of rows) {
+        after = row.actionBatchId
+        yield { userId: row.userId, batchId: row.batchId }
+      }
+    }
   }
 
   override async updateActionBatch(

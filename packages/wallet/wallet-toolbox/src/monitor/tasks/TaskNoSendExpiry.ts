@@ -1,3 +1,5 @@
+import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
+import type { StorageWriterAdmission } from '../../storage/StorageActiveWrite'
 import { processNoSendExpiryLifecycle } from '../../storage/methods/noSendExpiryLifecycle'
 import { Monitor } from '../Monitor'
 import { WalletMonitorTask } from './WalletMonitorTask'
@@ -35,9 +37,22 @@ export class TaskNoSendExpiry extends WalletMonitorTask {
     // A client whose active store is remote does not own lifecycle execution;
     // the remote provider's keyless multi-user monitor does.
     if (!this.storage.isActiveStorageProvider()) return ''
-    const result = await this.storage.runAsStorageProvider(async storage => {
-      return await processNoSendExpiryLifecycle(storage)
-    })
+    const provider = await this.storage.runAsStorageProvider(
+      async storage =>
+        typeof storage.supportsPrimaryWriteFences === 'function' && (await storage.supportsPrimaryWriteFences())
+          ? storage
+          : undefined,
+      true
+    )
+    const admission: StorageWriterAdmission = async operation =>
+      await this.storage.runAsStorageProvider(async current => {
+        if (current !== provider) throw new WERR_NOT_ACTIVE('Expiry work belongs to a replaced provider')
+        return await operation()
+      }, true)
+    const result =
+      provider == null
+        ? await this.storage.runAsStorageProvider(async storage => await processNoSendExpiryLifecycle(storage))
+        : await processNoSendExpiryLifecycle(provider, admission)
     if (result.inspected === 0) return ''
     return (
       `BRC-177 inspected=${result.inspected} cancelled=${result.cancelled} observed=${result.observed} ` +

@@ -1,5 +1,5 @@
 import { WalletError } from '../../sdk/WalletError'
-import type { StorageActiveWrite } from '../StorageActiveWrite'
+import type { StorageActiveWrite, StorageWriterAdmission } from '../StorageActiveWrite'
 import { type ValidCreateActionArgs, validateSatoshis } from '@bsv/sdk/wallet/validationHelpers'
 import { Beef, Script } from '@bsv/sdk'
 import {
@@ -151,34 +151,39 @@ async function releaseBatchState(
   )
 }
 
-export async function cleanupExpiredActionBatches(storage: StorageProvider): Promise<number> {
+export async function cleanupExpiredActionBatches(
+  storage: StorageProvider,
+  admission?: StorageWriterAdmission
+): Promise<number> {
   const now = new Date()
-  const expired = await storage.findExpiredActionBatches(now)
+  const expired =
+    typeof storage.expiredActionBatchCandidates === 'function'
+      ? storage.expiredActionBatchCandidates(now)
+      : (async function* () {
+          yield* await storage.findExpiredActionBatches(now)
+        })()
   const fenced =
     typeof storage.supportsPrimaryWriteFences === 'function' && (await storage.supportsPrimaryWriteFences())
-  const captures = new Map<number, StorageActiveWrite | undefined>()
   let released = 0
-  for (const batch of expired) {
+  for await (const batch of expired) {
     try {
       let write: StorageActiveWrite | undefined
       if (fenced) {
-        if (!captures.has(batch.userId)) {
-          const user = verifyOne(await storage.findUsers({ partial: { userId: batch.userId } }))
-          captures.set(batch.userId, undefined)
-          captures.set(batch.userId, await storage.activeWriteTransaction(user))
-        }
-        write = captures.get(batch.userId)
-        if (write == null) continue
+        // Each batch is an independent SQL-only step. Its capture precedes
+        // writer admission; no wallet payload or external observation survives.
+        const user = verifyOne(await storage.findUsers({ partial: { userId: batch.userId } }))
+        write = await storage.activeWriteTransaction(user)
       }
       const release = async (trx: TrxToken): Promise<boolean> => {
-        const current = await storage.findActionBatchForUpdate(batch.userId, batch.batchId, trx)
+        const current = await storage.findActionBatchForUpdate(batch.userId, batch.batchId, trx, true)
         if (current == null || !canExpire(current, now)) return false
         await releaseBatchState(storage, current, 'expired', trx)
         return true
       }
       // Report only committed releases. A profile retirement cannot free its
       // reservations, blobs or manifest through a service-wide cleanup pass.
-      if (await (write == null ? storage.transaction(release) : write.transaction(release))) released++
+      const commit = async () => await (write == null ? storage.transaction(release) : write.transaction(release))
+      if (await (admission != null && write?.prepareOutsideManager === true ? admission(commit) : commit())) released++
     } catch (error) {
       if (WalletError.fromUnknown(error).code !== 'WERR_NOT_ACTIVE') throw error
     }
@@ -431,7 +436,11 @@ export async function beginActionBatch(
 ): Promise<BeginActionBatchResult> {
   const write = await storage.activeWriteTransaction(auth)
   const userId = verifyId(auth.userId)
-  await cleanupExpiredActionBatches(storage)
+  if (
+    typeof storage.requiresActionBatchReservationCleanup !== 'function' ||
+    storage.requiresActionBatchReservationCleanup()
+  )
+    await cleanupExpiredActionBatches(storage)
   if ((await storage.findActionBatch(userId, args.batchId)) != null) {
     throw new WERR_INVALID_PARAMETER('batchId', 'unique')
   }
@@ -542,7 +551,11 @@ export async function extendActionBatch(
 ): Promise<ExtendActionBatchResult> {
   const write = await storage.activeWriteTransaction(auth)
   const userId = verifyId(auth.userId)
-  await cleanupExpiredActionBatches(storage)
+  if (
+    typeof storage.requiresActionBatchReservationCleanup !== 'function' ||
+    storage.requiresActionBatchReservationCleanup()
+  )
+    await cleanupExpiredActionBatches(storage)
   const batch = requireLiveBatch(await storage.findActionBatch(userId, args.batchId), args.batchId)
   const basket = verifyOne(await storage.findOutputBaskets({ partial: { userId, name: 'default' } }))
   const alreadyReserved = await storage.findActionBatchOutputIds(batch.actionBatchId)
@@ -707,7 +720,11 @@ export async function resumeActionBatch(
   const write = await storage.activeWriteTransaction(auth)
   const userId = verifyId(auth.userId)
   validateResumeOutpoints(storage, args)
-  await cleanupExpiredActionBatches(storage)
+  if (
+    typeof storage.requiresActionBatchReservationCleanup !== 'function' ||
+    storage.requiresActionBatchReservationCleanup()
+  )
+    await cleanupExpiredActionBatches(storage)
   return await write.transaction(async trx => {
     const batch = await storage.findActionBatchForUpdate(userId, args.batchId, trx)
     const state = actionBatchErrorState(batch)
