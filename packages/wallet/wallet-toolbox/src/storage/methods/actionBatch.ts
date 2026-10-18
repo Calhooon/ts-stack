@@ -1,3 +1,4 @@
+import { WalletError } from '../../sdk/WalletError'
 import type { StorageActiveWrite } from '../StorageActiveWrite'
 import { type ValidCreateActionArgs, validateSatoshis } from '@bsv/sdk/wallet/validationHelpers'
 import { Beef, Script } from '@bsv/sdk'
@@ -153,14 +154,34 @@ async function releaseBatchState(
 export async function cleanupExpiredActionBatches(storage: StorageProvider): Promise<number> {
   const now = new Date()
   const expired = await storage.findExpiredActionBatches(now)
+  const fenced =
+    typeof storage.supportsPrimaryWriteFences === 'function' && (await storage.supportsPrimaryWriteFences())
+  const captures = new Map<number, StorageActiveWrite | undefined>()
   let released = 0
   for (const batch of expired) {
-    await storage.transaction(async trx => {
-      const current = await storage.findActionBatchForUpdate(batch.userId, batch.batchId, trx)
-      if (current == null || !canExpire(current, now)) return
-      await releaseBatchState(storage, current, 'expired', trx)
-      released++
-    })
+    try {
+      let write: StorageActiveWrite | undefined
+      if (fenced) {
+        if (!captures.has(batch.userId)) {
+          const user = verifyOne(await storage.findUsers({ partial: { userId: batch.userId } }))
+          captures.set(batch.userId, undefined)
+          captures.set(batch.userId, await storage.activeWriteTransaction(user))
+        }
+        write = captures.get(batch.userId)
+        if (write == null) continue
+      }
+      const release = async (trx: TrxToken): Promise<boolean> => {
+        const current = await storage.findActionBatchForUpdate(batch.userId, batch.batchId, trx)
+        if (current == null || !canExpire(current, now)) return false
+        await releaseBatchState(storage, current, 'expired', trx)
+        return true
+      }
+      // Report only committed releases. A profile retirement cannot free its
+      // reservations, blobs or manifest through a service-wide cleanup pass.
+      if (await (write == null ? storage.transaction(release) : write.transaction(release))) released++
+    } catch (error) {
+      if (WalletError.fromUnknown(error).code !== 'WERR_NOT_ACTIVE') throw error
+    }
   }
   return released
 }

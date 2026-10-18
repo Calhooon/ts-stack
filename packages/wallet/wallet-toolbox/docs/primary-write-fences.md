@@ -114,6 +114,14 @@ conflict/stale-outpoint evidence is applied in the same writer as input release;
 failed-parent evidence is checked against current parent state. Reclaim-anchor
 protection and original legacy failure/blocked-request behavior remain.
 
+Abandoned-action cleanup captures each actual profile before queuing its first
+commit and keeps that capture for the scan. Every bounded background writer
+re-reads ownership, status and age; a fresh action or obsolete epoch is retained,
+and skipped rows contribute to the mutation-safe page offset. Only committed
+failures are logged. Expired batch cleanup also retains original actual profile
+captures and rechecks the locked expiry state. It never frees an inactive
+profile's reservations, manifest or blobs and counts only committed releases.
+
 ## Migration and compatibility
 
 No new schema, wire field, native ABI, quota or persisted authority is added.
@@ -130,9 +138,9 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-Background batch cleanup, expiry lifecycle, abandoned-action failure and UTXO
-review/recovery writers still require the remaining original-epoch and scheduling
-integration. These implemented monitor paths do not imply that every surrounding
+Expiry lifecycle and UTXO review/recovery writers still require the remaining
+original-epoch and scheduling integration. Batch cleanup still uses the existing
+expired-batch scan; bounded large-record selection remains to be completed. These implemented monitor paths do not imply that every surrounding
 maintenance writer is fenced. Remaining supported-provider and large-record
 routing, full primary handoff and whole-system qualification are still required. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a

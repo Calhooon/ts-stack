@@ -4656,6 +4656,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/monitor/tasks/TaskSendWaiting.ts',
         'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
         'src/monitor/tasks/TaskReviewStatus.ts',
+        'src/monitor/tasks/TaskFailAbandoned.ts',
         'src/storage/methods/reviewStatus.ts',
         sourceLineRange(
           repositoryRoot,
@@ -4799,6 +4800,8 @@ function currentWalletMutationTargets(repositoryRoot) {
         [
           '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskSendWaiting.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests/TaskFailAbandoned.test.ts',
+          '<rootDir>/test/Wallet/action/actionBatch.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskReconcilePendingTransactions.test.ts',
           '<rootDir>/test/storage/reviewStatus.test.ts',
           '<rootDir>/src/storage/__test/completeAllTxidCopies.test.ts',

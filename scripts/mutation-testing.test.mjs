@@ -787,6 +787,7 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
     'src/monitor/tasks/TaskSendWaiting.ts',
     'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
     'src/monitor/tasks/TaskReviewStatus.ts',
+    'src/monitor/tasks/TaskFailAbandoned.ts',
     'src/storage/methods/reviewStatus.ts',
     'src/monitor/tasks/TaskCheckForProofs.ts',
     'src/monitor/tasks/TaskArcSSE.ts',

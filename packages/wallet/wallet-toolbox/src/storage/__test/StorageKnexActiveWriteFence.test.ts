@@ -1,3 +1,5 @@
+import { TaskFailAbandoned } from '../../monitor/tasks/TaskFailAbandoned'
+import { cleanupExpiredActionBatches } from '../methods/actionBatch'
 import { captureMonitorReqWrite } from '../../monitor/tasks/WalletMonitorTask'
 import { TaskReconcilePendingTransactions } from '../../monitor/tasks/TaskReconcilePendingTransactions'
 import { applyCapturedTerminalFailure } from '../methods/reconcileFailedTransactionInputs'
@@ -1131,6 +1133,104 @@ test('queued foreground SQL runs before the next captured monitor commit', async
   } finally {
     release()
     await Promise.allSettled([held, foreground, background])
+    await ctx.wallet.destroy()
+  }
+})
+
+test.each(['ABA', 'refreshed'] as const)(
+  'abandoned cleanup rechecks the original actual role and current row, race=%s',
+  async race => {
+    const ctx = await _tu.createLegacyWalletSQLiteCopy('abandoned-actual-role-' + race, 'legacy')
+    try {
+      await _tu.installOfflineLegacyChainTracker(ctx)
+      const created = await ctx.wallet.createAction({
+        description: 'genuine unfinished action for abandoned cleanup',
+        outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'unfinished output' }],
+        options: { noSend: true, signAndProcess: false, randomizeOutputs: false }
+      })
+      const reference = created.signableTransaction?.reference
+      if (reference == null) throw new Error('Missing actual signable action')
+      const storage = ctx.activeStorage
+      const original = (
+        await storage.findTransactions({ partial: { userId: ctx.userId, reference }, noRawTx: true })
+      )[0]
+      expect(original.status).toBe('unsigned')
+      await storage.updateTransaction(original.transactionId, { updated_at: new Date(0) })
+      const beforeInputs = await storage.findOutputs({
+        partial: { userId: ctx.userId, spentBy: original.transactionId }
+      })
+      expect(beforeInputs.length).toBeGreaterThan(0)
+      const capture = storage.activeWriteTransaction.bind(storage)
+      const spy = jest.spyOn(storage, 'activeWriteTransaction').mockImplementationOnce(async auth => {
+        const write = await capture(auth)
+        if (race === 'ABA') {
+          await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+          await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey })
+        } else {
+          await storage.updateTransaction(original.transactionId, { updated_at: new Date() })
+        }
+        return write
+      })
+      const task = new TaskFailAbandoned(ctx.monitor)
+      const result = await task.runTask()
+      expect(result).not.toContain(`updated tx ${original.transactionId} status to 'failed'`)
+      if (race === 'ABA') expect(result).toContain('deferred to its current primary')
+      expect(
+        (await storage.findTransactions({ partial: { transactionId: original.transactionId }, noRawTx: true }))[0]
+          .status
+      ).toBe('unsigned')
+      for (const output of beforeInputs) {
+        expect((await storage.findOutputs({ partial: { outputId: output.outputId } }))[0].spentBy).toBe(
+          original.transactionId
+        )
+      }
+      spy.mockRestore()
+      await storage.updateTransaction(original.transactionId, { updated_at: new Date(0) })
+      expect(await task.runTask()).toContain(`updated tx ${original.transactionId} status to 'failed'`)
+      expect(
+        (await storage.findTransactions({ partial: { transactionId: original.transactionId }, noRawTx: true }))[0]
+          .status
+      ).toBe('failed')
+      for (const output of beforeInputs) {
+        expect((await storage.findOutputs({ partial: { outputId: output.outputId } }))[0].spentBy).toBeUndefined()
+      }
+    } finally {
+      await ctx.wallet.destroy()
+    }
+  }
+)
+
+test('expired batch cleanup cannot release actual reservations across a primary ABA', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('batch-cleanup-original-epoch')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const begin = jest.spyOn(ctx.storage, 'beginActionBatch')
+    await ctx.wallet.createAction({
+      description: 'genuine batch reserved before expiry',
+      outputs: [{ satoshis: 1, lockingScript: '51', outputDescription: 'batched output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    const begun = await begin.mock.results[0].value
+    const storage = ctx.activeStorage
+    const batch = await storage.findActionBatch(ctx.userId, begun.batchId)
+    if (batch == null) throw new Error('Missing actual prepared batch')
+    await storage.updateActionBatch(batch.actionBatchId, { expiresAt: new Date(0) })
+    const reservations = await storage.findActionBatchOutputIds(batch.actionBatchId)
+    expect(reservations.length).toBeGreaterThan(0)
+    const capture = storage.activeWriteTransaction.bind(storage)
+    jest.spyOn(storage, 'activeWriteTransaction').mockImplementationOnce(async auth => {
+      const write = await capture(auth)
+      await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+      await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey })
+      return write
+    })
+    expect(await cleanupExpiredActionBatches(storage)).toBe(0)
+    expect((await storage.findActionBatch(ctx.userId, begun.batchId))?.status).toBe(batch.status)
+    expect(await storage.findActionBatchOutputIds(batch.actionBatchId)).toEqual(reservations)
+    expect(await cleanupExpiredActionBatches(storage)).toBe(1)
+    expect((await storage.findActionBatch(ctx.userId, begun.batchId))?.status).toBe('expired')
+    expect(await storage.findActionBatchOutputIds(batch.actionBatchId)).toEqual([])
+  } finally {
     await ctx.wallet.destroy()
   }
 })
