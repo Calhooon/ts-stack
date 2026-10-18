@@ -3,6 +3,15 @@ import type { Knex } from 'knex'
 import { requireBrc38PackedRead } from '../portable/Brc38NativePackedSchemaNode'
 import { snapshotSyncPrimaryChangeSqlite } from '../schema/snapshotSyncMigration'
 
+import {
+  SNAPSHOT_SYNC_CONTENT_RECEIPTS,
+  verifySnapshotSyncContentReceiptSchema
+} from '../schema/snapshotSyncReceiptMigration'
+import {
+  SNAPSHOT_JOURNAL_DATA_RECEIPTS,
+  verifySnapshotJournalDataReceiptSchema
+} from '../schema/snapshotJournalDataReceiptMigration'
+
 type Column = readonly [name: string, type: string, notNull: number, primary: number]
 const columns: Readonly<Record<string, readonly Column[]>> = {
   snapshot_sync_sessions: [
@@ -131,6 +140,21 @@ export async function verifyNativeSnapshotSyncSchema(trx: Knex.Transaction): Pro
     }
     requireBrc38PackedRead(trx)
   }
+  // Optional comparison DATA belongs to the current migration inventory. A
+  // name alone never exempts it: verify its full live table/index/trigger shape
+  // inside this same actual transaction, including temporary shadow refusal.
+  let receiptCount = 0
+  for (const [name, verify] of [
+    [SNAPSHOT_SYNC_CONTENT_RECEIPTS, verifySnapshotSyncContentReceiptSchema],
+    [SNAPSHOT_JOURNAL_DATA_RECEIPTS, verifySnapshotJournalDataReceiptSchema]
+  ] as const) {
+    const present = (await trx('sqlite_schema').where({ name, type: 'table' }).count({ count: '*' }).first()) as
+      { count: unknown } | undefined
+    if (present?.count === 1) {
+      await verify(trx)
+      receiptCount++
+    } else if (present?.count !== 0) invalid()
+  }
   const sql = snapshotSyncPrimaryChangeSqlite.replace(' IF NOT EXISTS', ''),
     trigger = (await trx('sqlite_schema')
       .where({ name: 'snapshot_sync_primary_change', type: 'trigger', tbl_name: 'users' })
@@ -141,7 +165,7 @@ export async function verifyNativeSnapshotSyncSchema(trx: Knex.Transaction): Pro
       .whereRaw('substr(name,1,14)=?', ['snapshot_sync_'])
       .count({ count: '*' })
       .first()) as { count: unknown } | undefined
-  if (trigger?.count !== 1 || named?.count !== 4) invalid()
+  if (trigger?.count !== 1 || named?.count !== 4 + receiptCount) invalid()
   await readNativeSnapshotSyncMappingRevision(trx)
   requireBrc38PackedRead(trx)
 }

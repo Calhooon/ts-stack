@@ -42,12 +42,12 @@ export async function captureKnexActiveWrite(
     const users: Array<{ identityKey: string; activeStorage: string | null }> = await trx('users')
       .where({ userId })
       .select(
-        trx.raw('substr(identityKey,1,131) AS identityKey'),
-        trx.raw('substr(activeStorage,1,131) AS activeStorage')
+        trx.raw('substr(??,1,131) AS ??', ['identityKey', 'identityKey']),
+        trx.raw('substr(??,1,131) AS ??', ['activeStorage', 'activeStorage'])
       )
       .limit(2)
     const settings: Array<{ storageIdentity: string; chain: string }> = await trx('settings')
-      .select(trx.raw('substr(storageIdentityKey,1,131) AS storageIdentity'), 'chain')
+      .select(trx.raw('substr(??,1,131) AS ??', ['storageIdentityKey', 'storageIdentity']), 'chain')
       .limit(2)
     const epochs: Array<{ epoch: string }> = await trx('snapshot_sync_primary_epochs')
       .where({ userId })

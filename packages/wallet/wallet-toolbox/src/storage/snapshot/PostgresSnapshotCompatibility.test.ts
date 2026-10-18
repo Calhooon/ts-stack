@@ -1,5 +1,7 @@
 import { knex, type Knex } from 'knex'
 import { KnexMigrations } from '../schema/KnexMigrations'
+import { SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION } from '../schema/snapshotSyncReceiptMigration'
+import { SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION } from '../schema/snapshotJournalDataReceiptMigration'
 import { forSnapshotSqlDialect } from '../schema/snapshotSqlMigration'
 import { StorageKnex } from '../StorageKnex'
 import { StorageProvider } from '../StorageProvider'
@@ -11,14 +13,16 @@ const entries = [
   '2026-09-30-003 add snapshot archive requests',
   '2026-10-01-001 add snapshot archive source owners',
   '2026-10-01-002 add snapshot archive source guards',
-  SNAPSHOT_JOURNAL_SOURCE_MIGRATION
+  SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
+  SNAPSHOT_SYNC_CONTENT_RECEIPT_MIGRATION,
+  SNAPSHOT_JOURNAL_DATA_RECEIPT_MIGRATION
 ]
 
 test('Postgres snapshot auxiliary migrations never execute SQLite or MySQL SQL', async () => {
   const k = knex({ client: 'pg', connection: { database: 'unused' }, pool: { min: 0, max: 1 } })
   const source = new KnexMigrations('test', 'postgres compatibility', '1'.repeat(64), 10000)
   const names = (await source.getMigrations()).filter(name => name.includes('snapshot'))
-  expect(names).toHaveLength(11)
+  expect(names).toHaveLength(13)
   expect(names).toEqual(expect.arrayContaining(entries))
   const query = jest.spyOn(k.client, 'query').mockRejectedValue(new Error('Snapshot SQL reached Postgres'))
   const acquire = jest.spyOn(k.client, 'acquireConnection').mockRejectedValue(new Error('Snapshot opened Postgres'))

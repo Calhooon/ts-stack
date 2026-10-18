@@ -176,8 +176,8 @@ async function lockUser(
     .where(partial)
     .select(
       'userId',
-      k.raw('substr(identityKey,1,131) AS identityKey'),
-      k.raw('substr(activeStorage,1,131) AS activeStorage')
+      k.raw('substr(??,1,131) AS ??', ['identityKey', 'identityKey']),
+      k.raw('substr(??,1,131) AS ??', ['activeStorage', 'activeStorage'])
     )
     .limit(2)
   if (mysql) query.forUpdate()
@@ -259,7 +259,7 @@ export async function assertKnexPrimaryRestoreWrite(
   if (!(await hasTable(storage, k))) return
   const users: Array<{ userId: number; activeStorage: string | null }> = await k('users')
     .where({ identityKey })
-    .select('userId', k.raw('substr(activeStorage,1,131) AS activeStorage'))
+    .select('userId', k.raw('substr(??,1,131) AS ??', ['activeStorage', 'activeStorage']))
     .limit(2)
   if (users.length > 1) invalid()
   if (users.length === 0) return // A genuine fresh restore has no enrolled profile.

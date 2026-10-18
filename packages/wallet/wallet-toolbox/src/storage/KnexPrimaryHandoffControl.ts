@@ -64,10 +64,13 @@ export async function createKnexPrimaryHandoffControl(
   const readRole = async (k: Knex, auth: AuthId): Promise<Role> => {
     const users: Array<{ identityKey: string; activeStorage: string | null }> = await k('users')
       .where({ userId: auth.userId })
-      .select(k.raw('substr(identityKey,1,131) AS identityKey'), k.raw('substr(activeStorage,1,131) AS activeStorage'))
+      .select(
+        k.raw('substr(??,1,131) AS ??', ['identityKey', 'identityKey']),
+        k.raw('substr(??,1,131) AS ??', ['activeStorage', 'activeStorage'])
+      )
       .limit(2)
     const settings: Array<{ storageIdentityKey: string; chain: string }> = await k('settings')
-      .select(k.raw('substr(storageIdentityKey,1,131) AS storageIdentityKey'), 'chain')
+      .select(k.raw('substr(??,1,131) AS ??', ['storageIdentityKey', 'storageIdentityKey']), 'chain')
       .limit(2)
     const epochs: Array<{ epoch: string }> = await k('snapshot_sync_primary_epochs')
       .where({ userId: auth.userId })
