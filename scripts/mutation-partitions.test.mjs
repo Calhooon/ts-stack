@@ -246,7 +246,22 @@ test('HTTP execution preserves every canonical range, full configuration and fut
   assert.deepEqual(parts[0].target.mutate, [
     'src/storage/snapshot/archive/SnapshotArchiveProtocol.ts',
     'src/storage/snapshot/archive/KnexSnapshotArchiveRpc.ts',
-    'src/storage/snapshot/archive/SnapshotArchiveTransport.ts'
+    'src/storage/snapshot/archive/SnapshotArchiveTransport.ts',
+    'src/storage/snapshot/RemoteSnapshotSyncContentProtocol.ts',
+    'src/storage/snapshot/journal/KnexSnapshotJournalDataRpc.ts',
+    'src/storage/snapshot/journal/KnexSnapshotJournalFieldRpc.ts',
+    'src/storage/snapshot/journal/RemoteSnapshotJournalFieldDestination.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldRpcProtocol.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldUploadRequest.ts',
+    'src/storage/snapshot/journal/openStoredSnapshotJournalFieldArchive.ts',
+    'src/storage/snapshot/journal/RemoteSnapshotJournalDataDestination.ts',
+    'src/storage/snapshot/journal/SnapshotJournalArchiveProtocol.ts',
+    'src/storage/snapshot/journal/SnapshotJournalArchiveTransport.ts',
+    'src/storage/snapshot/journal/SnapshotJournalDataProtocol.ts',
+    'src/storage/snapshot/journal/openRemoteSnapshotJournalArchive.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldArchiveProtocol.ts',
+    'src/storage/snapshot/journal/SnapshotJournalFieldArchiveTransport.ts',
+    'src/storage/snapshot/journal/openRemoteSnapshotJournalFieldArchive.ts'
   ])
   for (const [index, file] of [
     [1, 'StorageClientBase.ts'],

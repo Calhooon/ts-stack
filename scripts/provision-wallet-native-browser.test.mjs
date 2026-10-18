@@ -131,7 +131,9 @@ test('measured browser admission preserves all other original case and cleanup b
     'utf8'
   )
   const cases = [...catalogue.matchAll(/id: '([^']+)',/g)].map(match => match[1])
-  assert.equal(cases.length, 60)
+  assert.equal(cases.length, 61)
+  assert.equal(new Set(cases).size, 61)
+  assert.ok(cases.includes('verifyPackedIdbSnapshotContentReceipts'))
   for (const id of cases) {
     const inner = nativeBrowserCaseTimeout(id)
     assert.equal(inner, id === 'verifyIdbSnapshotSyncProvenTxReqs' ? 90000 : 30000)
