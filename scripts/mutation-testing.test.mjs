@@ -783,6 +783,11 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
   for (const source of [
     'src/storage/KnexActiveWriteFence.ts',
     'src/storage/StorageReqWrite.ts',
+    'src/monitor/tasks/WalletMonitorTask.ts',
+    'src/monitor/tasks/TaskSendWaiting.ts',
+    'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
+    'src/monitor/tasks/TaskReviewStatus.ts',
+    'src/storage/methods/reviewStatus.ts',
     'src/monitor/tasks/TaskCheckForProofs.ts',
     'src/monitor/tasks/TaskArcSSE.ts',
     'src/monitor/tasks/TaskUnFail.ts',
@@ -796,6 +801,7 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
     'src/storage/methods/noSendExpiry.ts'
   ])
     assert.ok(target.mutate.includes(source))
+  assert.ok(target.mutate.some(path => path.startsWith('src/storage/WalletStorageManager.ts:')))
   assert.ok(target.additionalInputs.includes('src/storage/StorageActiveWrite.ts'))
   assert.ok(JSON.stringify(target).includes('StorageKnexActiveWriteFence.test.ts'))
 })

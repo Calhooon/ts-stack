@@ -164,7 +164,7 @@ type AbortActionStorageResult =
 const MAX_AUTH_PROOF_REQUEST_FALLBACK_ROWS = 10_000
 const MAX_AUTH_PROOF_REQUEST_TXIDS = 1_000
 
-import type { StorageActiveWrite } from './StorageActiveWrite'
+import type { StorageActiveWrite, StorageStatusReviewArgs, StorageWriterAdmission } from './StorageActiveWrite'
 
 export abstract class StorageProvider extends StorageReaderWriter implements WalletStorageProvider {
   isDirty = false
@@ -226,7 +226,12 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     }
   }
 
-  abstract reviewStatus(args: { agedLimit: Date; trx?: TrxToken }): Promise<{ log: string }>
+  /** Scheduling negotiation only; each actual write still captures/checks its role. */
+  async supportsPrimaryWriteFences(): Promise<boolean> {
+    return false
+  }
+
+  abstract reviewStatus(args: StorageStatusReviewArgs): Promise<{ log: string }>
 
   abstract purgeData(params: PurgeParams, trx?: TrxToken): Promise<PurgeResults>
 
@@ -1706,13 +1711,9 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
    * This is called by TaskReviewStatus so a completed request with
    * `notified = false` is retried and can become eligible for normal purge.
    */
-  async reconcileCompletedProvenTxReqs(): Promise<{ log: string }> {
+  async reconcileCompletedProvenTxReqs(admission?: StorageWriterAdmission): Promise<{ log: string }> {
     let log = ''
-    const reqs = await this.findProvenTxReqs({
-      partial: { status: 'completed', notified: false }
-    })
-
-    for (const reqApi of reqs) {
+    for await (const reqApi of this.completedProofRequests()) {
       const req = new EntityProvenTxReq(reqApi)
       if (req.provenTxId == null || req.provenTxId <= 0) {
         log += `completed req ${req.id} cannot reconcile without provenTxId\n`
@@ -1729,11 +1730,18 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
         continue
       }
 
-      await this.reconcileProvenTxReqTransactions(req, new EntityProvenTx(provenApi))
+      const writes = await StorageReqWrite.capture(this, [req.txid], undefined, admission)
+      await this.reconcileProvenTxReqTransactions(req, new EntityProvenTx(provenApi), writes)
       if (req.notified) log += `completed req ${req.id} transaction notifications reconciled\n`
     }
 
     return { log }
+  }
+
+  /** Older providers keep their existing serialized scan. SQL providers can
+   * override with a metadata keyset, hydrating one bounded request at a time. */
+  protected async *completedProofRequests(): AsyncIterable<TableProvenTxReq> {
+    for (const req of await this.findProvenTxReqs({ partial: { status: 'completed', notified: false } })) yield req
   }
 
   private async prepareProofRecoveryOutputVerdicts(

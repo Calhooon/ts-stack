@@ -787,13 +787,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     )
   }
 
-  runAsStorageProvider<R>(sync: (active: StorageProvider) => Promise<R>): Promise<R> {
-    return this.withAccess(active => {
-      if (!active.isStorageProvider()) {
-        throw new WERR_INVALID_OPERATION('Active "WalletStorageProvider" does not support "StorageProvider" interface.')
-      }
-      return sync(active as unknown as StorageProvider)
-    })
+  runAsStorageProvider<R>(sync: (active: StorageProvider) => Promise<R>, background = false): Promise<R> {
+    return this.withAccess(
+      active => {
+        if (!active.isStorageProvider()) {
+          throw new WERR_INVALID_OPERATION(
+            'Active "WalletStorageProvider" does not support "StorageProvider" interface.'
+          )
+        }
+        return sync(active as unknown as StorageProvider)
+      },
+      false,
+      background
+    )
   }
 
   /**

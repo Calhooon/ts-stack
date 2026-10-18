@@ -1,5 +1,5 @@
 import type { StorageProvider } from './StorageProvider'
-import type { StorageActiveWrite } from './StorageActiveWrite'
+import type { StorageActiveWrite, StorageWriterAdmission } from './StorageActiveWrite'
 import type { TrxToken } from '../sdk/WalletStorage.interfaces'
 import type { TransactionStatus } from '../sdk/types'
 import { EntityProvenTxReq } from './schema/entities/EntityProvenTxReq'
@@ -17,15 +17,17 @@ export class StorageReqWrite {
 
   private constructor(
     private readonly storage: StorageProvider,
-    private readonly actor?: { userId: number; write: StorageActiveWrite }
+    private readonly actor?: { userId: number; write: StorageActiveWrite },
+    private readonly admission?: StorageWriterAdmission
   ) {}
 
   static async capture(
     storage: StorageProvider,
     txids: string[],
-    actor?: { userId: number; write: StorageActiveWrite }
+    actor?: { userId: number; write: StorageActiveWrite },
+    admission?: StorageWriterAdmission
   ): Promise<StorageReqWrite> {
-    const captured = new StorageReqWrite(storage, actor)
+    const captured = new StorageReqWrite(storage, actor, admission)
     for (const txid of new Set(txids)) {
       const users = new Map<number, number[]>()
       const rows = await storage.findTransactions({ partial: { txid }, noRawTx: true })
@@ -61,6 +63,36 @@ export class StorageReqWrite {
     }
   }
 
+  /** Older providers keep their serialized manager contract. Only actual
+   * operation captures advertising commit-time epoch checks can prepare outside
+   * that queue. This choice never supplies SQL or financial permission. */
+  get preparesOutsideManager(): boolean {
+    const writes = [...this.profiles.values()].filter((write): write is StorageActiveWrite => write != null)
+    return (
+      writes.length > 0 &&
+      writes.every(write => write.prepareOutsideManager === true) &&
+      (this.actor == null || this.actor.write.prepareOutsideManager === true)
+    )
+  }
+
+  get hasParticipatingProfiles(): boolean {
+    return this.profiles.size > 0
+  }
+
+  get requiresSerializedPreparation(): boolean {
+    return (
+      this.profiles.size === 0 ||
+      [...this.profiles.values()].some(write => write != null && write.prepareOutsideManager !== true) ||
+      (this.actor != null && this.actor.write.prepareOutsideManager !== true)
+    )
+  }
+
+  async prepare<T>(operation: (storage: StorageProvider) => Promise<T>): Promise<T> {
+    if (!this.preparesOutsideManager) throw new WERR_INVALID_OPERATION('Provider requires serialized preparation')
+    await this.assertCurrent()
+    return await operation(this.storage)
+  }
+
   async assertCurrent(): Promise<void> {
     if (this.actor != null) return await this.actor.write.assertCurrent()
     if (this.profiles.size === 0) return // Cache-only orphan; no financial owner.
@@ -76,11 +108,15 @@ export class StorageReqWrite {
     throw new WERR_NOT_ACTIVE('No captured participating wallet profile is still active')
   }
 
+  private async admit<T>(operation: () => Promise<T>): Promise<T> {
+    return this.preparesOutsideManager && this.admission != null ? await this.admission(operation) : await operation()
+  }
+
   async forUser(userId: number, apply: (trx: TrxToken) => Promise<void>): Promise<boolean> {
     const write = this.profiles.get(userId)
     if (write == null) return false
     try {
-      await write.transaction(apply)
+      await this.admit(async () => await write.transaction(apply))
       return true
     } catch (error) {
       if (!isObsolete(error)) throw error
@@ -112,43 +148,58 @@ export class StorageReqWrite {
    */
   async request(
     req: EntityProvenTxReq,
-    apply: (current: EntityProvenTxReq, trx: TrxToken) => Promise<void>
+    apply: (current: EntityProvenTxReq, trx: TrxToken) => Promise<void | false>
   ): Promise<boolean> {
     this.assertRequests([req])
+    let committed: EntityProvenTxReq | undefined
     const run = async (trx: TrxToken) => {
       const current = await EntityProvenTxReq.fromStorageId(this.storage, req.id, trx)
       if (current.txid !== req.txid) throw new WERR_NOT_ACTIVE('The selected proof request changed')
-      await apply(current, trx)
-      await current.updateStorageDynamicProperties(this.storage, trx)
-      req.api = current.api
+      if ((await apply(current, trx)) !== false) await current.updateStorageDynamicProperties(this.storage, trx)
+      committed = current
+    }
+    const publish = () => {
+      if (committed == null) throw new WERR_INVALID_OPERATION('Request writer did not complete')
+      req.api = committed.api
       req.unpackApi()
     }
     if (this.actor != null) {
-      await this.actor.write.transaction(run)
+      await this.admit(async () => await this.actor!.write.transaction(run))
+      publish()
       return true
     }
     if (this.profiles.size === 0) {
       await this.storage.transaction(run)
+      publish()
       return true
     }
-    for (const userId of this.profiles.keys()) if (await this.forUser(userId, run)) return true
+    for (const userId of this.profiles.keys())
+      if (await this.forUser(userId, run)) {
+        publish()
+        return true
+      }
     return false
   }
 
-  async status(req: EntityProvenTxReq, status: TransactionStatus): Promise<void> {
+  async status<T = never>(
+    req: EntityProvenTxReq,
+    status: TransactionStatus,
+    after?: (userId: number, trx: TrxToken) => Promise<T>
+  ): Promise<T[]> {
+    const results: T[] = []
     for (const [userId, ids] of this.transactions.get(req.txid) ?? []) {
-      await this.forUser(userId, async trx => {
+      let result: T | undefined
+      const applied = await this.forUser(userId, async trx => {
         const current = await EntityProvenTxReq.fromStorageId(this.storage, req.id, trx)
         if (current.status === 'completed') return
         const nextStatus = current.status === 'unmined' ? 'unproven' : status
+        let eligible = false
         for (const transactionId of ids) {
           const rows = await this.storage.findTransactions({
             partial: { transactionId, userId, txid: req.txid },
             noRawTx: true,
             trx
           })
-          // Recheck actual ownership and preserve already completed proofs. New
-          // copies discovered after capture are left for a fresh monitor pass.
           if (
             rows.length !== 1 ||
             rows[0].status === 'completed' ||
@@ -156,10 +207,17 @@ export class StorageReqWrite {
             (rows[0].status === 'failed' && nextStatus !== 'failed')
           )
             continue
-          await this.storage.updateTransactionStatus(nextStatus, transactionId, undefined, undefined, trx)
+          eligible = true
+          if (rows[0].status !== nextStatus || nextStatus === 'failed')
+            await this.storage.updateTransactionStatus(nextStatus, transactionId, undefined, undefined, trx)
         }
+        // Failure cleanup and quarantine share this same actual profile writer.
+        // Never quarantine after a competing proof/accepted-state advance.
+        if (eligible && nextStatus === status && after != null) result = await after(userId, trx)
       })
+      if (applied && result !== undefined) results.push(result)
     }
+    return results
   }
 }
 

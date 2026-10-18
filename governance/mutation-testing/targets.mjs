@@ -4652,6 +4652,18 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/StorageKnex.ts',
         'src/storage/KnexActiveWriteFence.ts',
         'src/storage/StorageReqWrite.ts',
+        'src/monitor/tasks/WalletMonitorTask.ts',
+        'src/monitor/tasks/TaskSendWaiting.ts',
+        'src/monitor/tasks/TaskReconcilePendingTransactions.ts',
+        'src/monitor/tasks/TaskReviewStatus.ts',
+        'src/storage/methods/reviewStatus.ts',
+        sourceLineRange(
+          repositoryRoot,
+          'packages/wallet/wallet-toolbox',
+          'src/storage/WalletStorageManager.ts',
+          'runAsStorageProvider<R>(',
+          'invalidatePreparedBeefsForReorg(): Promise<void>'
+        ),
         'src/monitor/tasks/TaskCheckForProofs.ts',
         'src/monitor/tasks/TaskArcSSE.ts',
         'src/monitor/tasks/TaskUnFail.ts',
@@ -4786,6 +4798,9 @@ function currentWalletMutationTargets(repositoryRoot) {
         'jest.config.cjs',
         [
           '<rootDir>/src/storage/__test/StorageKnexActiveWriteFence.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests/TaskSendWaiting.test.ts',
+          '<rootDir>/src/monitor/tasks/__tests/TaskReconcilePendingTransactions.test.ts',
+          '<rootDir>/test/storage/reviewStatus.test.ts',
           '<rootDir>/src/storage/__test/completeAllTxidCopies.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskCheckForProofs.test.ts',
           '<rootDir>/src/monitor/tasks/__tests/TaskArcSSE.test.ts',

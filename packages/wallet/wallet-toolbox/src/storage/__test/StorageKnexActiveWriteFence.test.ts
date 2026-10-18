@@ -1,3 +1,8 @@
+import { captureMonitorReqWrite } from '../../monitor/tasks/WalletMonitorTask'
+import { TaskReconcilePendingTransactions } from '../../monitor/tasks/TaskReconcilePendingTransactions'
+import { applyCapturedTerminalFailure } from '../methods/reconcileFailedTransactionInputs'
+import { getProofs, TaskCheckForProofs } from '../../monitor/tasks/TaskCheckForProofs'
+import { TaskSendWaiting } from '../../monitor/tasks/TaskSendWaiting'
 import { TaskUnFail } from '../../monitor/tasks/TaskUnFail'
 import { markConfirmedStaleReqInputs } from '../methods/reconcileFailedTransactionInputs'
 import { StorageReqWrite } from '../StorageReqWrite'
@@ -576,9 +581,12 @@ test('shared request result commits preserve late durable notification history a
     expect(unrelated).toBeDefined()
     stale.addNotifyTransactionId(unrelated.transactionId)
     const update = jest.spyOn(storage, 'updateTransactionStatus')
+    await writes.request(stale, async current => {
+      current.status = 'unsent'
+    })
     await writes.status(stale, 'sending')
     expect(update).not.toHaveBeenCalledWith(
-      'unproven',
+      'sending',
       unrelated.transactionId,
       expect.anything(),
       expect.anything(),
@@ -782,9 +790,347 @@ test('a rejected unfail proof cannot invalidate a newer actual primary generatio
       return { name: 'unavailable-proof-after-ABA' }
     })
     const task = new TaskUnFail(ctx.monitor)
-    await expect(task.unfail([req.toApi()])).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(await task.unfail([req.toApi()])).toMatchObject({
+      deferred: 1,
+      log: expect.stringContaining('deferred to its current primary')
+    })
     expect((await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)).status).toBe('unfail')
   } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('a rolled-back captured request never publishes uncommitted metadata to its caller', async () => {
+  const { ctx, req } = await sharedRequestFixture('request-publication-after-commit')
+  try {
+    const storage = ctx.activeStorage
+    const write = await storage.activeWriteTransaction({ identityKey: ctx.identityKey, userId: ctx.userId })
+    const captured = await StorageReqWrite.capture(storage, [req.txid], { userId: ctx.userId, write })
+    await expect(
+      captured.request(req, async (current, trx) => {
+        current.addHistoryNote({ what: 'rolled-back-observation' })
+        await storage.updateUser(ctx.userId, { activeStorage: 'away' }, trx)
+        await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey }, trx)
+      })
+    ).rejects.toMatchObject({ code: 'WERR_NOT_ACTIVE' })
+    expect(req.history.notes?.some(note => note.what === 'rolled-back-observation')).toBe(false)
+    expect(
+      (await EntityProvenTxReq.fromStorageId(storage, req.id)).history.notes?.some(
+        note => note.what === 'rolled-back-observation'
+      )
+    ).toBe(false)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('the proof checker cannot persist attempts or history across an obsolete actual profile epoch', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('proof-checker-metadata-ABA', 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'real proof checker observation epoch',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'proof checker output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing actual signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual request')
+    await ctx.activeStorage.updateProvenTxReq(req.id, { status: 'unmined' })
+    await req.refreshFromStorage(ctx.activeStorage)
+    const before = { ...req.toApi() }
+    jest.spyOn(ctx.monitor.services, 'getMerklePath').mockImplementationOnce(async () => {
+      const identity = ctx.activeStorage.getSettings().storageIdentityKey
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: 'away' })
+      await ctx.activeStorage.updateUser(ctx.userId, { activeStorage: identity })
+      return { name: 'proof-checker-delayed-no-proof', notes: [{ what: 'must-not-persist-obsolete-observation' }] }
+    })
+    const deferred = await getProofs(
+      new TaskCheckForProofs(ctx.monitor),
+      [req.toApi()],
+      Number.MAX_SAFE_INTEGER,
+      0,
+      true
+    )
+    expect(deferred.log).toContain('deferred to its current primary')
+    expect(deferred.proven).toEqual([])
+    expect(deferred.invalid).toEqual([])
+    const current = await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)
+    expect(current.attempts).toBe(before.attempts)
+    expect(current.apiHistory).toBe(before.history)
+    expect(current.status).toBe(before.status)
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('a slow proof observation preserves concurrent attempts, advanced state and late history', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('proof-checker-late-metadata', 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'real concurrent proof observer',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'late observation output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing actual signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual request')
+    await ctx.activeStorage.updateProvenTxReq(req.id, { status: 'unmined', attempts: 0 })
+    await req.refreshFromStorage(ctx.activeStorage)
+    jest.spyOn(ctx.monitor.services, 'getMerklePath').mockImplementationOnce(async () => {
+      const current = await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)
+      current.attempts = 3
+      current.addHistoryNote({ what: 'another-live-observer' })
+      await current.updateStorageDynamicProperties(ctx.activeStorage)
+      return { name: 'proof-checker-no-proof', notes: [{ what: 'late-proof-observer' }] }
+    })
+    await getProofs(new TaskCheckForProofs(ctx.monitor), [req.toApi()], Number.MAX_SAFE_INTEGER, 0, true)
+    const current = await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)
+    expect(current.attempts).toBe(4)
+    expect(current.status).toBe('unmined')
+    expect(current.history.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ what: 'another-live-observer' }),
+        expect.objectContaining({ what: 'late-proof-observer' })
+      ])
+    )
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('the actual waiting-send monitor releases manager ownership while a broadcast is pending', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('monitor-send-foreground-yield', 'legacy')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let pending: Promise<string> | undefined
+  let foreground: Promise<unknown> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'real background broadcast fairness',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'foreground yielding output' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing actual signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual request')
+    await ctx.activeStorage.updateProvenTxReq(req.id, { status: 'unsent', updated_at: new Date(0) })
+    jest.spyOn(ctx.services, 'postBeef').mockImplementation(async (_beef, txids) => {
+      entered()
+      await gate
+      return [
+        {
+          name: 'controlled-monitor-post',
+          status: 'success',
+          txidResults: txids.map(txid => ({ txid, status: 'success' }))
+        }
+      ]
+    })
+    const task = new TaskSendWaiting(ctx.monitor, 0, 0)
+    pending = task.runTask()
+    await Promise.race([
+      reached,
+      pending.then(() => {
+        throw new Error('Monitor did not reach actual post')
+      })
+    ])
+    const basket = (await ctx.activeStorage.findOutputBaskets({ partial: { userId: ctx.userId, name: 'default' } }))[0]
+    foreground = ctx.storage.runAsStorageProvider(async sp => {
+      await sp.updateOutputBasket(basket.basketId, { numberOfDesiredUTXOs: 9 })
+      return (await sp.findOutputBaskets({ partial: { userId: ctx.userId, basketId: basket.basketId } }))[0]
+        .numberOfDesiredUTXOs
+    })
+    await expect(
+      Promise.race([
+        foreground,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Foreground writer blocked by pending monitor transport')), 1500)
+        })
+      ])
+    ).resolves.toBe(9)
+    release()
+    await pending
+    expect((await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)).status).toBe('unmined')
+  } finally {
+    if (timer != null) clearTimeout(timer)
+    release()
+    await pending?.catch(() => undefined)
+    await foreground?.catch(() => undefined)
+    await ctx.wallet.destroy()
+  }
+})
+
+test('a wholly invalid real request set returns validation results without posting an empty batch', async () => {
+  const ctx = await _tu.createLegacyWalletSQLiteCopy('monitor-invalid-no-empty-post', 'legacy')
+  try {
+    await _tu.installOfflineLegacyChainTracker(ctx)
+    const created = await ctx.wallet.createAction({
+      description: 'real invalid broadcast preparation',
+      outputs: [{ satoshis: 741, lockingScript: '51', outputDescription: 'invalid request metadata' }],
+      options: { noSend: true, randomizeOutputs: false }
+    })
+    if (created.txid == null) throw new Error('Missing actual signed action')
+    const req = await EntityProvenTxReq.fromStorageTxid(ctx.activeStorage, created.txid)
+    if (req == null) throw new Error('Missing actual request')
+    req.inputBEEF = undefined
+    const post = jest.spyOn(ctx.services, 'postBeef').mockImplementation(async () => {
+      throw new Error('No valid transaction may reach transport')
+    })
+    const result = await ctx.activeStorage.attemptToPostReqsToNetwork([req])
+    expect(post).not.toHaveBeenCalled()
+    expect(result.details).toHaveLength(1)
+    expect(result.details[0].status).toBe('invalid')
+    expect((await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)).status).toBe('invalid')
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test('terminal cleanup and quarantine share one actual captured profile transaction', async () => {
+  const { ctx, req, rows } = await sharedRequestFixture('terminal-quarantine-atomic-writer')
+  try {
+    const storage = ctx.activeStorage
+    const writes = await StorageReqWrite.capture(storage, [req.txid])
+    await writes.request(req, async current => {
+      current.status = 'doubleSpend'
+    })
+    const owned = rows.find(row => row.userId === ctx.userId)!
+    const before = await storage.findOutputs({ partial: { userId: ctx.userId, spentBy: owned.transactionId } })
+    expect(before.length).toBeGreaterThan(0)
+    const stop = new Error('injected quarantine rollback')
+    await expect(
+      writes.status(req, 'failed', async (userId, trx) => {
+        if (userId === ctx.userId) {
+          await storage.updateOutput(before[0].outputId, { spendable: false }, trx)
+          throw stop
+        }
+      })
+    ).rejects.toBe(stop)
+    expect(
+      (await storage.findTransactions({ partial: { transactionId: owned.transactionId }, noRawTx: true }))[0].status
+    ).toBe('unproven')
+    expect((await storage.findOutputs({ partial: { outputId: before[0].outputId } }))[0].spentBy).toBe(
+      owned.transactionId
+    )
+    const applied = await applyCapturedTerminalFailure(req, storage, writes, true)
+    expect(applied.staleConfirmed).toBeGreaterThan(0)
+    expect(
+      (await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })).every(
+        row => row.status === 'failed'
+      )
+    ).toBe(true)
+    for (const output of before) {
+      const current = (await storage.findOutputs({ partial: { outputId: output.outputId } }))[0]
+      expect(current.spendable).toBe(false)
+      expect(current.spentBy).toBeUndefined()
+    }
+  } finally {
+    await ctx.wallet.destroy()
+  }
+})
+
+test.each([false, true])(
+  'proactive terminal observation and drift repair preserve primary ownership, conflict=%s',
+  async inputConflict => {
+    const { ctx, req, second } = await sharedRequestFixture('terminal-observation-and-review-primary')
+    try {
+      const storage = ctx.activeStorage
+      await storage.updateProvenTxReq(req.id, { status: 'unmined', created_at: new Date(0), updated_at: new Date(0) })
+      const find = ctx.storage.findProvenTxReqs.bind(ctx.storage)
+      jest
+        .spyOn(ctx.storage, 'findProvenTxReqs')
+        .mockImplementation(async args => (await find(args)).filter(row => row.provenTxReqId === req.id))
+      jest.spyOn(ctx.monitor.services, 'getStatusForTxids').mockImplementationOnce(async (...args) => {
+        const [txids] = args
+        expect(txids).toEqual([req.txid])
+        await storage.updateUser(ctx.userId, { activeStorage: 'another-primary' })
+        return {
+          name: 'controlled-terminal-status',
+          status: 'success',
+          results: [
+            {
+              txid: req.txid,
+              status: 'unknown',
+              depth: undefined,
+              terminal: true,
+              inputConflict,
+              providerStatus: 'MISSING_INPUTS'
+            }
+          ]
+        }
+      })
+      const result = JSON.parse(await new TaskReconcilePendingTransactions(ctx.monitor, 0, 100, 0).runTask())
+      expect(result.reconciled).toBe(1)
+      let current = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+      expect(current.find(row => row.userId === ctx.userId)?.status).toBe('unproven')
+      expect(current.find(row => row.userId === second.userId)?.status).toBe('failed')
+      // This service-wide repair must not undo the profile fence on its next run.
+      await storage.reviewStatus({ agedLimit: new Date() })
+      current = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+      expect(current.find(row => row.userId === ctx.userId)?.status).toBe('unproven')
+      expect(current.find(row => row.userId === second.userId)?.status).toBe('failed')
+      await storage.updateUser(ctx.userId, { activeStorage: storage.getSettings().storageIdentityKey })
+      await storage.reviewStatus({ agedLimit: new Date() })
+      current = await storage.findTransactions({ partial: { txid: req.txid }, noRawTx: true })
+      expect(current.every(row => row.status === 'failed')).toBe(true)
+    } finally {
+      await ctx.wallet.destroy()
+    }
+  }
+)
+
+test('queued foreground SQL runs before the next captured monitor commit', async () => {
+  const { ctx, req } = await sharedRequestFixture('monitor-background-commit-priority')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let entered!: () => void
+  const reached = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  let held: Promise<unknown> | undefined
+  let foreground: Promise<unknown> | undefined
+  let background: Promise<unknown> | undefined
+  try {
+    const writes = await captureMonitorReqWrite({ storage: ctx.storage }, [req.txid])
+    if (writes == null) throw new Error('Actual migrated provider did not supply monitor captures')
+    expect(writes.preparesOutsideManager).toBe(true)
+    held = ctx.storage.runAsStorageProvider(async () => {
+      entered()
+      await gate
+    })
+    await reached
+    const order: string[] = []
+    background = writes.request(req, async current => {
+      current.addHistoryNote({ what: 'background-priority-witness' })
+      order.push('background')
+    })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    const basket = (await ctx.activeStorage.findOutputBaskets({ partial: { userId: ctx.userId, name: 'default' } }))[0]
+    foreground = ctx.storage.runAsStorageProvider(async sp => {
+      await sp.updateOutputBasket(basket.basketId, { numberOfDesiredUTXOs: 8 })
+      expect((await sp.findOutputBaskets({ partial: { basketId: basket.basketId } }))[0].numberOfDesiredUTXOs).toBe(8)
+      order.push('foreground')
+    })
+    release()
+    await Promise.all([held, foreground, background])
+    expect(order).toEqual(['foreground', 'background'])
+    expect((await EntityProvenTxReq.fromStorageId(ctx.activeStorage, req.id)).history.notes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ what: 'background-priority-witness' })])
+    )
+  } finally {
+    release()
+    await Promise.allSettled([held, foreground, background])
     await ctx.wallet.destroy()
   }
 })

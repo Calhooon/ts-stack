@@ -80,6 +80,40 @@ The source/target sync/import paths keep their separate actual writer admission
 and financial semantics; they do not use an ordinary primary write fence to
 pretend that an import activates a restored primary.
 
+## Monitor scheduling and replay
+
+Supported SQL captures advertise internal `prepareOutsideManager` scheduling.
+The actual provider must still compare its original role/epoch in every writer;
+this routing hint is not SQL permission and cannot be selected by wire DATA.
+Proof checking, unfail, waiting sends and mined-SSE recovery release manager
+ownership before external work. Each actual SQL callback rejoins the original
+manager/provider as background work, allowing queued foreground work to run
+first. Provider replacement rejects old callbacks. Older/custom providers keep
+the serialized path unless they implement the actual fencing capability.
+
+Proof-checker metadata merges into current locked rows. Concurrent attempts,
+rebroadcast cycles, late history/notifications and advanced durable states survive
+slow observations. Request objects publish new metadata only after commit and
+its final epoch check. Entirely invalid broadcast sets return validation results
+without posting an empty transaction list.
+
+SSE and proactive terminal reconciliation capture before observations and apply
+failure bookkeeping plus input quarantine atomically for each real profile.
+Inactive/moved profiles defer without granting another profile authority or
+blocking unrelated requests. Their original durable states stay pending for a
+fresh current-primary invocation; deferral is not a financial acknowledgement.
+
+SQL drift repair now scans metadata with user/transaction keysets and performs
+one financial transaction's bounded repair per actual epoch-checked writer.
+Completed-proof retry hydrates one request at a time behind bounded ID pages.
+External proof/output observations stay outside manager and SQL ownership;
+only commits rejoin background admission. Stored proof completion is not
+replaced by a weaker rejection. Deferred terminal and accepted states are
+replayed for a profile only after fresh actual primary admission. Recorded
+conflict/stale-outpoint evidence is applied in the same writer as input release;
+failed-parent evidence is checked against current parent state. Reclaim-anchor
+protection and original legacy failure/blocked-request behavior remain.
+
 ## Migration and compatibility
 
 No new schema, wire field, native ABI, quota or persisted authority is added.
@@ -96,12 +130,11 @@ completed and qualified; this change does not advertise a new capability there.
 The role transition itself must still demote/fence the old primary before a new
 primary becomes writable, with durable recovery for an uncertain remote reply.
 These ordinary writer restrictions do not implement that distributed handoff.
-Background batch cleanup and expiry/proof-monitor writers still need their own
-original-epoch integration for their remaining scheduling/status/history,
-terminal input quarantine and publication phases. Central mined-proof fan-out
-and recovery fences do not fence every surrounding monitor mutation. Some legacy
-monitor wrappers also retain manager ownership during external preparation;
-completing the supported-provider scheduling split remains required. Previously committed old-primary work
+Background batch cleanup, expiry lifecycle, abandoned-action failure and UTXO
+review/recovery writers still require the remaining original-epoch and scheduling
+integration. These implemented monitor paths do not imply that every surrounding
+maintenance writer is fenced. Remaining supported-provider and large-record
+routing, full primary handoff and whole-system qualification are still required. Previously committed old-primary work
 must be reconciled through actual target state; a caller's failure log is not a
 new financial acknowledgement or permission to undo it on another primary.
 

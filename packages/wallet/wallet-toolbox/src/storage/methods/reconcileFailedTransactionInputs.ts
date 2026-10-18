@@ -25,11 +25,13 @@ interface LocalInput {
 async function quarantineLocalInputs(
   localInputs: LocalInput[],
   storage: StorageProvider,
-  trx?: sdk.TrxToken
+  trx?: sdk.TrxToken,
+  skipUnchanged = false
 ): Promise<FailedInputReconciliationResult> {
   const staleOutpoints = new Set<string>()
   for (const { output, outpoint } of localInputs) {
-    await storage.updateOutput(verifyId(output.outputId), { spendable: false }, trx)
+    if (!skipUnchanged || output.spendable)
+      await storage.updateOutput(verifyId(output.outputId), { spendable: false }, trx)
     staleOutpoints.add(`${outpoint.txid}.${outpoint.vout}`)
   }
   return {
@@ -42,7 +44,8 @@ async function quarantineLocalInputs(
 async function findLocalInputs(
   req: EntityProvenTxReq,
   storage: StorageProvider,
-  trx?: sdk.TrxToken
+  trx?: sdk.TrxToken,
+  onlyUserId?: number
 ): Promise<LocalInput[]> {
   const tx = Transaction.fromBinary(req.rawTx)
   const outpoints = tx.inputs
@@ -54,7 +57,7 @@ async function findLocalInputs(
   // notification list is racing. Resolve every local copy by txid so no user's
   // basket retains the same confirmed-stale outpoint.
   const transactions = await storage.findTransactions({
-    partial: { txid: req.txid },
+    partial: { txid: req.txid, ...(onlyUserId == null ? {} : { userId: onlyUserId }) },
     noRawTx: true,
     trx
   })
@@ -87,10 +90,15 @@ export async function quarantineReqInputs(
   req: EntityProvenTxReq,
   storage: StorageProvider,
   trx?: sdk.TrxToken,
-  logger?: WalletLoggerInterface
+  logger?: WalletLoggerInterface,
+  onlyUserId?: number,
+  onlyOutpoints?: ReadonlySet<string>,
+  skipUnchanged = false
 ): Promise<FailedInputReconciliationResult> {
-  const localInputs = await findLocalInputs(req, storage, trx)
-  const result = await quarantineLocalInputs(localInputs, storage, trx)
+  const localInputs = (await findLocalInputs(req, storage, trx, onlyUserId)).filter(
+    ({ outpoint }) => onlyOutpoints == null || onlyOutpoints.has(`${outpoint.txid}.${outpoint.vout}`)
+  )
+  const result = await quarantineLocalInputs(localInputs, storage, trx, skipUnchanged)
   if (result.staleConfirmed > 0) {
     logger?.log(
       `quarantineReqInputs: ${result.staleConfirmed} local input copy/copies quarantined for txid=${req.txid}`
@@ -109,13 +117,15 @@ export async function quarantineReqInputsFromFailedParents(
   failedParentTxids: string[],
   storage: StorageProvider,
   trx?: sdk.TrxToken,
-  logger?: WalletLoggerInterface
+  logger?: WalletLoggerInterface,
+  onlyUserId?: number,
+  skipUnchanged = false
 ): Promise<FailedInputReconciliationResult> {
   const failedParents = new Set(failedParentTxids)
-  const localInputs = (await findLocalInputs(req, storage, trx)).filter(({ outpoint }) =>
+  const localInputs = (await findLocalInputs(req, storage, trx, onlyUserId)).filter(({ outpoint }) =>
     failedParents.has(outpoint.txid)
   )
-  const result = await quarantineLocalInputs(localInputs, storage, trx)
+  const result = await quarantineLocalInputs(localInputs, storage, trx, skipUnchanged)
   if (result.staleConfirmed > 0) {
     logger?.log(
       `quarantineReqInputsFromFailedParents: ${result.staleConfirmed} local parent output copy/copies quarantined for txid=${req.txid}`
@@ -210,4 +220,64 @@ export async function markConfirmedStaleReqInputs(
     )
   }
   return result
+}
+
+/** Original captures restrict each real profile. Failure bookkeeping and input
+ * quarantine commit atomically; counts include only actual committed scopes. */
+export async function applyCapturedTerminalFailure(
+  req: EntityProvenTxReq,
+  storage: StorageProvider,
+  writes: StorageReqWrite,
+  inputConflict: boolean,
+  failedParentTxids: string[] = []
+): Promise<FailedInputReconciliationResult> {
+  writes.assertProvider(storage)
+  const results = await writes.status(req, 'failed', async (userId, trx) => {
+    if (inputConflict) return await quarantineReqInputs(req, storage, trx, undefined, userId)
+    if (failedParentTxids.length)
+      return await quarantineReqInputsFromFailedParents(req, failedParentTxids, storage, trx, undefined, userId)
+    return { checked: 0, staleConfirmed: 0, staleOutpoints: [] }
+  })
+  return {
+    checked: results.reduce((sum, result) => sum + result.checked, 0),
+    staleConfirmed: results.reduce((sum, result) => sum + result.staleConfirmed, 0),
+    staleOutpoints: [...new Set(results.flatMap(result => result.staleOutpoints))]
+  }
+}
+
+/** Replay only recorded terminal evidence, under the caller's actual user
+ * writer. History chooses comparison data, never a SQL actor or primary grant. */
+export async function quarantineRecordedTerminalInputs(
+  req: EntityProvenTxReq,
+  storage: StorageProvider,
+  userId: number,
+  trx: sdk.TrxToken
+): Promise<void> {
+  if (!['invalid', 'doubleSpend'].includes(req.status)) return
+  const notes = req.history.notes ?? []
+  if (
+    notes.some(
+      note =>
+        ['arcSSETerminalRejection', 'proactiveTerminalReconciliation'].includes(note.what ?? '') &&
+        note.inputConflict === true
+    )
+  ) {
+    await quarantineReqInputs(req, storage, trx, undefined, userId, undefined, true)
+    return
+  }
+  const spent = new Set<string>()
+  const parents = new Set<string>()
+  for (const note of notes) {
+    if (note.what === 'markStaleInputsAsSpent' && typeof note.outpoints === 'string')
+      for (const point of note.outpoints.split(',')) spent.add(point)
+    if (note.what === 'proactiveFailedParentQuarantine' && typeof note.parentTxids === 'string')
+      for (const txid of note.parentTxids.split(',')) if (/^[a-f0-9]{64}$/.test(txid)) parents.add(txid)
+  }
+  if (spent.size) await quarantineReqInputs(req, storage, trx, undefined, userId, spent, true)
+  const failed: string[] = []
+  for (const txid of parents) {
+    const current = await storage.findProvenTxReqs({ partial: { txid }, trx })
+    if (current.some(parent => ['invalid', 'doubleSpend'].includes(parent.status))) failed.push(txid)
+  }
+  if (failed.length) await quarantineReqInputsFromFailedParents(req, failed, storage, trx, undefined, userId, true)
 }

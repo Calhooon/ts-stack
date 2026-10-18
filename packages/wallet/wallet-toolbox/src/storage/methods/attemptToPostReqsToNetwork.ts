@@ -39,6 +39,7 @@ export async function attemptToPostReqsToNetwork(
 
   const { r, vreqs, txids } = await validateReqsAndMergeBeefs(storage, reqs, trx, writes)
   logger?.log('validated request and merged beefs')
+  if (txids.length === 0) return r
 
   const services = storage.getServices()
 

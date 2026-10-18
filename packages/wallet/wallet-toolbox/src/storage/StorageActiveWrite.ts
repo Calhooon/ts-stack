@@ -8,6 +8,19 @@ import type { TrxToken } from '../sdk/WalletStorage.interfaces'
  * their existing serialized contract through the default implementation.
  */
 export interface StorageActiveWrite {
+  /** Scheduling capability only. The actual provider must still validate its
+   * original durable epoch in every SQL commit; wire data cannot select this. */
+  readonly prepareOutsideManager?: true
   transaction: <T>(scope: (trx: TrxToken) => Promise<T>, trx?: TrxToken) => Promise<T>
   assertCurrent: () => Promise<void>
+}
+
+/** @internal Scheduling only; the actual SQL writer supplies authority. */
+export type StorageWriterAdmission = <T>(operation: () => Promise<T>) => Promise<T>
+
+/** @internal Optional manager scheduling for bounded monitor SQL scopes. */
+export interface StorageStatusReviewArgs {
+  agedLimit: Date
+  trx?: TrxToken
+  admission?: StorageWriterAdmission
 }

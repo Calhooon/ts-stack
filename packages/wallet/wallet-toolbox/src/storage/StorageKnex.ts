@@ -1,6 +1,6 @@
-import { SNAPSHOT_SYNC_MIGRATION } from './schema/snapshotSyncMigration'
+import { SNAPSHOT_SYNC_MIGRATION, verifySnapshotSyncPrimaryFence } from './schema/snapshotSyncMigration'
 import { captureKnexActiveWrite } from './KnexActiveWriteFence'
-import type { StorageActiveWrite } from './StorageActiveWrite'
+import type { StorageActiveWrite, StorageStatusReviewArgs } from './StorageActiveWrite'
 import {
   parseSnapshotJournalFieldArchiveReference,
   type SnapshotJournalFieldArchiveReference
@@ -3896,7 +3896,7 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     }
   }
 
-  override async activeWriteTransaction(auth: AuthId): Promise<StorageActiveWrite> {
+  private async primaryWriteFenceInstalled(): Promise<boolean> {
     if (this.snapshotAdmissionStopped) throw new WERR_INVALID_OPERATION('Active wallet writer admission is stopped')
     await this.makeAvailable()
     const client = String(this.knex.client.config.client)
@@ -3905,17 +3905,47 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       (!['sqlite3', 'better-sqlite3', 'mysql', 'mysql2'].includes(client) &&
         ownedNativeRootIdentity(this.knex)?.slot !== 0)
     )
-      return await super.activeWriteTransaction(auth)
+      return false
     const table = this.knex.client.config.migrations?.tableName ?? 'knex_migrations'
     const installed = await this.knex.schema.hasTable('snapshot_sync_primary_epochs')
     const entries: Array<{ name: string }> = await this.knex(table)
       .where('name', SNAPSHOT_SYNC_MIGRATION)
       .select('name')
       .limit(2)
-    if (!installed && entries.length === 0) return await super.activeWriteTransaction(auth)
+    if (!installed && entries.length === 0) return false
     if (!installed || entries.length !== 1)
       throw new WERR_INVALID_OPERATION('Active wallet primary fence migration is incomplete')
+    return true
+  }
+
+  override async supportsPrimaryWriteFences(): Promise<boolean> {
+    if (!(await this.primaryWriteFenceInstalled())) return false
+    await verifySnapshotSyncPrimaryFence(this.knex)
+    return true
+  }
+
+  override async activeWriteTransaction(auth: AuthId): Promise<StorageActiveWrite> {
+    if (!(await this.primaryWriteFenceInstalled())) return await super.activeWriteTransaction(auth)
     return await captureKnexActiveWrite(this, auth, () => !this.snapshotAdmissionStopped)
+  }
+
+  protected override async *completedProofRequests(): AsyncIterable<TableProvenTxReq> {
+    let after = 0
+    for (;;) {
+      const ids: Array<{ provenTxReqId: number }> = await this.knex('proven_tx_reqs')
+        .select('provenTxReqId')
+        .where({ status: 'completed', notified: false })
+        .where('provenTxReqId', '>', after)
+        .orderBy('provenTxReqId')
+        .limit(100)
+      if (!ids.length) return
+      for (const { provenTxReqId } of ids) {
+        const reqs = await this.findProvenTxReqs({ partial: { provenTxReqId } })
+        const req = reqs[0]
+        if (req?.status === 'completed' && req.notified === false) yield req
+        after = provenTxReqId
+      }
+    }
   }
 
   override async transaction<T>(scope: (trx: TrxToken) => Promise<T>, trx?: TrxToken): Promise<T> {
@@ -4080,7 +4110,7 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     return await purgeData(this, params, trx)
   }
 
-  override async reviewStatus(args: { agedLimit: Date; trx?: TrxToken }): Promise<{ log: string }> {
+  override async reviewStatus(args: StorageStatusReviewArgs): Promise<{ log: string }> {
     return await reviewStatus(this, args)
   }
 

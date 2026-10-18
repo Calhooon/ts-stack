@@ -125,5 +125,5 @@ export async function captureKnexActiveWrite(
       }
     })
   }
-  return { transaction, assertCurrent: async () => await check(root) }
+  return { prepareOutsideManager: true, transaction, assertCurrent: async () => await check(root) }
 }
