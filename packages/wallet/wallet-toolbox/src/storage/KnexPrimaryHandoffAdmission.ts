@@ -24,6 +24,10 @@ async function hasTable(storage: StorageKnex, k: Knex): Promise<boolean> {
     requiredTables.add(root)
     return true
   }
+  // PostgreSQL records this migration as a supported no-op. Only an actual
+  // absent table takes that legacy path; present/previously observed controls
+  // still require their full verification and cannot downgrade by dialect.
+  if (k.client.dialect === 'postgresql') return false
   const migrations = root.client.config.migrations?.tableName ?? 'knex_migrations'
   if (await k.schema.hasTable(migrations)) {
     if ((await k(migrations).where('name', PRIMARY_HANDOFF_MIGRATION).select('name').limit(1)).length) invalid()
