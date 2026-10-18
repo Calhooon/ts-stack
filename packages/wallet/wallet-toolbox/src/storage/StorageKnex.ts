@@ -32,7 +32,7 @@ import {
   type SnapshotSyncContentPosition
 } from './snapshot/SnapshotSyncContentRevision'
 import { closeSnapshotJournalSource } from './snapshot/journal/closeSnapshotJournalSource'
-import { forSnapshotSqlDialect } from './schema/snapshotSqlMigration'
+import { forSnapshotSqlDialect, SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from './schema/snapshotSqlMigration'
 import {
   withBrc38NativeLocalPackedWalletMutation,
   withBrc38NativeLocalPackedWalletTransaction,
@@ -3920,6 +3920,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
         dropPrimaryHandoffForDataDeletion
       )
       migrationSource.migrations[SNAPSHOT_SQLITE_INDEX_MIGRATION].down = dropGenerationForDataDeletion
+      migrationSource.migrations[SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION].down = forSnapshotSqlDialect(
+        dropSnapshotJournalDestinationForDataDeletion
+      )
       migrationSource.migrations[SNAPSHOT_JOURNAL_DESTINATION_MIGRATION].down = forSnapshotSqlDialect(
         dropSnapshotJournalDestinationForDataDeletion
       )
