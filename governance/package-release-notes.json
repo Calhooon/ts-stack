@@ -229,10 +229,10 @@
     },
     {
       "name": "@bsv/webrtpay",
-      "publishedVersion": "0.2.0",
+      "publishedVersion": "0.2.1",
       "releaseType": "patch",
-      "summary": "Makes the relay ready to run as a governed container image. A relay that creates its own server answers GET or HEAD /ready with 200 while it accepts connections and 503 once close() is called (SIGTERM or SIGINT for the CLI), and GET or HEAD /health with 200 until it stops. Both carry Access-Control-Allow-Origin: * without credentials, and OPTIONS on either answers a 204 preflight allowing GET, HEAD and OPTIONS and every well-formed requested header. The ./server entry now exports relayOptionsFromEnv and relayUsage, the environment parser and help text the webrtpay-relay CLI uses, with DEFAULT_HOST and DEFAULT_RELAY_PORT, so a wrapper can start the relay exactly as the CLI does. Other paths still answer 404, WebSocket upgrades are unchanged, and a relay attached to an app's own server still leaves that server's requests alone.",
-      "migration": "No consumer migration required. On a server the relay creates, /ready and OPTIONS on /health and /ready, which answered 404 in 0.2.0, now answer as described; relays attached to an app's own server are unchanged."
+      "summary": "Keeps an offer link open until the absolute whole-second expiry encoded in its offer code. An early timer wake checks the remaining time and reschedules rather than closing a still-valid offer. Completed handshakes and explicit cancellation continue to clear the active expiry timer.",
+      "migration": "No consumer migration required. Offer code bytes, encoded expiry, timeout errors and handshake behavior are unchanged. Offers remain available until their encoded expiry even when a timer wakes early."
     },
     {
       "name": "create-bsv-app",
