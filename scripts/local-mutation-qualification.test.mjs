@@ -379,16 +379,16 @@ test('source closure rejects tracked symlinks and preserves locale-independent U
     )
   }
   try {
-    const names = ['a.txt', 'A.txt', '\ue000.txt', '\u{10000}.txt']
+    const names = ['a-lower.txt', 'A-upper.txt', '\ue000.txt', '\u{10000}.txt']
     for (const name of names) fs.writeFileSync(path.join(directory, name), name)
     git('init', '--quiet')
     commit()
-    const legacyOrder = ['A.txt', 'a.txt', '\u{10000}.txt', '\ue000.txt']
+    const legacyOrder = ['A-upper.txt', 'a-lower.txt', '\u{10000}.txt', '\ue000.txt']
     assert.equal(
       trackedSourceDigest(directory).sourceDigest,
       digest(JSON.stringify(legacyOrder.map(name => [name, digest(name)])))
     )
-    fs.symlinkSync('a.txt', path.join(directory, 'link.txt'))
+    fs.symlinkSync('a-lower.txt', path.join(directory, 'link.txt'))
     commit()
     assert.throws(
       () => trackedSourceDigest(directory),
