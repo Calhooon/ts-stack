@@ -198,7 +198,7 @@ terminal successful hosted checks on the final published head.
 ## Final acceptance requirements
 
 - Pass complete uninstrumented coverage on the final published source, including the original 300-run disclosure and coordinator properties.
-- Pass the full 151-target/398-row governed mutation campaign and independently reconcile every raw result.
+- Pass the full 153-target/400-row governed mutation campaign and independently reconcile every raw result. Reconciliation with `main` adds the two WebRTCPay targets to the original 151-target/398-row inventory; all original targets, partitions and gates remain required.
 - Verify final packed consumers, platforms, conformance, actual CodeQL and zero-new Sonar findings on the same published head.
 
 The PR completion evidence must establish each requirement on the exact published head. Demonstrated reference components do not by themselves complete Checkpoint 2; this source inventory does not self-certify qualification.
