@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import type { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import {
   brc38JsonStructuredFieldPolicy,
@@ -19,11 +20,11 @@ export function brc38IdbStructuredFieldSink(
   )
     throw new RangeError('Private browser structured chunks and original allocation differ')
   return Object.freeze({
-    begin: async (table, index, field) =>
-      await store.beginStructuredField(table, index, field, policy.maximumStructuredBytes),
-    append: async (table, index, field, offset, bytes) =>
-      await store.appendStructuredField(table, index, field, offset, bytes),
-    finish: async (table, index, field) => await store.finishStructuredField(table, index, field),
+    begin: (table, index, field) =>
+      awaitFromSync(() => store.beginStructuredField(table, index, field, policy.maximumStructuredBytes)),
+    append: (table, index, field, offset, bytes) =>
+      awaitFromSync(() => store.appendStructuredField(table, index, field, offset, bytes)),
+    finish: (table, index, field) => awaitFromSync(() => store.finishStructuredField(table, index, field)),
     row
   } satisfies Brc38JsonStructuredFieldSink)
 }

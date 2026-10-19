@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { parseSnapshotSyncContentRevision } from './SnapshotSyncContentRevision'
 import { SnapshotResourceLimitError } from './SnapshotResourceLimitError'
 import { SnapshotWorkingAllocationLimitError } from './SnapshotWorkingAllocationLimitError'
@@ -208,13 +209,15 @@ async function preparePage(
   return { page, apply, close: undefined, readMs, prepareMs, fieldBytesRead: undefined }
 }
 
-async function rejectClosedSnapshot(view: WalletReadSnapshot): Promise<never> {
-  // Physical cleanup may need database I/O; await it after queue ownership
-  // was released. Its actual expiry/cancellation/read error stays authoritative.
-  await view.closed
-  if (Date.now() >= view.expiresAt)
-    throw new SnapshotResourceLimitError('Snapshot source expired before destination commit')
-  throw new WERR_INVALID_OPERATION('Snapshot source closed before destination commit')
+function rejectClosedSnapshot(view: WalletReadSnapshot): Promise<never> {
+  return mapAwaitFromSync(
+    () => view.closed,
+    () => {
+      if (Date.now() >= view.expiresAt)
+        throw new SnapshotResourceLimitError('Snapshot source expired before destination commit')
+      throw new WERR_INVALID_OPERATION('Snapshot source closed before destination commit')
+    }
+  )
 }
 
 /** One packed page in flight. The caller owns source cleanup, including error/cancellation. */

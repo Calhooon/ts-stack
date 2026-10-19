@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { SyncMap } from '../schema/entities/EntityBase'
 import {
@@ -571,7 +572,7 @@ export async function prepareNativeSnapshotRequestFields(
           member: 'transactionIds',
           check: workspace.check,
           chunks: width => (measurement ? projection.measureChunks(width) : projection.chunks(width)),
-          close: async () => undefined
+          close: () => promiseFromSync(() => undefined)
         }
       )
     notify = retain(

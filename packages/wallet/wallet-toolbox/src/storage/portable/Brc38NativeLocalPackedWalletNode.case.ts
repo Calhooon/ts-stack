@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { TableActionBatch, TableActionBatchBlob, TableMonitorEvent } from '../schema/tables'
 import type { TablePreparedBeef } from '../schema/tables/TablePreparedBeef.interfaces'
@@ -29,8 +30,10 @@ export async function verifyBrc38NativeLocalPackedForeground(
   check: () => void
 ): Promise<void> {
   check()
-  await withBrc38NativeLocalPackedWalletTransaction(storage.knex, async (_db, packed) => {
-    requireCase(packed)
+  await withBrc38NativeLocalPackedWalletTransaction(storage.knex, (_db, packed) => {
+    return promiseFromSync(() => {
+      requireCase(packed)
+    })
   })
   const batch = { ...fixtures.batch },
     monitor = { ...fixtures.monitor },
@@ -120,9 +123,11 @@ export async function verifyBrc38NativeLocalPackedTransfer(
   }
   requireCase(bytesEqual((await store.loadWrite(identityKey, write.transferId)).bytes, input))
   let applications = 0
-  const apply = async (): Promise<{ saved: string }> => {
-    applications++
-    return { saved: 'independent acknowledged result' }
+  const apply = (): Promise<{ saved: string }> => {
+    return promiseFromSync(() => {
+      applications++
+      return { saved: 'independent acknowledged result' }
+    })
   }
   const first = await store.commitPreparedWrite(identityKey, write.transferId, digest, apply),
     replay = await store.commitPreparedWrite(identityKey, write.transferId, digest, apply)

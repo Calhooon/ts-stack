@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import { createHash, randomBytes } from 'node:crypto'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
@@ -87,20 +88,22 @@ export async function snapshotJournalPayloadLength(
 ): Promise<{ expression: Knex.Raw }> {
   table(selected)
   retained(k)
-  return await withBrc38NativeLocalPackedWalletTransaction(k, async (database, packed) => ({
-    // Knex.Raw is thenable. Box it so async return/await cannot execute this
-    // SELECT fragment as a standalone query before the retained page query.
-    expression: packed
-      ? database.raw('? AS actualBytes', [
-          brc38NativeLocalPackedWalletLength(database as Knex.Transaction, selected, 'payload')
-        ])
-      : database.raw(
-          (['mysql', 'mysql2'].includes(String(database.client.config.client))
-            ? 'octet_length(??)'
-            : 'length(cast(?? as blob))') + ' AS actualBytes',
-          ['payload']
-        )
-  }))
+  return await withBrc38NativeLocalPackedWalletTransaction(k, (database, packed) =>
+    promiseFromSync(() => ({
+      // Knex.Raw is thenable. Box it so async return/await cannot execute this
+      // SELECT fragment as a standalone query before the retained page query.
+      expression: packed
+        ? database.raw('? AS actualBytes', [
+            brc38NativeLocalPackedWalletLength(database as Knex.Transaction, selected, 'payload')
+          ])
+        : database.raw(
+            (['mysql', 'mysql2'].includes(String(database.client.config.client))
+              ? 'octet_length(??)'
+              : 'length(cast(?? as blob))') + ' AS actualBytes',
+            ['payload']
+          )
+    }))
+  )
 }
 /** Complete negotiated frame only; chunk reads remain <=64KiB and their full
  * SHA is verified before returning. Never return the physical empty marker. */

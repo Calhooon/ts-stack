@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageIdb } from '../StorageIdb'
 import { packedIdbCurrentMetadataEqual, type PackedIdbCurrentMetadata } from '../idbPackedCurrentMetadata'
 import { packedIdbPositive } from '../idbPackedFields'
@@ -232,12 +233,14 @@ export async function prepareIdbSnapshotSyncProvenTxReqs(
   try {
     check()
     journal = await IdbSnapshotSyncJournal.open(storage)
-    await journal.inspect(expected, async read => {
-      check()
-      if (read.sourceUserId !== binding.userId) invalid()
-      transactionMembershipRevision = read.transactionMembershipRevision
-      expiresAt = Math.min(expiresAt, read.expiresAt)
-      deadline = Math.min(deadline, performance.now() + expiresAt - Date.now())
+    await journal.inspect(expected, read => {
+      return promiseFromSync(() => {
+        check()
+        if (read.sourceUserId !== binding.userId) invalid()
+        transactionMembershipRevision = read.transactionMembershipRevision
+        expiresAt = Math.min(expiresAt, read.expiresAt)
+        deadline = Math.min(deadline, performance.now() + expiresAt - Date.now())
+      })
     })
     for (const metadata of detached.rows) {
       check()
@@ -336,12 +339,16 @@ export async function prepareIdbSnapshotSyncProvenTxReqs(
             workspace.releaseReadWindows()
             const allowance = working.claim(16384 + 8 * 1048576)
             try {
-              await journal!.inspect(expected, async read => {
-                if (read.transactionMembershipRevision !== transactionMembershipRevision) invalid()
+              await journal!.inspect(expected, read => {
+                return promiseFromSync(() => {
+                  if (read.transactionMembershipRevision !== transactionMembershipRevision) invalid()
+                })
               })
               const mapped = await journal!.readNotificationMappings(expected, incomingIds, 1048576, signal)
-              await journal!.inspect(expected, async read => {
-                if (read.transactionMembershipRevision !== transactionMembershipRevision) invalid()
+              await journal!.inspect(expected, read => {
+                return promiseFromSync(() => {
+                  if (read.transactionMembershipRevision !== transactionMembershipRevision) invalid()
+                })
               })
               check()
               return mapped
@@ -405,7 +412,7 @@ export async function prepareIdbSnapshotSyncProvenTxReqs(
               member: 'transactionIds',
               check: workspace.check,
               chunks: width => (measurement ? projection.measureChunks(width) : projection.chunks(width)),
-              close: async () => undefined
+              close: () => promiseFromSync(() => undefined)
             }
           )
         notify = retain(

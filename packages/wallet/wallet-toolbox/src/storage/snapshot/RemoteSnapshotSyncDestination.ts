@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { SnapshotCancelledError } from './SnapshotCancelledError'
 import {
   parseSnapshotSyncContentPosition,
@@ -206,16 +207,16 @@ export class RemoteSnapshotSyncDestination implements SnapshotSyncStorage {
     return checkpoint
   }
 
-  async begin(source: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
-    return await this.beginSession(source, activeStorage)
+  begin(source: SnapshotSyncSource, activeStorage: string | undefined): Promise<SnapshotSyncCheckpoint> {
+    return awaitFromSync(() => this.beginSession(source, activeStorage))
   }
 
-  async beginContent(
+  beginContent(
     source: SnapshotSyncSource,
     activeStorage: string | undefined,
     input: SnapshotSyncContentRevision
   ): Promise<SnapshotSyncCheckpoint> {
-    return await this.beginSession(source, activeStorage, parseSnapshotSyncContentRevision(input))
+    return awaitFromSync(() => this.beginSession(source, activeStorage, parseSnapshotSyncContentRevision(input)))
   }
 
   private async beginSession(

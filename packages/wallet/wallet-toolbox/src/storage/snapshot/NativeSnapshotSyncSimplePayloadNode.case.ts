@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { Brc38ImportRowTypes } from '../portable/Brc38ImportPage'
 import { KnexSnapshotSyncDestination } from './KnexSnapshotSyncDestination'
@@ -66,8 +67,10 @@ export async function verifyNativeSimplePayloadSession(
       fixture.expected.length > 0 &&
       fixture.expected.length <= 4
   )
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Simple native payload performed proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Simple native payload performed proof I/O')
+      })
     }),
     page = await source.fieldReader.readMetadataPage(fixture.table, checkpoint.cursor, { maxRows: 4, maxBytes: 32768 })
   requireCase(
@@ -123,8 +126,10 @@ export async function verifyNativeSimplePayloadStaleCurrent(
   fixture: NativeSimplePayloadCurrentFixture
 ): Promise<void> {
   requireCase(source.fieldReader !== undefined && snapshotSyncTables[checkpoint.tableIndex] === fixture.table)
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Simple native payload performed proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Simple native payload performed proof I/O')
+      })
     }),
     before = await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey),
     page = await source.fieldReader.readMetadataPage(fixture.table, checkpoint.cursor, { maxRows: 4, maxBytes: 32768 }),

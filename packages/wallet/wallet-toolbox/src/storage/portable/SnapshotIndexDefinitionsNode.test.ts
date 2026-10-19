@@ -28,16 +28,30 @@ describe('actual native exact generation-definition reads', () => {
       return [match[1].toLowerCase(), match[2].replaceAll('"', '')]
     })
     const pages = queries.filter(query =>
-      query.sql.startsWith('select `type`, substr(name,1,129) AS name, substr(sql,1,65537) AS sql from `sqlite_master`')
+      query.sql.startsWith('select count(*) as `matches`, count(distinct `name`) as `names` from `sqlite_master`')
     )
     expect(expected.length).toBeGreaterThan(16)
-    expect(pages).toHaveLength(Math.ceil(expected.length / 16))
-    expect(pages.every(query => query.bindings.length > 1 && query.bindings.length <= 33)).toBe(true)
-    expect(pages.flatMap(query => query.bindings.slice(0, -1))).toEqual(expected.flat())
-    for (const page of pages) {
-      expect(page.sql.endsWith('limit ?')).toBe(true)
-      expect(page.bindings.at(-1)).toBe((page.bindings.length - 1) / 2 + 1)
+    expect(pages.length).toBeGreaterThanOrEqual(Math.ceil(expected.length / 16))
+    expect(pages.length).toBeLessThanOrEqual(expected.length)
+    const pairs: unknown[][] = [],
+      completeSql: unknown[] = []
+    for (const query of pages) {
+      const values = query.bindings.slice(0, -1)
+      expect(query.bindings.at(-1)).toBe(1)
+      expect(query.sql.endsWith(' limit ?')).toBe(true)
+      expect(values.length).toBeGreaterThan(0)
+      expect(values.length % 3).toBe(0)
+      expect(values.length).toBeLessThanOrEqual(48)
+      const bindingBytes = values.reduce<number>((sum, value) => sum + Buffer.byteLength(String(value)), 0)
+      // One longer original definition still has its individual bounded query.
+      expect(bindingBytes <= 32768 || values.length === 3).toBe(true)
+      for (let at = 0; at < values.length; at += 3) {
+        pairs.push(values.slice(at, at + 2))
+        completeSql.push(values[at + 2])
+      }
     }
+    expect(pairs).toEqual(expected)
+    expect(completeSql).toEqual([...plan.ddl, ...plan.triggers])
     expect(queries.every(query => /^(select|PRAGMA|EXPLAIN)\b/i.test(query.sql))).toBe(true)
     const later = { ...plan, ddl: [...plan.ddl] }
     later.ddl[0] += '\n'

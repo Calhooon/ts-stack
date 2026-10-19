@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import type { StorageWriterAdmission } from '../../storage/StorageActiveWrite'
 import { Monitor } from '../Monitor'
@@ -51,11 +52,15 @@ export class TaskReviewStatus extends WalletMonitorTask {
     let r: { log: string }
     if (selected.independent) {
       const admission: StorageWriterAdmission = async operation =>
-        await this.storage.runAsStorageProvider(async current => {
-          if (current !== selected.provider)
-            throw new WERR_NOT_ACTIVE('Review preparation belongs to a replaced provider')
-          return await operation()
-        }, true)
+        await this.storage.runAsStorageProvider(
+          current =>
+            awaitFromSync(() => {
+              if (current !== selected.provider)
+                throw new WERR_NOT_ACTIVE('Review preparation belongs to a replaced provider')
+              return operation()
+            }),
+          true
+        )
       const reconciliation = await selected.provider.reconcileCompletedProvenTxReqs(admission)
       const review = await selected.provider.reviewStatus({ agedLimit, admission })
       r = { log: reconciliation.log + review.log }

@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation } from './Brc38WorkingAllocation'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 
@@ -28,12 +29,12 @@ export async function* brc38Utf16Chunks(
     total += 2 * text.length
     for (let index = 0; index < text.length; index++) {
       signal?.throwIfAborted()
-      const unit = text.charCodeAt(index)
+      const unit = utf16CodeUnitAt(text, index)
       buffer![used++] = unit & 255
       buffer![used++] = unit >>> 8
       if (used === 65536) {
         owned = false
-        yield buffer!
+        yield Promise.resolve(buffer!)
         buffer = new Uint8Array(65536)
         owned = true
         used = 0

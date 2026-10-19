@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../utility/promiseFromSync'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { getPackedIdbConnection, type PackedIdbConnection } from './idbPackedConnection'
 import {
@@ -184,38 +185,41 @@ export class PackedIdbStagedField {
       packedIdbInvalid()
     let bytes: Uint8Array | undefined
     try {
-      return await this.operation(async current => {
-        const tx = current.owner.rawTransaction([], 'readonly')
-        return await drain(tx, async () => {
-          await durableStage(tx, current, true)
-          // An unpromoted, sealed stage has zero row references and is not
-          // retired. Only this actual live stage may read it; the operational
-          // row reader keeps its original referenced/retired-content guard.
-          bytes = new Uint8Array(length)
-          for (let used = 0; used < length;) {
+      return await this.operation(current =>
+        awaitFromSync(() => {
+          const tx = current.owner.rawTransaction([], 'readonly')
+          return drain(tx, async () => {
+            await durableStage(tx, current, true)
+            // An unpromoted, sealed stage has zero row references and is not
+            // retired. Only this actual live stage may read it; the operational
+            // row reader keeps its original referenced/retired-content guard.
+            bytes = new Uint8Array(length)
+            for (let used = 0; used < length;) {
+              actualStage(this)
+              const index = Math.floor((offset + used) / packedIdbChunkBytes),
+                start = (offset + used) % packedIdbChunkBytes,
+                chunk = await tx.objectStore(packedIdbStores.chunks).get([current.field.content, index])
+              if (
+                chunk?.content !== current.field.content ||
+                chunk.index !== index ||
+                !packedIdbIsUint8Array(chunk.data) ||
+                chunk.data.length !==
+                  Math.min(packedIdbChunkBytes, current.field.bytes - index * packedIdbChunkBytes) ||
+                typeof chunk.sha256 !== 'string' ||
+                new SHA256().update(chunk.data).digestHex() !== chunk.sha256
+              )
+                packedIdbInvalid()
+              const count = Math.min(length - used, chunk.data.length - start)
+              if (count < 1) packedIdbInvalid()
+              bytes.set(chunk.data.subarray(start, start + count), used)
+              used += count
+            }
+            await durableStage(tx, current, true)
             actualStage(this)
-            const index = Math.floor((offset + used) / packedIdbChunkBytes),
-              start = (offset + used) % packedIdbChunkBytes,
-              chunk = await tx.objectStore(packedIdbStores.chunks).get([current.field.content, index])
-            if (
-              chunk?.content !== current.field.content ||
-              chunk.index !== index ||
-              !packedIdbIsUint8Array(chunk.data) ||
-              chunk.data.length !== Math.min(packedIdbChunkBytes, current.field.bytes - index * packedIdbChunkBytes) ||
-              typeof chunk.sha256 !== 'string' ||
-              new SHA256().update(chunk.data).digestHex() !== chunk.sha256
-            )
-              packedIdbInvalid()
-            const count = Math.min(length - used, chunk.data.length - start)
-            if (count < 1) packedIdbInvalid()
-            bytes.set(chunk.data.subarray(start, start + count), used)
-            used += count
-          }
-          await durableStage(tx, current, true)
-          actualStage(this)
-          return bytes
+            return bytes
+          })
         })
-      })
+      )
     } catch (cause) {
       bytes?.fill(0)
       throw cause
@@ -278,46 +282,48 @@ export class PackedIdbStagedField {
       })
     })
   }
-  async finish(): Promise<Readonly<PackedIdbField>> {
-    return await this.operation(async identity => {
-      const hash = new SHA256()
-      for (let offset = 0; offset < identity.field.bytes; offset += packedIdbChunkBytes) {
-        actualStage(this)
-        const tx = identity.owner.rawTransaction([], 'readonly')
-        const data = await drain(tx, async () => {
-          const actual = await durableStage(tx, identity, false)
-          if (actual.received !== identity.field.bytes) packedIdbInvalid()
-          const chunk = await tx
-            .objectStore(packedIdbStores.chunks)
-            .get([identity.field.content, offset / packedIdbChunkBytes])
+  finish(): Promise<Readonly<PackedIdbField>> {
+    return awaitFromSync(() => {
+      return this.operation(async identity => {
+        const hash = new SHA256()
+        for (let offset = 0; offset < identity.field.bytes; offset += packedIdbChunkBytes) {
+          actualStage(this)
+          const tx = identity.owner.rawTransaction([], 'readonly')
+          const data = await drain(tx, async () => {
+            const actual = await durableStage(tx, identity, false)
+            if (actual.received !== identity.field.bytes) packedIdbInvalid()
+            const chunk = await tx
+              .objectStore(packedIdbStores.chunks)
+              .get([identity.field.content, offset / packedIdbChunkBytes])
+            if (
+              chunk?.content !== identity.field.content ||
+              chunk.index !== offset / packedIdbChunkBytes ||
+              !packedIdbIsUint8Array(chunk.data) ||
+              chunk.data.length !== Math.min(packedIdbChunkBytes, identity.field.bytes - offset) ||
+              typeof chunk.sha256 !== 'string' ||
+              new SHA256().update(chunk.data).digestHex() !== chunk.sha256
+            )
+              packedIdbInvalid()
+            actualStage(this)
+            return chunk.data
+          })
+          hash.update(data)
+        }
+        if (hash.digestHex() !== identity.field.sha256) packedIdbInvalid()
+        const seal = identity.owner.rawTransaction([], 'readwrite')
+        await drain(seal, async () => {
+          const actual = await durableStage(seal, identity, false)
           if (
-            chunk?.content !== identity.field.content ||
-            chunk.index !== offset / packedIdbChunkBytes ||
-            !packedIdbIsUint8Array(chunk.data) ||
-            chunk.data.length !== Math.min(packedIdbChunkBytes, identity.field.bytes - offset) ||
-            typeof chunk.sha256 !== 'string' ||
-            new SHA256().update(chunk.data).digestHex() !== chunk.sha256
+            actual.received !== identity.field.bytes ||
+            (await seal.objectStore(packedIdbStores.chunks).index('content').count(identity.field.content)) !==
+              Math.ceil(identity.field.bytes / packedIdbChunkBytes)
           )
             packedIdbInvalid()
+          await seal.objectStore(packedIdbStores.contents).put({ ...actual, state: 'sealed' })
           actualStage(this)
-          return chunk.data
         })
-        hash.update(data)
-      }
-      if (hash.digestHex() !== identity.field.sha256) packedIdbInvalid()
-      const seal = identity.owner.rawTransaction([], 'readwrite')
-      await drain(seal, async () => {
-        const actual = await durableStage(seal, identity, false)
-        if (
-          actual.received !== identity.field.bytes ||
-          (await seal.objectStore(packedIdbStores.chunks).index('content').count(identity.field.content)) !==
-            Math.ceil(identity.field.bytes / packedIdbChunkBytes)
-        )
-          packedIdbInvalid()
-        await seal.objectStore(packedIdbStores.contents).put({ ...actual, state: 'sealed' })
-        actualStage(this)
+        return { ...identity.field }
       })
-      return { ...identity.field }
     })
   }
   /** Revokes admission first, drains this stage's actual operation, then makes

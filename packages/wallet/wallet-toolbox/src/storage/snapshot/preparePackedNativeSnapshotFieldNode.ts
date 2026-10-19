@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import {
   assertRemoteSnapshotJournalFieldFrame,
   type RemoteSnapshotJournalFieldArchive,
@@ -19,13 +20,9 @@ import { detachBrc38PrivateChunk } from '../portable/Brc38PrivateChunkPipe'
 import { Brc38StagingCleanupError } from '../portable/Brc38StagingCleanupError'
 import { brc38Utf8Chunks } from '../portable/Brc38Utf8Chunks'
 import { Brc38NativePreparedFieldLifetime } from '../portable/Brc38NativePreparedFieldsNode'
-import { hasBrc38NativePreparedFieldsSchema } from '../portable/Brc38NativePreparedFieldSchemaNode'
-import {
-  hasBrc38NativePackedSchema,
-  nativePackedTables,
-  requireBrc38PackedWriter
-} from '../portable/Brc38NativePackedSchemaNode'
-import { hasBrc38NativePackedTextSchema, nativePackedTextTables } from '../portable/Brc38NativePackedTextSchemaNode'
+import { hasBrc38NativePreparedContentSchema } from '../portable/Brc38NativePreparedFieldSchemaNode'
+import { nativePackedTables, requireBrc38PackedWriter } from '../portable/Brc38NativePackedSchemaNode'
+import { nativePackedTextTables } from '../portable/Brc38NativePackedTextSchemaNode'
 import { hashBrc38NativePackedVersion, readBrc38NativePackedDescriptor } from '../portable/Brc38NativePackedFieldsNode'
 import {
   hashBrc38NativePackedTextVersion,
@@ -398,12 +395,12 @@ export async function stageNativeSnapshotSyncInlineText(
     for (let offset = 0; offset < value.length;) {
       requireNativeSnapshotStructuredOwner(owner)
       let count = Math.min(4096, value.length - offset)
-      const last = value.charCodeAt(offset + count - 1),
-        next = value.charCodeAt(offset + count)
+      const last = utf16CodeUnitAt(value, offset + count - 1),
+        next = utf16CodeUnitAt(value, offset + count)
       if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) count++
       const bytes = new TextEncoder().encode(value.slice(offset, offset + count))
       try {
-        yield bytes
+        yield Promise.resolve(bytes)
         requireNativeSnapshotStructuredOwner(owner)
         offset += count
       } finally {
@@ -601,12 +598,7 @@ async function prepareNativeSnapshotContent(
   }
   const schema = async (trx: Knex.Transaction): Promise<void> => {
     producer()
-    if (
-      ownedNativeRootIdentity(trx)?.token !== origin.token ||
-      !(await hasBrc38NativePreparedFieldsSchema(trx)) ||
-      !(await hasBrc38NativePackedSchema(trx)) ||
-      !(await hasBrc38NativePackedTextSchema(trx))
-    )
+    if (ownedNativeRootIdentity(trx)?.token !== origin.token || !(await hasBrc38NativePreparedContentSchema(trx)))
       invalid()
   }
   const version = async (trx: Knex.Transaction, sha256: string): Promise<Version | undefined> =>

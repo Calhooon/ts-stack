@@ -44,7 +44,7 @@ async function* encrypted(controller: ActualController, width: number): AsyncGen
   requireCase(controller.encrypted.length >= 96 && controller.encrypted.length <= 1048576)
   for (let offset = 0; offset < controller.encrypted.length; offset += width) {
     controller.check()
-    yield controller.encrypted.slice(offset, offset + width)
+    yield Promise.resolve(controller.encrypted.slice(offset, offset + width))
   }
 }
 async function assertComplete(

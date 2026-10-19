@@ -427,16 +427,23 @@ test('portable streaming keeps every complete source module and original behavio
   ].map(name => `<rootDir>/src/storage/portable/${name}`)
   for (const [id, source] of modules) {
     const target = targets[id]
-    assert.deepEqual(target.mutate, [`src/storage/portable/${source}.ts`])
+    const helpers =
+      id === 'wallet-portable-canonical-chunks'
+        ? ['src/utility/promiseFromSync.ts', 'src/utility/utf16CodeUnitAt.ts']
+        : []
+    const helperTests = helpers.map(file => file.replace('.ts', '.test.ts'))
+    assert.deepEqual(target.mutate, [`src/storage/portable/${source}.ts`, ...helpers])
     const selectedSuites = target.runnerOptions.jest.config.testMatch
     assert.deepEqual(selectedSuites.slice(0, originalSuites.length), originalSuites)
     assert.deepEqual(selectedSuites.slice(originalSuites.length), [
-      '<rootDir>/src/storage/portable/EntryPoints.test.ts'
+      '<rootDir>/src/storage/portable/EntryPoints.test.ts',
+      ...helperTests.map(file => `<rootDir>/${file}`)
     ])
     assert.deepEqual(target.additionalInputs, [
       'src/storage/portable/index.ts',
       'src/storage/portable/stream.ts',
-      'src/storage/portable/node.ts'
+      'src/storage/portable/node.ts',
+      ...helperTests
     ])
     assert.ok(
       selectAffectedMutationTargets(targets, [
@@ -459,7 +466,7 @@ test('snapshot sync owns every inherited manager region and complete primary sel
     'utf8'
   ).split('\n')
   const expected = [
-    ['private async runSnapshotCopy(', 'async syncFromReader('],
+    ['private runSnapshotCopy(', 'async syncFromReader('],
     ['async syncFromReader(', '    let inserts = 0'],
     ['async syncFromReaderResumable(', '    const generation ='],
     ['async syncToWriterResumable(', 'async syncToWriter('],
@@ -825,4 +832,13 @@ test('active SQL writer fences retain a canonical owner with actual role-change 
   assert.ok(target.mutate.some(path => path.startsWith('src/storage/schema/KnexMigrations.ts:')))
   assert.ok(JSON.stringify(target).includes('KnexPrimaryHandoffControl.test.ts'))
   assert.ok(JSON.stringify(target).includes('StorageKnexActiveWriteFence.test.ts'))
+})
+
+test('wallet mutation runners serialize the shared physical Worker and fixture lifecycle', () => {
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  assert.equal(targets['wallet-portable-canonical-chunks'].runnerOptions.maxTestRunnerReuse, 20)
+  for (const target of Object.values(targets)) {
+    if (target.packageDirectory === 'packages/wallet/wallet-toolbox' && target.runnerOptions?.jest)
+      assert.equal(target.runnerOptions.concurrency, 1)
+  }
 })

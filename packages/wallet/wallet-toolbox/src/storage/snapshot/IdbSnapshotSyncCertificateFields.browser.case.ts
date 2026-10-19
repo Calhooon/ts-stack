@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
@@ -212,7 +213,7 @@ export async function verifyIdbSnapshotSyncCertificateFields(expiresAt: number):
     }
     await target.db!.put('certificate_fields', original)
     source = await openPackedIdbSyncSource(sourceStorage, identityKey, { lifetimeMs: expiresAt - Date.now() })
-    const destination = new IdbSnapshotSyncDestination(target, async () => new Map()),
+    const destination = new IdbSnapshotSyncDestination(target, () => promiseFromSync(() => new Map())),
       journal = await IdbSnapshotSyncJournal.open(target)
     let cp = await destination.begin(
       {
@@ -224,7 +225,7 @@ export async function verifyIdbSnapshotSyncCertificateFields(expiresAt: number):
       },
       'source'
     )
-    cp = (await journal.commit(cp, 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+    cp = (await journal.commit(cp, 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 })))).checkpoint
     const basketPage = await source.fieldReader!.readMetadataPage('outputBaskets', undefined, {
       maxRows: 2,
       maxBytes: 262144
@@ -244,7 +245,8 @@ export async function verifyIdbSnapshotSyncCertificateFields(expiresAt: number):
     prepared = undefined
     cp = basketOutcome.checkpoint
     for (let table = 2; table < 4; table++)
-      cp = (await journal.commit(cp, table + 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+      cp = (await journal.commit(cp, table + 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 }))))
+        .checkpoint
     const transactionPage = await source.fieldReader!.readMetadataPage('transactions', undefined, {
       maxRows: 3,
       maxBytes: 262144
@@ -295,7 +297,8 @@ export async function verifyIdbSnapshotSyncCertificateFields(expiresAt: number):
     prepared = undefined
     cp = outputOutcome.checkpoint
     for (let table = 6; table < 8; table++)
-      cp = (await journal.commit(cp, table + 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+      cp = (await journal.commit(cp, table + 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 }))))
+        .checkpoint
     const certificatePage = await source.fieldReader!.readMetadataPage('certificates', undefined, {
       maxRows: 2,
       maxBytes: 262144

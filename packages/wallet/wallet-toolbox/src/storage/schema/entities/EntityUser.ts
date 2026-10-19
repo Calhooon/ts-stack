@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import { TrxToken } from '../../../sdk/WalletStorage.interfaces'
 import { verifyId, verifyOneOrNone } from '../../../utility/utilityHelpers'
 import { EntityBase, EntityStorage, SyncMap } from './EntityBase'
@@ -102,8 +103,10 @@ export class EntityUser extends EntityBase<TableUser> {
     }
   }
 
-  override async mergeNew(storage: EntityStorage, userId: number, syncMap: SyncMap, trx?: TrxToken): Promise<void> {
-    throw new WERR_INTERNAL('a sync chunk merge must never create a new user')
+  override mergeNew(storage: EntityStorage, userId: number, syncMap: SyncMap, trx?: TrxToken): Promise<void> {
+    return promiseFromSync(() => {
+      throw new WERR_INTERNAL('a sync chunk merge must never create a new user')
+    })
   }
 
   override async mergeExisting(

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -48,17 +49,12 @@ export async function verifyNativePackedTextPreparationRecovery(
     throw new Error('TEXT fixture metadata row does not use the actual packed layout')
   let escaped: Brc38PrivatePreparedTextInstaller | undefined
   try {
-    await withBrc38PreparedPrivatePackedText(
-      store,
-      await freshPage(),
-      projections,
-      expiresAt,
-      undefined,
-      async install => {
+    await withBrc38PreparedPrivatePackedText(store, await freshPage(), projections, expiresAt, undefined, install => {
+      return promiseFromSync(() => {
         escaped = install
         throw failure
-      }
-    )
+      })
+    })
     throw new Error('Interrupted TEXT preparation unexpectedly returned')
   } catch (cause) {
     if (cause !== failure) throw cause

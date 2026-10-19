@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { Brc38CleanupScope } from './Brc38StagingCleanupError'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { toHex } from '@bsv/sdk/primitives/utils'
@@ -101,13 +102,17 @@ class TransactionReader {
       remaining -= amount
     }
   }
-  async integer(width: 1 | 2 | 4 | 8): Promise<number> {
-    const bytes = await this.fixed(width)
-    let value = 0n
-    for (let index = width - 1; index >= 0; index--) value = value * 256n + BigInt(bytes[index])
-    // Matches SDK BigNumber.toNumber's precision refusal, including amounts.
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) invalid()
-    return Number(value)
+  integer(width: 1 | 2 | 4 | 8): Promise<number> {
+    return mapAwaitFromSync(
+      () => this.fixed(width),
+      bytes => {
+        let value = 0n
+        for (let index = width - 1; index >= 0; index--) value = value * 256n + BigInt(bytes[index])
+        // Matches SDK BigNumber.toNumber's precision refusal, including amounts.
+        if (value > BigInt(Number.MAX_SAFE_INTEGER)) invalid()
+        return Number(value)
+      }
+    )
   }
   async compactSize(): Promise<number> {
     const prefix = await this.integer(1)

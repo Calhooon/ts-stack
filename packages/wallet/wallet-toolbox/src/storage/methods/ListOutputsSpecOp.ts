@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageWriterAdmission } from '../StorageActiveWrite'
 import { type ValidListOutputsArgs } from '@bsv/sdk/wallet/validationHelpers'
 import { ListOutputsResult } from '@bsv/sdk'
@@ -70,17 +71,18 @@ const getBasketToSpecOp: () => Record<string, ListOutputsSpecOp> = () => {
       ignoreLimit: true,
       totalOutputsIsSumOfSatoshis: true,
       managedChangeOnly: true,
-      resultFromOutputs: async (
+      resultFromOutputs: (
         s: StorageProvider,
         auth: AuthId,
         vargs: ValidListOutputsArgs,
         specOpTags: string[],
         outputs: TableOutput[]
-      ): Promise<ListOutputsResult> => {
-        let totalOutputs = 0
-        for (const o of outputs) totalOutputs += o.satoshis
-        return { totalOutputs, outputs: [] }
-      }
+      ): Promise<ListOutputsResult> =>
+        promiseFromSync(() => {
+          let totalOutputs = 0
+          for (const o of outputs) totalOutputs += o.satoshis
+          return { totalOutputs, outputs: [] }
+        })
     },
     [specOpWalletManagedUtxos]: {
       name: 'walletManagedUtxos',
@@ -146,17 +148,18 @@ const getTagToSpecOp: () => Record<string, ListOutputsSpecOp> = () => {
       useBasket: 'default',
       ignoreLimit: true,
       totalOutputsIsSumOfSatoshis: true,
-      resultFromOutputs: async (
+      resultFromOutputs: (
         s: StorageProvider,
         auth: AuthId,
         vargs: ValidListOutputsArgs,
         specOpTags: string[],
         outputs: TableOutput[]
-      ): Promise<ListOutputsResult> => {
-        let totalOutputs = 0
-        for (const o of outputs) totalOutputs += o.satoshis
-        return { totalOutputs, outputs: [] }
-      }
+      ): Promise<ListOutputsResult> =>
+        promiseFromSync(() => {
+          let totalOutputs = 0
+          for (const o of outputs) totalOutputs += o.satoshis
+          return { totalOutputs, outputs: [] }
+        })
     }
   }
 }

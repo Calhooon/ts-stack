@@ -1,3 +1,4 @@
+import { awaitFromSync, promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageProvider } from '../../storage/StorageProvider'
 import type { StorageWriterAdmission } from '../../storage/StorageActiveWrite'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
@@ -81,9 +82,11 @@ export class TaskReviewUtxos extends WalletMonitorTask {
     }
   }
 
-  async runTask(): Promise<string> {
-    TaskReviewUtxos.checkNow = false
-    return 'TaskReviewUtxos is disabled; use reviewByIdentityKey instead.\n'
+  runTask(): Promise<string> {
+    return promiseFromSync(() => {
+      TaskReviewUtxos.checkNow = false
+      return 'TaskReviewUtxos is disabled; use reviewByIdentityKey instead.\n'
+    })
   }
 
   async reviewByIdentityKey(identityKey: string, mode: 'all' | 'change' = 'all', release = false): Promise<string> {
@@ -229,12 +232,16 @@ export class TaskReviewUtxos extends WalletMonitorTask {
         typeof sp.supportsPrimaryWriteFences === 'function' && (await sp.supportsPrimaryWriteFences()) ? sp : undefined,
       true
     )
-    if (provider == null) return await this.storage.runAsStorageProvider(async sp => await review(sp))
+    if (provider == null) return await this.storage.runAsStorageProvider(sp => awaitFromSync(() => review(sp)))
     const admission: StorageWriterAdmission = async operation =>
-      await this.storage.runAsStorageProvider(async current => {
-        if (current !== provider) throw new WERR_NOT_ACTIVE('UTXO review belongs to a replaced provider')
-        return await operation()
-      }, true)
+      await this.storage.runAsStorageProvider(
+        current =>
+          awaitFromSync(() => {
+            if (current !== provider) throw new WERR_NOT_ACTIVE('UTXO review belongs to a replaced provider')
+            return operation()
+          }),
+        true
+      )
     return await review(provider, admission)
   }
 
@@ -274,50 +281,56 @@ export class TaskReviewUtxos extends WalletMonitorTask {
    * has no signing authority; progressive migration occurs only during a
    * caller-authorized createAction.
    */
-  async reviewManagedChangeByIdentityKey(identityKey: string): Promise<string> {
-    identityKey = normalizeMonitorIdentityKey(identityKey)
-    return await this.storage.runAsStorageProvider(async sp => {
-      const user = (await sp.findUsers({ partial: { identityKey } }))[0]
-      if (user == null) return `identityKey ${identityKey} was not found\n`
-      const basket = verifyOne(await sp.findOutputBaskets({ partial: { userId: user.userId, name: 'default' } }))
-      const outputQuery = {
-        partial: { userId: user.userId, basketId: basket.basketId, spendable: true, ...managedChangeOutputFields },
-        txStatus: ['completed', 'unproven', 'sending'],
-        noScript: true
-      } satisfies Parameters<typeof sp.findOutputs>[0]
-      const candidateCount = await sp.countOutputs(outputQuery)
-      if (!Number.isSafeInteger(candidateCount) || candidateCount < 0 || candidateCount > MAX_UTXO_REVIEW_CANDIDATES) {
-        throw new Error(
-          `Managed-change review is limited to ${MAX_UTXO_REVIEW_CANDIDATES} candidate outputs; use bounded storage diagnostics.`
+  reviewManagedChangeByIdentityKey(identityKey: string): Promise<string> {
+    return awaitFromSync(() => {
+      identityKey = normalizeMonitorIdentityKey(identityKey)
+      return this.storage.runAsStorageProvider(async sp => {
+        const user = (await sp.findUsers({ partial: { identityKey } }))[0]
+        if (user == null) return `identityKey ${identityKey} was not found\n`
+        const basket = verifyOne(await sp.findOutputBaskets({ partial: { userId: user.userId, name: 'default' } }))
+        const outputQuery = {
+          partial: { userId: user.userId, basketId: basket.basketId, spendable: true, ...managedChangeOutputFields },
+          txStatus: ['completed', 'unproven', 'sending'],
+          noScript: true
+        } satisfies Parameters<typeof sp.findOutputs>[0]
+        const candidateCount = await sp.countOutputs(outputQuery)
+        if (
+          !Number.isSafeInteger(candidateCount) ||
+          candidateCount < 0 ||
+          candidateCount > MAX_UTXO_REVIEW_CANDIDATES
+        ) {
+          throw new Error(
+            `Managed-change review is limited to ${MAX_UTXO_REVIEW_CANDIDATES} candidate outputs; use bounded storage diagnostics.`
+          )
+        }
+        const outputs = (await sp.findOutputs(outputQuery)).filter(isAutoSpendableChangeOutput)
+        const reserved = new Set(await sp.findReservedActionBatchOutputIds(outputs.map(output => output.outputId)))
+        const statuses = await sp.findTransactionStatusesByIds(
+          user.userId,
+          outputs.map(output => output.transactionId)
         )
-      }
-      const outputs = (await sp.findOutputs(outputQuery)).filter(isAutoSpendableChangeOutput)
-      const reserved = new Set(await sp.findReservedActionBatchOutputIds(outputs.map(output => output.outputId)))
-      const statuses = await sp.findTransactionStatusesByIds(
-        user.userId,
-        outputs.map(output => output.transactionId)
-      )
-      const preferred = Math.max(1, basket.minimumDesiredUTXOValue)
-      const healthy = outputs.filter(output => output.satoshis >= preferred)
-      const undersized = outputs.filter(output => output.satoshis < preferred)
-      const countStatus = (status: 'completed' | 'unproven' | 'sending'): number =>
-        outputs.filter(output => statuses.get(output.transactionId) === status).length
-      let satoshis = 0
-      for (const output of outputs) {
-        if (!Number.isSafeInteger(output.satoshis) || output.satoshis < 0 || output.satoshis > 21e14) {
-          throw new Error('Managed-change output has an invalid satoshi value.')
+        const preferred = Math.max(1, basket.minimumDesiredUTXOValue)
+        const healthy = outputs.filter(output => output.satoshis >= preferred)
+        const undersized = outputs.filter(output => output.satoshis < preferred)
+        const countStatus = (status: 'completed' | 'unproven' | 'sending'): number =>
+          outputs.filter(output => statuses.get(output.transactionId) === status).length
+        let satoshis = 0
+        for (const output of outputs) {
+          if (!Number.isSafeInteger(output.satoshis) || output.satoshis < 0 || output.satoshis > 21e14) {
+            throw new Error('Managed-change output has an invalid satoshi value.')
+          }
+          satoshis += output.satoshis
+          if (!Number.isSafeInteger(satoshis) || satoshis > 21e14) {
+            throw new Error('Managed-change output total exceeds the maximum monetary supply.')
+          }
         }
-        satoshis += output.satoshis
-        if (!Number.isSafeInteger(satoshis) || satoshis > 21e14) {
-          throw new Error('Managed-change output total exceeds the maximum monetary supply.')
-        }
-      }
-      return (
-        `userId ${user.userId}: managed change ${outputs.length}/${basket.numberOfDesiredUTXOs}, ` +
-        `healthy ${healthy.length}, undersized ${undersized.length}, reserved ${reserved.size}, ` +
-        `completed ${countStatus('completed')}, unproven ${countStatus('unproven')}, ` +
-        `sending ${countStatus('sending')}, satoshis ${satoshis}, preferred minimum ${preferred}\n`
-      )
+        return (
+          `userId ${user.userId}: managed change ${outputs.length}/${basket.numberOfDesiredUTXOs}, ` +
+          `healthy ${healthy.length}, undersized ${undersized.length}, reserved ${reserved.size}, ` +
+          `completed ${countStatus('completed')}, unproven ${countStatus('unproven')}, ` +
+          `sending ${countStatus('sending')}, satoshis ${satoshis}, preferred minimum ${preferred}\n`
+        )
+      })
     })
   }
 

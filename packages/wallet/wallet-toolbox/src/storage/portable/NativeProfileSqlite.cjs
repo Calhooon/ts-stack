@@ -1573,15 +1573,17 @@ function isOwnedNativeTransaction(transaction) {
     !actual.owner.isCompleted()
   )
 }
-/** @param {import('./KnexNativeContract').NativeRuntimeFactory} createKnex @param {import('./KnexNativeContract').NativeRuntimeClientConstructor} SqliteClient @param {NativeProfileSqlite} session @param {number} slot */
-function nativeKnex(createKnex, SqliteClient, session, slot) {
+/** @param {import('./KnexNativeContract').NativeRuntimeFactory} createKnex @param {import('./KnexNativeContract').NativeRuntimeClientConstructor} SqliteClient @param {NativeProfileSqlite} session @param {number} slot @param {boolean} [passiveCheckpoint] */
+function nativeKnex(createKnex, SqliteClient, session, slot, passiveCheckpoint = false) {
   const originalFactory = require('knex'),
     originalClient = require('knex/lib/dialects/sqlite3')
   if (
     typeof createKnex !== 'function' ||
     (createKnex !== originalFactory && createKnex !== originalFactory.default) ||
     SqliteClient !== originalClient ||
-    ![0, 2, 3].includes(slot)
+    ![0, 2, 3].includes(slot) ||
+    typeof passiveCheckpoint !== 'boolean' ||
+    (passiveCheckpoint && (slot !== 0 || privateStageSessions.has(session) || retiredReadSessions.has(session)))
   )
     throw new Error('The actual supported native Knex factory and client are required')
   if (!liveOwnedSession(session)) throw new Error('An actual live native profile session is required')
@@ -1663,11 +1665,22 @@ function nativeKnex(createKnex, SqliteClient, session, slot) {
     }
     /** @override */
     async acquireRawConnection() {
-      return session.acquire(
+      const actualSlot =
         /** @type {import('knex/lib/dialects/sqlite3/execution/sqlite-transaction').RuntimeClient & {nativeSlot:number}} */ (
           this
         ).nativeSlot
-      )
+      const connection = await session.acquire(actualSlot)
+      try {
+        // Published wallets keep short commits within the original physical
+        // quota. SQLite's passive checkpoint never waits for a retained reader
+        // or overrides a pinned snapshot. Reapply after each physical reopen.
+        if (passiveCheckpoint && actualSlot === 0)
+          await actualSessionQuery(session, actualSlot, 'PRAGMA wal_autocheckpoint=1', [], false)
+        return connection
+      } catch (cause) {
+        await session.release(actualSlot)
+        throw cause
+      }
     }
     /** @param {object} connection  @override */
     async destroyRawConnection(connection) {

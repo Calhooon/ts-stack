@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { semanticStageFixture } from './Brc38SemanticStageFixture'
 import { brc38StageTables } from './Brc38SemanticStage'
@@ -101,7 +102,7 @@ async function fixture(large = false, scalar = false) {
 }
 async function* chunks(bytes: Uint8Array, width = 4093) {
   for (let offset = 0; offset < bytes.length; offset += width)
-    yield bytes.subarray(offset, Math.min(bytes.length, offset + width))
+    yield Promise.resolve(bytes.subarray(offset, Math.min(bytes.length, offset + width)))
 }
 export async function verifyBrowserLargeAuthenticatedStreamAndReplay(): Promise<void> {
   const f = await fixture(true),
@@ -168,12 +169,14 @@ export async function verifyBrowserStreamRefusalsAndOriginalSourceClose(): Promi
     let closed = false,
       failed = false,
       refuseClose = mode === 'source-close'
-    const closeSource = async () => {
-      closed = true
-      if (refuseClose) {
-        refuseClose = false
-        throw new Error('original source close refused')
-      }
+    const closeSource = () => {
+      return promiseFromSync(() => {
+        closed = true
+        if (refuseClose) {
+          refuseClose = false
+          throw new Error('original source close refused')
+        }
+      })
     }
     try {
       const value = await stageAuthenticatedBrc39StreamBrowserImport(
@@ -225,8 +228,10 @@ export async function verifyBrowserStreamScalarTextAndAuthenticationRefusal(): P
       binding: { ...options.binding, archiveSha256: new SHA256().update(corrupted).digestHex() },
       sourceControl: {
         ...options.sourceControl,
-        closeSource: async () => {
-          closed = true
+        closeSource: () => {
+          return promiseFromSync(() => {
+            closed = true
+          })
         }
       }
     })

@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../utility/promiseFromSync'
 import { getPackedIdbConnection, type PackedIdbConnection } from './idbPackedConnection'
 import { requirePackedIdbSnapshotInTransaction, type PackedIdbReadSnapshot } from './idbPackedSnapshot'
 import {
@@ -283,64 +284,72 @@ export class PackedIdbJsonIndex implements Brc38JsonMemberIndex {
       await writer.objectStore(packedIdbStores.jsonStages).put({ ...stage, state: 'sealed' })
     })
   }
-  async lookup(
+  lookup(
     objectOffset: number,
     key: string
   ): Promise<Readonly<Brc38JsonMember & { firstKeyOffset: number }> | undefined> {
-    if (
-      !Number.isSafeInteger(objectOffset) ||
-      objectOffset < 0 ||
-      objectOffset >= this.#limits.maximumSourceSpanBytes ||
-      typeof key !== 'string' ||
-      key.length > 8192
-    )
-      packedIdbInvalid()
-    return await this.operation('readonly', 'sealed', async tx => {
-      const row = await tx.objectStore(packedIdbStores.jsonMembers).get([this.#id, objectOffset, key])
-      if (row === undefined) return undefined
-      const value = storedMember(row, this.#limits.maximumSourceSpanBytes)
+    return awaitFromSync(() => {
       if (
-        row.stage !== this.#id ||
-        row.objectOffset !== objectOffset ||
-        row.key !== key ||
-        row.charge !== 256 + key.length * 2 ||
-        typeof row.firstKeyOffset !== 'number' ||
-        !Number.isSafeInteger(row.firstKeyOffset) ||
-        row.firstKeyOffset <= objectOffset ||
-        row.firstKeyOffset > value.keyOffset
+        !Number.isSafeInteger(objectOffset) ||
+        objectOffset < 0 ||
+        objectOffset >= this.#limits.maximumSourceSpanBytes ||
+        typeof key !== 'string' ||
+        key.length > 8192
       )
         packedIdbInvalid()
-      return Object.freeze({ ...value, firstKeyOffset: row.firstKeyOffset })
+      return this.operation('readonly', 'sealed', tx =>
+        mapAwaitFromSync(
+          () => tx.objectStore(packedIdbStores.jsonMembers).get([this.#id, objectOffset, key]),
+          row => {
+            if (row === undefined) return undefined
+            const value = storedMember(row, this.#limits.maximumSourceSpanBytes)
+            if (
+              row.stage !== this.#id ||
+              row.objectOffset !== objectOffset ||
+              row.key !== key ||
+              row.charge !== 256 + key.length * 2 ||
+              typeof row.firstKeyOffset !== 'number' ||
+              !Number.isSafeInteger(row.firstKeyOffset) ||
+              row.firstKeyOffset <= objectOffset ||
+              row.firstKeyOffset > value.keyOffset
+            )
+              packedIdbInvalid()
+            return Object.freeze({ ...value, firstKeyOffset: row.firstKeyOffset })
+          }
+        )
+      )
     })
   }
   /** One keyset member in one short owned read; no native cursor survives
    * this return. The original stage/view/expiry/content checks repeat. */
-  async nextEntry(objectOffset: number, after?: string): Promise<Brc38JsonMember | undefined> {
-    if (
-      !Number.isSafeInteger(objectOffset) ||
-      objectOffset < 0 ||
-      objectOffset >= this.#limits.maximumSourceSpanBytes ||
-      (after !== undefined && (typeof after !== 'string' || after.length > 8192))
-    )
-      packedIdbInvalid()
-    return await this.operation('readonly', 'sealed', async tx => {
-      const range = IDBKeyRange.bound(
-          after === undefined ? [this.#id, objectOffset] : [this.#id, objectOffset, after],
-          [this.#id, objectOffset, []],
-          after !== undefined
-        ),
-        cursor = await tx.objectStore(packedIdbStores.jsonMembers).openCursor(range)
-      if (cursor === null) return undefined
-      const row = cursor.value,
-        item = storedMember(row, this.#limits.maximumSourceSpanBytes)
+  nextEntry(objectOffset: number, after?: string): Promise<Brc38JsonMember | undefined> {
+    return awaitFromSync(() => {
       if (
-        row.stage !== this.#id ||
-        row.objectOffset !== objectOffset ||
-        row.charge !== 256 + item.key.length * 2 ||
-        (after !== undefined && item.key <= after)
+        !Number.isSafeInteger(objectOffset) ||
+        objectOffset < 0 ||
+        objectOffset >= this.#limits.maximumSourceSpanBytes ||
+        (after !== undefined && (typeof after !== 'string' || after.length > 8192))
       )
         packedIdbInvalid()
-      return item
+      return this.operation('readonly', 'sealed', async tx => {
+        const range = IDBKeyRange.bound(
+            after === undefined ? [this.#id, objectOffset] : [this.#id, objectOffset, after],
+            [this.#id, objectOffset, []],
+            after !== undefined
+          ),
+          cursor = await tx.objectStore(packedIdbStores.jsonMembers).openCursor(range)
+        if (cursor === null) return undefined
+        const row = cursor.value,
+          item = storedMember(row, this.#limits.maximumSourceSpanBytes)
+        if (
+          row.stage !== this.#id ||
+          row.objectOffset !== objectOffset ||
+          row.charge !== 256 + item.key.length * 2 ||
+          (after !== undefined && item.key <= after)
+        )
+          packedIdbInvalid()
+        return item
+      })
     })
   }
   async *entries(objectOffset: number): AsyncGenerator<Brc38JsonMember> {

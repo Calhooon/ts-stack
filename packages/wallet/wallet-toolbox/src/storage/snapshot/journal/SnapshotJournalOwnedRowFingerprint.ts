@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../../utility/utf16CodeUnitAt'
 import { createHash } from 'node:crypto'
 import type { SnapshotJournalFieldDescriptor } from './SnapshotJournalFieldTypes'
 import type { SnapshotJournalPosition } from './SnapshotJournalTypes'
@@ -21,7 +22,7 @@ function* escaped(value: string): Generator<string> {
   yield '"'
   for (let offset = 0; offset < value.length;) {
     let end = Math.min(value.length, offset + 8192)
-    const last = value.charCodeAt(end - 1)
+    const last = utf16CodeUnitAt(value, end - 1)
     if (end < value.length && last >= 0xd800 && last <= 0xdbff) end--
     const part = value.slice(offset, end),
       bytes = new TextEncoder().encode(part)

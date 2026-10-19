@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../utility/utf16CodeUnitAt'
 import { unwrap, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
@@ -524,7 +525,7 @@ function sourceChunk(value: string | Uint8Array | number[], offset: number, byte
   const chunk = new Uint8Array(bytes)
   if (typeof value === 'string') {
     for (let i = 0; i < bytes; i += 2) {
-      const unit = value.charCodeAt((offset + i) / 2)
+      const unit = utf16CodeUnitAt(value, (offset + i) / 2)
       chunk[i] = unit & 255
       chunk[i + 1] = unit >>> 8
     }
@@ -673,7 +674,7 @@ export async function hydratePackedIdbRow(
         const data = await readPackedIdbExtent(tx, field, offset, Math.min(packedIdbChunkBytes, field.bytes - offset))
         hash.update(data)
         let text = ''
-        for (let i = 0; i < data.length; i += 2) text += String.fromCharCode(data[i] | (data[i + 1] << 8))
+        for (let i = 0; i < data.length; i += 2) text += String.fromCodePoint(data[i] | (data[i + 1] << 8))
         pieces.push(text)
       }
       result[name] = pieces.join('')

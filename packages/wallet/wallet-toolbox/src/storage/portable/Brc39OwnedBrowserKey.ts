@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { toArray } from '@bsv/sdk/primitives/utils'
 import { argon2id } from '../../utility/hashWasm'
 import { readyArgon2idBackend } from '../../utility/Argon2idBackend'
@@ -149,16 +150,20 @@ export async function deriveBrc39OwnedBrowserKey(
     result.key = undefined
     if (pending !== undefined) {
       const actual = pending
-      const cleanup = async () => {
-        await wait(
-          actual.then(
-            () => {},
-            () => {}
-          ),
-          cleanupLimit
+      const cleanup = () =>
+        mapAwaitFromSync(
+          () =>
+            wait(
+              actual.then(
+                () => {},
+                () => {}
+              ),
+              cleanupLimit
+            ),
+          () => {
+            erase()
+          }
         )
-        erase()
-      }
       try {
         await cleanup()
       } catch (error_) {

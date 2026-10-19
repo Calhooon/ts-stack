@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { StorageKnex } from '../StorageKnex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -278,7 +279,7 @@ async function prepareNew(
                         member: 'transactionIds',
                         check: sources.owners.check,
                         chunks: width => (measurement ? mapped.measureChunks(width) : mapped.chunks(width)),
-                        close: async () => undefined
+                        close: () => promiseFromSync(() => undefined)
                       }
                     )
                 let output!: Readonly<Brc38PrivateDerivedTextDescriptor>,

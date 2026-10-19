@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitVoidFromSync } from './promiseFromSync'
 import type { Argon2idOptions, AsyncArgon2idBackend } from './Argon2idBackend'
 import { Brc38StagingCleanupError } from '../storage/portable/Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from '../storage/snapshot/SnapshotResourceLimitError'
@@ -227,9 +228,11 @@ export class BrowserArgon2idWorkerBackend implements AsyncArgon2idBackend {
       this.#retained = new Brc38StagingCleanupError(
         [cause, error_],
         'Browser KDF retains original Worker termination',
-        async () => {
-          this.#stop()
-          this.#retained = undefined
+        () => {
+          return promiseFromSync(() => {
+            this.#stop()
+            this.#retained = undefined
+          })
         }
       )
       this.#pending = undefined
@@ -245,7 +248,7 @@ export class BrowserArgon2idWorkerBackend implements AsyncArgon2idBackend {
     if (this.#retained !== undefined) throw this.#retained
     await this.#preloading?.catch(() => {})
   }
-  async retryCleanup(): Promise<void> {
-    await this.#retained?.retryCleanup()
+  retryCleanup(): Promise<void> {
+    return awaitVoidFromSync(() => this.#retained?.retryCleanup())
   }
 }

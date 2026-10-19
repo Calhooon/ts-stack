@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../../utility/promiseFromSync'
 import {
   validateSnapshotArchiveReaderOffer,
   validateSnapshotArchiveReaderOptions,
@@ -44,14 +45,12 @@ export class SnapshotArchiveTransport {
     parseSnapshotArchiveRpcInput('getSnapshotArchiveOffer', [{ version: 1, identityKey }])
   }
 
-  private async call(
-    method: SnapshotArchiveMethod,
-    fields: Record<string, unknown>,
-    signal?: AbortSignal
-  ): Promise<unknown> {
-    const params = [{ version: 1, identityKey: this.identityKey, ...fields }]
-    parseSnapshotArchiveRpcInput(method, params)
-    return await this.rpc(method, params, signal)
+  private call(method: SnapshotArchiveMethod, fields: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return awaitFromSync(() => {
+      const params = [{ version: 1, identityKey: this.identityKey, ...fields }]
+      parseSnapshotArchiveRpcInput(method, params)
+      return this.rpc(method, params, signal)
+    })
   }
 
   async offer(signal?: AbortSignal): Promise<Readonly<SnapshotArchiveOffer>> {

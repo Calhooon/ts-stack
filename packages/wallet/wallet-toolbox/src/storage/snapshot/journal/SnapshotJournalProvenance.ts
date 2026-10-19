@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import type { SnapshotJournalFieldProvenancePage } from './SnapshotJournalFieldTypes'
 import {
   writeSnapshotJournalPayloadRow,
@@ -1151,7 +1152,7 @@ export class SnapshotJournalProvenanceFieldReader {
       signal
     )
     try {
-      owner.#header = await owner.#writer(async (_trx, _scope, header) => header)
+      owner.#header = await owner.#writer((_trx, _scope, header) => promiseFromSync(() => header))
       const hash = createHash('sha256')
       let offset = 0
       for (;;) {

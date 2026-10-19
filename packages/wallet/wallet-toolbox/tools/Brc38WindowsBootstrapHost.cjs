@@ -21,7 +21,7 @@ function coordinate(value) {
     value.length > 2048 ||
     !/^[A-Za-z]:\\/.test(value) ||
     /["<>|?*]/.test(value) ||
-    Array.from(value).some(c => c.charCodeAt(0) < 32) ||
+    Array.from(value).some(c => c.codePointAt(0) < 32) ||
     path.win32.normalize(value) !== value ||
     value
       .slice(3)

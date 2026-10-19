@@ -37,6 +37,7 @@ test(
         originalHistory = JSON.stringify({ notes: [], independent: 'original 雪😀'.repeat(7000) }),
         changedHistory = '{"notes":[],"independent":"foreground replacement"}'
       expect(users).toHaveLength(1)
+      expect((await storage.knex.raw('PRAGMA wal_autocheckpoint'))[0].wal_autocheckpoint).toBe(1)
       expect(user.userId).toBe(manager.getActiveUser().userId)
       expect(requests).toHaveLength(1)
       expect(states).toHaveLength(1)

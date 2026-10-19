@@ -103,11 +103,22 @@ export async function readBoundedSnapshotJournalSqliteSchema(
     check()
     const coordinates = selected.map(row => row.position)
     if (coordinates.some(value => typeof value !== 'string' || !/^-?(0|[1-9][0-9]{0,18})$/.test(value))) invalid()
+    // The same retained-view query may deliver its complete small page.
+    // The window sum fences ALL BLOB columns together at the original 16KiB
+    // response bound; larger pages still use the original split transfer.
+    const aggregate = columns.map(() => 'coalesce(length(CAST(?? AS BLOB)),0)').join('+')
     const metadata = (await k('sqlite_master')
       .whereIn('rowid', coordinates)
       .select(
         k.raw('CAST(rowid AS TEXT) AS position'),
-        ...columns.map(column => k.raw('length(CAST(?? AS BLOB)) AS ??', [column, column]))
+        ...columns.map(column => k.raw('length(CAST(?? AS BLOB)) AS ??', [column, column])),
+        ...columns.map(column =>
+          k.raw(`CASE WHEN sum(${aggregate}) OVER ()<=16384 THEN CAST(?? AS BLOB) END AS ??`, [
+            ...columns,
+            column,
+            `${column}_bytes`
+          ])
+        )
       )
       .limit(9)) as Array<Lengths & { position: string }>
     check()
@@ -124,6 +135,22 @@ export async function readBoundedSnapshotJournalSqliteSchema(
       }
       values.set(row.position, row)
     }
+    const completeBytes = metadata.reduce(
+      (sum, row) => sum + columns.reduce((amount, column) => amount + (row[column] ?? 0), 0),
+      0
+    )
+    if (completeBytes <= 16384) {
+      for (const row of metadata) {
+        for (const column of columns) {
+          const blob = row[`${column}_bytes`],
+            length = row[column]
+          if (length === null ? blob !== null : !Buffer.isBuffer(blob) || blob.length !== length) invalid()
+        }
+      }
+      return values
+    }
+    // An over-budget page must contain metadata only, including NULL SQL.
+    if (metadata.some(row => columns.some(column => row[`${column}_bytes`] !== null))) invalid()
     let group: string[] = [],
       bytes = 0
     const transfer = async (): Promise<void> => {

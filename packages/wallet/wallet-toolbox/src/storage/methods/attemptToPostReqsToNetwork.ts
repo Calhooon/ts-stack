@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync } from '../../utility/promiseFromSync'
 import { StorageReqWrite } from '../StorageReqWrite'
 import { Beef, Transaction, WalletLoggerInterface } from '@bsv/sdk'
 import { repairBeefProofs } from './repairBeefProofs'
@@ -380,7 +381,7 @@ async function mutateRequest(
   apply: (current: EntityProvenTxReq) => void
 ): Promise<void> {
   if (writes != null) {
-    await writes.request(req, async current => apply(current))
+    await writes.request(req, current => promiseFromSync(() => apply(current)))
   } else {
     apply(req)
     await req.updateStorageDynamicProperties(storage, trx)
@@ -410,44 +411,48 @@ async function updateCapturedResults(
       await confirmDoubleSpend(ar, r.beef, storage, services, logger)
     const observed = req.toApi()
     let financialStatus: sdk.TransactionStatus | undefined
-    const applied = await writes.request(req, async current => {
-      current.mergeHistory(observed, undefined, true)
-      if (current.status === 'completed' || current.status === 'unmined') {
-        // The durable state may advance during confirmation as well.
-        ar.status = broadcastStatus
-        ar.competingTxs = broadcastCompetingTxs
-        if (current.status === 'unmined') financialStatus = 'unproven'
-        return
-      }
-      const note: ReqHistoryNote = {
-        when: new Date().toISOString(),
-        what: 'aggregateResults',
-        reqStatus: current.status,
-        aggStatus: ar.status,
-        attempts: current.attempts,
-        successCount: ar.successCount,
-        doubleSpendCount: ar.doubleSpendCount,
-        statusErrorCount: ar.statusErrorCount,
-        serviceErrorCount: ar.serviceErrorCount
-      }
-      const { newReqStatus, newTxStatus } = applyAggregateStatus(current, ar.status)
-      current.status = newReqStatus
-      financialStatus = newTxStatus
-      current.addHistoryNote({ ...note, newReqStatus, newTxStatus, newAttempts: current.attempts })
+    const applied = await writes.request(req, current => {
+      return promiseFromSync(() => {
+        current.mergeHistory(observed, undefined, true)
+        if (current.status === 'completed' || current.status === 'unmined') {
+          // The durable state may advance during confirmation as well.
+          ar.status = broadcastStatus
+          ar.competingTxs = broadcastCompetingTxs
+          if (current.status === 'unmined') financialStatus = 'unproven'
+          return
+        }
+        const note: ReqHistoryNote = {
+          when: new Date().toISOString(),
+          what: 'aggregateResults',
+          reqStatus: current.status,
+          aggStatus: ar.status,
+          attempts: current.attempts,
+          successCount: ar.successCount,
+          doubleSpendCount: ar.doubleSpendCount,
+          statusErrorCount: ar.statusErrorCount,
+          serviceErrorCount: ar.serviceErrorCount
+        }
+        const { newReqStatus, newTxStatus } = applyAggregateStatus(current, ar.status)
+        current.status = newReqStatus
+        financialStatus = newTxStatus
+        current.addHistoryNote({ ...note, newReqStatus, newTxStatus, newAttempts: current.attempts })
+      })
     })
     if (applied && financialStatus != null) {
       await writes.status(req, financialStatus)
       if (financialStatus === 'failed' && services != null) {
         const stale = await markConfirmedStaleReqInputs(req, storage, services, undefined, logger, writes)
         if (stale.checked > 0)
-          await writes.request(req, async current => {
-            current.addHistoryNote({
-              when: new Date().toISOString(),
-              what: 'markStaleInputsAsSpent',
-              aggStatus: ar.status,
-              checked: stale.checked,
-              confirmed: stale.staleConfirmed,
-              ...(stale.staleOutpoints.length ? { outpoints: stale.staleOutpoints.join(',') } : {})
+          await writes.request(req, current => {
+            return promiseFromSync(() => {
+              current.addHistoryNote({
+                when: new Date().toISOString(),
+                what: 'markStaleInputsAsSpent',
+                aggStatus: ar.status,
+                checked: stale.checked,
+                confirmed: stale.staleConfirmed,
+                ...(stale.staleOutpoints.length ? { outpoints: stale.staleOutpoints.join(',') } : {})
+              })
             })
           })
       }
@@ -620,14 +625,14 @@ export async function classifyBroadcastInputSpendEvidence(
  * Returns counts for instrumentation and the set of stale outpoints
  * that were actually evicted (added to history note for diagnostics).
  */
-export async function markStaleInputsAsSpent(
+export function markStaleInputsAsSpent(
   ar: AggregatePostBeefTxResult,
   storage: StorageProvider,
   services: sdk.WalletServices,
   trx?: sdk.TrxToken,
   logger?: WalletLoggerInterface
 ): Promise<{ checked: number; staleConfirmed: number; staleOutpoints: string[] }> {
-  return await markConfirmedStaleReqInputs(ar.vreq.req, storage, services, trx, logger)
+  return awaitFromSync(() => markConfirmedStaleReqInputs(ar.vreq.req, storage, services, trx, logger))
 }
 
 type AggregateStatus = 'success' | 'doubleSpend' | 'invalidTx' | 'serviceError'

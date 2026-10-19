@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -327,24 +328,26 @@ export async function inspectBrc38PrivateRequestInventory(
         retainedBuffers: Uint8Array[] = []
       try {
         if (baseline)
-          local = await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_tx_reqs', rowId, async row => {
-            check()
-            const bytes = Object.values(row.metadata).reduce<number>(
-              (sum, value) => sum + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
-              0
-            )
-            if (
-              bytes > 131072 ||
-              row.fields.length !== 4 ||
-              Object.values(row.metadata).some(
-                value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+          local = await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_tx_reqs', rowId, row => {
+            return promiseFromSync(() => {
+              check()
+              const bytes = Object.values(row.metadata).reduce<number>(
+                (sum, value) => sum + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
+                0
               )
-            )
-              invalid()
-            localCharge = working.claim(131072 + 32 * bytes)
-            return Object.freeze({
-              metadata: Object.freeze({ ...row.metadata }),
-              fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+              if (
+                bytes > 131072 ||
+                row.fields.length !== 4 ||
+                Object.values(row.metadata).some(
+                  value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+                )
+              )
+                invalid()
+              localCharge = working.claim(131072 + 32 * bytes)
+              return Object.freeze({
+                metadata: Object.freeze({ ...row.metadata }),
+                fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+              })
             })
           })
         const fields: Record<string, Field> = {},
@@ -586,7 +589,7 @@ export async function inspectBrc38PrivateRequestInventory(
                 )
                 if (result.complete) break
               }
-              await read(async () => undefined)
+              await read(() => promiseFromSync(() => undefined))
               touched = true
               aliasCursor = next
             } finally {
@@ -677,7 +680,7 @@ export async function inspectBrc38PrivateRequestInventory(
       if (baseline) afterSource = rowId
     }
     if (aliases !== layout.count) invalid()
-    await read(async () => undefined)
+    await read(() => promiseFromSync(() => undefined))
     check()
     return Object.freeze({ rows, aliases, logicalBytes: logicalBytes.toString() })
   } finally {

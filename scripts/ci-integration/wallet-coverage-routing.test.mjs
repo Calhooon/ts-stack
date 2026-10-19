@@ -73,3 +73,83 @@ test('actual scope Bash routes every affected wallet to complete coverage exactl
     }
   }
 })
+
+test('ordinary wallet discovery removes only the two complete mandatory native files under unchanged limits', async () => {
+  const { parse } = await import('yaml')
+  const workflow = parse(readFileSync(join(REPOSITORY_ROOT, '.github/workflows/ci.yml'), 'utf8'))
+  const job = workflow.jobs['coverage-wallet']
+  assert.equal(
+    job['timeout-minutes'],
+    "${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || matrix.native_merge_minutes || matrix.native_auth_minutes || 40 }}"
+  )
+  const step = job.steps.find(
+    value =>
+      value.run?.includes('NATIVE_AUTH_COHORT') &&
+      value.run?.includes('pnpm --filter @bsv/wallet-toolbox exec jest')
+  )
+  const source = step.run
+  const pattern = /args\+=\(--testPathIgnorePatterns='([^']+)'\)/.exec(source)[1]
+  const files = [
+    'src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts',
+    'src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts'
+  ]
+  const originalPattern = pattern
+    .split('|')
+    .filter(value => !files.includes(value))
+    .join('|')
+  const discover = ignored => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox/node_modules/jest/bin/jest.js'),
+        '--listTests',
+        '--json',
+        '--runInBand',
+        '--watchman=false',
+        '--testPathIgnorePatterns=' + ignored
+      ],
+      {
+        cwd: join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox'),
+        encoding: 'utf8',
+        timeout: 30000,
+        maxBuffer: 4194304
+      }
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+      .map(file => file.replaceAll('\\', '/'))
+      .sort()
+  }
+  const before = discover(originalPattern),
+    after = discover(pattern)
+  assert.equal(before.length - after.length, 2)
+  assert.deepEqual(
+    before
+      .filter(file => !after.includes(file))
+      .map(file => file.slice(file.indexOf('/src/') + 1))
+      .sort(),
+    files.sort()
+  )
+  assert.deepEqual(
+    after.filter(file => !before.includes(file)),
+    []
+  )
+  for (const family of ['READ', 'USER']) {
+    const lower = family.toLowerCase()
+    assert.equal(step.env[`NATIVE_${family}_COHORT`], '${{ matrix.native_' + lower + '_cohort }}')
+    assert.ok(
+      source.includes(
+        `--testNamePattern="$(node scripts/wallet-composed-native-ci.mjs ${lower}-pattern "$NATIVE_${family}_COHORT")"`
+      )
+    )
+    assert.ok(source.includes(`${lower}-capture "$NATIVE_${family}_COHORT"`))
+    assert.ok(
+      workflow.jobs['coverage-upload'].steps.some(
+        value =>
+          value.run ===
+            `node scripts/wallet-composed-native-ci.mjs ${lower}-verify .coverage-artifacts` &&
+          value.if.includes("wallet == 'true'")
+      )
+    )
+  }
+})

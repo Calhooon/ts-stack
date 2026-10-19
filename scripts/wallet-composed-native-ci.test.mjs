@@ -70,12 +70,21 @@ test('routing preserves all21 original cases including both identical completed 
   assert.equal(composedNativeCohorts.length, 20)
   const matrix = walletCoverageMatrix().include
   const originalMatrix = matrix.filter(
-    value => !['journal-field', 'archive-native-cache'].includes(value.native_pair_cohort)
+    value =>
+      !['journal-field', 'archive-native-cache'].includes(value.native_pair_cohort) &&
+      !value.native_read_cohort &&
+      !value.native_user_cohort
   )
   assert.equal(originalMatrix.length, 56)
   assert.equal(new Set(originalMatrix.map(value => value.id)).size, 56)
-  assert.equal(matrix.length, 58)
-  assert.equal(new Set(matrix.map(value => value.id)).size, 58)
+  assert.equal(matrix.length, 67)
+  assert.equal(new Set(matrix.map(value => value.id)).size, 67)
+  assert.equal(
+    createHash('sha256')
+      .update(JSON.stringify(matrix.slice(0, 58)))
+      .digest('hex'),
+    'f78766b20998647f31b51293092c6804d860cf71d509faee0a0067eb0d70848d'
+  )
   assert.deepEqual(
     matrix.filter(value => value.shard).map(value => value.shard),
     [1, 2, 3, 4]
@@ -343,6 +352,24 @@ for (const family of [
     report: nativeRouting.validateNativeAuthenticatedMergeReport,
     receipts: nativeRouting.validateNativeAuthenticatedMergeReceipts,
     bytes: nativeRouting.validateNativeAuthenticatedMergeReceiptReport
+  },
+  {
+    label: 'native read',
+    file: nativeRouting.nativeReadTestFile,
+    cohorts: nativeRouting.nativeReadCohorts,
+    names: nativeRouting.nativeReadCaseNames,
+    report: nativeRouting.validateNativeReadReport,
+    receipts: nativeRouting.validateNativeReadReceipts,
+    bytes: nativeRouting.validateNativeReadReceiptReport
+  },
+  {
+    label: 'native user',
+    file: nativeRouting.nativeUserTestFile,
+    cohorts: nativeRouting.nativeUserCohorts,
+    names: nativeRouting.nativeUserCaseNames,
+    report: nativeRouting.validateNativeUserReport,
+    receipts: nativeRouting.validateNativeUserReceipts,
+    bytes: nativeRouting.validateNativeUserReceiptReport
   }
 ]) {
   const composedNativeTestFile = family.file
@@ -511,5 +538,40 @@ test('CLI binds native receipt identity to the real checkout with a hostile PATH
     assert.notEqual(captured.identity.head, '0'.repeat(40))
   } finally {
     rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('read and user mandatory cohorts preserve their exact independently declared complete inventories', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const reads = readFileSync(join(root, nativeRouting.nativeReadTestFile), 'utf8')
+  const declared = [...reads.matchAll(/\btest\(\s*'([^']+)'/g)].map(match => match[1]).sort()
+  assert.equal(declared.length, 6)
+  assert.deepEqual(nativeRouting.nativeReadCaseNames, declared)
+  const users = readFileSync(join(root, nativeRouting.nativeUserTestFile), 'utf8')
+  assert.match(users, /test\.each\(\['2026-10-02', '2026-10-03', '2026-10-04'\]\)/)
+  const template = /test\.each[\s\S]*?\(\s*'([^']+%s)'/.exec(users)[1]
+  assert.deepEqual(
+    nativeRouting.nativeUserCaseNames,
+    ['2026-10-02', '2026-10-03', '2026-10-04'].map(day => template.replace('%s', day)).sort()
+  )
+  const matrix = walletCoverageMatrix().include
+  for (const [family, cohorts, names] of [
+    ['read', nativeRouting.nativeReadCohorts, nativeRouting.nativeReadCaseNames],
+    ['user', nativeRouting.nativeUserCohorts, nativeRouting.nativeUserCaseNames]
+  ]) {
+    const lanes = matrix.filter(value => value[`native_${family}_cohort`])
+    assert.equal(lanes.length, names.length)
+    assert.deepEqual(
+      lanes.map(value => value[`native_${family}_cohort`]),
+      cohorts.map(value => value.id)
+    )
+    for (const cohort of cohorts) {
+      assert.equal(cohort.cases, 1)
+      assert.deepEqual(
+        names.filter(name => new RegExp(cohort.pattern).test(name)),
+        [cohort.name]
+      )
+      assert.equal(new RegExp(cohort.pattern).test(cohort.name + ' changed'), false)
+    }
   }
 })

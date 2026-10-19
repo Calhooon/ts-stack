@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
@@ -70,7 +71,7 @@ export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number, 
     let journal = await IdbSnapshotSyncJournal.open(storage),
       cp = await journal.begin(source, 'source')
     same(await journal.begin(source, 'source'), cp)
-    cp = (await journal.commit(cp, 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+    cp = (await journal.commit(cp, 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 })))).checkpoint
     const chunk: SyncChunk = {
       fromStorageIdentityKey: 'source',
       toStorageIdentityKey: 'target',
@@ -148,14 +149,18 @@ export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number, 
     same(await journal.checkpoint(identityKey, 'source'), outcome.checkpoint)
     let invoked = false
     await refused(() =>
-      journal.commit(cp, 2, null, async () => {
-        invoked = true
-        return { inserts: 0, updates: 0 }
+      journal.commit(cp, 2, null, () => {
+        return promiseFromSync(() => {
+          invoked = true
+          return { inserts: 0, updates: 0 }
+        })
       })
     )
     await refused(() =>
-      journal.inspect(cp, async () => {
-        invoked = true
+      journal.inspect(cp, () => {
+        return promiseFromSync(() => {
+          invoked = true
+        })
       })
     )
     same(invoked, false)
@@ -198,12 +203,16 @@ export async function verifyOccupiedPackedIdbSnapshotJournal(expiresAt: number, 
     same(await journal.checkpoint(identityKey, 'source'), outcome.checkpoint)
     await refused(() => journal.begin(source, 'source'))
     await refused(() =>
-      journal.inspect(outcome.checkpoint, async () => {
-        invoked = true
+      journal.inspect(outcome.checkpoint, () => {
+        return promiseFromSync(() => {
+          invoked = true
+        })
       })
     )
     same(invoked, false)
-    await refused(() => journal.commit(outcome.checkpoint, 3, null, async () => ({ inserts: 0, updates: 0 })))
+    await refused(() =>
+      journal.commit(outcome.checkpoint, 3, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 })))
+    )
     check()
   } finally {
     try {

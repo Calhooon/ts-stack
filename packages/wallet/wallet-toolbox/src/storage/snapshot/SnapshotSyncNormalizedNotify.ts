@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Brc38StructuredProjectionOwners } from '../portable/Brc38StructuredProjectionOwners'
 import {
   stringifyBrc38StructuredJsonSpan,
@@ -180,7 +181,9 @@ export async function prepareSnapshotSyncNormalizedNotify(
             { start: 0, end: source.length },
             policy,
             undefined,
-            !replace ? undefined : { member: 'transactionIds', check, chunks: ids, close: async () => undefined }
+            !replace
+              ? undefined
+              : { member: 'transactionIds', check, chunks: ids, close: () => promiseFromSync(() => undefined) }
           )) {
             check()
             yield bytes

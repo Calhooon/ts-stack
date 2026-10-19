@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { assertKnexPrimaryRestoreWrite } from '../KnexPrimaryHandoffAdmission'
 import type { Brc38PrivateCheckpointData } from './Brc38PrivateCheckpointData'
 import {
@@ -290,9 +291,11 @@ export async function commitBrc38PrivateImportPage(
     const source = prepareMerge
       ? await (
           await prepareBrc38ImportPage(reader, metadata, admission, 0, signal)
-        ).consume(async header => {
-          if (header.kind !== 'header') invalid()
-          return header.source
+        ).consume(header => {
+          return promiseFromSync(() => {
+            if (header.kind !== 'header') invalid()
+            return header.source
+          })
         })
       : undefined
     const prepared = await page.consume(
@@ -550,7 +553,7 @@ export async function commitBrc38PrivateStreamedRestorePage(
         policy,
         admission,
         page.step,
-        async () => invalid(),
+        () => promiseFromSync(() => invalid()),
         signal,
         preview,
         prior
@@ -650,7 +653,7 @@ export async function commitBrc38PrivateStructuredRestorePage(
         policy,
         admission,
         page.step,
-        async () => invalid(),
+        () => promiseFromSync(() => invalid()),
         signal,
         preview,
         prior
@@ -828,7 +831,7 @@ export async function commitBrc38PrivateStructuredMergePage(
           receiptPolicy,
           admission,
           page.step,
-          async () => invalid(),
+          () => promiseFromSync(() => invalid()),
           signal,
           preview,
           prior
@@ -974,8 +977,8 @@ export async function commitBrc38PrivateStructuredMergePage(
           })
           return await consume(effect)
         },
-        unusedBinary: Brc38PrivatePreparedFieldInstaller = async () => invalid(),
-        unusedText: Brc38PrivatePreparedTextInstaller = async () => invalid()
+        unusedBinary: Brc38PrivatePreparedFieldInstaller = () => promiseFromSync(() => invalid()),
+        unusedText: Brc38PrivatePreparedTextInstaller = () => promiseFromSync(() => invalid())
       // Original sync-state payloads remain archive provenance; no operational
       // map or archived init/error state is installed as an occupied provider.
       if (

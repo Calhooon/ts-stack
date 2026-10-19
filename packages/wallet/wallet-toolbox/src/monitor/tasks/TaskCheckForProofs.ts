@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { WalletError } from '../../sdk/WalletError'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import { StorageReqWrite } from '../../storage/StorageReqWrite'
@@ -115,22 +116,24 @@ async function persistProofObservation(
   if (writes == null) return await req.updateStorageDynamicProperties(task.storage)
   const observed = { ...req.toApi() }
   if (
-    !(await writes.request(req, async current => {
-      current.mergeHistory(observed, undefined, true)
-      const sameCycle =
-        current.status === before.status && current.rebroadcastAttempts === (before.rebroadcastAttempts ?? 0)
-      if (sameCycle) {
-        const unchangedAttempts = current.attempts === before.attempts
-        const delta = observed.attempts - before.attempts
-        if (delta > 0) current.attempts = Math.min(Number.MAX_SAFE_INTEGER, current.attempts + delta)
-        if (unchangedAttempts) {
-          if (delta < 0) current.attempts = observed.attempts
-          current.status = observed.status
-          current.rebroadcastAttempts = observed.rebroadcastAttempts ?? 0
+    !(await writes.request(req, current => {
+      return promiseFromSync(() => {
+        current.mergeHistory(observed, undefined, true)
+        const sameCycle =
+          current.status === before.status && current.rebroadcastAttempts === (before.rebroadcastAttempts ?? 0)
+        if (sameCycle) {
+          const unchangedAttempts = current.attempts === before.attempts
+          const delta = observed.attempts - before.attempts
+          if (delta > 0) current.attempts = Math.min(Number.MAX_SAFE_INTEGER, current.attempts + delta)
+          if (unchangedAttempts) {
+            if (delta < 0) current.attempts = observed.attempts
+            current.status = observed.status
+            current.rebroadcastAttempts = observed.rebroadcastAttempts ?? 0
+          }
         }
-      }
-      if (observed.wasBroadcast) current.wasBroadcast = true
-      if (!observed.notified) current.notified = false
+        if (observed.wasBroadcast) current.wasBroadcast = true
+        if (!observed.notified) current.notified = false
+      })
     }))
   )
     throw new WERR_NOT_ACTIVE('Proof observation lost its captured primary profiles')

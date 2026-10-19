@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   compactBrc38NativeTargetIndexes,
   brc38NativeTargetIndexCompactionMigration
@@ -161,22 +162,28 @@ export async function installBrc38PrivateNativeCandidateSchema(
   if (streamed)
     source.migrations[brc38NativeTailLayoutMigration] = {
       up: async token => await installBrc38NativeTailLayout(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Private streamed layout requires owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Private streamed layout requires owned forward recovery')
+        })
       }
     }
   if (streamed)
     source.migrations[brc38NativeTargetIndexCompactionMigration] = {
       up: async token => await compactBrc38NativeTargetIndexes(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Fresh private target indexes require owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Fresh private target indexes require owned forward recovery')
+        })
       }
     }
   if (streamed)
     source.migrations[brc38NativePackedMigration] = {
       up: async token => await installBrc38NativePackedSchema(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Private packed native fields require owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Private packed native fields require owned forward recovery')
+        })
       }
     }
   source.migrations[structured ? migration + ' structured-v5' : streamed ? migration + ' streamed-v4' : migration] = {
@@ -195,43 +202,55 @@ export async function installBrc38PrivateNativeCandidateSchema(
         table.string('admissionSha256', 64).nullable()
       })
     },
-    down: async () => {
-      throw new Error('Private native restore requires owned forward recovery')
+    down: () => {
+      return promiseFromSync(() => {
+        throw new Error('Private native restore requires owned forward recovery')
+      })
     }
   }
   if (structured)
     source.migrations[brc38StructuredNativeReceiverMigration] = {
       up: async token => await installBrc38StructuredNativeReceiverSchema(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Private structured receiver requires owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Private structured receiver requires owned forward recovery')
+        })
       }
     }
   if (structured)
     source.migrations[brc38NativePreparedFieldsMigration] = {
       up: async token => await installBrc38NativePreparedFieldsSchema(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Native prepared field lifetimes require owned profile retirement')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Native prepared field lifetimes require owned profile retirement')
+        })
       }
     }
   if (structured)
     source.migrations[nativeSnapshotSyncMappingMigration] = {
       up: async token => await installNativeSnapshotSyncMappingSchema(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Native sync mapping fences require owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Native sync mapping fences require owned forward recovery')
+        })
       }
     }
   if (structured)
     source.migrations[nativeSnapshotJournalMappingMigration] = {
       up: async token => await installNativeSnapshotJournalMappingSchema(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Native journal mapping fences require owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Native journal mapping fences require owned forward recovery')
+        })
       }
     }
   if (localBaseline)
     source.migrations[brc38NativeLocalPackedLayoutMigration] = {
       up: async token => await installBrc38NativeLocalPackedLayout(token as Knex.Transaction),
-      down: async () => {
-        throw new Error('Private local packed receiver requires owned forward recovery')
+      down: () => {
+        return promiseFromSync(() => {
+          throw new Error('Private local packed receiver requires owned forward recovery')
+        })
       }
     }
   // Private candidates retain the caller's original receipt policy and finite
@@ -255,8 +274,10 @@ export async function installBrc38PrivateNativeCandidateSchema(
       if (beforeJournal !== undefined) await beforeJournal(storage)
       await completePrivateNativeCandidateJournal(storage, store, options.receiptPolicy)
     },
-    down: async () => {
-      throw new Error('Private native journal requires owned forward recovery')
+    down: () => {
+      return promiseFromSync(() => {
+        throw new Error('Private native journal requires owned forward recovery')
+      })
     }
   }
   await storage.knex.raw('PRAGMA foreign_keys=OFF')

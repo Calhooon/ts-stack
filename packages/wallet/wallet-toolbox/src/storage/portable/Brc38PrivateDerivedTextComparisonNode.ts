@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { privateNativeDatabaseIdentity } from './Brc38PrivateNativeOwnershipNode'
@@ -69,15 +70,21 @@ export async function compareBrc38PrivateDerivedText(
       invalid()
     store.assertPrivateNativeDestination(root)
   }
-  const cleanupScope1 = new Brc38CleanupScope(async () => {
-    if (retained !== undefined) {
-      const failure = retained
-      throw new Brc38StagingCleanupError([failure], 'Private TEXT comparison retains actual read cleanup', async () => {
-        await failure.retryCleanup()
-        reservation.close()
-      })
-    }
-    reservation.close()
+  const cleanupScope1 = new Brc38CleanupScope(() => {
+    return promiseFromSync(() => {
+      if (retained !== undefined) {
+        const failure = retained
+        throw new Brc38StagingCleanupError(
+          [failure],
+          'Private TEXT comparison retains actual read cleanup',
+          async () => {
+            await failure.retryCleanup()
+            reservation.close()
+          }
+        )
+      }
+      reservation.close()
+    })
   })
   try {
     return await store.withPrivateNativeDatabase(true, async database => {

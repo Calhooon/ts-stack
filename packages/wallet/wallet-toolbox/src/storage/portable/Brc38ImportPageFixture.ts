@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { randomUUID } from 'node:crypto'
 import { semanticStageFixture } from './Brc38SemanticStageFixture'
 import { brc38StageTables, type Brc38StageTable } from './Brc38SemanticStage'
@@ -55,23 +56,29 @@ export function importPageFixture(data: BRC38WalletData = semanticStageFixture()
     pending = 0,
     maximumPending = 0
   const reader: Brc38AuthenticatedImportReader = {
-    async header() {
-      return pageClone(header)
+    header() {
+      return promiseFromSync(() => {
+        return pageClone(header)
+      })
     },
-    async count(table) {
-      scalarReads++
-      return data.tables[table].length
+    count(table) {
+      return promiseFromSync(() => {
+        scalarReads++
+        return data.tables[table].length
+      })
     },
-    async row(table, index) {
-      pending++
-      maximumPending = Math.max(maximumPending, pending)
-      calls.push({ table, index })
-      try {
-        const value = data.tables[table].at(index)
-        return value === undefined ? undefined : pageClone(value)
-      } finally {
-        pending--
-      }
+    row(table, index) {
+      return promiseFromSync(() => {
+        pending++
+        maximumPending = Math.max(maximumPending, pending)
+        calls.push({ table, index })
+        try {
+          const value = data.tables[table].at(index)
+          return value === undefined ? undefined : pageClone(value)
+        } finally {
+          pending--
+        }
+      })
     }
   }
   return {

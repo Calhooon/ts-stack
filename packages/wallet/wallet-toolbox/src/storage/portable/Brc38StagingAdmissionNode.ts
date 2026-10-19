@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { BigIntStats } from 'node:fs'
 import {
   requirePrivatePath,
@@ -165,8 +166,10 @@ export class Brc38StagingAdmissionNode {
   static async create(directory: string, selected: Brc38StagingCapacity): Promise<Brc38StagingAdmissionNode> {
     const limits = capacity(selected),
       identity = await privateRoot(directory)
-    await visitEntries(directory, async () => {
-      throw new Error('Private staging root must initially be empty')
+    await visitEntries(directory, () => {
+      return promiseFromSync(() => {
+        throw new Error('Private staging root must initially be empty')
+      })
     })
     const file = await createPrivateFile(join(directory, catalogName))
     let catalogIdentity: BigIntStats
@@ -648,8 +651,10 @@ export class Brc38StagingAdmissionNode {
       const ownerFile = await optionalStat(join(path, 'brc38-owner.sqlite'))
       if (ownerFile === undefined) {
         if (row.state !== 'reserved') throw new Error('A ready private stage lost its ownership file')
-        await visitEntries(path, async () => {
-          throw new Error('Incomplete private stage without an owner is not empty')
+        await visitEntries(path, () => {
+          return promiseFromSync(() => {
+            throw new Error('Incomplete private stage without an owner is not empty')
+          })
         })
         await rm(path, { recursive: true })
       } else {

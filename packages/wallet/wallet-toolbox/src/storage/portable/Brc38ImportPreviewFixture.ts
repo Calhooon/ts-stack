@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
 import { runInSeries } from '../../utility/runInSeries'
 import { promises as fs } from 'node:fs'
@@ -54,8 +55,10 @@ export async function previewDestinationFixture(beforeGeneration?: (trx: Knex.Tr
       )
       migrationSource.migrations['2026-10-01-999 private import indexes fixture'] = {
         up: async transaction => await beforeGeneration(transaction as Knex.Transaction),
-        down: async () => {
-          throw new Error('Fresh import fixture indexes require forward migration')
+        down: () => {
+          return promiseFromSync(() => {
+            throw new Error('Fresh import fixture indexes require forward migration')
+          })
         }
       }
       await migrateBeforeSnapshotJournal(storage, 'synthetic import preview', 'synthetic target', migrationSource)
@@ -149,7 +152,8 @@ export async function previewPrivateFixture(
       }
     }
     async function* chunks() {
-      for (let offset = 0; offset < bytes.length; offset += 137) yield bytes.slice(offset, offset + 137)
+      for (let offset = 0; offset < bytes.length; offset += 137)
+        yield Promise.resolve(bytes.slice(offset, offset + 137))
     }
     const value = await stageAuthenticatedBrc39PrivateImport(chunks(), authenticatedStagePassword, root, selected)
     held.push(value.reservation)

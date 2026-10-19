@@ -1,3 +1,4 @@
+import { awaitFromSync, promiseFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageActiveWrite } from '../StorageActiveWrite'
 import {
   type ValidCreateActionArgs,
@@ -87,17 +88,20 @@ export async function createAction(
         'action.is_no_send': vargs.isNoSend
       }
     },
-    async span => {
-      const result = await createActionCore(storage, auth, vargs, write, span)
-      span.end({
-        attributes: {
-          'action.result_input_count': result.inputs.length,
-          'action.result_output_count': result.outputs.length,
-          'action.input_beef_bytes': result.inputBeef?.length ?? 0
+    span =>
+      mapAwaitFromSync(
+        () => createActionCore(storage, auth, vargs, write, span),
+        result => {
+          span.end({
+            attributes: {
+              'action.result_input_count': result.inputs.length,
+              'action.result_output_count': result.outputs.length,
+              'action.input_beef_bytes': result.inputBeef?.length ?? 0
+            }
+          })
+          return result
         }
-      })
-      return result
-    }
+      )
   )
 }
 
@@ -217,11 +221,14 @@ async function createActionCore(
           'action.label_count': vargs.labels.length,
           'action.storage_beef_bytes': storageBeefBytes.length
         },
-        async span => {
-          const transaction = await createNewTxRecord(storage, userId, vargs, storageBeefBytes, initialSatoshis, trx)
-          span?.end({ attributes: { 'action.transaction_record_created': true } })
-          return transaction
-        }
+        span =>
+          mapAwaitFromSync(
+            () => createNewTxRecord(storage, userId, vargs, storageBeefBytes, initialSatoshis, trx),
+            transaction => {
+              span?.end({ attributes: { 'action.transaction_record_created': true } })
+              return transaction
+            }
+          )
       )
       logger?.log('created new transaction record')
 
@@ -263,11 +270,14 @@ async function createActionCore(
           'action.fixed_output_count': ctx.xoutputs.length,
           'action.change_output_count': funded.changeOutputs.length
         },
-        async span => {
-          const result = await createNewOutputs(storage, userId, vargs, ctx, funded.changeOutputs, trx)
-          span?.end({ attributes: { 'action.persisted_output_count': result.outputs.length } })
-          return result
-        }
+        span =>
+          mapAwaitFromSync(
+            () => createNewOutputs(storage, userId, vargs, ctx, funded.changeOutputs, trx),
+            result => {
+              span?.end({ attributes: { 'action.persisted_output_count': result.outputs.length } })
+              return result
+            }
+          )
       )
       return { ...funded, ...storedOutputs, ctx }
     })
@@ -296,11 +306,14 @@ async function createActionCore(
         'action.funding_input_count': allocatedChange.length,
         'action.include_source_transactions': vargs.includeAllSourceTransactions
       },
-      async span => {
-        const assembled = await createNewInputs(storage, userId, vargs, ctx, allocatedChange, write)
-        span?.end({ attributes: { 'action.result_input_count': assembled.length } })
-        return assembled
-      }
+      span =>
+        mapAwaitFromSync(
+          () => createNewInputs(storage, userId, vargs, ctx, allocatedChange, write),
+          assembled => {
+            span?.end({ attributes: { 'action.result_input_count': assembled.length } })
+            return assembled
+          }
+        )
     )
     logger?.log('created new inputs')
 
@@ -331,14 +344,15 @@ async function createActionCore(
     if (newTx?.transactionId != null) {
       try {
         if (newTxCommitted) {
-          await write.transaction(
-            async trx =>
-              await storage.updateTransactionStatus('failed', newTx!.transactionId, undefined, undefined, trx)
+          await write.transaction(trx =>
+            awaitFromSync(() =>
+              storage.updateTransactionStatus('failed', newTx!.transactionId, undefined, undefined, trx)
+            )
           )
           logger?.log(`marked failed createAction transaction ${newTx.transactionId} after construction error`)
         } else {
-          const failed = await write.transaction(
-            async trx => await createNewTxRecord(storage, userId, vargs, storageBeefBytes, 0, trx, 'failed')
+          const failed = await write.transaction(trx =>
+            awaitFromSync(() => createNewTxRecord(storage, userId, vargs, storageBeefBytes, 0, trx, 'failed'))
           )
           logger?.log(`recorded failed createAction transaction ${failed.transactionId} after rollback`)
         }
@@ -1155,7 +1169,7 @@ async function traceStorageStep<T>(
   return await storage.telemetry.withSpan(
     name,
     { component: 'wallet-storage', parent: parent?.context, attributes },
-    async span => await callback(span)
+    span => awaitFromSync(() => callback(span))
   )
 }
 
@@ -1266,24 +1280,26 @@ async function buildFundingPlan(
       const availableSelector = new CanonicalChangeSelector(available)
       const noSend = [...plannedNoSend]
       const noSendById = new Map(plannedNoSend.map(output => [output.outputId, output]))
-      const allocate = async (
+      const allocate = (
         targetSatoshis: number,
         exactSatoshis?: number
-      ): Promise<GenerateChangeSdkChangeInput | undefined> => {
-        let output: ResolvedManagedChangeInputCandidate | undefined = noSend.pop()
-        output ??= availableSelector.take(targetSatoshis, exactSatoshis)
-        if (output == null) return undefined
-        allocated.set(output.outputId, output)
-        return { outputId: output.outputId, satoshis: output.satoshis }
-      }
-      const release = async (outputId: number): Promise<void> => {
-        const output = allocated.get(outputId)
-        if (output == null) return
-        allocated.delete(outputId)
-        availableSelector.release(outputId)
-        const noSendOutput = noSendById.get(outputId)
-        if (noSendOutput != null) noSend.push(noSendOutput)
-      }
+      ): Promise<GenerateChangeSdkChangeInput | undefined> =>
+        promiseFromSync(() => {
+          let output: ResolvedManagedChangeInputCandidate | undefined = noSend.pop()
+          output ??= availableSelector.take(targetSatoshis, exactSatoshis)
+          if (output == null) return undefined
+          allocated.set(output.outputId, output)
+          return { outputId: output.outputId, satoshis: output.satoshis }
+        })
+      const release = (outputId: number): Promise<void> =>
+        promiseFromSync(() => {
+          const output = allocated.get(outputId)
+          if (output == null) return
+          allocated.delete(outputId)
+          availableSelector.release(outputId)
+          const noSendOutput = noSendById.get(outputId)
+          if (noSendOutput != null) noSend.push(noSendOutput)
+        })
       const result = await generateChangeSdk(params, allocate, release, vargs.logger, storage.telemetry)
       const selected = result.allocatedChangeInputs.map(input => verifyTruthy(allocated.get(input.outputId)))
       span?.end({
@@ -1350,20 +1366,24 @@ async function resolveFundingCandidates(
     'wallet.storage.create_action.funding_candidates',
     parent,
     { 'funding.include_pending': true },
-    async span => {
-      const outputs = await storage.findAvailableManagedChangeInputCandidates(userId, basketId, false, trx)
-      span?.end({
-        attributes: {
-          'funding.candidate_count': outputs.length,
-          'funding.candidate_satoshis': outputs.reduce((sum, output) => sum + output.satoshis, 0),
-          'funding.completed_candidate_count': outputs.filter(output => output.transactionStatus === 'completed')
-            .length,
-          'funding.unproven_candidate_count': outputs.filter(output => output.transactionStatus === 'unproven').length,
-          'funding.sending_candidate_count': outputs.filter(output => output.transactionStatus === 'sending').length
+    span =>
+      mapAwaitFromSync(
+        () => storage.findAvailableManagedChangeInputCandidates(userId, basketId, false, trx),
+        outputs => {
+          span?.end({
+            attributes: {
+              'funding.candidate_count': outputs.length,
+              'funding.candidate_satoshis': outputs.reduce((sum, output) => sum + output.satoshis, 0),
+              'funding.completed_candidate_count': outputs.filter(output => output.transactionStatus === 'completed')
+                .length,
+              'funding.unproven_candidate_count': outputs.filter(output => output.transactionStatus === 'unproven')
+                .length,
+              'funding.sending_candidate_count': outputs.filter(output => output.transactionStatus === 'sending').length
+            }
+          })
+          return outputs
         }
-      })
-      return outputs
-    }
+      )
   )
   const missingStatusIds = rawCandidates
     .filter(output => output.transactionStatus == null)
@@ -1906,18 +1926,21 @@ function startAllocatedChangeBeefPrefetch(
       'beef.missing_source_count': missing.length,
       'beef.storage_batch_count': missing.length === 0 ? 0 : 1
     },
-    async span => {
-      const fetched = await loadAllocatedChangeBeef(storage, userId, missing, options, parent)
-      span?.end({
-        attributes: {
-          'beef.fetched_tx_count': fetched.beef.txs.length,
-          'beef.fetched_bump_count': fetched.beef.bumps.length,
-          'beef.prepared_hit_count': fetched.preparedHitCount,
-          'beef.canonical_fetch_count': fetched.canonicalFetchCount
+    span =>
+      mapAwaitFromSync(
+        () => loadAllocatedChangeBeef(storage, userId, missing, options, parent),
+        fetched => {
+          span?.end({
+            attributes: {
+              'beef.fetched_tx_count': fetched.beef.txs.length,
+              'beef.fetched_bump_count': fetched.beef.bumps.length,
+              'beef.prepared_hit_count': fetched.preparedHitCount,
+              'beef.canonical_fetch_count': fetched.canonicalFetchCount
+            }
+          })
+          return fetched
         }
-      })
-      return fetched
-    }
+      )
   ).then(
     prefetched => ({
       beef: prefetched.beef,
@@ -1961,11 +1984,14 @@ async function mergeAllocatedChangeBeefs(
     'wallet.storage.create_action.beef_prefetch_join',
     parent,
     { 'beef.prefetch_source_count': 0 },
-    async span => {
-      const result = await prefetch
-      span?.end({ attributes: { 'beef.prefetch_source_count': result.sourceCount } })
-      return result
-    }
+    span =>
+      mapAwaitFromSync(
+        () => prefetch,
+        result => {
+          span?.end({ attributes: { 'beef.prefetch_source_count': result.sourceCount } })
+          return result
+        }
+      )
   )
   // A claim retry may replace only part of the initial funding plan. Never
   // merge proofs for outputs the final transaction does not spend: apart from
@@ -2011,15 +2037,16 @@ async function mergeAllocatedChangeBeefs(
     'wallet.storage.create_action.beef_merge',
     parent,
     { 'beef.fragment_count': (usePrefetch && prefetched.beef != null ? 1 : 0) + (fetched == null ? 0 : 1) },
-    async span => {
-      if (fetched != null) beef.mergeBeef(fetched)
-      span?.end({
-        attributes: {
-          'beef.merged_tx_count': beef.txs.length,
-          'beef.merged_bump_count': beef.bumps.length
-        }
+    span =>
+      promiseFromSync(() => {
+        if (fetched != null) beef.mergeBeef(fetched)
+        span?.end({
+          attributes: {
+            'beef.merged_tx_count': beef.txs.length,
+            'beef.merged_bump_count': beef.bumps.length
+          }
+        })
       })
-    }
   )
   // Standalone offline storage historically permits construction without
   // services. Configured wallets validate even prepared/embedded ancestry
@@ -2035,11 +2062,12 @@ async function mergeAllocatedChangeBeefs(
       'beef.bump_count': beef.bumps.length,
       'beef.known_txid_count': knownTxids.length
     },
-    async span => {
-      const result = trimInputBeef(beef, vargs)
-      span?.end({ attributes: { 'beef.result_bytes': result?.length ?? 0 } })
-      return result
-    }
+    span =>
+      promiseFromSync(() => {
+        const result = trimInputBeef(beef, vargs)
+        span?.end({ attributes: { 'beef.result_bytes': result?.length ?? 0 } })
+        return result
+      })
   )
   return { inputBeef, preparations }
 }

@@ -1,3 +1,4 @@
+import { hasBrc38NativePreparedContentSchema } from './Brc38NativePreparedFieldSchemaNode'
 import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -972,7 +973,18 @@ test('fresh native import queries reuse exact source indexes and refuse partial 
   ] as const
   await withBrc38NativePrivateContractFixture(async fixture => {
     await fixture.withWriter(async trx => {
-      await verifyBrc38ImportTargetIndexes(trx)
+      const metadataQueries: string[] = []
+      const observeQuery = (query: { sql: string }): void => {
+        if (query.sql.includes('pragma_index_list')) metadataQueries.push(query.sql)
+      }
+      trx.on('query', observeQuery)
+      try {
+        await verifyBrc38ImportTargetIndexes(trx)
+      } finally {
+        trx.removeListener('query', observeQuery)
+      }
+      expect(metadataQueries).toHaveLength(1)
+      expect(Buffer.byteLength(metadataQueries[0])).toBeLessThanOrEqual(65536)
       expect(await brc38ImportTargetIndexStatements(trx)).toHaveLength(4)
       const named = await trx('main.sqlite_schema')
         .whereRaw('substr(name,1,20)=?', ['brc38_import_target_'])
@@ -1891,3 +1903,42 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
     await fixture.close()
   }
 })
+
+test('prepared content groups complete fresh schema validation without accepting damaged families', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    await fixture.withWriter(async trx => {
+      const binaryInventories: string[] = []
+      const observe = (query: { sql: string; bindings?: unknown[] }): void => {
+        if (query.sql.includes('substr(name,1,20)') && query.bindings?.includes('brc38_native_binary_'))
+          binaryInventories.push(query.sql)
+      }
+      trx.on('query', observe)
+      try {
+        expect(await hasBrc38NativePreparedContentSchema(trx)).toBe(true)
+      } finally {
+        trx.removeListener('query', observe)
+      }
+      expect(binaryInventories).toHaveLength(1)
+      const names = [
+        'brc38_native_prepared_fields_update_guard',
+        'brc38_native_binary_versions_update_guard',
+        'brc38_native_text_versions_update_guard'
+      ]
+      const definitions: Array<{ name: string; sql: string }> = await trx('sqlite_schema')
+        .whereIn('name', names)
+        .select('name', 'sql')
+      expect(definitions).toHaveLength(3)
+      for (const definition of definitions) {
+        await trx.raw('SAVEPOINT independently_damaged_content_schema')
+        try {
+          await trx.raw('DROP TRIGGER ??', [definition.name])
+          await expect(hasBrc38NativePreparedContentSchema(trx)).rejects.toThrow()
+        } finally {
+          await trx.raw('ROLLBACK TO independently_damaged_content_schema')
+          await trx.raw('RELEASE independently_damaged_content_schema')
+        }
+        expect(await hasBrc38NativePreparedContentSchema(trx)).toBe(true)
+      }
+    })
+  })
+}, 30000)

@@ -1,3 +1,4 @@
+import { awaitFromSync, awaitVoidFromSync } from '../../../utility/promiseFromSync'
 import { closeSnapshotJournalSource } from './closeSnapshotJournalSource'
 import { assertRemoteSnapshotJournalFieldArchive } from './openRemoteSnapshotJournalFieldArchive'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -43,18 +44,20 @@ export async function* runSnapshotJournalArchiveReconciliation(
           if (expected.phase !== 'intake' || stream === undefined || expected.sequence >= archive.frameCount)
             throw new WERR_INVALID_OPERATION('Journal archive differs from the actual destination intake ordinal')
           const context = { stream: stream.stream, tableId: stream.tableId }
-          const frame = await archive.readFrame(expected.sequence, async (digest, index, identities) => {
-            await destination.stagePacket(
-              expected,
-              encodeSnapshotJournalArchiveIdentities(
-                context,
-                digest,
-                index,
-                identities,
-                manifest.binding.journal.receipt.highWater
+          const frame = await archive.readFrame(expected.sequence, (digest, index, identities) =>
+            awaitVoidFromSync(() =>
+              destination.stagePacket(
+                expected,
+                encodeSnapshotJournalArchiveIdentities(
+                  context,
+                  digest,
+                  index,
+                  identities,
+                  manifest.binding.journal.receipt.highWater
+                )
               )
             )
-          })
+          )
           if (frame.stream !== stream.stream || frame.tableId !== stream.tableId)
             throw new WERR_INVALID_OPERATION('Journal archive frame differs from destination stream')
           return await destination.stagePacket(expected, encodeSnapshotJournalArchiveFrame(context, frame.page))
@@ -102,7 +105,7 @@ export async function* runSnapshotJournalFieldArchiveReconciliation(
       if (closing !== undefined) return closing
       closing = Promise.resolve().then(async () => {
         const results = await Promise.allSettled([
-            Promise.resolve().then(async () => await destination?.close?.()),
+            Promise.resolve().then(() => awaitFromSync(() => destination?.close?.())),
             closeSnapshotJournalSource(archive, options.signal)
           ]),
           failures = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { SyncMap } from '../schema/entities/EntityBase'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
@@ -165,12 +166,14 @@ export async function prepareNativeSnapshotSyncActions(
     }
   try {
     check()
-    await destination.inspectNativeFieldSession(expected, signal, async read => {
-      check()
-      if (read.sourceUserId !== binding.userId) invalid()
-      journalEpoch = read.journalEpoch
-      expiresAt = Math.min(expiresAt, read.expiresAt)
-      deadline = Math.min(deadline, performance.now() + expiresAt - Date.now())
+    await destination.inspectNativeFieldSession(expected, signal, read => {
+      return promiseFromSync(() => {
+        check()
+        if (read.sourceUserId !== binding.userId) invalid()
+        journalEpoch = read.journalEpoch
+        expiresAt = Math.min(expiresAt, read.expiresAt)
+        deadline = Math.min(deadline, performance.now() + expiresAt - Date.now())
+      })
     })
     for (const metadata of detached.rows) {
       const fields: Record<string, unknown> = { ...metadata.fields },

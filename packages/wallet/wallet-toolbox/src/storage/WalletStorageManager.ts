@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, awaitVoidFromSync, mapAwaitFromSync } from '../utility/promiseFromSync'
 import type { StoragePreparedWalletWriter, StorageWriterAdmission } from './StorageActiveWrite'
 import { runPrimaryHandoffProgram, type PrimaryHandoffParticipant } from './PrimaryHandoffProgram'
 import type { PrimaryHandoffControl, PrimaryHandoffPlan, PrimaryHandoffControlOptions } from './PrimaryHandoffControl'
@@ -596,7 +597,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
       }
       this.#providerTransition = owned
       this.#requireProviderTransition(scope)
-      return await owned.io.retain(async () => await owned!.controller.retain(async () => await work(scope)))
+      return await owned.io.retain(() =>
+        awaitFromSync(() => owned!.controller.retain(() => awaitFromSync(() => work(scope))))
+      )
     } finally {
       if (owned !== undefined && this.#providerTransition === owned) this.#providerTransition = undefined
       release?.()
@@ -776,19 +779,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     )
       return await this.runAsWriter(async writer => await operation(writer, await this.getAuth(true)))
     const admission: StorageWriterAdmission = async <T>(work: () => Promise<T>): Promise<T> =>
-      await this.withAccess(async active => {
-        if (
-          active !== selected.writer ||
-          this.generation !== selected.generation ||
-          this._authId.identityKey !== selected.auth.identityKey
-        )
-          throw new WERR_INVALID_OPERATION('Wallet preparation belongs to an obsolete manager provider or generation')
-        return await work()
-      })
-    return await prepared.withPreparedWalletWrite(
-      selected.auth,
-      admission,
-      async () => await operation(selected.writer, selected.auth)
+      await this.withAccess(active =>
+        awaitFromSync(() => {
+          if (
+            active !== selected.writer ||
+            this.generation !== selected.generation ||
+            this._authId.identityKey !== selected.auth.identityKey
+          )
+            throw new WERR_INVALID_OPERATION('Wallet preparation belongs to an obsolete manager provider or generation')
+          return work()
+        })
+      )
+    return await prepared.withPreparedWalletWrite(selected.auth, admission, () =>
+      awaitFromSync(() => operation(selected.writer, selected.auth))
     )
   }
 
@@ -797,11 +800,15 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   /** Preserve the legacy reader contract: obtain caller auth before joining the ownership queue. */
-  private async runAsAuthorizedReader<R>(
+  private runAsAuthorizedReader<R>(
     operation: (reader: sdk.WalletStorageReader, auth: sdk.AuthId) => Promise<R>
   ): Promise<R> {
-    const auth = await this.getAuth()
-    return this.runAsReader(reader => operation(reader, auth))
+    return mapAwaitFromSync(
+      () => this.getAuth(),
+      auth => {
+        return this.runAsReader(reader => operation(reader, auth))
+      }
+    )
   }
 
   /** Borrowed activeSync is the legacy explicit reentrancy contract for an already-held exclusive operation. */
@@ -832,7 +839,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
   > {
     return commitSyncAdmission(
       operation => this.withAccess(() => operation(), false, false, signal),
-      async () => ({ active: this.getActive(), generation: this.generation }),
+      () => promiseFromSync(() => ({ active: this.getActive(), generation: this.generation })),
       signal
     )
   }
@@ -867,9 +874,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
         ? extension.suspendPreparedBeefReads.call(active)
         : undefined
     return this.runAsStorageProvider(async storage => {
-      await storage.transaction(async trx => {
-        await invalidatePreparedBeefs(storage, trx)
-      })
+      await storage.transaction(trx => awaitVoidFromSync(() => invalidatePreparedBeefs(storage, trx)))
     }).then(() => {
       release?.()
     })
@@ -1007,39 +1012,50 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const auth = await this.getAuth()
     if (identityKey !== auth.identityKey) throw new WERR_UNAUTHORIZED()
 
-    return await this.runAsWriter(async writer => {
-      const r = await writer.findOrInsertUser(identityKey)
-
-      if (auth.userId != null && auth.userId !== 0 && auth.userId !== r.user.userId) {
-        throw new WERR_INTERNAL('userId may not change for given identityKey')
-      }
-      this._authId.userId = r.user.userId
-      return r
-    })
+    return await this.runAsWriter(writer =>
+      mapAwaitFromSync(
+        () => writer.findOrInsertUser(identityKey),
+        r => {
+          if (auth.userId != null && auth.userId !== 0 && auth.userId !== r.user.userId) {
+            throw new WERR_INTERNAL('userId may not change for given identityKey')
+          }
+          this._authId.userId = r.user.userId
+          return r
+        }
+      )
+    )
   }
 
-  async abortAction(args: AbortActionArgs): Promise<AbortActionResult> {
-    validateAbortActionArgs(args)
-    return await this.runAsAuthorizedWriter((writer, auth) => writer.abortAction(auth, args))
+  abortAction(args: AbortActionArgs): Promise<AbortActionResult> {
+    return awaitFromSync(() => {
+      validateAbortActionArgs(args)
+      return this.runAsAuthorizedWriter((writer, auth) => writer.abortAction(auth, args))
+    })
   }
 
   createAction(vargs: ValidCreateActionArgs): Promise<sdk.StorageCreateActionResult> {
     return this.runAsAuthorizedWriter((writer, auth) => writer.createAction(auth, vargs))
   }
 
-  async internalizeAction(args: InternalizeActionArgs): Promise<sdk.StorageInternalizeActionResult> {
-    validateInternalizeActionArgs(args)
-    return await this.runAsAuthorizedWriter((writer, auth) => writer.internalizeAction(auth, args))
+  internalizeAction(args: InternalizeActionArgs): Promise<sdk.StorageInternalizeActionResult> {
+    return awaitFromSync(() => {
+      validateInternalizeActionArgs(args)
+      return this.runAsAuthorizedWriter((writer, auth) => writer.internalizeAction(auth, args))
+    })
   }
 
-  async relinquishCertificate(args: RelinquishCertificateArgs): Promise<number> {
-    validateRelinquishCertificateArgs(args)
-    return await this.runAsAuthorizedWriter((writer, auth) => writer.relinquishCertificate(auth, args))
+  relinquishCertificate(args: RelinquishCertificateArgs): Promise<number> {
+    return awaitFromSync(() => {
+      validateRelinquishCertificateArgs(args)
+      return this.runAsAuthorizedWriter((writer, auth) => writer.relinquishCertificate(auth, args))
+    })
   }
 
-  async relinquishOutput(args: RelinquishOutputArgs): Promise<number> {
-    validateRelinquishOutputArgs(args)
-    return await this.runAsAuthorizedWriter((writer, auth) => writer.relinquishOutput(auth, args))
+  relinquishOutput(args: RelinquishOutputArgs): Promise<number> {
+    return awaitFromSync(() => {
+      validateRelinquishOutputArgs(args)
+      return this.runAsAuthorizedWriter((writer, auth) => writer.relinquishOutput(auth, args))
+    })
   }
 
   processAction(args: sdk.StorageProcessActionArgs): Promise<sdk.StorageProcessActionResults> {
@@ -1047,21 +1063,25 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   prepareNoSendExpiry(args: ValidCreateActionArgs): Promise<sdk.StoragePrepareNoSendExpiryResult> {
-    return this.runAsAuthorizedWriter(async (writer, auth) => {
-      if (writer.prepareNoSendExpiry == null) {
-        throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
-      }
-      return await writer.prepareNoSendExpiry(auth, args)
-    })
+    return this.runAsAuthorizedWriter((writer, auth) =>
+      awaitFromSync(() => {
+        if (writer.prepareNoSendExpiry == null) {
+          throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
+        }
+        return writer.prepareNoSendExpiry(auth, args)
+      })
+    )
   }
 
   activateNoSendExpiry(args: sdk.StorageActivateNoSendExpiryArgs): Promise<sdk.StorageActivateNoSendExpiryResult> {
-    return this.runAsAuthorizedWriter(async (writer, auth) => {
-      if (writer.activateNoSendExpiry == null) {
-        throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
-      }
-      return await writer.activateNoSendExpiry(auth, args)
-    })
+    return this.runAsAuthorizedWriter((writer, auth) =>
+      awaitFromSync(() => {
+        if (writer.activateNoSendExpiry == null) {
+          throw new WERR_INVALID_OPERATION('Active storage does not support BRC-177 noSend expiry')
+        }
+        return writer.activateNoSendExpiry(auth, args)
+      })
+    )
   }
 
   async armNoSendExpiry(args: sdk.StorageArmNoSendExpiryArgs): Promise<void> {
@@ -1090,12 +1110,14 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   resumeActionBatch(args: sdk.ResumeActionBatchArgs): Promise<sdk.ResumeActionBatchResult> {
-    return this.runAsAuthorizedWriter(async (writer, auth) => {
-      if (writer.resumeActionBatch == null) {
-        throw new WERR_NOT_IMPLEMENTED('action batch resume is not available')
-      }
-      return await writer.resumeActionBatch(auth, args)
-    })
+    return this.runAsAuthorizedWriter((writer, auth) =>
+      awaitFromSync(() => {
+        if (writer.resumeActionBatch == null) {
+          throw new WERR_NOT_IMPLEMENTED('action batch resume is not available')
+        }
+        return writer.resumeActionBatch(auth, args)
+      })
+    )
   }
 
   prepareActionBatchCommit(manifest: sdk.ActionBatchManifest): Promise<sdk.PrepareActionBatchCommitResult> {
@@ -1120,12 +1142,14 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   commitActionBatchByDigest(args: sdk.CommitActionBatchByDigestArgs): Promise<sdk.CommitActionBatchResult> {
-    return this.runAsAuthorizedWriter(async (writer, auth) => {
-      if (writer.commitActionBatchByDigest == null) {
-        throw new WERR_NOT_IMPLEMENTED('digest-only action batch commit is not available')
-      }
-      return await writer.commitActionBatchByDigest(auth, args)
-    })
+    return this.runAsAuthorizedWriter((writer, auth) =>
+      awaitFromSync(() => {
+        if (writer.commitActionBatchByDigest == null) {
+          throw new WERR_NOT_IMPLEMENTED('digest-only action batch commit is not available')
+        }
+        return writer.commitActionBatchByDigest(auth, args)
+      })
+    )
   }
 
   abortActionBatch(batchId: string): Promise<sdk.AbortActionBatchResult> {
@@ -1172,15 +1196,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
    * @param deactivatedHash An orphaned header than may have served as a proof source for proven_txs records.
    * @returns
    */
-  async reproveHeader(deactivatedHash: string): Promise<sdk.ReproveHeaderResult> {
-    return await this.reproveMatching({ blockHash: deactivatedHash }, `block ${deactivatedHash} orphaned`)
+  reproveHeader(deactivatedHash: string): Promise<sdk.ReproveHeaderResult> {
+    return awaitFromSync(() =>
+      this.reproveMatching({ blockHash: deactivatedHash }, `block ${deactivatedHash} orphaned`)
+    )
   }
 
   /** Audit a stale root against the same canonical evidence as reorg recovery. */
-  async reproveHeightMerkleRoot(height: number, staleMerkleRoot: string): Promise<sdk.ReproveHeaderResult> {
-    return await this.reproveMatching(
-      { height, merkleRoot: staleMerkleRoot },
-      `height ${height} stale merkleRoot ${staleMerkleRoot}`
+  reproveHeightMerkleRoot(height: number, staleMerkleRoot: string): Promise<sdk.ReproveHeaderResult> {
+    return awaitFromSync(() =>
+      this.reproveMatching(
+        { height, merkleRoot: staleMerkleRoot },
+        `height ${height} stale merkleRoot ${staleMerkleRoot}`
+      )
     )
   }
 
@@ -1361,7 +1389,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
-  private async runSnapshotCopy(
+  private runSnapshotCopy(
     view: WalletReadSnapshot,
     destination: SnapshotSyncStorage,
     direction: 'push' | 'pull',
@@ -1369,17 +1397,19 @@ export class WalletStorageManager implements sdk.WalletStorage {
     generation: number,
     active: sdk.WalletStorageProvider
   ): Promise<SyncSessionResult> {
-    if (view.user.identityKey !== this._authId.identityKey) throw new WERR_UNAUTHORIZED()
-    const commit = this.snapshotCommit(destination, options, generation, active)
-    return await runSnapshotSyncSession(
-      {
-        view,
-        destination,
-        activeStorage: direction === 'push' ? view.user.activeStorage : this.getActiveUser().activeStorage,
-        commit
-      },
-      options
-    )
+    return awaitFromSync(() => {
+      if (view.user.identityKey !== this._authId.identityKey) throw new WERR_UNAUTHORIZED()
+      const commit = this.snapshotCommit(destination, options, generation, active)
+      return runSnapshotSyncSession(
+        {
+          view,
+          destination,
+          activeStorage: direction === 'push' ? view.user.activeStorage : this.getActiveUser().activeStorage,
+          commit
+        },
+        options
+      )
+    })
   }
 
   private committedPageLog(progress: SyncSessionProgress, logger: (message: string) => string): string {
@@ -1670,7 +1700,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     if (forceCurrentCopy) return { forceBootstrap: false }
     const outside = snapshotJournalDataProvider(writer) && writer.journalDataCommitOutsideManager === true
     const dispatch = async (observe = false): Promise<void> => {
-      if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+      if (outside) await admission(() => awaitFromSync(() => this.getAuth()), observe ? 'observe' : undefined)
     }
     let forceBootstrap = false
     const observer = reader.getSnapshotSync?.()
@@ -1771,7 +1801,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
       failure: { cause: unknown } | undefined
     const cleanup = new Brc38CleanupScope(async () => {
       const results = await Promise.allSettled([
-          Promise.resolve().then(async () => await destination?.close?.()),
+          Promise.resolve().then(() => awaitFromSync(() => destination?.close?.())),
           Promise.resolve().then(async () => {
             if (archive !== undefined) await closeSnapshotJournalSource(archive, options.signal)
           })
@@ -1836,21 +1866,22 @@ export class WalletStorageManager implements sdk.WalletStorage {
         const actual = destination
         iterator = runSnapshotJournalFieldArchiveReconciliation(
           archive,
-          async () => ({
-            status: async () => {
-              await dispatch(true)
-              return await actual.status()
-            },
-            stageArchiveFrame: async (expected, source) => {
-              await dispatch()
-              return await actual.stageArchiveFrame(expected, source)
-            },
-            promote: async (expected, source) => {
-              await dispatch()
-              return await actual.promote(expected, source)
-            },
-            ...(actual.close === undefined ? {} : { close: () => actual.close!() })
-          }),
+          () =>
+            promiseFromSync(() => ({
+              status: async () => {
+                await dispatch(true)
+                return await actual.status()
+              },
+              stageArchiveFrame: async (expected, source) => {
+                await dispatch()
+                return await actual.stageArchiveFrame(expected, source)
+              },
+              promote: async (expected, source) => {
+                await dispatch()
+                return await actual.promote(expected, source)
+              },
+              ...(actual.close === undefined ? {} : { close: () => actual.close!() })
+            })),
           { signal: options.signal, onProgress: observe }
         )
       }
@@ -1896,7 +1927,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
     const dispatch = async (observe = false): Promise<void> => {
       if (writer.journalDataCommitOutsideManager === true)
-        await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+        await admission(() => awaitFromSync(() => this.getAuth()), observe ? 'observe' : undefined)
     }
     await dispatch(true)
     const previous = await writer.getSnapshotJournalFieldStatus(identityKey, readerSettings.storageIdentityKey, {
@@ -2029,7 +2060,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
                 await dispatch()
                 return await actual.promote(expected, archive)
               },
-              ...(actual.close === undefined ? {} : { close: async () => await actual.close!() })
+              ...(actual.close === undefined ? {} : { close: () => awaitFromSync(() => actual.close!()) })
             }
           } catch (error) {
             if (isSnapshotJournalDataBootstrapRequiredError(error)) admissionRefusal = error
@@ -2136,7 +2167,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
     const admission = this.journalCopyAdmission(reader, writer, selected, identityKey, options.signal)
     const outside = writer.journalDataCommitOutsideManager === true
     const dispatch = async (observe = false): Promise<void> => {
-      if (outside) await admission(async () => await this.getAuth(), observe ? 'observe' : undefined)
+      if (outside) await admission(() => awaitFromSync(() => this.getAuth()), observe ? 'observe' : undefined)
     }
     const confirmation = await this.confirmJournalContentCopy(
       reader,
@@ -2396,7 +2427,8 @@ export class WalletStorageManager implements sdk.WalletStorage {
         return { status: 'cancelled', mode: 'paged', pages: 0, inserts: 0, updates: 0 }
       const settings = await reader.makeAvailable(),
         admission = this.journalCopyAdmission(reader, writer, current, this._authId.identityKey, options.signal)
-      if (writer.journalDataCommitOutsideManager === true) await admission(async () => await this.getAuth(), 'observe')
+      if (writer.journalDataCommitOutsideManager === true)
+        await admission(() => awaitFromSync(() => this.getAuth()), 'observe')
       recordedFields =
         (await writer.getSnapshotJournalFieldStatus(this._authId.identityKey, settings.storageIdentityKey, {
           admission,
@@ -2469,19 +2501,23 @@ export class WalletStorageManager implements sdk.WalletStorage {
         throw new WERR_UNAUTHORIZED()
       const run = runSnapshotJournalReconciliation(
         source,
-        async () => {
-          const opened = await writer.openSnapshotJournalDestination(
-            source,
-            snapshotJournalRevision('0'),
-            limits,
-            admission,
-            options.signal,
-            true,
-            true
-          )
-          destination = opened.destination
-          return opened.destination
-        },
+        () =>
+          mapAwaitFromSync(
+            () =>
+              writer.openSnapshotJournalDestination(
+                source,
+                snapshotJournalRevision('0'),
+                limits,
+                admission,
+                options.signal,
+                true,
+                true
+              ),
+            opened => {
+              destination = opened.destination
+              return opened.destination
+            }
+          ),
         {
           signal: options.signal,
           onProgress: this.journalCopyProgress(options, onDurableProgress)
@@ -2597,11 +2633,15 @@ export class WalletStorageManager implements sdk.WalletStorage {
         throw new SnapshotCancelledError('Unchanged push was cancelled during source observation')
       if (observed !== undefined && snapshotSyncContentConfirms(prior.source, observed)) {
         const fencedAdmission: SnapshotJournalWriterAdmission = async operation =>
-          await admission(async () => {
-            const current = await source.withCurrentDataFence(source.receipt.highWater, operation)
-            if (!current.current) throw changed
-            return current.value
-          })
+          await admission(() =>
+            mapAwaitFromSync(
+              () => source.withCurrentDataFence(source.receipt.highWater, operation),
+              current => {
+                if (!current.current) throw changed
+                return current.value
+              }
+            )
+          )
         const confirmed = await writer.confirmSnapshotJournalPrimaryContentReceipt(
           identityKey,
           settings.storageIdentityKey,
@@ -2791,17 +2831,21 @@ export class WalletStorageManager implements sdk.WalletStorage {
         throw new WERR_UNAUTHORIZED()
       return yield* runSnapshotJournalReconciliation(
         source,
-        async () => {
-          const opened = await writer.openSnapshotJournalDestination(
-            source,
-            snapshotJournalRevision('0'),
-            limits,
-            admission,
-            options.signal,
-            true
-          )
-          return opened.destination
-        },
+        () =>
+          mapAwaitFromSync(
+            () =>
+              writer.openSnapshotJournalDestination(
+                source,
+                snapshotJournalRevision('0'),
+                limits,
+                admission,
+                options.signal,
+                true
+              ),
+            opened => {
+              return opened.destination
+            }
+          ),
         options
       )
     } finally {
@@ -2974,21 +3018,25 @@ export class WalletStorageManager implements sdk.WalletStorage {
       (await this.trySnapshotCopy(this.getActive(), writer, 'push', options))
     if (snapshot !== undefined) return snapshot
     return (
-      (await this.runAsSyncCancellable(async reader => {
-        const settings = reader.getSettings()
-        assertSyncNetwork(settings, writerSettings)
-        return await runPullSession(
-          {
-            reader,
-            writer,
-            atomicCheckpoint: false,
-            mode: 'exclusive',
-            loadRequest: () => this.loadSyncRequest(auth, writer, settings, writerSettings.storageIdentityKey),
-            commit: operation => operation()
-          },
-          options
-        )
-      }, options.signal)) ?? { status: 'cancelled', mode: 'exclusive', pages: 0, inserts: 0, updates: 0 }
+      (await this.runAsSyncCancellable(
+        reader =>
+          awaitFromSync(() => {
+            const settings = reader.getSettings()
+            assertSyncNetwork(settings, writerSettings)
+            return runPullSession(
+              {
+                reader,
+                writer,
+                atomicCheckpoint: false,
+                mode: 'exclusive',
+                loadRequest: () => this.loadSyncRequest(auth, writer, settings, writerSettings.storageIdentityKey),
+                commit: operation => operation()
+              },
+              options
+            )
+          }),
+        options.signal
+      )) ?? { status: 'cancelled', mode: 'exclusive', pages: 0, inserts: 0, updates: 0 }
     )
   }
 
@@ -3212,7 +3260,9 @@ export class WalletStorageManager implements sdk.WalletStorage {
     this.primaryCopyAdmissions.set(selected, ordinary)
     let log = progLog(`setActive to ${target.settings?.storageName} using durable primary handoff\n`)
     try {
-      const pending = await Promise.all(participants.map(async value => await value.control.status(value.auth)))
+      const pending = await Promise.all(
+        participants.map(value => awaitFromSync(() => value.control.status(value.auth)))
+      )
       const agreed = participants.every(value => value.activeStorage === storageIdentityKey)
       if (
         !agreed ||
@@ -3222,16 +3272,20 @@ export class WalletStorageManager implements sdk.WalletStorage {
           participants,
           targetStorageIdentityKey: storageIdentityKey,
           newOperationId: () => Utils.toHex(Random(16)),
-          arm: async (_plan: PrimaryHandoffPlan) =>
-            await queue(async () => {
-              if (
-                this.#primaryHandoffPending !== undefined &&
-                this.#primaryHandoffPending.target !== storageIdentityKey
-              )
-                throw new WERR_INVALID_OPERATION('Another primary handoff is pending')
-              this.#primaryHandoffPending = { target: storageIdentityKey, stores, identityKey }
-              this._authId.isActive = false
-            }),
+          arm: (_plan: PrimaryHandoffPlan) =>
+            awaitFromSync(() =>
+              queue(() => {
+                return promiseFromSync(() => {
+                  if (
+                    this.#primaryHandoffPending !== undefined &&
+                    this.#primaryHandoffPending.target !== storageIdentityKey
+                  )
+                    throw new WERR_INVALID_OPERATION('Another primary handoff is pending')
+                  this.#primaryHandoffPending = { target: storageIdentityKey, stores, identityKey }
+                  this._authId.isActive = false
+                })
+              })
+            ),
           copy: async (source, destination) => {
             const reader = stores.find(
                 store => store.settings?.storageIdentityKey === source.storageIdentityKey
@@ -3248,23 +3302,25 @@ export class WalletStorageManager implements sdk.WalletStorage {
                 throw error
               }
             }
-            const copy = async (fields = false) =>
-              await this.tryJournalCopy(
-                reader,
-                writer,
-                {
-                  ...options,
-                  maxRoughSize: options.maxRoughSize ?? 10000000,
-                  ...(fields ? { journalFields: true } : {}),
-                  onProgress: progress => {
-                    notify(options.onProgress, progress)
-                    log += this.committedPageLog(progress, value => notify(progLog, value) as string)
+            const copy = (fields = false) =>
+              awaitFromSync(() =>
+                this.tryJournalCopy(
+                  reader,
+                  writer,
+                  {
+                    ...options,
+                    maxRoughSize: options.maxRoughSize ?? 10000000,
+                    ...(fields ? { journalFields: true } : {}),
+                    onProgress: progress => {
+                      notify(options.onProgress, progress)
+                      log += this.committedPageLog(progress, value => notify(progLog, value) as string)
+                    },
+                    onJournalProgress: progress => notify(options.onJournalProgress, progress)
                   },
-                  onJournalProgress: progress => notify(options.onJournalProgress, progress)
-                },
-                selected,
-                undefined,
-                false
+                  selected,
+                  undefined,
+                  false
+                )
               )
             let copied: SyncSessionResult | undefined
             try {
@@ -3289,9 +3345,11 @@ export class WalletStorageManager implements sdk.WalletStorage {
         if (user.activeStorage !== storageIdentityKey)
           throw new WERR_INVALID_OPERATION('Primary selection is not agreed by all managed stores')
       }
-      await queue(async () => {
-        this.#primaryHandoffPending = undefined
-        this.invalidatePrimarySelection()
+      await queue(() => {
+        return promiseFromSync(() => {
+          this.#primaryHandoffPending = undefined
+          this.invalidatePrimarySelection()
+        })
       })
       await this.makeAvailable()
       if (this.getActiveStore() !== storageIdentityKey || !this.isActiveEnabled)
@@ -3388,9 +3446,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
         }
         // Drain every contributor before propagating selection or close errors.
         const drained = await Promise.allSettled(
-          sources.map(async value => {
-            await closeSnapshotJournalSource(value.source)
-          })
+          sources.map(value => awaitVoidFromSync(() => closeSnapshotJournalSource(value.source)))
         )
         const failures = drained.filter(value => value.status === 'rejected')
         if (failures.length !== 0)

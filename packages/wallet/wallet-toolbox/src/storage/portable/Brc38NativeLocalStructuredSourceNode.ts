@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import { isBrc38OwnedPrivateNativeSqlite, type KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -263,10 +264,12 @@ async function withLocalStructuredActor<T>(
       for (let offset = 0; offset < bytes;) {
         await probe()
         const length = Math.min(sourceWidth, bytes - offset)
-        await row.withFieldExtent(field, offset, length, async value => {
-          check()
-          if (value.length !== length) invalid()
-          hash.update(value)
+        await row.withFieldExtent(field, offset, length, value => {
+          return promiseFromSync(() => {
+            check()
+            if (value.length !== length) invalid()
+            hash.update(value)
+          })
         })
         offset += length
       }
@@ -295,10 +298,12 @@ async function withLocalStructuredActor<T>(
               for (let used = 0; used < length;) {
                 const amount = Math.min(sourceWidth, length - used),
                   start = used
-                await row.withFieldExtent(field, offset + used, amount, async value => {
-                  check()
-                  if (value.length !== amount) invalid()
-                  output!.set(value, start)
+                await row.withFieldExtent(field, offset + used, amount, value => {
+                  return promiseFromSync(() => {
+                    check()
+                    if (value.length !== amount) invalid()
+                    output!.set(value, start)
+                  })
                 })
                 used += amount
               }

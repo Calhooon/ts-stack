@@ -101,6 +101,17 @@ export async function hasBrc38NativePreparedFieldsSchema(k: Knex.Transaction): P
   requireBrc38PackedRead(k)
   return true
 }
+/** Complete fresh prepared/binary/TEXT validation in this actual transaction.
+ * TEXT validation already performs the complete binary validation, and both
+ * inspect every prepared definition before selecting their version guards.
+ * Require actual prepared-table presence too, so the legacy optional family
+ * cannot satisfy this mandatory prepared-content admission. No verdict is
+ * retained or accepted from a caller. */
+export async function hasBrc38NativePreparedContentSchema(k: Knex.Transaction): Promise<boolean> {
+  requireBrc38PackedRead(k)
+  if (!(await k.schema.hasTable(nativePreparedFieldsTable))) return false
+  return await hasBrc38NativePackedTextSchema(k)
+}
 /** Fresh empty authenticated candidate only, within its source-owned migration
  * BEFORE generation/seal receipts. No existing live profile migration or
  * activation is inferred. Original binary/TEXT budgets and limits stay fixed. */

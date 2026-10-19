@@ -14,6 +14,7 @@ import {
   readApprovedSonarBudget,
   SONAR_BUDGET
 } from './sonar-pr569-budget.mjs'
+import { readReviewedAnalysisExceptions } from './pr569-reviewed-analysis.mjs'
 import { enforceRepositorySonarGate } from './sonar-policy-gate.mjs'
 
 const SHA = '1234567890abcdef1234567890abcdef12345678'
@@ -705,5 +706,199 @@ test('real evidence creation refuses a preexisting file symlink without modifyin
   } finally {
     process.chdir(original)
     await rm(directory, { recursive: true, force: true })
+  }
+})
+
+const REVIEW_NOW = Date.parse('2026-10-19T18:30:00Z')
+function reviewedPermissionSnapshot() {
+  const manifest = readReviewedAnalysisExceptions()
+  const s = snapshot()
+  s.issues = manifest.findings
+    .filter(f => f.analyzer === 'Sonar')
+    .map(f => ({
+      ...clone(f),
+      project: manifest.project,
+      pullRequest: '569',
+      component: `${manifest.project}:${f.file}`,
+      issueStatus: 'OPEN'
+    }))
+  s.issueTotal = s.issues.length
+  return s
+}
+
+test('only exact reviewed permission findings pass while original findings stay visible', () => {
+  const s = reviewedPermissionSnapshot()
+  const verdict = evaluateSonarBudget(s, REVIEW_NOW)
+  assert.equal(verdict.scopedBudgetSatisfied, true)
+  assert.equal(verdict.originalZeroFindingsSatisfied, false)
+  assert.equal(verdict.activeFindings, 2)
+  assert.equal(verdict.maintainabilityFindings, 0)
+  assert.deepEqual(
+    verdict.reviewedPermissionFindings,
+    s.issues.map(i => i.key)
+  )
+})
+
+for (const [name, change] of [
+  [
+    'key',
+    i => {
+      i.key += '-new'
+    }
+  ],
+  [
+    'rule',
+    i => {
+      i.rule = 'javascript:S9999'
+    }
+  ],
+  [
+    'component',
+    i => {
+      i.component += '.changed'
+    }
+  ],
+  [
+    'line',
+    i => {
+      i.line++
+    }
+  ],
+  [
+    'message',
+    i => {
+      i.message += ' changed'
+    }
+  ],
+  [
+    'type',
+    i => {
+      i.type = 'BUG'
+    }
+  ],
+  [
+    'mixed impact',
+    i => {
+      i.impacts.push({ softwareQuality: 'RELIABILITY', severity: 'LOW' })
+    }
+  ],
+  [
+    'severity',
+    i => {
+      i.impacts[0].severity = 'HIGH'
+    }
+  ],
+  [
+    'unknown state',
+    i => {
+      i.issueStatus = 'UNKNOWN'
+    }
+  ],
+  [
+    'project',
+    i => {
+      i.project += '-other'
+    }
+  ],
+  [
+    'PR',
+    i => {
+      i.pullRequest = '570'
+    }
+  ]
+])
+  test(`reviewed permission exception rejects changed ${name}`, () => {
+    const s = reviewedPermissionSnapshot()
+    change(s.issues[0])
+    assert.equal(evaluateSonarBudget(s, REVIEW_NOW).scopedBudgetSatisfied, false)
+  })
+
+for (const now of [
+  Date.parse('2026-10-19T18:27:59Z'),
+  Date.parse('2026-10-24T23:59:59Z'),
+  Number.NaN
+])
+  test(`reviewed permissions fail outside their authorization window: ${now}`, () => {
+    assert.equal(
+      evaluateSonarBudget(reviewedPermissionSnapshot(), now).scopedBudgetSatisfied,
+      false
+    )
+  })
+
+test('reviewed permissions do not authorize another security finding or another PR', () => {
+  const s = reviewedPermissionSnapshot()
+  s.issues.push({ ...clone(s.issues[0]), key: 'unreviewed-security' })
+  s.issueTotal++
+  assert.equal(evaluateSonarBudget(s, REVIEW_NOW).scopedBudgetSatisfied, false)
+  const other = reviewedPermissionSnapshot()
+  other.pullRequest = 570
+  assert.equal(evaluateSonarBudget(other, REVIEW_NOW).scopedBudgetSatisfied, false)
+})
+
+test('reviewed source hashes and registry identities fail closed independently of finding status', () => {
+  const manifestUrl = new URL(
+    '../governance/pr569-reviewed-analysis-exceptions.json',
+    import.meta.url
+  )
+  const original = JSON.parse(readFileSync(manifestUrl, 'utf8'))
+  for (const finding of original.findings) {
+    assert.throws(
+      () =>
+        readReviewedAnalysisExceptions((url, encoding) =>
+          url.pathname.endsWith('/' + finding.file)
+            ? Buffer.from('changed source')
+            : readFileSync(url, encoding)
+        ),
+      /Reviewed analysis source changed/
+    )
+  }
+  for (const change of [
+    m => {
+      m.owner = 'someone-else'
+    },
+    m => {
+      m.expiresAt = '2027-01-01T00:00:00Z'
+    },
+    m => {
+      m.findings[0].sha256 = '0'.repeat(64)
+    },
+    m => {
+      m.findings.push(clone(m.findings[0]))
+    },
+    m => {
+      m.findings[1].key += '-new'
+    }
+  ]) {
+    const altered = clone(original)
+    change(altered)
+    assert.throws(
+      () =>
+        readReviewedAnalysisExceptions((url, encoding) =>
+          url.href === manifestUrl.href ? JSON.stringify(altered) : readFileSync(url, encoding)
+        ),
+      /Invalid reviewed analysis exception/
+    )
+  }
+})
+
+test('only both exact reviewed permission findings explain the original security C metric', () => {
+  const s = reviewedPermissionSnapshot()
+  const security = s.qualityGate.projectStatus.conditions.find(
+    c => c.metricKey === 'new_security_rating'
+  )
+  security.actualValue = '3'
+  security.status = 'ERROR'
+  assert.equal(evaluateSonarBudget(s, REVIEW_NOW).scopedBudgetSatisfied, true)
+  assert.equal(evaluateSonarBudget(s, REVIEW_NOW).originalZeroFindingsSatisfied, false)
+  const one = clone(s)
+  one.issues.pop()
+  one.issueTotal--
+  assert.equal(evaluateSonarBudget(one, REVIEW_NOW).scopedBudgetSatisfied, false)
+  for (const rating of ['2', '4', '5']) {
+    const changed = clone(s)
+    changed.qualityGate.projectStatus.conditions.find(
+      c => c.metricKey === 'new_security_rating'
+    ).actualValue = rating
+    assert.equal(evaluateSonarBudget(changed, REVIEW_NOW).scopedBudgetSatisfied, false)
   }
 })

@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { getPackedIdbConnection, type PackedIdbConnection } from '../idbPackedConnection'
 import {
   chargePackedIdb,
@@ -572,78 +573,86 @@ export class Brc38IdbImportJournal {
     if (value === undefined) invalid()
     return await this.#entry(tx, clock, value)
   }
-  async prepare(actualDestinationSha256: string): Promise<Readonly<Brc38ImportJournalReceipt>> {
-    if (!isSha(actualDestinationSha256)) invalid()
-    return await this.#run('readwrite', async (wallet, tx, clock) => {
-      const value = await tx.objectStore(idbImportJournalStores.journal).get(1)
-      if (value !== undefined) {
-        const { receipt } = await this.#entry(tx, clock, value)
-        if (receipt.state === 'EXPIRED' || receipt.destinationSha256 !== actualDestinationSha256) invalid()
-        return receipt
-      }
-      if (
-        actualDestinationSha256 !== this.admission.initialDestinationSha256 ||
-        (await tx.objectStore(idbImportJournalStores.journal).count()) !== 0 ||
-        (await tx.objectStore(idbImportJournalStores.ids).count()) !== 0 ||
-        (await tx.objectStore(idbImportJournalStores.originals).count()) !== 0
-      )
-        invalid()
-      for (const store of walletStores)
-        if (store !== 'settings' && (await wallet.objectStore(store).count()) !== 0) invalid()
-      const receipt: Brc38ImportJournalReceipt = Object.freeze({
-          protocol: 'brc38-destination-import/v1',
-          state: this.admission.totalRows === 0 ? 'COMPLETE' : 'PREPARED',
-          sequence: 0,
-          nextRow: 0,
-          mappedIds: 0,
-          logicalBytes: 4096,
-          destinationSha256: actualDestinationSha256,
-          lastStep: null
-        }),
-        admissionJson = boundedJson(this.admission),
-        receiptJson = boundedJson(receipt),
-        entry: Entry = {
-          bindingSha256: this.admission.scope.bindingSha256,
-          archiveSha256: this.admission.scope.archiveSha256,
-          userId: this.admission.scope.userId,
-          mappedIds: 0,
-          maximumMappedIds: mappingCapacity(this.admission),
-          cleanupAllowed: 0,
-          admissionJson,
-          admissionSha256: digest(admissionJson),
-          receiptJson,
-          receiptSha256: digest(receiptJson),
-          epoch: clock.epoch,
-          revision: clock.revision,
-          policyJson: this.#policyJson,
-          originalRows: 0,
-          originalBytes: 0
+  prepare(actualDestinationSha256: string): Promise<Readonly<Brc38ImportJournalReceipt>> {
+    return awaitFromSync(() => {
+      if (!isSha(actualDestinationSha256)) invalid()
+      return this.#run('readwrite', async (wallet, tx, clock) => {
+        const value = await tx.objectStore(idbImportJournalStores.journal).get(1)
+        if (value !== undefined) {
+          const { receipt } = await this.#entry(tx, clock, value)
+          if (receipt.state === 'EXPIRED' || receipt.destinationSha256 !== actualDestinationSha256) invalid()
+          return receipt
         }
-      decodeReceipt(receiptJson, this.admission)
-      boundedJson(entry)
-      await chargePackedIdb(tx, 4096, 1)
-      await tx.objectStore(idbImportJournalStores.journal).add(entry as unknown as Record<string, unknown>, 1)
-      return receipt
+        if (
+          actualDestinationSha256 !== this.admission.initialDestinationSha256 ||
+          (await tx.objectStore(idbImportJournalStores.journal).count()) !== 0 ||
+          (await tx.objectStore(idbImportJournalStores.ids).count()) !== 0 ||
+          (await tx.objectStore(idbImportJournalStores.originals).count()) !== 0
+        )
+          invalid()
+        for (const store of walletStores)
+          if (store !== 'settings' && (await wallet.objectStore(store).count()) !== 0) invalid()
+        const receipt: Brc38ImportJournalReceipt = Object.freeze({
+            protocol: 'brc38-destination-import/v1',
+            state: this.admission.totalRows === 0 ? 'COMPLETE' : 'PREPARED',
+            sequence: 0,
+            nextRow: 0,
+            mappedIds: 0,
+            logicalBytes: 4096,
+            destinationSha256: actualDestinationSha256,
+            lastStep: null
+          }),
+          admissionJson = boundedJson(this.admission),
+          receiptJson = boundedJson(receipt),
+          entry: Entry = {
+            bindingSha256: this.admission.scope.bindingSha256,
+            archiveSha256: this.admission.scope.archiveSha256,
+            userId: this.admission.scope.userId,
+            mappedIds: 0,
+            maximumMappedIds: mappingCapacity(this.admission),
+            cleanupAllowed: 0,
+            admissionJson,
+            admissionSha256: digest(admissionJson),
+            receiptJson,
+            receiptSha256: digest(receiptJson),
+            epoch: clock.epoch,
+            revision: clock.revision,
+            policyJson: this.#policyJson,
+            originalRows: 0,
+            originalBytes: 0
+          }
+        decodeReceipt(receiptJson, this.admission)
+        boundedJson(entry)
+        await chargePackedIdb(tx, 4096, 1)
+        await tx.objectStore(idbImportJournalStores.journal).add(entry as unknown as Record<string, unknown>, 1)
+        return receipt
+      })
     })
   }
-  async read(): Promise<Readonly<Brc38ImportJournalReceipt>> {
-    return await this.#run('readonly', async (_wallet, tx, clock) => (await this.#load(tx, clock)).receipt)
-  }
-  async readExisting(): Promise<Readonly<Brc38ImportJournalReceipt> | undefined> {
-    return await this.#run('readonly', async (_wallet, tx, clock) => {
-      const value = await tx.objectStore(idbImportJournalStores.journal).get(1)
-      if (value !== undefined) return (await this.#entry(tx, clock, value)).receipt
-      for (const store of Object.values(idbImportJournalStores))
-        if ((await tx.objectStore(store).count()) !== 0) invalid()
-      return undefined
+  read(): Promise<Readonly<Brc38ImportJournalReceipt>> {
+    return awaitFromSync(() => {
+      return this.#run('readonly', async (_wallet, tx, clock) => (await this.#load(tx, clock)).receipt)
     })
   }
-  async readPublication(expectedReceiptSha256: string): Promise<Readonly<Brc38IdbRestorePublication> | undefined> {
-    if (!isSha(expectedReceiptSha256)) invalid()
-    return await this.#run('readonly', async (_wallet, tx, clock) => {
-      const { entry } = await this.#load(tx, clock)
-      if (entry.receiptSha256 !== expectedReceiptSha256) invalid()
-      return this.#publication(entry, clock)
+  readExisting(): Promise<Readonly<Brc38ImportJournalReceipt> | undefined> {
+    return awaitFromSync(() => {
+      return this.#run('readonly', async (_wallet, tx, clock) => {
+        const value = await tx.objectStore(idbImportJournalStores.journal).get(1)
+        if (value !== undefined) return (await this.#entry(tx, clock, value)).receipt
+        for (const store of Object.values(idbImportJournalStores))
+          if ((await tx.objectStore(store).count()) !== 0) invalid()
+        return undefined
+      })
+    })
+  }
+  readPublication(expectedReceiptSha256: string): Promise<Readonly<Brc38IdbRestorePublication> | undefined> {
+    return awaitFromSync(() => {
+      if (!isSha(expectedReceiptSha256)) invalid()
+      return this.#run('readonly', async (_wallet, tx, clock) => {
+        const { entry } = await this.#load(tx, clock)
+        if (entry.receiptSha256 !== expectedReceiptSha256) invalid()
+        return this.#publication(entry, clock)
+      })
     })
   }
   #coordinates(selected: Brc38IdbRestoreCoordinates): Readonly<Brc38IdbRestoreCoordinates> {
@@ -703,10 +712,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Browser publication retains actual native metadata through drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -717,116 +729,122 @@ export class Brc38IdbImportJournal {
   /** Short durable publication only. Enclosing actual controller must freshly
    * authenticate the complete source and inspect proofs/all rows/references.
    * Coordinates are a compare-and-swap on current data, not that inspection. */
-  async publishCurrent(
+  publishCurrent(
     expectedReceiptSha256: string,
     selected: Brc38IdbRestoreCoordinates
   ): Promise<Readonly<Brc38IdbRestorePublication>> {
-    const coordinates = this.#coordinates(selected)
-    if (!isSha(expectedReceiptSha256)) invalid()
-    return await this.#transitionAllocation(
-      async () =>
-        await this.#run('readwrite', async (_wallet, tx, clock) => {
-          const { entry, receipt } = await this.#load(tx, clock)
-          if (receipt.state !== 'COMPLETE' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
-          await this.#sameCoordinates(tx, clock, coordinates)
-          const existing = this.#publication(entry, clock)
-          if (existing !== undefined) return existing
-          const publication: Brc38IdbRestorePublication = {
-              protocol: 'brc38-idb-profile-publication/v1',
-              state: 'PUBLISHED',
-              databaseName: this.#owner.database.name,
-              importId: this.admission.scope.importId,
-              previewId: this.admission.previewId,
-              bindingSha256: this.admission.scope.bindingSha256,
-              archiveSha256: this.admission.scope.archiveSha256,
-              identityKey: this.#profile.identityKey,
-              chain: this.#profile.chain,
-              targetStorageIdentityKey: this.#profile.targetStorageIdentityKey,
-              epoch: clock.epoch,
-              publishedRevision: clock.revision,
-              publishedAt: Date.now()
-            },
-            publicationJson = boundedJson(publication),
-            next = { ...entry, publicationJson }
-          readBrc38IdbRestorePublication(publicationJson)
-          boundedJson(next)
-          await tx.objectStore(idbImportJournalStores.journal).put(next, 1)
-          return this.#publication(next, clock)!
-        })
-    )
+    return awaitFromSync(() => {
+      const coordinates = this.#coordinates(selected)
+      if (!isSha(expectedReceiptSha256)) invalid()
+      return this.#transitionAllocation(
+        async () =>
+          await this.#run('readwrite', async (_wallet, tx, clock) => {
+            const { entry, receipt } = await this.#load(tx, clock)
+            if (receipt.state !== 'COMPLETE' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
+            await this.#sameCoordinates(tx, clock, coordinates)
+            const existing = this.#publication(entry, clock)
+            if (existing !== undefined) return existing
+            const publication: Brc38IdbRestorePublication = {
+                protocol: 'brc38-idb-profile-publication/v1',
+                state: 'PUBLISHED',
+                databaseName: this.#owner.database.name,
+                importId: this.admission.scope.importId,
+                previewId: this.admission.previewId,
+                bindingSha256: this.admission.scope.bindingSha256,
+                archiveSha256: this.admission.scope.archiveSha256,
+                identityKey: this.#profile.identityKey,
+                chain: this.#profile.chain,
+                targetStorageIdentityKey: this.#profile.targetStorageIdentityKey,
+                epoch: clock.epoch,
+                publishedRevision: clock.revision,
+                publishedAt: Date.now()
+              },
+              publicationJson = boundedJson(publication),
+              next = { ...entry, publicationJson }
+            readBrc38IdbRestorePublication(publicationJson)
+            boundedJson(next)
+            await tx.objectStore(idbImportJournalStores.journal).put(next, 1)
+            return this.#publication(next, clock)!
+          })
+      )
+    })
   }
   /** Atomic local activation: actual observed user mutation and transition
    * record share one native writer. Source/proof/inventory work is excluded
    * from this writer. Lost acknowledgement is read back without rewriting. */
-  async activatePublished(
+  activatePublished(
     expectedReceiptSha256: string,
     selected: Brc38IdbRestoreCoordinates
   ): Promise<Readonly<Brc38IdbRestorePublication>> {
-    const coordinates = this.#coordinates(selected)
-    if (!this.#allowActivatedProfile || !isSha(expectedReceiptSha256) || this.#working === undefined) invalid()
-    return await this.#transitionAllocation(
-      async () =>
-        await this.#run('readwrite', async (wallet, tx, clock) => {
-          const { entry, receipt } = await this.#load(tx, clock),
-            publication = this.#publication(entry, clock)
-          if (
-            receipt.state !== 'COMPLETE' ||
-            entry.receiptSha256 !== expectedReceiptSha256 ||
-            publication === undefined
-          )
-            invalid()
-          await this.#sameCoordinates(tx, clock, coordinates)
-          if (publication.state === 'ACTIVATED') return publication
-          const raw = await tx.objectStore('users').get(this.admission.scope.userId)
-          if (raw === undefined) invalid()
-          const user = unpackPackedIdbMetadata(raw)
-          // User identity/selection/timestamps are bounded metadata, never an
-          // arbitrary full hydrated row or a large field inside the short writer.
-          if (
-            Object.keys(user.extents).length !== 0 ||
-            user.fields.identityKey !== this.#profile.identityKey ||
-            user.fields.activeStorage !== ''
-          )
-            invalid()
-          if (
-            (await wallet
-              .objectStore('users')
-              .put({ ...user.fields, activeStorage: this.#profile.targetStorageIdentityKey })) !==
-            this.admission.scope.userId
-          )
-            invalid()
-          await this.#owner.sealRestoreEffects(wallet)
-          const current = await readPackedIdbClock(tx)
-          if (current.epoch !== clock.epoch || current.revision !== clock.revision + 1) invalid()
-          const publicationJson = boundedJson({
-              ...publication,
-              state: 'ACTIVATED',
-              activatedRevision: current.revision,
-              activatedAt: Date.now()
-            }),
-            next = { ...entry, revision: current.revision, publicationJson }
-          readBrc38IdbRestorePublication(publicationJson)
-          boundedJson(next)
-          await tx.objectStore(idbImportJournalStores.journal).put(next, 1)
-          await this.#current(wallet, tx)
-          return this.#publication(next, current)!
-        })
-    )
+    return awaitFromSync(() => {
+      const coordinates = this.#coordinates(selected)
+      if (!this.#allowActivatedProfile || !isSha(expectedReceiptSha256) || this.#working === undefined) invalid()
+      return this.#transitionAllocation(
+        async () =>
+          await this.#run('readwrite', async (wallet, tx, clock) => {
+            const { entry, receipt } = await this.#load(tx, clock),
+              publication = this.#publication(entry, clock)
+            if (
+              receipt.state !== 'COMPLETE' ||
+              entry.receiptSha256 !== expectedReceiptSha256 ||
+              publication === undefined
+            )
+              invalid()
+            await this.#sameCoordinates(tx, clock, coordinates)
+            if (publication.state === 'ACTIVATED') return publication
+            const raw = await tx.objectStore('users').get(this.admission.scope.userId)
+            if (raw === undefined) invalid()
+            const user = unpackPackedIdbMetadata(raw)
+            // User identity/selection/timestamps are bounded metadata, never an
+            // arbitrary full hydrated row or a large field inside the short writer.
+            if (
+              Object.keys(user.extents).length !== 0 ||
+              user.fields.identityKey !== this.#profile.identityKey ||
+              user.fields.activeStorage !== ''
+            )
+              invalid()
+            if (
+              (await wallet
+                .objectStore('users')
+                .put({ ...user.fields, activeStorage: this.#profile.targetStorageIdentityKey })) !==
+              this.admission.scope.userId
+            )
+              invalid()
+            await this.#owner.sealRestoreEffects(wallet)
+            const current = await readPackedIdbClock(tx)
+            if (current.epoch !== clock.epoch || current.revision !== clock.revision + 1) invalid()
+            const publicationJson = boundedJson({
+                ...publication,
+                state: 'ACTIVATED',
+                activatedRevision: current.revision,
+                activatedAt: Date.now()
+              }),
+              next = { ...entry, revision: current.revision, publicationJson }
+            readBrc38IdbRestorePublication(publicationJson)
+            boundedJson(next)
+            await tx.objectStore(idbImportJournalStores.journal).put(next, 1)
+            await this.#current(wallet, tx)
+            return this.#publication(next, current)!
+          })
+      )
+    })
   }
   /** Current empty-profile fingerprint DATA for an authenticated controller.
    * Actual empty rows/profile/schema/budget are checked again by prepare().
    * The native epoch/revision prevents another profile sharing this checksum. */
-  async emptyDestinationSha256(): Promise<string> {
-    return await this.#run('readonly', async (wallet, tx, clock) => {
-      for (const store of walletStores)
-        if (store !== 'settings' && (await tx.objectStore(store).count()) !== 0) invalid()
-      for (const store of Object.values(idbImportJournalStores))
-        if ((await tx.objectStore(store).count()) !== 0) invalid()
-      const settings = await wallet.objectStore('settings').openCursor()
-      if (settings === null) invalid()
-      return digest(
-        JSON.stringify(['browser-empty-restore/v1', this.#profile, clock.epoch, clock.revision, settings.value])
-      )
+  emptyDestinationSha256(): Promise<string> {
+    return awaitFromSync(() => {
+      return this.#run('readonly', async (wallet, tx, clock) => {
+        for (const store of walletStores)
+          if (store !== 'settings' && (await tx.objectStore(store).count()) !== 0) invalid()
+        for (const store of Object.values(idbImportJournalStores))
+          if ((await tx.objectStore(store).count()) !== 0) invalid()
+        const settings = await wallet.objectStore('settings').openCursor()
+        if (settings === null) invalid()
+        return digest(
+          JSON.stringify(['browser-empty-restore/v1', this.#profile, clock.epoch, clock.revision, settings.value])
+        )
+      })
     })
   }
   /** The original live resource counter; it conveys no source admission. */
@@ -887,10 +905,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'IndexedDB mapping read retains its original allocation until actual callback drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance?.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance?.close()
+              }
+            )
         )
       allowance?.close()
       throw cause
@@ -1039,10 +1060,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'IndexedDB original read retains its original allocation until actual callback drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       allowance.close()
       throw cause
@@ -1096,12 +1120,15 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'IndexedDB original extent retains its native window and metadata until actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            result?.fill(0)
-            window?.close()
-            metadata.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                result?.fill(0)
+                window?.close()
+                metadata.close()
+              }
+            )
         )
       }
       result?.fill(0)
@@ -1170,11 +1197,14 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'IndexedDB destination inspection retains native metadata until actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            rowAllowance?.close()
-            metadata.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                rowAllowance?.close()
+                metadata.close()
+              }
+            )
         )
       }
       throw cause
@@ -1242,12 +1272,15 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'IndexedDB destination extent retains its current window until actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            result?.fill(0)
-            window?.close()
-            metadata.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                result?.fill(0)
+                window?.close()
+                metadata.close()
+              }
+            )
         )
       }
       result?.fill(0)
@@ -1259,7 +1292,7 @@ export class Brc38IdbImportJournal {
       }
     }
   }
-  async readDestinationCounts(expectedReceiptSha256: string): Promise<
+  readDestinationCounts(expectedReceiptSha256: string): Promise<
     Readonly<{
       counts: Readonly<Record<Brc38StageTable, number>>
       users: number
@@ -1268,20 +1301,22 @@ export class Brc38IdbImportJournal {
       mappings: number
     }>
   > {
-    if (!isSha(expectedReceiptSha256)) invalid()
-    return await this.#run('readonly', async (_wallet, tx, clock) => {
-      const { entry, receipt } = await this.#load(tx, clock)
-      if (receipt.state === 'EXPIRED' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
-      const counts = {} as Record<Brc38StageTable, number>
-      for (const table of brc38StageTables) counts[table] = await tx.objectStore(brc38IdbRestoreStore(table)).count()
-      for (const store of ['action_batches', 'action_batch_outputs', 'action_batch_blobs', 'monitor_events'])
-        if ((await tx.objectStore(store).count()) !== 0) invalid()
-      return Object.freeze({
-        counts: Object.freeze(counts),
-        users: await tx.objectStore('users').count(),
-        originals: entry.originalRows,
-        originalBytes: entry.originalBytes,
-        mappings: receipt.mappedIds
+    return awaitFromSync(() => {
+      if (!isSha(expectedReceiptSha256)) invalid()
+      return this.#run('readonly', async (_wallet, tx, clock) => {
+        const { entry, receipt } = await this.#load(tx, clock)
+        if (receipt.state === 'EXPIRED' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
+        const counts = {} as Record<Brc38StageTable, number>
+        for (const table of brc38StageTables) counts[table] = await tx.objectStore(brc38IdbRestoreStore(table)).count()
+        for (const store of ['action_batches', 'action_batch_outputs', 'action_batch_blobs', 'monitor_events'])
+          if ((await tx.objectStore(store).count()) !== 0) invalid()
+        return Object.freeze({
+          counts: Object.freeze(counts),
+          users: await tx.objectStore('users').count(),
+          originals: entry.originalRows,
+          originalBytes: entry.originalBytes,
+          mappings: receipt.mappedIds
+        })
       })
     })
   }
@@ -1383,10 +1418,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Packed version inventory retains current native allocations through actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -1394,7 +1432,7 @@ export class Brc38IdbImportJournal {
       if (!transferred && !retained) allowance.close()
     }
   }
-  async readPackedInventoryCounts(expectedReceiptSha256: string): Promise<
+  readPackedInventoryCounts(expectedReceiptSha256: string): Promise<
     Readonly<{
       epoch: string
       revision: number
@@ -1412,34 +1450,38 @@ export class Brc38IdbImportJournal {
       records: number
     }>
   > {
-    if (!isSha(expectedReceiptSha256)) invalid()
-    return await this.#run('readonly', async (_wallet, tx, clock) => {
-      const { entry, receipt } = await this.#load(tx, clock)
-      if (receipt.state === 'EXPIRED' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
-      if (
-        tx.db.objectStoreNames.length !==
-          walletStores.length + Object.values(packedIdbStores).length + Object.values(idbImportJournalStores).length ||
-        (await tx.objectStore(packedIdbStores.clock).count()) !== 1
-      )
-        invalid()
-      const counts = { contents: 0, chunks: 0, versions: 0, heads: 0, leases: 0, jsonStages: 0, jsonMembers: 0 }
-      for (const name of Object.keys(counts) as Array<keyof typeof counts>)
-        counts[name] = await tx.objectStore(packedIdbStores[name]).count()
-      return Object.freeze({
-        epoch: clock.epoch,
-        revision: clock.revision,
-        ...counts,
-        retired: await tx.objectStore(packedIdbStores.contents).index('retired').count(1),
-        expired: await tx
-          .objectStore(packedIdbStores.contents)
-          .index('expiresAt')
-          .count(IDBKeyRange.upperBound(Date.now())),
-        obsolete: await tx
-          .objectStore(packedIdbStores.versions)
-          .index('obsoleteAt')
-          .count(IDBKeyRange.upperBound(clock.revision)),
-        logicalBytes: clock.bytes,
-        records: clock.records
+    return awaitFromSync(() => {
+      if (!isSha(expectedReceiptSha256)) invalid()
+      return this.#run('readonly', async (_wallet, tx, clock) => {
+        const { entry, receipt } = await this.#load(tx, clock)
+        if (receipt.state === 'EXPIRED' || entry.receiptSha256 !== expectedReceiptSha256) invalid()
+        if (
+          tx.db.objectStoreNames.length !==
+            walletStores.length +
+              Object.values(packedIdbStores).length +
+              Object.values(idbImportJournalStores).length ||
+          (await tx.objectStore(packedIdbStores.clock).count()) !== 1
+        )
+          invalid()
+        const counts = { contents: 0, chunks: 0, versions: 0, heads: 0, leases: 0, jsonStages: 0, jsonMembers: 0 }
+        for (const name of Object.keys(counts) as Array<keyof typeof counts>)
+          counts[name] = await tx.objectStore(packedIdbStores[name]).count()
+        return Object.freeze({
+          epoch: clock.epoch,
+          revision: clock.revision,
+          ...counts,
+          retired: await tx.objectStore(packedIdbStores.contents).index('retired').count(1),
+          expired: await tx
+            .objectStore(packedIdbStores.contents)
+            .index('expiresAt')
+            .count(IDBKeyRange.upperBound(Date.now())),
+          obsolete: await tx
+            .objectStore(packedIdbStores.versions)
+            .index('obsoleteAt')
+            .count(IDBKeyRange.upperBound(clock.revision)),
+          logicalBytes: clock.bytes,
+          records: clock.records
+        })
       })
     })
   }
@@ -1473,10 +1515,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Packed garbage collection retains native windows through actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -1551,10 +1596,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Packed original inventory retains current native metadata through actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -1623,10 +1671,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Packed content inventory retains current native metadata through actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -1663,11 +1714,14 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Packed content range retains current native window through actual drainage',
-          async () => {
-            await cause.retryCleanup()
-            result?.fill(0)
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                result?.fill(0)
+                allowance.close()
+              }
+            )
         )
       }
       result?.fill(0)
@@ -1750,10 +1804,13 @@ export class Brc38IdbImportJournal {
         throw new Brc38StagingCleanupError(
           [cause],
           'Expired original retirement retains its current metadata allowance until drainage',
-          async () => {
-            await cause.retryCleanup()
-            allowance.close()
-          }
+          () =>
+            mapAwaitFromSync(
+              () => cause.retryCleanup(),
+              () => {
+                allowance.close()
+              }
+            )
         )
       }
       throw cause
@@ -1761,321 +1818,324 @@ export class Brc38IdbImportJournal {
       if (!retained) allowance.close()
     }
   }
-  async commit(
+  commit(
     proposed: Brc38ImportJournalStep,
     actualDestinationSha256: string,
     applyPrepared: (writer: Readonly<Brc38IdbImportWriter>) => Promise<string>,
     expectedReceiptSha256?: string
   ): Promise<Readonly<Brc38ImportJournalReceipt>> {
-    const step = stepCopy(proposed, this.admission)
-    if (
-      !isSha(actualDestinationSha256) ||
-      typeof applyPrepared !== 'function' ||
-      (expectedReceiptSha256 !== undefined && !isSha(expectedReceiptSha256))
-    )
-      invalid()
-    return await this.#run('readwrite', async (wallet, tx, clock) => {
-      const { entry, receipt } = await this.#load(tx, clock)
+    return awaitFromSync(() => {
+      const step = stepCopy(proposed, this.admission)
       if (
-        receipt.state === 'EXPIRED' ||
-        entry.publicationJson !== undefined ||
-        receipt.destinationSha256 !== actualDestinationSha256
+        !isSha(actualDestinationSha256) ||
+        typeof applyPrepared !== 'function' ||
+        (expectedReceiptSha256 !== undefined && !isSha(expectedReceiptSha256))
       )
         invalid()
-      if (step.fromRow < receipt.nextRow) {
-        if (JSON.stringify(step) !== JSON.stringify(receipt.lastStep)) invalid()
-        return receipt
-      }
-      if (receipt.state === 'COMPLETE' || step.fromRow !== receipt.nextRow) invalid()
-      if (expectedReceiptSha256 !== undefined && entry.receiptSha256 !== expectedReceiptSha256) invalid()
-      const mappedIds = receipt.mappedIds + step.mappedIds
-      if (mappedIds > mappingCapacity(this.admission))
-        throw new SnapshotResourceLimitError('IndexedDB import original mapping quota reached')
-      let active = true,
-        additions = 0,
-        originalRows = entry.originalRows,
-        originalBytes = entry.originalBytes,
-        pending: Promise<unknown> | undefined
-      const own = <T>(work: () => Promise<T>): Promise<T> => {
-        check()
-        if (pending !== undefined) throw new Error('IndexedDB import writer requires serial awaited effects')
-        const current = Promise.resolve().then(work)
-        const result: Promise<T> = current.finally(() => {
-          if (pending === result) pending = undefined
-        })
-        pending = result
-        void result.catch(() => undefined)
-        return result
-      }
-      const check = () => {
-          if (!active) invalid()
-          this.#check()
-        },
-        ids = tx.objectStore(idbImportJournalStores.ids),
-        originals = tx.objectStore(idbImportJournalStores.originals),
-        writer: Brc38IdbImportWriter = {
-          transaction: wallet as PackedIdbTransaction<'readwrite'>,
-          lookup: (entity, incomingId) =>
-            own(async () => {
-              check()
-              const key = incoming(entity, incomingId),
-                row = await ids.get([entity, key])
-              check()
-              if (row === undefined) return undefined
-              if (row.entity !== entity || row.incomingId !== key) invalid()
-              integer(row.localId as number, 1, Number.MAX_SAFE_INTEGER)
-              return row.localId as number
-            }),
-          map: (entity, incomingId, localId) =>
-            own(async () => {
-              check()
-              const key = incoming(entity, incomingId)
-              integer(localId, 1, Number.MAX_SAFE_INTEGER)
-              const old = await ids.get([entity, key])
-              check()
-              if (old !== undefined) {
-                if (old.entity !== entity || old.incomingId !== key || old.localId !== localId) invalid()
-                return
-              }
-              if (++additions > step.mappedIds) invalid()
-              await chargePackedIdb(tx, 512, 1)
-              check()
-              await ids.add({ entity, incomingId: key, localId })
-              check()
-            }),
-          original: (table, index, payload, selectedKey) => {
-            const keyJson = destinationJson(selectedKey)
-            return own(async () => {
-              check()
-              if (table !== 'header' && !brc38StageTables.includes(table)) invalid()
-              integer(index, 0, this.admission.totalRows)
-              const bytes = utf8Bytes(payload, this.#maximumOriginalRowBytes),
-                allowance = this.#working?.claim(1024 + 16 * bytes)
-              try {
-                const sha256 = digest(payload),
-                  old = await originals.get([table, index])
+      return this.#run('readwrite', async (wallet, tx, clock) => {
+        const { entry, receipt } = await this.#load(tx, clock)
+        if (
+          receipt.state === 'EXPIRED' ||
+          entry.publicationJson !== undefined ||
+          receipt.destinationSha256 !== actualDestinationSha256
+        )
+          invalid()
+        if (step.fromRow < receipt.nextRow) {
+          if (JSON.stringify(step) !== JSON.stringify(receipt.lastStep)) invalid()
+          return receipt
+        }
+        if (receipt.state === 'COMPLETE' || step.fromRow !== receipt.nextRow) invalid()
+        if (expectedReceiptSha256 !== undefined && entry.receiptSha256 !== expectedReceiptSha256) invalid()
+        const mappedIds = receipt.mappedIds + step.mappedIds
+        if (mappedIds > mappingCapacity(this.admission))
+          throw new SnapshotResourceLimitError('IndexedDB import original mapping quota reached')
+        let active = true,
+          additions = 0,
+          originalRows = entry.originalRows,
+          originalBytes = entry.originalBytes,
+          pending: Promise<unknown> | undefined
+        const own = <T>(work: () => Promise<T>): Promise<T> => {
+          check()
+          if (pending !== undefined) throw new Error('IndexedDB import writer requires serial awaited effects')
+          const current = Promise.resolve().then(work)
+          const result: Promise<T> = current.finally(() => {
+            if (pending === result) pending = undefined
+          })
+          pending = result
+          void result.catch(() => undefined)
+          return result
+        }
+        const check = () => {
+            if (!active) invalid()
+            this.#check()
+          },
+          ids = tx.objectStore(idbImportJournalStores.ids),
+          originals = tx.objectStore(idbImportJournalStores.originals),
+          writer: Brc38IdbImportWriter = {
+            transaction: wallet as PackedIdbTransaction<'readwrite'>,
+            lookup: (entity, incomingId) =>
+              own(async () => {
                 check()
-                if (
-                  keyJson !== undefined &&
-                  ((table === 'header' && destinationKey(keyJson) !== this.admission.scope.userId) ||
-                    (await wallet.objectStore(brc38IdbRestoreStore(table)).getKey(destinationKey(keyJson))) ===
-                      undefined)
-                )
-                  invalid()
+                const key = incoming(entity, incomingId),
+                  row = await ids.get([entity, key])
+                check()
+                if (row === undefined) return undefined
+                if (row.entity !== entity || row.incomingId !== key) invalid()
+                integer(row.localId as number, 1, Number.MAX_SAFE_INTEGER)
+                return row.localId as number
+              }),
+            map: (entity, incomingId, localId) =>
+              own(async () => {
+                check()
+                const key = incoming(entity, incomingId)
+                integer(localId, 1, Number.MAX_SAFE_INTEGER)
+                const old = await ids.get([entity, key])
+                check()
                 if (old !== undefined) {
-                  if (
-                    old.table !== table ||
-                    old.index !== index ||
-                    old.payload !== payload ||
-                    old.sha256 !== sha256 ||
-                    old.bytes !== bytes ||
-                    old.destinationKeyJson !== keyJson
-                  )
-                    invalid()
+                  if (old.entity !== entity || old.incomingId !== key || old.localId !== localId) invalid()
                   return
                 }
-                const charge = 256 + bytes + destinationCharge(keyJson)
-                if (originalRows >= this.admission.totalRows || charge > this.#maximumOriginalBytes - originalBytes)
-                  throw new SnapshotResourceLimitError('IndexedDB import original provenance quota reached')
-                await chargePackedIdb(tx, charge, 1)
+                if (++additions > step.mappedIds) invalid()
+                await chargePackedIdb(tx, 512, 1)
                 check()
-                await originals.add({
-                  table,
-                  index,
-                  payload,
-                  sha256,
-                  bytes,
-                  references: [],
-                  ...(keyJson === undefined ? {} : { destinationKeyJson: keyJson })
-                })
+                await ids.add({ entity, incomingId: key, localId })
                 check()
-                originalRows++
-                originalBytes += charge
-              } finally {
-                allowance?.close()
-              }
-            })
-          },
-          originalStreamed: (table, index, payload, selected, selectedKey) => {
-            const keyJson = destinationJson(selectedKey)
-            // Capture exact stage identities and data properties BEFORE the
-            // first asynchronous boundary. Copies/descriptor markers cannot
-            // replace an actual current owner-issued packed stage.
-            if (
-              !brc38StageTables.includes(table) ||
-              selected === null ||
-              typeof selected !== 'object' ||
-              Array.isArray(selected)
-            )
-              invalid()
-            const names = Object.keys(selected).sort((a, b) => Number(a > b) - Number(a < b)),
-              fields: Record<string, PackedIdbStagedField> = Object.create(null)
-            if (names.length < 1 || names.length > 13) invalid()
-            for (const name of names) {
-              const property = Object.getOwnPropertyDescriptor(selected, name)
+              }),
+            original: (table, index, payload, selectedKey) => {
+              const keyJson = destinationJson(selectedKey)
+              return own(async () => {
+                check()
+                if (table !== 'header' && !brc38StageTables.includes(table)) invalid()
+                integer(index, 0, this.admission.totalRows)
+                const bytes = utf8Bytes(payload, this.#maximumOriginalRowBytes),
+                  allowance = this.#working?.claim(1024 + 16 * bytes)
+                try {
+                  const sha256 = digest(payload),
+                    old = await originals.get([table, index])
+                  check()
+                  if (
+                    keyJson !== undefined &&
+                    ((table === 'header' && destinationKey(keyJson) !== this.admission.scope.userId) ||
+                      (await wallet.objectStore(brc38IdbRestoreStore(table)).getKey(destinationKey(keyJson))) ===
+                        undefined)
+                  )
+                    invalid()
+                  if (old !== undefined) {
+                    if (
+                      old.table !== table ||
+                      old.index !== index ||
+                      old.payload !== payload ||
+                      old.sha256 !== sha256 ||
+                      old.bytes !== bytes ||
+                      old.destinationKeyJson !== keyJson
+                    )
+                      invalid()
+                    return
+                  }
+                  const charge = 256 + bytes + destinationCharge(keyJson)
+                  if (originalRows >= this.admission.totalRows || charge > this.#maximumOriginalBytes - originalBytes)
+                    throw new SnapshotResourceLimitError('IndexedDB import original provenance quota reached')
+                  await chargePackedIdb(tx, charge, 1)
+                  check()
+                  await originals.add({
+                    table,
+                    index,
+                    payload,
+                    sha256,
+                    bytes,
+                    references: [],
+                    ...(keyJson === undefined ? {} : { destinationKeyJson: keyJson })
+                  })
+                  check()
+                  originalRows++
+                  originalBytes += charge
+                } finally {
+                  allowance?.close()
+                }
+              })
+            },
+            originalStreamed: (table, index, payload, selected, selectedKey) => {
+              const keyJson = destinationJson(selectedKey)
+              // Capture exact stage identities and data properties BEFORE the
+              // first asynchronous boundary. Copies/descriptor markers cannot
+              // replace an actual current owner-issued packed stage.
               if (
-                property === undefined ||
-                !Object.hasOwn(property, 'value') ||
-                !property.enumerable ||
-                !(
-                  brc38JsonBinaryField(table, name) ||
-                  brc38JsonStructuredField(table, name) ||
-                  brc38JsonTextField(table, name)
-                )
+                !brc38StageTables.includes(table) ||
+                selected === null ||
+                typeof selected !== 'object' ||
+                Array.isArray(selected)
               )
                 invalid()
-              fields[name] = property.value as PackedIdbStagedField
-            }
-            return own(async () => {
-              check()
-              integer(index, 0, this.admission.totalRows)
-              const bytes = utf8Bytes(payload, this.#maximumOriginalRowBytes),
-                allowance = this.#working?.claim(262144 + 16 * bytes + 4096 * names.length)
-              try {
-                const sha256 = digest(payload),
-                  old = await originals.get([table, index])
-                check()
+              const names = Object.keys(selected).sort((a, b) => Number(a > b) - Number(a < b)),
+                fields: Record<string, PackedIdbStagedField> = Object.create(null)
+              if (names.length < 1 || names.length > 13) invalid()
+              for (const name of names) {
+                const property = Object.getOwnPropertyDescriptor(selected, name)
                 if (
-                  keyJson !== undefined &&
-                  (await wallet.objectStore(brc38IdbRestoreStore(table)).getKey(destinationKey(keyJson))) === undefined
+                  property === undefined ||
+                  !Object.hasOwn(property, 'value') ||
+                  !property.enumerable ||
+                  !(
+                    brc38JsonBinaryField(table, name) ||
+                    brc38JsonStructuredField(table, name) ||
+                    brc38JsonTextField(table, name)
+                  )
                 )
                   invalid()
-                const row = await attachPackedIdbStages(
-                  this.#owner,
-                  tx as PackedIdbTransaction<'readwrite'>,
-                  Object.create(null),
-                  fields,
-                  new Set<string>()
-                )
-                check()
-                let extentBytes = 0
-                for (const name of names) {
-                  const descriptor = row.extents[name]
-                  if (
-                    descriptor === undefined ||
-                    ((brc38JsonStructuredField(table, name) || brc38JsonTextField(table, name)) &&
-                      descriptor.kind !== 'utf16') ||
-                    (brc38JsonBinaryField(table, name) && !['array', 'typed'].includes(descriptor.kind))
-                  )
-                    invalid()
-                  extentBytes += descriptor.bytes
-                  if (!Number.isSafeInteger(extentBytes)) invalid()
-                }
-                // This strict replay accepts the same actual content identities;
-                // a checksum-equivalent new stage is not a replacement grant.
-                const fieldsJson = JSON.stringify(row.extents)
-                if (old !== undefined) {
-                  if (
-                    old.table !== table ||
-                    old.index !== index ||
-                    old.payload !== payload ||
-                    old.sha256 !== sha256 ||
-                    old.bytes !== bytes ||
-                    old.fieldsJson !== fieldsJson ||
-                    old.extentBytes !== extentBytes ||
-                    old.destinationKeyJson !== keyJson
-                  )
-                    invalid()
-                  verifyPackedIdbReferences(old.references, row)
-                  return
-                }
-                const metadataCharge = 256 + bytes + 384 * names.length + destinationCharge(keyJson),
-                  originalCharge = metadataCharge + extentBytes
-                if (
-                  !Number.isSafeInteger(originalCharge) ||
-                  originalRows >= this.admission.totalRows ||
-                  originalCharge > this.#maximumOriginalBytes - originalBytes
-                )
-                  throw new SnapshotResourceLimitError('IndexedDB streamed original provenance quota reached')
-                // Content was prepared outside this writer. Charge its new
-                // metadata here; existing packed content/chunk charges remain.
-                // The original-provenance ceiling counts both metadata and
-                // referenced extents without billing content a second time.
-                await chargePackedIdb(tx, metadataCharge, 1)
-                await retainPackedIdbFields(tx as PackedIdbTransaction<'readwrite'>, row, 1)
-                check()
-                await originals.add({
-                  table,
-                  index,
-                  payload,
-                  sha256,
-                  bytes,
-                  fieldsJson,
-                  extentBytes,
-                  references: packedIdbReferences(row),
-                  ...(keyJson === undefined ? {} : { destinationKeyJson: keyJson })
-                })
-                check()
-                originalRows++
-                originalBytes += originalCharge
-              } finally {
-                allowance?.close()
+                fields[name] = property.value as PackedIdbStagedField
               }
-            })
+              return own(async () => {
+                check()
+                integer(index, 0, this.admission.totalRows)
+                const bytes = utf8Bytes(payload, this.#maximumOriginalRowBytes),
+                  allowance = this.#working?.claim(262144 + 16 * bytes + 4096 * names.length)
+                try {
+                  const sha256 = digest(payload),
+                    old = await originals.get([table, index])
+                  check()
+                  if (
+                    keyJson !== undefined &&
+                    (await wallet.objectStore(brc38IdbRestoreStore(table)).getKey(destinationKey(keyJson))) ===
+                      undefined
+                  )
+                    invalid()
+                  const row = await attachPackedIdbStages(
+                    this.#owner,
+                    tx as PackedIdbTransaction<'readwrite'>,
+                    Object.create(null),
+                    fields,
+                    new Set<string>()
+                  )
+                  check()
+                  let extentBytes = 0
+                  for (const name of names) {
+                    const descriptor = row.extents[name]
+                    if (
+                      descriptor === undefined ||
+                      ((brc38JsonStructuredField(table, name) || brc38JsonTextField(table, name)) &&
+                        descriptor.kind !== 'utf16') ||
+                      (brc38JsonBinaryField(table, name) && !['array', 'typed'].includes(descriptor.kind))
+                    )
+                      invalid()
+                    extentBytes += descriptor.bytes
+                    if (!Number.isSafeInteger(extentBytes)) invalid()
+                  }
+                  // This strict replay accepts the same actual content identities;
+                  // a checksum-equivalent new stage is not a replacement grant.
+                  const fieldsJson = JSON.stringify(row.extents)
+                  if (old !== undefined) {
+                    if (
+                      old.table !== table ||
+                      old.index !== index ||
+                      old.payload !== payload ||
+                      old.sha256 !== sha256 ||
+                      old.bytes !== bytes ||
+                      old.fieldsJson !== fieldsJson ||
+                      old.extentBytes !== extentBytes ||
+                      old.destinationKeyJson !== keyJson
+                    )
+                      invalid()
+                    verifyPackedIdbReferences(old.references, row)
+                    return
+                  }
+                  const metadataCharge = 256 + bytes + 384 * names.length + destinationCharge(keyJson),
+                    originalCharge = metadataCharge + extentBytes
+                  if (
+                    !Number.isSafeInteger(originalCharge) ||
+                    originalRows >= this.admission.totalRows ||
+                    originalCharge > this.#maximumOriginalBytes - originalBytes
+                  )
+                    throw new SnapshotResourceLimitError('IndexedDB streamed original provenance quota reached')
+                  // Content was prepared outside this writer. Charge its new
+                  // metadata here; existing packed content/chunk charges remain.
+                  // The original-provenance ceiling counts both metadata and
+                  // referenced extents without billing content a second time.
+                  await chargePackedIdb(tx, metadataCharge, 1)
+                  await retainPackedIdbFields(tx as PackedIdbTransaction<'readwrite'>, row, 1)
+                  check()
+                  await originals.add({
+                    table,
+                    index,
+                    payload,
+                    sha256,
+                    bytes,
+                    fieldsJson,
+                    extentBytes,
+                    references: packedIdbReferences(row),
+                    ...(keyJson === undefined ? {} : { destinationKeyJson: keyJson })
+                  })
+                  check()
+                  originalRows++
+                  originalBytes += originalCharge
+                } finally {
+                  allowance?.close()
+                }
+              })
+            }
           }
-        }
-      let outcome: { value: string } | { cause: unknown }
-      try {
-        outcome = { value: await applyPrepared(Object.freeze(writer)) }
-      } catch (cause) {
-        outcome = { cause }
-      }
-      active = false
-      if (pending !== undefined) {
+        let outcome: { value: string } | { cause: unknown }
         try {
-          tx.abort()
-        } catch {
-          /* settled */
+          outcome = { value: await applyPrepared(Object.freeze(writer)) }
+        } catch (cause) {
+          outcome = { cause }
         }
-        await pending.catch(() => undefined)
-        throw new Error(
-          'IndexedDB import preparation returned with an unawaited effect',
-          'cause' in outcome ? { cause: outcome.cause } : {}
+        active = false
+        if (pending !== undefined) {
+          try {
+            tx.abort()
+          } catch {
+            /* settled */
+          }
+          await pending.catch(() => undefined)
+          throw new Error(
+            'IndexedDB import preparation returned with an unawaited effect',
+            'cause' in outcome ? { cause: outcome.cause } : {}
+          )
+        }
+        if ('cause' in outcome) throw outcome.cause
+        const destinationSha256 = outcome.value
+        this.#check()
+        await this.#owner.sealRestoreEffects(wallet)
+        if (
+          !isSha(destinationSha256) ||
+          additions !== step.mappedIds ||
+          originalRows - entry.originalRows !== step.rows ||
+          (await ids.count()) !== mappedIds ||
+          (await originals.count()) !== originalRows
         )
-      }
-      if ('cause' in outcome) throw outcome.cause
-      const destinationSha256 = outcome.value
-      this.#check()
-      await this.#owner.sealRestoreEffects(wallet)
-      if (
-        !isSha(destinationSha256) ||
-        additions !== step.mappedIds ||
-        originalRows - entry.originalRows !== step.rows ||
-        (await ids.count()) !== mappedIds ||
-        (await originals.count()) !== originalRows
-      )
-        invalid()
-      const nextRow = receipt.nextRow + step.rows,
-        next: Brc38ImportJournalReceipt = Object.freeze({
-          protocol: receipt.protocol,
-          state: nextRow === this.admission.totalRows ? 'COMPLETE' : 'COMMITTED',
-          sequence: receipt.sequence + 1,
-          nextRow,
+          invalid()
+        const nextRow = receipt.nextRow + step.rows,
+          next: Brc38ImportJournalReceipt = Object.freeze({
+            protocol: receipt.protocol,
+            state: nextRow === this.admission.totalRows ? 'COMPLETE' : 'COMMITTED',
+            sequence: receipt.sequence + 1,
+            nextRow,
+            mappedIds,
+            logicalBytes: 4096 + mappedIds * 512,
+            destinationSha256,
+            lastStep: step
+          }),
+          receiptJson = boundedJson(next)
+        utf8Bytes(receiptJson, 1024)
+        decodeReceipt(receiptJson, this.admission)
+        // Journal changes do not observe themselves as wallet rows. Normal row
+        // effects already advanced the provider clock atomically in this view.
+        const current = await this.#current(wallet, tx)
+        if (current.epoch !== entry.epoch || current.revision - entry.revision !== step.rows)
+          throw new Error('IndexedDB import row effects differ from the prepared bounded step')
+        const nextEntry = {
+          ...entry,
           mappedIds,
-          logicalBytes: 4096 + mappedIds * 512,
-          destinationSha256,
-          lastStep: step
-        }),
-        receiptJson = boundedJson(next)
-      utf8Bytes(receiptJson, 1024)
-      decodeReceipt(receiptJson, this.admission)
-      // Journal changes do not observe themselves as wallet rows. Normal row
-      // effects already advanced the provider clock atomically in this view.
-      const current = await this.#current(wallet, tx)
-      if (current.epoch !== entry.epoch || current.revision - entry.revision !== step.rows)
-        throw new Error('IndexedDB import row effects differ from the prepared bounded step')
-      const nextEntry = {
-        ...entry,
-        mappedIds,
-        originalRows,
-        originalBytes,
-        revision: current.revision,
-        receiptJson,
-        receiptSha256: digest(receiptJson)
-      }
-      boundedJson(nextEntry)
-      await tx.objectStore(idbImportJournalStores.journal).put(nextEntry, 1)
-      return next
+          originalRows,
+          originalBytes,
+          revision: current.revision,
+          receiptJson,
+          receiptSha256: digest(receiptJson)
+        }
+        boundedJson(nextEntry)
+        await tx.objectStore(idbImportJournalStores.journal).put(nextEntry, 1)
+        return next
+      })
     })
   }
   async close(): Promise<void> {

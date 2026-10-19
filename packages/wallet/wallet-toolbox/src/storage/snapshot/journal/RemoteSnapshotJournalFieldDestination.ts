@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, awaitVoidFromSync, mapAwaitFromSync } from '../../../utility/promiseFromSync'
 import {
   runSnapshotJournalReconciliation,
   type SnapshotJournalReconciliationOptions,
@@ -87,9 +88,7 @@ export class RemoteSnapshotJournalFieldDestination {
     private readonly bound: SnapshotJournalDestinationBinding,
     private readonly signal?: AbortSignal,
     private readonly preflight?: () => Promise<void>
-  ) {
-    void this.closed.catch(() => undefined)
-  }
+  ) {}
   private static async request(
     rpc: SnapshotJournalFieldRpcCall,
     method: SnapshotJournalFieldRpcMethod,
@@ -108,7 +107,7 @@ export class RemoteSnapshotJournalFieldDestination {
       )
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      return await retrySnapshotArchiveOperation(async () => await rpc(method, params, controller.signal))
+      return await retrySnapshotArchiveOperation(() => awaitFromSync(() => rpc(method, params, controller.signal)))
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)
@@ -143,19 +142,24 @@ export class RemoteSnapshotJournalFieldDestination {
     return this.ready
   }
 
-  static async observe(
+  static observe(
     rpc: SnapshotJournalFieldRpcCall,
     identityKey: string,
     sourceStorageIdentity: string,
     destinationIdentity: string
   ) {
-    const value = await this.request(rpc, 'getSnapshotJournalFieldStatus', {
-      version: 1,
-      identityKey,
-      sourceStorageIdentity
-    })
-    if (value === null) return undefined
-    return this.fieldStatus(value, identityKey, sourceStorageIdentity, destinationIdentity)
+    return mapAwaitFromSync(
+      () =>
+        this.request(rpc, 'getSnapshotJournalFieldStatus', {
+          version: 1,
+          identityKey,
+          sourceStorageIdentity
+        }),
+      value => {
+        if (value === null) return undefined
+        return this.fieldStatus(value, identityKey, sourceStorageIdentity, destinationIdentity)
+      }
+    )
   }
   private static fieldStatus(value: unknown, identityKey: string, sourceIdentity: string, destinationIdentity: string) {
     const status = parseSnapshotJournalDataStatus(
@@ -169,32 +173,39 @@ export class RemoteSnapshotJournalFieldDestination {
       throw new TypeError('Target did not return an actual field window')
     return status
   }
-  static async contentReceipt(
+  static contentReceipt(
     rpc: SnapshotJournalFieldRpcCall,
     identityKey: string,
     sourceStorageIdentity: string,
     destinationIdentity: string,
     revision?: SnapshotSyncContentRevision
   ) {
-    const value = await this.request(
-      rpc,
-      revision === undefined ? 'getSnapshotJournalFieldContentReceipt' : 'confirmSnapshotJournalFieldContentReceipt',
-      {
-        version: 1,
-        identityKey,
-        sourceStorageIdentity,
-        ...(revision === undefined ? {} : { revision: parseSnapshotSyncContentRevision(revision) })
+    return mapAwaitFromSync(
+      () =>
+        this.request(
+          rpc,
+          revision === undefined
+            ? 'getSnapshotJournalFieldContentReceipt'
+            : 'confirmSnapshotJournalFieldContentReceipt',
+          {
+            version: 1,
+            identityKey,
+            sourceStorageIdentity,
+            ...(revision === undefined ? {} : { revision: parseSnapshotSyncContentRevision(revision) })
+          }
+        ),
+      value => {
+        if (value === null) return undefined
+        const receipt = parseSnapshotJournalDataContentReceipt(value)
+        if (
+          receipt.identityKey !== identityKey ||
+          receipt.sourceStorageIdentity !== sourceStorageIdentity ||
+          receipt.destinationStorageIdentity !== destinationIdentity
+        )
+          throw new TypeError('Field content receipt changed its authenticated endpoint/profile')
+        return receipt
       }
     )
-    if (value === null) return undefined
-    const receipt = parseSnapshotJournalDataContentReceipt(value)
-    if (
-      receipt.identityKey !== identityKey ||
-      receipt.sourceStorageIdentity !== sourceStorageIdentity ||
-      receipt.destinationStorageIdentity !== destinationIdentity
-    )
-      throw new TypeError('Field content receipt changed its authenticated endpoint/profile')
-    return receipt
   }
   static async open(
     rpc: SnapshotJournalFieldRpcCall,
@@ -290,6 +301,7 @@ export class RemoteSnapshotJournalFieldDestination {
         signal,
         preflight
       )
+      void destination.closed.catch(() => undefined)
       destination.ready = ready
       return destination
     } catch (cause) {
@@ -338,25 +350,26 @@ export class RemoteSnapshotJournalFieldDestination {
     if (!this.ready) throw new WERR_INVALID_OPERATION('Uploaded field recovery has no actual READY artifact')
     return yield* runSnapshotJournalReconciliation(
       this,
-      async () => ({
-        status: () => this.status(),
-        intake: expected =>
-          this.exclusive(async () =>
-            this.statusValue(
-              await this.call('stageSnapshotJournalFieldFrame', {
-                checkpoint: parseSnapshotJournalDataCheckpoint(expected)
-              })
+      () =>
+        promiseFromSync(() => ({
+          status: () => this.status(),
+          intake: expected =>
+            this.exclusive(async () =>
+              this.statusValue(
+                await this.call('stageSnapshotJournalFieldFrame', {
+                  checkpoint: parseSnapshotJournalDataCheckpoint(expected)
+                })
+              )
+            ),
+          promote: expected =>
+            this.exclusive(async () =>
+              this.statusValue(
+                await this.call('promoteSnapshotJournalFields', {
+                  checkpoint: parseSnapshotJournalDataCheckpoint(expected)
+                })
+              )
             )
-          ),
-        promote: expected =>
-          this.exclusive(async () =>
-            this.statusValue(
-              await this.call('promoteSnapshotJournalFields', {
-                checkpoint: parseSnapshotJournalDataCheckpoint(expected)
-              })
-            )
-          )
-      }),
+        })),
       { ...options, signal: options.signal ?? this.signal }
     )
   }
@@ -391,16 +404,18 @@ export class RemoteSnapshotJournalFieldDestination {
       this.pending = undefined
     }
   }
-  async status(): Promise<SnapshotJournalDataStatus> {
-    return await this.exclusive(async () =>
-      this.statusValue(
-        await RemoteSnapshotJournalFieldDestination.request(this.rpc, 'getSnapshotJournalFieldStatus', {
-          version: 1,
-          identityKey: this.identityKey,
-          sourceStorageIdentity: this.source.sourceStorage.storageIdentityKey
-        })
+  status(): Promise<SnapshotJournalDataStatus> {
+    return awaitFromSync(() => {
+      return this.exclusive(async () =>
+        this.statusValue(
+          await RemoteSnapshotJournalFieldDestination.request(this.rpc, 'getSnapshotJournalFieldStatus', {
+            version: 1,
+            identityKey: this.identityKey,
+            sourceStorageIdentity: this.source.sourceStorage.storageIdentityKey
+          })
+        )
       )
-    )
+    })
   }
   private async packet(sequence: number, streamIndex: number, bytes: Uint8Array) {
     if (bytes.length <= limits.inlinePacketBytes) {
@@ -507,17 +522,19 @@ export class RemoteSnapshotJournalFieldDestination {
       const stream = snapshotJournalArchiveStreams[streamIndex]
       if (stream === undefined) throw new TypeError('Field upload has extra streams')
       const context = { stream: stream.stream, tableId: stream.tableId },
-        frame = await archive.readFrame(ordinal, async (digest, index, identities) => {
-          await append(
-            encodeSnapshotJournalFieldArchiveIdentities(
-              context,
-              digest,
-              index,
-              identities,
-              this.source.journal.receipt.highWater
+        frame = await archive.readFrame(ordinal, (digest, index, identities) =>
+          awaitVoidFromSync(() =>
+            append(
+              encodeSnapshotJournalFieldArchiveIdentities(
+                context,
+                digest,
+                index,
+                identities,
+                this.source.journal.receipt.highWater
+              )
             )
           )
-        })
+        )
       if (frame.stream !== stream.stream || frame.tableId !== stream.tableId)
         throw new TypeError('Actual field frame stream differs')
       const page = frame.page
@@ -582,18 +599,22 @@ export class RemoteSnapshotJournalFieldDestination {
     this.uploaded = archive
     this.ready = true
   }
-  async stageArchiveFrame(input: SnapshotJournalDestinationCheckpoint, archive: RemoteSnapshotJournalFieldArchive) {
-    const checkpoint = parseSnapshotJournalDataCheckpoint(input)
-    return await this.exclusive(async () => {
-      await this.upload(archive)
-      return this.statusValue(await this.call('stageSnapshotJournalFieldFrame', { checkpoint }))
+  stageArchiveFrame(input: SnapshotJournalDestinationCheckpoint, archive: RemoteSnapshotJournalFieldArchive) {
+    return awaitFromSync(() => {
+      const checkpoint = parseSnapshotJournalDataCheckpoint(input)
+      return this.exclusive(async () => {
+        await this.upload(archive)
+        return this.statusValue(await this.call('stageSnapshotJournalFieldFrame', { checkpoint }))
+      })
     })
   }
-  async promote(input: SnapshotJournalDestinationCheckpoint, archive: RemoteSnapshotJournalFieldArchive) {
-    const checkpoint = parseSnapshotJournalDataCheckpoint(input)
-    return await this.exclusive(async () => {
-      await this.upload(archive)
-      return this.statusValue(await this.call('promoteSnapshotJournalFields', { checkpoint }))
+  promote(input: SnapshotJournalDestinationCheckpoint, archive: RemoteSnapshotJournalFieldArchive) {
+    return awaitFromSync(() => {
+      const checkpoint = parseSnapshotJournalDataCheckpoint(input)
+      return this.exclusive(async () => {
+        await this.upload(archive)
+        return this.statusValue(await this.call('promoteSnapshotJournalFields', { checkpoint }))
+      })
     })
   }
   close(): Promise<void> {

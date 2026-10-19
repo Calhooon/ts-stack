@@ -103,12 +103,9 @@ async function copyInput(from, to, maximum, expected) {
  * @param {string} sqliteDirectory @param {string} parentDirectory
  * @param {{platform:string,architecture:string}} [target]
  */
-async function prepareNativeSource(
-  sqliteDirectory,
-  parentDirectory,
-  target = { platform: process.platform, architecture: process.arch }
-) {
-  const argumentsPlan = unixCompilerArguments(target.platform, target.architecture)
+async function prepareNativeSource(sqliteDirectory, parentDirectory, target) {
+  const selectedTarget = target === undefined ? { platform: process.platform, architecture: process.arch } : target
+  const argumentsPlan = unixCompilerArguments(selectedTarget.platform, selectedTarget.architecture)
   const directory = await fs.mkdtemp(path.join(parentDirectory, 'wallet-native-source-'))
   try {
     await fs.chmod(directory, 0o700)
@@ -122,8 +119,8 @@ async function prepareNativeSource(
     const source = {
       protocol: 'brc38-native-build-source/v2',
       abi: 2,
-      platform: target.platform,
-      architecture: target.architecture,
+      platform: selectedTarget.platform,
+      architecture: selectedTarget.architecture,
       inputs: Object.freeze(inputs),
       compiled: false,
       engineExecuted: false,

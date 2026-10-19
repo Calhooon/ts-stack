@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { addSnapshotJournalMysqlPrimaryControl } from '../snapshot/journal/SnapshotJournalMysqlSourceUpgrade'
 import {
   PRIMARY_HANDOFF_MIGRATION,
@@ -307,10 +308,12 @@ export class KnexMigrations implements MigrationSource<string> {
             await addSnapshotJournalDestinationSchema(trx)
           })
       }),
-      down: forSnapshotSqlDialect(async () => {
-        throw new WERR_NOT_IMPLEMENTED(
-          'Journal reconciliation schema requires a forward migration; preserve wallet and recovery data'
-        )
+      down: forSnapshotSqlDialect(() => {
+        return promiseFromSync(() => {
+          throw new WERR_NOT_IMPLEMENTED(
+            'Journal reconciliation schema requires a forward migration; preserve wallet and recovery data'
+          )
+        })
       })
     }
 
@@ -327,18 +330,22 @@ export class KnexMigrations implements MigrationSource<string> {
             await migrateSnapshotJournalSqliteSignedProvenance(trx, knex.client.config.migrations)
           })
       }),
-      down: forSnapshotSqlDialect(async () => {
-        throw new WERR_NOT_IMPLEMENTED('Journal field custody requires forward recovery; preserve provenance bytes')
+      down: forSnapshotSqlDialect(() => {
+        return promiseFromSync(() => {
+          throw new WERR_NOT_IMPLEMENTED('Journal field custody requires forward recovery; preserve provenance bytes')
+        })
       })
     }
 
     migrations[SNAPSHOT_JOURNAL_SOURCE_MIGRATION] = {
       config: { transaction: false },
       up: forSnapshotSqlDialect(migrateSnapshotJournalSource),
-      down: forSnapshotSqlDialect(async () => {
-        throw new WERR_NOT_IMPLEMENTED(
-          'Native journal downgrade is unsupported; preserve wallet and retained-source data'
-        )
+      down: forSnapshotSqlDialect(() => {
+        return promiseFromSync(() => {
+          throw new WERR_NOT_IMPLEMENTED(
+            'Native journal downgrade is unsupported; preserve wallet and retained-source data'
+          )
+        })
       })
     }
 

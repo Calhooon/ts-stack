@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageActiveWrite } from '../../storage/StorageActiveWrite'
 import { WalletError } from '../../sdk/WalletError'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
@@ -83,27 +84,31 @@ export class TaskFailAbandoned extends WalletMonitorTask {
                   }
                   const write = captures.get(tx.userId)
                   if (write == null) continue
-                  const applied = await this.storage.runAsStorageProvider(async current => {
-                    if (current !== provider) throw new WERR_NOT_ACTIVE('Abandoned review provider was replaced')
-                    return await write.transaction(async trx => {
-                      const currentTx = (
-                        await provider.findTransactions({
-                          partial: { transactionId: tx.transactionId, userId: tx.userId },
-                          noRawTx: true,
-                          trx
+                  const applied = await this.storage.runAsStorageProvider(
+                    current =>
+                      awaitFromSync(() => {
+                        if (current !== provider) throw new WERR_NOT_ACTIVE('Abandoned review provider was replaced')
+                        return write.transaction(async trx => {
+                          const currentTx = (
+                            await provider.findTransactions({
+                              partial: { transactionId: tx.transactionId, userId: tx.userId },
+                              noRawTx: true,
+                              trx
+                            })
+                          )[0]
+                          if (
+                            currentTx == null ||
+                            !['unprocessed', 'unsigned'].includes(currentTx.status) ||
+                            currentTx.updated_at == null ||
+                            currentTx.updated_at >= abandoned
+                          )
+                            return false
+                          await provider.updateTransactionStatus('failed', tx.transactionId, tx.userId, undefined, trx)
+                          return true
                         })
-                      )[0]
-                      if (
-                        currentTx == null ||
-                        !['unprocessed', 'unsigned'].includes(currentTx.status) ||
-                        currentTx.updated_at == null ||
-                        currentTx.updated_at >= abandoned
-                      )
-                        return false
-                      await provider.updateTransactionStatus('failed', tx.transactionId, tx.userId, undefined, trx)
-                      return true
-                    })
-                  }, true)
+                      }),
+                    true
+                  )
                   if (applied) {
                     changed++
                     log += `updated tx ${tx.transactionId} status to 'failed'\n`

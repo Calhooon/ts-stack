@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import type { BRC38Tables } from './index'
 import type { Brc38JsonFieldInput, Brc38JsonStreamedRow } from './Brc38JsonBinaryFields'
@@ -130,7 +131,7 @@ class Grammar {
         this.parent().expect = this.quoted === 'key' ? 'colon' : 'separator'
         this.quoted = undefined
       } else {
-        if (unit.charCodeAt(0) < 32) invalid()
+        if (utf16CodeUnitAt(unit, 0) < 32) invalid()
         this.keyUnit()
       }
       return
@@ -265,7 +266,7 @@ export async function readBrc38JsonStructuredField(
     bytes++
   }
   const utf8 = (unit: string) => {
-    let point = unit.charCodeAt(0)
+    let point = utf16CodeUnitAt(unit, 0)
     if (high !== undefined) {
       if (point < 0xdc00 || point > 0xdfff) invalid()
       point = 0x10000 + (high - 0xd800) * 1024 + point - 0xdc00

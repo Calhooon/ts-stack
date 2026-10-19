@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { Brc38PrivateIdbStage, type Brc38PrivateIdbStructuredRead } from './Brc38PrivateIdbStage'
 import { Brc38IdbImportJournal } from './Brc38IdbImportJournal'
 import { boundedJson, digest, type Brc38ImportJournalReceipt } from './Brc38ImportJournalContract'
@@ -78,11 +79,14 @@ export async function prepareBrc38IdbStructuredHistory(
     }
     return reader
   }
-  const currentReceipt = async (): Promise<void> => {
-    const read = await journal.readMappings(receiptSha256, [])
-    read.close()
-    policy.signal?.throwIfAborted()
-  }
+  const currentReceipt = (): Promise<void> =>
+    mapAwaitFromSync(
+      () => journal.readMappings(receiptSha256, []),
+      read => {
+        read.close()
+        policy.signal?.throwIfAborted()
+      }
+    )
   const cleanup = async (): Promise<void> => {
     const causes: unknown[] = []
     if (prepared !== undefined)

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 /** Internal physical privacy operations. Native metadata is DATA; callers still
  * owe original profile/archive/lease/transaction admission. No privacy verdict
  * is cached. The Windows native library belongs to the trusted installed package
@@ -162,8 +163,10 @@ function nativeCall<T>(boundary: WindowsBoundary, call: () => T): T {
     return call()
   } catch (cause) {
     if ((cause as { code?: unknown })?.code === 'BRC38_WINDOWS_CLEANUP_RETAINED')
-      throw new Brc38PrivateFilesystemCleanupError(cause, cause, async () => {
-        boundary.retryCleanup()
+      throw new Brc38PrivateFilesystemCleanupError(cause, cause, () => {
+        return promiseFromSync(() => {
+          boundary.retryCleanup()
+        })
       })
     throw cause
   }
@@ -297,20 +300,22 @@ export async function acquireWindowsNativeImage(
       if (closed || closing) throw new Error('Windows image is closing or closed')
       nativeCall(boundary, () => boundary.checkImage(token))
     },
-    async close(): Promise<void> {
-      if (closed) return
-      closing = true
-      try {
-        nativeCall(boundary, () => boundary.releaseImage(token))
-        closed = true
-      } catch (cause) {
-        if (cause instanceof Brc38PrivateFilesystemCleanupError)
-          throw new Brc38PrivateFilesystemCleanupError(cause, cause.cleanupError, async () => {
-            await cause.retryCleanup()
-            closed = true
-          })
-        throw cause
-      }
+    close(): Promise<void> {
+      return promiseFromSync(() => {
+        if (closed) return
+        closing = true
+        try {
+          nativeCall(boundary, () => boundary.releaseImage(token))
+          closed = true
+        } catch (cause) {
+          if (cause instanceof Brc38PrivateFilesystemCleanupError)
+            throw new Brc38PrivateFilesystemCleanupError(cause, cause.cleanupError, async () => {
+              await cause.retryCleanup()
+              closed = true
+            })
+          throw cause
+        }
+      })
     }
   })
 }

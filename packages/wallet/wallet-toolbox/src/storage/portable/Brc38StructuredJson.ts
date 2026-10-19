@@ -1,3 +1,5 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation, type Brc38WorkingCharge } from './Brc38WorkingAllocation'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
@@ -143,13 +145,13 @@ async function* notifyIds(selected: Brc38StructuredNotifyIds, policy: Policy): A
           } else if (state === 'first' || state === 'value') {
             if (state === 'first' && unit === 93) state = 'done'
             else if (unit === 45 || (unit >= 48 && unit <= 57)) {
-              token = String.fromCharCode(unit)
+              token = String.fromCodePoint(unit)
               state = 'number'
             } else invalid()
           } else if (state === 'number') {
             if (unit >= 48 && unit <= 57) {
               if (token.length >= 17) invalid()
-              token += String.fromCharCode(unit)
+              token += String.fromCodePoint(unit)
             } else if (unit === 44 || unit === 93) {
               finish()
               state = unit === 44 ? 'value' : 'done'
@@ -374,9 +376,9 @@ class Input {
   }
   private decodePoint(first: number, count: number, byte: (offset: number) => number): { text: string; bytes: number } {
     if (this.source.encoding === 'utf16le') {
-      return { text: String.fromCharCode(first | (byte(1) << 8)), bytes: 2 }
+      return { text: String.fromCodePoint(first | (byte(1) << 8)), bytes: 2 }
     }
-    if (first < 128) return { text: String.fromCharCode(first), bytes: 1 }
+    if (first < 128) return { text: String.fromCodePoint(first), bytes: 1 }
     let point = first & (count === 2 ? 31 : count === 3 ? 15 : 7)
     for (let i = 1; i < count; i++) {
       const next = byte(i)
@@ -428,7 +430,7 @@ function decodedUnit(input: Input): string | undefined | Promise<string | undefi
 }
 function decodeUnit(input: Input, next: string): string | undefined | Promise<string> {
   if (next === '"') return undefined
-  if (next === '' || next.charCodeAt(0) < 32) invalid()
+  if (next === '' || utf16CodeUnitAt(next, 0) < 32) invalid()
   if (next !== '\\') return next
   return escapedUnit(input)
 }
@@ -443,7 +445,7 @@ async function escapedUnit(input: Input): Promise<string> {
     if (!/^[0-9a-fA-F]$/.test(unit)) invalid()
     hex += unit
   }
-  return String.fromCharCode(Number.parseInt(hex, 16))
+  return String.fromCodePoint(Number.parseInt(hex, 16))
 }
 async function key(input: Input, maximum: number, policy: Policy): Promise<ChargedText> {
   const charge = policy.working.claim(768),
@@ -459,14 +461,14 @@ async function key(input: Input, maximum: number, policy: Policy): Promise<Charg
       charge.resize(768 + 16 * (units + next.length))
       for (let at = 0; at < next.length; at++) {
         if (units % 128 === 0) blocks.push(new Uint16Array(128))
-        blocks[Math.floor(units / 128)][units % 128] = next.charCodeAt(at)
+        blocks[Math.floor(units / 128)][units % 128] = utf16CodeUnitAt(next, at)
         units++
       }
     }
     const parts: string[] = []
     for (let at = 0; at < blocks.length; at++) {
       const amount = Math.min(128, units - at * 128)
-      parts.push(String.fromCharCode(...blocks[at].subarray(0, amount)))
+      parts.push(String.fromCodePoint(...blocks[at].subarray(0, amount)))
     }
     const value = parts.join('')
     // CanonicalPortableChunks retains the original Unicode predicate, now with
@@ -675,7 +677,7 @@ async function* stringParts(
         break
       }
       if (pending !== '') {
-        if (next.length === 1 && next.charCodeAt(0) >= 0xdc00 && next.charCodeAt(0) <= 0xdfff) {
+        if (next.length === 1 && utf16CodeUnitAt(next, 0) >= 0xdc00 && utf16CodeUnitAt(next, 0) <= 0xdfff) {
           next = pending + next
           pending = ''
         } else {
@@ -683,7 +685,7 @@ async function* stringParts(
           buffer += pending
           pending = ''
           charge.resize(512 + 16 * (buffer.length + next.length))
-          if (next.length === 1 && next.charCodeAt(0) >= 0xd800 && next.charCodeAt(0) <= 0xdbff) {
+          if (next.length === 1 && utf16CodeUnitAt(next, 0) >= 0xd800 && utf16CodeUnitAt(next, 0) <= 0xdbff) {
             pending = next
             if (buffer.length >= Math.floor(policy.width / 6) - 2) {
               if (text !== undefined) await text(buffer)
@@ -694,11 +696,12 @@ async function* stringParts(
             continue
           }
         }
-      } else if (next.length === 1 && next.charCodeAt(0) >= 0xd800 && next.charCodeAt(0) <= 0xdbff) {
+      } else if (next.length === 1 && utf16CodeUnitAt(next, 0) >= 0xd800 && utf16CodeUnitAt(next, 0) <= 0xdbff) {
         pending = next
         charge.resize(512 + 16 * (buffer.length + pending.length))
         continue
-      } else if (!raw && next.length === 1 && next.charCodeAt(0) >= 0xdc00 && next.charCodeAt(0) <= 0xdfff) invalid()
+      } else if (!raw && next.length === 1 && utf16CodeUnitAt(next, 0) >= 0xdc00 && utf16CodeUnitAt(next, 0) <= 0xdfff)
+        invalid()
       charge.resize(512 + 16 * (buffer.length + pending.length + next.length))
       buffer += next
       if (buffer.length >= Math.floor(policy.width / 6) - 2) {
@@ -1049,17 +1052,19 @@ export async function* canonicalBrc38StructuredStringSpan(
  * lone surrogates retain ordinary JavaScript comparison behavior. This is
  * comparison DATA only: the enclosing controller independently authenticates
  * complete sources and freshly replays them before final field attachment. */
-export async function compareBrc38StructuredStringSpans(
+export function compareBrc38StructuredStringSpans(
   selectedLeft: Brc38StreamedStructured,
   selectedLeftSpan: Readonly<{ start: number; end: number }>,
   selectedRight: Brc38StreamedStructured,
   selectedRightSpan: Readonly<{ start: number; end: number }>,
   selected: Brc38StructuredStringComparePolicy
 ): Promise<-1 | 0 | 1> {
-  return await compareBrc38StructuredStringSequences(
-    [{ source: selectedLeft, span: selectedLeftSpan }],
-    [{ source: selectedRight, span: selectedRightSpan }],
-    selected
+  return awaitFromSync(() =>
+    compareBrc38StructuredStringSequences(
+      [{ source: selectedLeft, span: selectedLeftSpan }],
+      [{ source: selectedRight, span: selectedRightSpan }],
+      selected
+    )
   )
 }
 export type Brc38StructuredStringPart =
@@ -1263,7 +1268,7 @@ export async function compareBrc38StructuredStringSequences(
     }
     if (++state.units > units)
       throw new SnapshotResourceLimitError('Structured string exceeds its original decoded-unit allowance')
-    const result = state.pending.charCodeAt(0)
+    const result = utf16CodeUnitAt(state.pending, 0)
     state.pending = state.pending.slice(1)
     return result
   }

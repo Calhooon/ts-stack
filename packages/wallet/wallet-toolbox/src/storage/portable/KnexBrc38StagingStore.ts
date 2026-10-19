@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Brc38AuthenticatedImportReader, Brc38AuthenticatedStreamedImportReader } from './Brc38SemanticStage'
 import type { KnexBrc38StagingLimits } from './Brc38StagingBinding'
 import { brc38StructuredRestoreResourceData } from './Brc38StructuredRestoreResourcesNode'
@@ -1915,8 +1916,10 @@ export class KnexBrc38StagingStore implements Brc38StageStore {
         this.#validateStructuredFields(table, index, descriptors, selected, sourceOnly),
       seal: async () => {},
       sealStreamed: async () => {},
-      discard: async () => {
-        throw new Error('Semantic source replay cannot dispose its caller-owned source')
+      discard: () => {
+        return promiseFromSync(() => {
+          throw new Error('Semantic source replay cannot dispose its caller-owned source')
+        })
       }
     }
     const semantic = new Brc38StreamedSemanticStage(

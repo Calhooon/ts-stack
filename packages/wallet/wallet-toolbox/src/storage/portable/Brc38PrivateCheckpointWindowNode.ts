@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
 import type { KnexBrc38StagingStore, Brc38AuthenticatedStreamedImportReader } from './KnexBrc38StagingStore'
@@ -336,7 +337,7 @@ export async function withBrc38PrivateCheckpointWindowDeltas<T>(
     if (deltas.length !== window.pendingPages || maps !== window.pendingMappings) invalid()
     deltas.push(current)
     if (deltas.length > maximumWindow || maps + current.mappings.length > 4000) invalid()
-    await read(async () => undefined)
+    await read(() => promiseFromSync(() => undefined))
     return await work(Object.freeze(deltas))
   } finally {
     charge.close()

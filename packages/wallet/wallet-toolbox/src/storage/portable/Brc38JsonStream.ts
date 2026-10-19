@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { parseBRC38Json, type BRC38Tables, type BRC38WalletData } from './index'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import { runInSeries } from '../../utility/runInSeries'
@@ -384,10 +385,14 @@ class Document {
   ) {
     this.row = sink.provisionalRow.bind(sink)
   }
-  async metadataValue(): Promise<Value> {
-    const result = await this.reader.value(this.remainingMetadata)
-    this.remainingMetadata -= result.allocation
-    return result.value
+  metadataValue(): Promise<Value> {
+    return mapAwaitFromSync(
+      () => this.reader.value(this.remainingMetadata),
+      result => {
+        this.remainingMetadata -= result.allocation
+        return result.value
+      }
+    )
   }
   async key(seen: Set<string>): Promise<string> {
     const value = await this.metadataValue()

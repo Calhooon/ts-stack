@@ -162,6 +162,61 @@ export const nativeAuthenticatedMergeCaseNames = Object.freeze(
     .sort((a, b) => Number(a > b) - Number(a < b))
 )
 
+// Mandatory per-case lanes retain the complete original read/user inventories
+// and all original resource/lifetime limits. Their existing 40-minute job
+// envelope also covers the two pinned delivery steps.
+export const nativeReadTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts'
+export const nativeReadCohorts = Object.freeze(
+  [
+    [
+      'wal',
+      'actual native WAL source retains original large history while foreground writing and archive provenance remain live'
+    ],
+    [
+      'publication',
+      'actual DELETE publication reaches WAL snapshot admission only through its original profile'
+    ],
+    [
+      'fields',
+      'actual native field metadata and packed hash windows preserve independent large bytes'
+    ],
+    ['scalar', 'all seventeen native scalar TEXT fields use exact bounded source windows'],
+    [
+      'capacity',
+      'native portable measurement keeps foreground capacity while its dedicated export reader is retained'
+    ],
+    [
+      'cache',
+      'actual native catalog component verifies authenticated binary and UTF8 cache reuse, pointer rollback and consumed actors'
+    ]
+  ].map(([id, name]) => Object.freeze({ id, name, cases: 1, pattern: `^${escapePattern(name)}$` }))
+)
+export const nativeReadCaseNames = Object.freeze(
+  nativeReadCohorts.map(value => value.name).sort((a, b) => Number(a > b) - Number(a < b))
+)
+export const nativeUserTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts'
+export const nativeUserCohorts = Object.freeze(
+  [
+    [
+      '2026-10-02',
+      'actual user inventory preserves the second profile, enforces current NULL constraints and applies header date 2026-10-02'
+    ],
+    [
+      '2026-10-03',
+      'actual user inventory preserves the second profile, enforces current NULL constraints and applies header date 2026-10-03'
+    ],
+    [
+      '2026-10-04',
+      'actual user inventory preserves the second profile, enforces current NULL constraints and applies header date 2026-10-04'
+    ]
+  ].map(([id, name]) => Object.freeze({ id, name, cases: 1, pattern: `^${escapePattern(name)}$` }))
+)
+export const nativeUserCaseNames = Object.freeze(
+  nativeUserCohorts.map(value => value.name).sort((a, b) => Number(a > b) - Number(a < b))
+)
+
 // COMPLETED has the same original name for live and expired admissions. Keep
 // both in one cohort, with multiplicity two; neither original case is renamed.
 export const composedNativeCohorts = Object.freeze(
@@ -206,6 +261,17 @@ const authenticatedMergePlan = {
   names: nativeAuthenticatedMergeCaseNames
 }
 
+const readPlan = {
+  testFile: nativeReadTestFile,
+  cohorts: nativeReadCohorts,
+  names: nativeReadCaseNames
+}
+const userPlan = {
+  testFile: nativeUserTestFile,
+  cohorts: nativeUserCohorts,
+  names: nativeUserCaseNames
+}
+
 export function walletCoverageMatrix() {
   return {
     include: [
@@ -228,6 +294,14 @@ export function walletCoverageMatrix() {
         id: `native-auth-${cohort.id}`,
         native_auth_cohort: cohort.id,
         native_auth_minutes: cohort.minutes
+      })),
+      ...nativeReadCohorts.map(cohort => ({
+        id: `native-read-${cohort.id}`,
+        native_read_cohort: cohort.id
+      })),
+      ...nativeUserCohorts.map(cohort => ({
+        id: `native-user-${cohort.id}`,
+        native_user_cohort: cohort.id
       }))
     ]
   }
@@ -340,6 +414,19 @@ export const validateNativeMergeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, mergePlan)
 export const validateNativeAuthenticatedMergeReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, authenticatedMergePlan)
+export const nativeReadCohort = id => nativeCohort(id, readPlan)
+export const validateNativeReadReport = (report, id) => validateNativeReport(report, id, readPlan)
+export const validateNativeReadReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, readPlan)
+export const validateNativeReadReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, readPlan)
+export const nativeUserCohort = id => nativeCohort(id, userPlan)
+export const validateNativeUserReport = (report, id) => validateNativeReport(report, id, userPlan)
+export const validateNativeUserReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, userPlan)
+export const validateNativeUserReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, userPlan)
+
 function identity(root, plan) {
   return {
     head: execFileSync(GIT_EXECUTABLE, ['rev-parse', 'HEAD'], {
@@ -359,6 +446,10 @@ function receiptFiles(directory, suffix) {
 }
 
 function commandFamily(command) {
+  if (command?.startsWith('read-'))
+    return { prefix: 'read-', plan: readPlan, suffix: '.native-read.json', label: 'native read' }
+  if (command?.startsWith('user-'))
+    return { prefix: 'user-', plan: userPlan, suffix: '.native-user.json', label: 'native user' }
   if (command?.startsWith('auth-'))
     return {
       prefix: 'auth-',

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { Brc38ImportRowTypes } from '../portable/Brc38ImportPage'
 import type { TableTransaction } from '../schema/tables'
@@ -45,8 +46,10 @@ export async function verifyNativeSnapshotSyncActions(
       fixture.expected.length > 0 &&
       fixture.expected.length <= 2
   )
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Action performed legacy proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Action performed legacy proof I/O')
+      })
     }),
     page = await source.fieldReader.readMetadataPage(fixture.table, checkpoint.cursor, { maxRows: 2, maxBytes: 32768 })
   requireCase(
@@ -103,8 +106,10 @@ export async function verifyNativeSnapshotSyncOutputStaleParent(
   parent: Readonly<TableTransaction>
 ): Promise<void> {
   requireCase(source.fieldReader !== undefined && snapshotSyncTables[checkpoint.tableIndex] === 'outputs')
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Unexpected proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Unexpected proof I/O')
+      })
     }),
     before = await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey),
     page = await source.fieldReader.readMetadataPage('outputs', checkpoint.cursor, { maxRows: 2, maxBytes: 32768 }),

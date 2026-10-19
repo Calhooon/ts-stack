@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { SnapshotJournalReceiptPolicy } from '../snapshot/journal/SnapshotJournalReceipt'
 import type { Brc38DestinationSelection } from './Brc38KnexDestinationFence'
@@ -85,11 +86,13 @@ export async function verifyBrc38NativeLocalBaselineSource(
               for (let offset = 0; offset < bytes.byteLength;) {
                 const length = Math.min(997, policy.maximumReadBytes, bytes.byteLength - offset)
                 let retained: Uint8Array | undefined
-                await actual.withFieldExtent(field.field, offset, length, async chunk => {
-                  retained = chunk
-                  for (let at = 0; at < length; at++)
-                    if (chunk[at] !== bytes[offset + at])
-                      throw new Error('Actual local baseline field differs from the independent fixture')
+                await actual.withFieldExtent(field.field, offset, length, chunk => {
+                  return promiseFromSync(() => {
+                    retained = chunk
+                    for (let at = 0; at < length; at++)
+                      if (chunk[at] !== bytes[offset + at])
+                        throw new Error('Actual local baseline field differs from the independent fixture')
+                  })
                 })
                 if (retained === undefined || retained.some(byte => byte !== 0))
                   throw new Error('Local source field retained transport bytes')
@@ -116,7 +119,7 @@ export async function verifyBrc38NativeLocalBaselineSource(
     const field = escapedRow.fields.find(value => value.bytes !== null && value.bytes > 0)!
     refused = false
     try {
-      await escapedRow.withFieldExtent(field.field, 0, 1, async () => undefined)
+      await escapedRow.withFieldExtent(field.field, 0, 1, () => promiseFromSync(() => undefined))
     } catch {
       refused = true
     }
@@ -162,8 +165,10 @@ export async function verifyBrc38NativeLocalCurrentSource(
         'Fresh actual source writer reused the retained old snapshot or missed a committed all48 mutation'
       )
     let committed = false
-    const refused = await Brc38NativeLocalBaselineSource.withCurrentDataFence(source, async () => {
-      committed = true
+    const refused = await Brc38NativeLocalBaselineSource.withCurrentDataFence(source, () => {
+      return promiseFromSync(() => {
+        committed = true
+      })
     })
     if (refused.current || committed)
       throw new Error('Changed live source admitted a destination commit from an old retained snapshot')
@@ -213,9 +218,11 @@ export async function verifyBrc38NativeLocalCurrentCommitFence(
     if (!result.current || calls !== 1 || result.value !== (await controller.readDestinationReceipt()))
       throw new Error('Actual current source exclusion or destination commit receipt differs')
     await controller.mutateAfterFence()
-    const changed = await Brc38NativeLocalBaselineSource.withCurrentDataFence(source, async () => {
-      calls++
-      return 'forbidden'
+    const changed = await Brc38NativeLocalBaselineSource.withCurrentDataFence(source, () => {
+      return promiseFromSync(() => {
+        calls++
+        return 'forbidden'
+      })
     })
     if (changed.current || calls !== 1) throw new Error('A fresh stale-source fence ran destination work')
   })
@@ -223,9 +230,11 @@ export async function verifyBrc38NativeLocalCurrentCommitFence(
     throw new Error('Current source commit fence did not drain')
   let refused = false
   try {
-    await Brc38NativeLocalBaselineSource.withCurrentDataFence(escaped, async () => {
-      calls++
-      return 'forbidden'
+    await Brc38NativeLocalBaselineSource.withCurrentDataFence(escaped, () => {
+      return promiseFromSync(() => {
+        calls++
+        return 'forbidden'
+      })
     })
   } catch {
     refused = true

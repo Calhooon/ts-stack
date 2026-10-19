@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
 import type { TableSettings } from '../schema/tables'
@@ -295,28 +296,30 @@ export async function inspectBrc38PrivateCheckpointInventory(
       if (keys.length === 0) break
       const rowId = keys[0]
       if (++scanned > maximumRows) invalid()
-      await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'sync_states', rowId, async row => {
-        if (
-          integer(row.metadata.userId) === admission.scope.userId &&
-          row.metadata.storageIdentityKey === layout.settings.storageIdentityKey
-        ) {
+      await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'sync_states', rowId, row => {
+        return promiseFromSync(() => {
           if (
-            original !== undefined ||
-            integer(row.metadata.syncStateId) !== rowId ||
-            typeof row.metadata.storageName !== 'string'
-          )
-            invalid()
-          const bytes = Object.values(row.metadata).reduce<number>(
-            (total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
-            0
-          )
-          originalCharge = working.claim(131072 + 32 * bytes)
-          original = Object.freeze({
-            rowId,
-            metadata: Object.freeze({ ...row.metadata }),
-            fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
-          })
-        }
+            integer(row.metadata.userId) === admission.scope.userId &&
+            row.metadata.storageIdentityKey === layout.settings.storageIdentityKey
+          ) {
+            if (
+              original !== undefined ||
+              integer(row.metadata.syncStateId) !== rowId ||
+              typeof row.metadata.storageName !== 'string'
+            )
+              invalid()
+            const bytes = Object.values(row.metadata).reduce<number>(
+              (total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
+              0
+            )
+            originalCharge = working.claim(131072 + 32 * bytes)
+            original = Object.freeze({
+              rowId,
+              metadata: Object.freeze({ ...row.metadata }),
+              fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+            })
+          }
+        })
       })
       sourceCursor = rowId
     }
@@ -361,10 +364,10 @@ export async function inspectBrc38PrivateCheckpointInventory(
           pending.length = 0
           pendingMappings = 0
           batchCharge!.resize(0)
-          await read(async () => undefined)
+          await read(() => promiseFromSync(() => undefined))
           await lifetimes.releaseExcept([{ family: 'text', sha256: reconstructed.output.sha256 }])
           await collect()
-          await read(async () => undefined)
+          await read(() => promiseFromSync(() => undefined))
           return reconstructed.maximumUpdatedAt
         }
         for (;;) {
@@ -574,13 +577,13 @@ export async function inspectBrc38PrivateCheckpointInventory(
               }
               if (done) expected.when = importedWhen?.toISOString() ?? maximumUpdatedAt ?? null
             }
-            await read(async () => undefined)
+            await read(() => promiseFromSync(() => undefined))
             if (observation.mode === 'NEW') {
               const map = fields?.syncMap
               await lifetimes.releaseExcept(map?.origin === 'version' ? [{ family: 'text', sha256: map.sha256 }] : [])
               await collect()
             }
-            await read(async () => undefined)
+            await read(() => promiseFromSync(() => undefined))
           } finally {
             deltaCharge.close()
           }
@@ -683,16 +686,18 @@ export async function inspectBrc38PrivateCheckpointInventory(
           if (baseline && rowId !== syncStateId) {
             let local: Local | undefined, charge: Brc38WorkingCharge | undefined
             try {
-              await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'sync_states', rowId, async row => {
-                const bytes = Object.values(row.metadata).reduce<number>(
-                  (total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
-                  0
-                )
-                charge = working.claim(131072 + 32 * bytes)
-                local = Object.freeze({
-                  rowId,
-                  metadata: Object.freeze({ ...row.metadata }),
-                  fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+              await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'sync_states', rowId, row => {
+                return promiseFromSync(() => {
+                  const bytes = Object.values(row.metadata).reduce<number>(
+                    (total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
+                    0
+                  )
+                  charge = working.claim(131072 + 32 * bytes)
+                  local = Object.freeze({
+                    rowId,
+                    metadata: Object.freeze({ ...row.metadata }),
+                    fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+                  })
                 })
               })
               await compare(local)

@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../../utility/promiseFromSync'
 import { parseSnapshotJournalDataContentReceipt } from './SnapshotJournalDataContentReceipt'
 import { parseSnapshotSyncContentRevision, type SnapshotSyncContentRevision } from '../SnapshotSyncContentRevision'
 import { SnapshotJournalDataBootstrapRequiredError } from './SnapshotJournalDataBootstrapRequiredError'
@@ -81,48 +82,58 @@ export class RemoteSnapshotJournalDataDestination {
     )
   }
   /** Fresh observation DATA only; opening a new writer still requires BEGIN. */
-  static async observe(
+  static observe(
     rpc: SnapshotJournalDataRpcCall,
     identityKey: string,
     sourceStorageIdentity: string,
     destinationStorageIdentity: string
   ): Promise<SnapshotJournalDataStatus | undefined> {
-    const value = await this.request(rpc, 'getSnapshotJournalDataStatus', {
-      version: 1,
-      identityKey,
-      sourceStorageIdentity
-    })
-    return value === null
-      ? undefined
-      : parseSnapshotJournalDataStatus(value, identityKey, sourceStorageIdentity, destinationStorageIdentity)
+    return mapAwaitFromSync(
+      () =>
+        this.request(rpc, 'getSnapshotJournalDataStatus', {
+          version: 1,
+          identityKey,
+          sourceStorageIdentity
+        }),
+      value => {
+        return value === null
+          ? undefined
+          : parseSnapshotJournalDataStatus(value, identityKey, sourceStorageIdentity, destinationStorageIdentity)
+      }
+    )
   }
 
-  static async contentReceipt(
+  static contentReceipt(
     rpc: SnapshotJournalDataRpcCall,
     identityKey: string,
     sourceStorageIdentity: string,
     destinationStorageIdentity: string,
     revision?: SnapshotSyncContentRevision
   ) {
-    const value = await this.request(
-      rpc,
-      revision === undefined ? 'getSnapshotJournalDataContentReceipt' : 'confirmSnapshotJournalDataContentReceipt',
-      {
-        version: 1,
-        identityKey,
-        sourceStorageIdentity,
-        ...(revision === undefined ? {} : { revision: parseSnapshotSyncContentRevision(revision) })
+    return mapAwaitFromSync(
+      () =>
+        this.request(
+          rpc,
+          revision === undefined ? 'getSnapshotJournalDataContentReceipt' : 'confirmSnapshotJournalDataContentReceipt',
+          {
+            version: 1,
+            identityKey,
+            sourceStorageIdentity,
+            ...(revision === undefined ? {} : { revision: parseSnapshotSyncContentRevision(revision) })
+          }
+        ),
+      value => {
+        if (value === null) return undefined
+        const receipt = parseSnapshotJournalDataContentReceipt(value)
+        if (
+          receipt.identityKey !== identityKey ||
+          receipt.sourceStorageIdentity !== sourceStorageIdentity ||
+          receipt.destinationStorageIdentity !== destinationStorageIdentity
+        )
+          throw new TypeError('Journal DATA receipt changed its authenticated endpoint/profile')
+        return receipt
       }
     )
-    if (value === null) return undefined
-    const receipt = parseSnapshotJournalDataContentReceipt(value)
-    if (
-      receipt.identityKey !== identityKey ||
-      receipt.sourceStorageIdentity !== sourceStorageIdentity ||
-      receipt.destinationStorageIdentity !== destinationStorageIdentity
-    )
-      throw new TypeError('Journal DATA receipt changed its authenticated endpoint/profile')
-    return receipt
   }
 
   private static async request(
@@ -144,7 +155,7 @@ export class RemoteSnapshotJournalDataDestination {
       snapshotJournalDataCapabilities.maxIoMs
     )
     try {
-      return await retrySnapshotArchiveOperation(async () => await rpc(method, params, controller.signal))
+      return await retrySnapshotArchiveOperation(() => awaitFromSync(() => rpc(method, params, controller.signal)))
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)
@@ -186,110 +197,113 @@ export class RemoteSnapshotJournalDataDestination {
       this.busy = false
     }
   }
-  async status(): Promise<SnapshotJournalDataStatus> {
-    return await this.exclusive(async () => this.statusValue(await this.call('getSnapshotJournalDataStatus', {}, true)))
-  }
-  async stagePacket(
-    input: SnapshotJournalDestinationCheckpoint,
-    inputBytes: Uint8Array
-  ): Promise<SnapshotJournalDataStatus> {
-    const checkpoint = parseSnapshotJournalDataCheckpoint(input)
-    const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get
-    if (
-      !(inputBytes instanceof Uint8Array) ||
-      byteLength === undefined ||
-      byteLength.call(inputBytes) < 4 ||
-      byteLength.call(inputBytes) > snapshotJournalDataCapabilities.maxPacketBytes
-    )
-      throw new TypeError('Journal destination packet exceeds its original bound')
-    const bytes = new Uint8Array(inputBytes)
-    return await this.exclusive(async () => {
-      if (bytes.length <= snapshotJournalDataCapabilities.inlinePacketBytes)
-        return this.statusValue(await this.call('stageSnapshotJournalDataPacket', { checkpoint, packet: bytes }))
-      const digest = syncTransferDigest(bytes)
-      let transferId: string | undefined,
-        result: SnapshotJournalDataStatus | undefined,
-        failure: unknown,
-        failed = false
-      const cleanup = async (): Promise<void> => {
-        if (
-          transferId !== undefined &&
-          (await this.call('releaseSnapshotJournalDataTransfer', { transferId }, true)) !== true
-        )
-          throw new TypeError('Invalid journal destination transfer release')
-      }
-      try {
-        const row = snapshotJournalDataRecord(
-          await this.call('beginSnapshotJournalDataTransfer', { checkpoint, digest, totalBytes: bytes.length }),
-          ['transferId', 'digest', 'totalBytes', 'partBytes', 'expiresAt', 'receivedBytes']
-        )
-        transferId = snapshotJournalDataDigest(row.transferId)
-        const manifest = validateSyncTransferManifest(row as unknown as SyncTransferManifest, {
-          version: 1,
-          maxBytes: snapshotJournalDataCapabilities.maxPacketBytes,
-          partBytes: snapshotJournalDataCapabilities.partBytes
-        })
-        const received = row.receivedBytes
-        if (
-          manifest.digest !== digest ||
-          manifest.totalBytes !== bytes.length ||
-          manifest.expiresAt > this.bound.receipt.expiresAt ||
-          typeof received !== 'number' ||
-          !Number.isSafeInteger(received) ||
-          received < 0 ||
-          received > bytes.length ||
-          (received !== bytes.length && received % manifest.partBytes !== 0)
-        )
-          throw new TypeError('Journal destination transfer changed its immutable bounds')
-        for (let offset = received; offset < bytes.length; offset += manifest.partBytes) {
-          const part = bytes.subarray(offset, Math.min(offset + manifest.partBytes, bytes.length))
-          if (
-            (await this.call('writeSnapshotJournalDataTransferPart', {
-              checkpoint,
-              transferId,
-              offset,
-              bytes: part
-            })) !==
-            offset + part.length
-          )
-            throw new TypeError('Journal destination part acknowledgement changed')
-        }
-        result = this.statusValue(await this.call('stageSnapshotJournalDataTransfer', { checkpoint, transferId }))
-      } catch (error) {
-        failure = error
-        failed = true
-      }
-      try {
-        await cleanup()
-      } catch (error) {
-        throw new RemoteSnapshotSyncTransferCleanupError(failure, error, cleanup)
-      }
-      if (failed) throw failure
-      if (result === undefined) throw new WERR_INVALID_OPERATION('Journal destination has no durable packet result')
-      return result
+  status(): Promise<SnapshotJournalDataStatus> {
+    return awaitFromSync(() => {
+      return this.exclusive(async () => this.statusValue(await this.call('getSnapshotJournalDataStatus', {}, true)))
     })
   }
-  async promote(input: SnapshotJournalDestinationCheckpoint): Promise<SnapshotJournalDataStatus> {
-    const checkpoint = parseSnapshotJournalDataCheckpoint(input)
-    return await this.exclusive(async () =>
-      this.statusValue(await this.call('promoteSnapshotJournalData', { checkpoint }))
-    )
-  }
-  async cleanup(input: SnapshotJournalDestinationCheckpoint): Promise<{ removed: number; complete: boolean }> {
-    const checkpoint = parseSnapshotJournalDataCheckpoint(input)
-    return await this.exclusive(async () => {
-      const row = snapshotJournalDataRecord(await this.call('cleanupSnapshotJournalData', { checkpoint }, true), [
-        'removed',
-        'complete'
-      ])
+  stagePacket(input: SnapshotJournalDestinationCheckpoint, inputBytes: Uint8Array): Promise<SnapshotJournalDataStatus> {
+    return awaitFromSync(() => {
+      const checkpoint = parseSnapshotJournalDataCheckpoint(input)
+      const byteLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength')?.get
       if (
-        typeof row.removed !== 'number' ||
-        !Number.isSafeInteger(row.removed) ||
-        row.removed < 0 ||
-        typeof row.complete !== 'boolean'
+        !(inputBytes instanceof Uint8Array) ||
+        byteLength === undefined ||
+        byteLength.call(inputBytes) < 4 ||
+        byteLength.call(inputBytes) > snapshotJournalDataCapabilities.maxPacketBytes
       )
-        throw new TypeError('Invalid journal destination cleanup result')
-      return { removed: row.removed, complete: row.complete }
+        throw new TypeError('Journal destination packet exceeds its original bound')
+      const bytes = new Uint8Array(inputBytes)
+      return this.exclusive(async () => {
+        if (bytes.length <= snapshotJournalDataCapabilities.inlinePacketBytes)
+          return this.statusValue(await this.call('stageSnapshotJournalDataPacket', { checkpoint, packet: bytes }))
+        const digest = syncTransferDigest(bytes)
+        let transferId: string | undefined,
+          result: SnapshotJournalDataStatus | undefined,
+          failure: unknown,
+          failed = false
+        const cleanup = async (): Promise<void> => {
+          if (
+            transferId !== undefined &&
+            (await this.call('releaseSnapshotJournalDataTransfer', { transferId }, true)) !== true
+          )
+            throw new TypeError('Invalid journal destination transfer release')
+        }
+        try {
+          const row = snapshotJournalDataRecord(
+            await this.call('beginSnapshotJournalDataTransfer', { checkpoint, digest, totalBytes: bytes.length }),
+            ['transferId', 'digest', 'totalBytes', 'partBytes', 'expiresAt', 'receivedBytes']
+          )
+          transferId = snapshotJournalDataDigest(row.transferId)
+          const manifest = validateSyncTransferManifest(row as unknown as SyncTransferManifest, {
+            version: 1,
+            maxBytes: snapshotJournalDataCapabilities.maxPacketBytes,
+            partBytes: snapshotJournalDataCapabilities.partBytes
+          })
+          const received = row.receivedBytes
+          if (
+            manifest.digest !== digest ||
+            manifest.totalBytes !== bytes.length ||
+            manifest.expiresAt > this.bound.receipt.expiresAt ||
+            typeof received !== 'number' ||
+            !Number.isSafeInteger(received) ||
+            received < 0 ||
+            received > bytes.length ||
+            (received !== bytes.length && received % manifest.partBytes !== 0)
+          )
+            throw new TypeError('Journal destination transfer changed its immutable bounds')
+          for (let offset = received; offset < bytes.length; offset += manifest.partBytes) {
+            const part = bytes.subarray(offset, Math.min(offset + manifest.partBytes, bytes.length))
+            if (
+              (await this.call('writeSnapshotJournalDataTransferPart', {
+                checkpoint,
+                transferId,
+                offset,
+                bytes: part
+              })) !==
+              offset + part.length
+            )
+              throw new TypeError('Journal destination part acknowledgement changed')
+          }
+          result = this.statusValue(await this.call('stageSnapshotJournalDataTransfer', { checkpoint, transferId }))
+        } catch (error) {
+          failure = error
+          failed = true
+        }
+        try {
+          await cleanup()
+        } catch (error) {
+          throw new RemoteSnapshotSyncTransferCleanupError(failure, error, cleanup)
+        }
+        if (failed) throw failure
+        if (result === undefined) throw new WERR_INVALID_OPERATION('Journal destination has no durable packet result')
+        return result
+      })
+    })
+  }
+  promote(input: SnapshotJournalDestinationCheckpoint): Promise<SnapshotJournalDataStatus> {
+    return awaitFromSync(() => {
+      const checkpoint = parseSnapshotJournalDataCheckpoint(input)
+      return this.exclusive(async () => this.statusValue(await this.call('promoteSnapshotJournalData', { checkpoint })))
+    })
+  }
+  cleanup(input: SnapshotJournalDestinationCheckpoint): Promise<{ removed: number; complete: boolean }> {
+    return awaitFromSync(() => {
+      const checkpoint = parseSnapshotJournalDataCheckpoint(input)
+      return this.exclusive(async () => {
+        const row = snapshotJournalDataRecord(await this.call('cleanupSnapshotJournalData', { checkpoint }, true), [
+          'removed',
+          'complete'
+        ])
+        if (
+          typeof row.removed !== 'number' ||
+          !Number.isSafeInteger(row.removed) ||
+          row.removed < 0 ||
+          typeof row.complete !== 'boolean'
+        )
+          throw new TypeError('Invalid journal destination cleanup result')
+        return { removed: row.removed, complete: row.complete }
+      })
     })
   }
 }

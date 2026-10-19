@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   hasBrc38NativeIncomingIdReservationSchema,
   brc38NativeIncomingIdReservations
@@ -373,7 +374,11 @@ export class Brc38NativeLocalBaselineSource {
       generation: Readonly<Brc38NativeLocalBaselineGeneration>
     }>
   > {
-    return Brc38NativeLocalBaselineSource.withCurrentDataFence(source, async () => undefined, transition)
+    return Brc38NativeLocalBaselineSource.withCurrentDataFence(
+      source,
+      () => promiseFromSync(() => undefined),
+      transition
+    )
   }
   /** Internal final-commit scope. The caller must acquire its manager's commit
    * queue BEFORE entering this method. The actual original root writer then

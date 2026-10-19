@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import { mergeSyncChunkEntities } from './mergeSyncChunkEntities'
 import {
   RequestSyncChunkArgs,
@@ -273,18 +274,22 @@ export class EntitySyncState extends EntityBase<TableSyncState> {
     return false
   }
 
-  override async mergeNew(storage: EntityStorage, userId: number, syncMap: SyncMap, trx?: TrxToken): Promise<void> {
-    // SyncState records are never created during a merge; they are managed separately
+  override mergeNew(storage: EntityStorage, userId: number, syncMap: SyncMap, trx?: TrxToken): Promise<void> {
+    return promiseFromSync(() => {
+      // SyncState records are never created during a merge; they are managed separately
+    })
   }
 
-  override async mergeExisting(
+  override mergeExisting(
     storage: EntityStorage,
     since: Date | undefined,
     ei: TableSyncState,
     syncMap: SyncMap,
     trx?: TrxToken
   ): Promise<boolean> {
-    return false
+    return promiseFromSync(() => {
+      return false
+    })
   }
 
   makeRequestSyncChunkArgs(

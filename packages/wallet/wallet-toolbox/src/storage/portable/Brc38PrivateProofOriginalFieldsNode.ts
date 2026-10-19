@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -69,10 +70,12 @@ export async function equalBrc38PrivateProofOriginalFields(
         extent(ref.bytes)
         if (ref.origin === 'local') {
           if (!Number.isSafeInteger(ref.sourceRowId)) invalid()
-          await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_txs', ref.sourceRowId, async row => {
-            check()
-            const value = row.fields.find(value => value.field === field)
-            if (value?.kind !== 'blob' || value.bytes !== ref.bytes) invalid()
+          await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_txs', ref.sourceRowId, row => {
+            return promiseFromSync(() => {
+              check()
+              const value = row.fields.find(value => value.field === field)
+              if (value?.kind !== 'blob' || value.bytes !== ref.bytes) invalid()
+            })
           })
           return undefined
         }
@@ -99,10 +102,12 @@ export async function equalBrc38PrivateProofOriginalFields(
             check()
             const value = row.fields.find(value => value.field === field)
             if (value?.kind !== 'blob' || value.bytes !== ref.bytes) invalid()
-            await row.withFieldExtent(field, offset, target.length, async bytes => {
-              check()
-              if (bytes.length !== target.length) invalid()
-              target.set(bytes)
+            await row.withFieldExtent(field, offset, target.length, bytes => {
+              return promiseFromSync(() => {
+                check()
+                if (bytes.length !== target.length) invalid()
+                target.set(bytes)
+              })
             })
           })
         } else

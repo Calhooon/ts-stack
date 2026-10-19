@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
 import { isOwnedNativeSqlite } from '../../schema/ownedNativeSqliteRuntimeNode'
 import type { Knex } from 'knex'
@@ -305,7 +306,7 @@ async function promoteDestinationBatch<T extends SnapshotJournalDelta | Snapshot
             promotionSequence: frame.receipt.sequence,
             ...(frame.receipt.examined === 0 ? { emptyFrameDigest: frame.receipt.digest } : {})
           },
-      async () => undefined
+      () => promiseFromSync(() => undefined)
     )
     return { checkpoint: advanced.checkpoint, applied: prepared?.applied ?? 0 }
   })

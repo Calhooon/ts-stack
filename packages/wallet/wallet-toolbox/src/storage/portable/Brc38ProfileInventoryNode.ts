@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   requirePrivatePath,
   requirePrivateDescriptor,
@@ -215,17 +216,19 @@ export class Brc38ProfileInventoryNode {
     bindingSha256: string
   ): Promise<void> {
     if (!actualInventories.has(root)) throw new Error('An actual profile inventory issuer is required')
-    await root.#exclusive(async (_trx, entries) => {
-      const entry = entries.find(value => value.id === inventory.profileId)
-      if (
-        entry === undefined ||
-        entry.state !== 'published' ||
-        entry.bindingSha256 !== bindingSha256 ||
-        root.#profiles.get(entry.id) !== profile ||
-        !root.#inFlight.has(entry.importId) ||
-        JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory)
-      )
-        throw new Error('Native transfer requires the actual current published inventory operation')
+    await root.#exclusive((_trx, entries) => {
+      return promiseFromSync(() => {
+        const entry = entries.find(value => value.id === inventory.profileId)
+        if (
+          entry === undefined ||
+          entry.state !== 'published' ||
+          entry.bindingSha256 !== bindingSha256 ||
+          root.#profiles.get(entry.id) !== profile ||
+          !root.#inFlight.has(entry.importId) ||
+          JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory)
+        )
+          throw new Error('Native transfer requires the actual current published inventory operation')
+      })
     })
   }
   /** Ongoing provider reads require current published membership, not a
@@ -238,16 +241,18 @@ export class Brc38ProfileInventoryNode {
     bindingSha256: string
   ): Promise<void> {
     if (!actualInventories.has(root)) throw new Error('An actual current profile inventory issuer is required')
-    await root.#exclusive(async (_trx, entries) => {
-      const entry = entries.find(value => value.id === inventory.profileId)
-      if (
-        entry === undefined ||
-        entry.state !== 'published' ||
-        entry.bindingSha256 !== bindingSha256 ||
-        root.#profiles.get(entry.id) !== profile ||
-        JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory)
-      )
-        throw new Error('Provider read requires its actual current published inventory membership')
+    await root.#exclusive((_trx, entries) => {
+      return promiseFromSync(() => {
+        const entry = entries.find(value => value.id === inventory.profileId)
+        if (
+          entry === undefined ||
+          entry.state !== 'published' ||
+          entry.bindingSha256 !== bindingSha256 ||
+          root.#profiles.get(entry.id) !== profile ||
+          JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory)
+        )
+          throw new Error('Provider read requires its actual current published inventory membership')
+      })
     })
   }
   static async assertReleasedProfileAddress(
@@ -256,23 +261,27 @@ export class Brc38ProfileInventoryNode {
     bindingSha256: string
   ): Promise<void> {
     if (!actualInventories.has(root)) throw new Error('Actual released current source inventory required')
-    await root.#exclusive(async (_trx, entries) => {
-      const entry = entries.find(value => value.id === inventory.profileId)
-      if (
-        entry?.state !== 'published' ||
-        entry.bindingSha256 !== bindingSha256 ||
-        JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory) ||
-        root.#profiles.get(entry.id)?.ownershipReleased === false
-      )
-        throw new Error('Released current source address has changed or retains a live owner')
+    await root.#exclusive((_trx, entries) => {
+      return promiseFromSync(() => {
+        const entry = entries.find(value => value.id === inventory.profileId)
+        if (
+          entry?.state !== 'published' ||
+          entry.bindingSha256 !== bindingSha256 ||
+          JSON.stringify(root.#inventory(entry.id)) !== JSON.stringify(inventory) ||
+          root.#profiles.get(entry.id)?.ownershipReleased === false
+        )
+          throw new Error('Released current source address has changed or retains a live owner')
+      })
     })
   }
   async #nativeTransferEntry(profile: Brc38PublishedProfileNode): Promise<Entry> {
-    return await this.#exclusive(async (_trx, entries) => {
-      const entry = entries.find(value => this.#profiles.get(value.id) === profile)
-      if (entry === undefined || entry.state !== 'published')
-        throw new Error('Native transfer requires the actual current published inventory operation')
-      return entry
+    return await this.#exclusive((_trx, entries) => {
+      return promiseFromSync(() => {
+        const entry = entries.find(value => this.#profiles.get(value.id) === profile)
+        if (entry === undefined || entry.state !== 'published')
+          throw new Error('Native transfer requires the actual current published inventory operation')
+        return entry
+      })
     })
   }
   /** Synchronous original operation membership only. Persisted published
@@ -863,15 +872,17 @@ export class Brc38ProfileInventoryNode {
   ): Promise<T> {
     if (!actualInventories.has(root)) throw new Error('Actual retired source inventory required')
     const selected = Object.freeze({ ...inventory }),
-      entry = await root.#exclusive(async (_trx, entries) => {
-        const found = entries.find(value => value.id === selected.profileId)
-        if (
-          found === undefined ||
-          found.state !== 'published' ||
-          JSON.stringify(root.#inventory(found.id)) !== JSON.stringify(selected)
-        )
-          throw new Error('Completed target source coordinates differ from the actual source inventory')
-        return Object.freeze({ ...found })
+      entry = await root.#exclusive((_trx, entries) => {
+        return promiseFromSync(() => {
+          const found = entries.find(value => value.id === selected.profileId)
+          if (
+            found === undefined ||
+            found.state !== 'published' ||
+            JSON.stringify(root.#inventory(found.id)) !== JSON.stringify(selected)
+          )
+            throw new Error('Completed target source coordinates differ from the actual source inventory')
+          return Object.freeze({ ...found })
+        })
       })
     return await Brc38ProfileInventoryNode.withRetiredNativeRead(
       root,
@@ -936,7 +947,13 @@ export class Brc38ProfileInventoryNode {
     const policyJson = policy(selected),
       identity = await directoryStat(directory),
       entries = await opendir(directory)
-    for await (const entry of entries) throw new Error('Profile inventory root must initially be empty: ' + entry.name)
+    let entry
+    try {
+      entry = await entries.read()
+    } finally {
+      await entries.close()
+    }
+    if (entry !== null) throw new Error('Profile inventory root must initially be empty: ' + entry.name)
     const file = await createPrivateFile(join(directory, catalogName)),
       catalogIdentity = await requirePrivateDescriptor(file)
     await closePrivateDescriptor(file)
@@ -1152,14 +1169,16 @@ export class Brc38ProfileInventoryNode {
     }
   }
   async usage(): Promise<Brc38ProfileInventoryUsage> {
-    return await this.#exclusive(async (_trx, entries) => this.#usage(entries))
+    return await this.#exclusive((_trx, entries) => promiseFromSync(() => this.#usage(entries)))
   }
   async #entry(importId: string, bindingSha256: string): Promise<Entry> {
-    return await this.#exclusive(async (_trx, entries) => {
-      const entry = entries.find(value => value.importId === importId)
-      if (entry === undefined || entry.bindingSha256 !== bindingSha256)
-        throw new Error('Profile inventory operation binding differs')
-      return entry
+    return await this.#exclusive((_trx, entries) => {
+      return promiseFromSync(() => {
+        const entry = entries.find(value => value.importId === importId)
+        if (entry === undefined || entry.bindingSha256 !== bindingSha256)
+          throw new Error('Profile inventory operation binding differs')
+        return entry
+      })
     })
   }
   async #claim(entry: Entry): Promise<Brc38PublishedProfileNode> {
@@ -1417,11 +1436,13 @@ export class Brc38ProfileInventoryNode {
       if (active !== provider) throw new Error('Withdrawal manager selected a different source')
       await Brc38PublishedProfileNode.assertNativeObserverMaintenance(sourceProfile, provider, manager, sourceRoot)
       return await this.#operation(importId, async () => {
-        const entry = await this.#exclusive(async (_trx, entries) => {
-          const actual = entries.find(value => value.importId === importId)
-          if (actual !== undefined && actual.bindingSha256 !== bindingSha256)
-            throw new Error('Inactive withdrawal binding changed')
-          return actual
+        const entry = await this.#exclusive((_trx, entries) => {
+          return promiseFromSync(() => {
+            const actual = entries.find(value => value.importId === importId)
+            if (actual !== undefined && actual.bindingSha256 !== bindingSha256)
+              throw new Error('Inactive withdrawal binding changed')
+            return actual
+          })
         })
         if (entry === undefined) {
           check()

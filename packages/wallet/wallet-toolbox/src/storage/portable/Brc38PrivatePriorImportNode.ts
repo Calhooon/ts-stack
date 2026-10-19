@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -254,9 +255,11 @@ export async function copyBrc38PrivatePriorImportStep(
           size = actual.field?.bytes ?? 0
         for (let offset = 0; offset < size;) {
           const length = Math.min(policy.maximumReadBytes, size - offset)
-          await actual.withFieldExtent(offset, length, async bytes => {
-            check()
-            digest.update(bytes)
+          await actual.withFieldExtent(offset, length, bytes => {
+            return promiseFromSync(() => {
+              check()
+              digest.update(bytes)
+            })
           })
           offset += length
         }

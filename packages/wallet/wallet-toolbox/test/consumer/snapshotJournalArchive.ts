@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../src/utility/promiseFromSync'
 import type {
   StorageClient,
   RemoteSnapshotJournalArchive,
@@ -30,7 +31,7 @@ import { runSnapshotJournalArchiveReconciliation } from '@bsv/wallet-toolbox'
 import type { SnapshotJournalDataDestination } from '@bsv/wallet-toolbox'
 
 export function copyJournal(archive: RemoteSnapshotJournalArchive, destination: SnapshotJournalDataDestination) {
-  return runSnapshotJournalArchiveReconciliation(archive, async () => destination)
+  return runSnapshotJournalArchiveReconciliation(archive, () => promiseFromSync(() => destination))
 }
 
 import type { SnapshotJournalDataContentReceipt, SyncSessionResult } from '@bsv/wallet-toolbox'

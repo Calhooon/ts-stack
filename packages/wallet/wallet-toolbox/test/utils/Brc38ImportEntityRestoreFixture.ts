@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../src/utility/promiseFromSync'
 import { jest } from '@jest/globals'
 import { MerklePath, Script, Transaction } from '@bsv/sdk'
 import { toBinaryBaseBlockHeader } from '../../src/services/Services'
@@ -35,10 +36,12 @@ export function restoreProofFixture(measurementRawBytes?: 256 | 32768 | 131073):
       bits: 0,
       nonce: 0
     }),
-    isValidRootForHeight = jest.fn(async (root: string, height: number) => root === txid && height === 100),
+    isValidRootForHeight = jest.fn((root: string, height: number) =>
+      promiseFromSync(() => root === txid && height === 100)
+    ),
     services = {
-      getChainTracker: async () => ({ isValidRootForHeight }),
-      getHeaderForHeight: async () => [...header]
+      getChainTracker: () => promiseFromSync(() => ({ isValidRootForHeight })),
+      getHeaderForHeight: () => promiseFromSync(() => [...header])
     } as unknown as WalletServices
   return { txid, tx, path, header, services, isValidRootForHeight }
 }

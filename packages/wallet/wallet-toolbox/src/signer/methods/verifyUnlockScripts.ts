@@ -1,3 +1,4 @@
+import { awaitFromSync, promiseFromSync } from '../../utility/promiseFromSync'
 import {
   Beef,
   type BdkVerifierInterface,
@@ -38,9 +39,10 @@ const canonicalP2PKHScope = TransactionSignature.SIGHASH_ALL + TransactionSignat
 
 const javaScriptOnlyVerifier: SpendVerifierInterface = {
   shouldVerifySpend: () => false,
-  verifySpend: async () => {
-    throw new Error('JavaScript-only verifier unexpectedly selected its backend')
-  }
+  verifySpend: () =>
+    promiseFromSync(() => {
+      throw new Error('JavaScript-only verifier unexpectedly selected its backend')
+    })
 }
 
 function invalidUnlockingScript(inputIndex: number, detail?: string): WERR_INVALID_PARAMETER {
@@ -285,7 +287,7 @@ async function verifyWholeTransactions(
   try {
     verdicts =
       verifier.verifyScriptsBatch === undefined
-        ? await Promise.all(pending.map(async item => await verifier.verifyScripts(item[1])))
+        ? await Promise.all(pending.map(item => awaitFromSync(() => verifier.verifyScripts(item[1]))))
         : await verifier.verifyScriptsBatch(pending.map(item => item[1]))
   } catch (error: unknown) {
     // Whole-transaction backends cannot identify the failing input. Preserve

@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import {
   inspectBrc38StreamedProofReader,
@@ -99,10 +100,13 @@ export async function inspectBrc38PrivateIdbStreamedProof(
       throw new Brc38StagingCleanupError(
         [cause],
         'Browser proof retains its original source-row allocation through actual network drainage',
-        async () => {
-          await cause.retryCleanup()
-          release()
-        }
+        () =>
+          mapAwaitFromSync(
+            () => cause.retryCleanup(),
+            () => {
+              release()
+            }
+          )
       )
     }
     throw cause

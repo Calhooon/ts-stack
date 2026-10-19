@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { StorageReqWrite } from '../../storage/StorageReqWrite'
 import { WalletError } from '../../sdk/WalletError'
 import { Transaction } from '@bsv/sdk'
@@ -290,7 +291,7 @@ export class TaskReconcilePendingTransactions extends WalletMonitorTask {
     createdBefore: Date,
     writes: StorageReqWrite
   ): Promise<AppliedTerminalVerdict | undefined> {
-    const provider = await this.storage.runAsStorageProvider(async sp => sp)
+    const provider = await this.storage.runAsStorageProvider(sp => promiseFromSync(() => sp))
     writes.assertProvider(provider)
     const req = new EntityProvenTxReq(reqApi)
     let plan: { result: StatusForTxidResult; parents: string[] } | undefined
@@ -332,14 +333,16 @@ export class TaskReconcilePendingTransactions extends WalletMonitorTask {
       parents
     )
     if (result.inputConflict === true || parents.length)
-      await writes.request(req, async current => {
-        current.addHistoryNote({
-          when: new Date().toISOString(),
-          what: result.inputConflict === true ? 'proactiveInputQuarantine' : 'proactiveFailedParentQuarantine',
-          checked: quarantined.checked,
-          confirmed: quarantined.staleConfirmed,
-          ...(parents.length ? { parentTxids: parents.join(',') } : {}),
-          ...(quarantined.staleOutpoints.length ? { outpoints: quarantined.staleOutpoints.join(',') } : {})
+      await writes.request(req, current => {
+        return promiseFromSync(() => {
+          current.addHistoryNote({
+            when: new Date().toISOString(),
+            what: result.inputConflict === true ? 'proactiveInputQuarantine' : 'proactiveFailedParentQuarantine',
+            checked: quarantined.checked,
+            confirmed: quarantined.staleConfirmed,
+            ...(parents.length ? { parentTxids: parents.join(',') } : {}),
+            ...(quarantined.staleOutpoints.length ? { outpoints: quarantined.staleOutpoints.join(',') } : {})
+          })
         })
       })
     this.monitor.callOnTransactionStatusChanged(reqApi.txid, result.providerStatus ?? 'REJECTED')

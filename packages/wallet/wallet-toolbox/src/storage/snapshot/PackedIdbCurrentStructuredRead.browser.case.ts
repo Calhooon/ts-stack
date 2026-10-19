@@ -1,3 +1,5 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB, openDB } from 'idb'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { StorageIdb } from '../StorageIdb'
@@ -33,7 +35,7 @@ async function refused(action: () => Promise<unknown>): Promise<void> {
 function utf16(value: string): Uint8Array {
   const bytes = new Uint8Array(value.length * 2)
   for (let i = 0; i < value.length; i++) {
-    const unit = value.charCodeAt(i)
+    const unit = utf16CodeUnitAt(value, i)
     bytes[2 * i] = unit & 255
     bytes[2 * i + 1] = unit >>> 8
   }
@@ -307,15 +309,17 @@ export async function verifyOccupiedPackedIdbHistoryStaging(): Promise<void> {
       binaryPolicy = { maximumBinaryBytes: 262144, maximumChunkBytes: 4096 },
       bytes = new TextEncoder().encode(JSON.stringify(data))
     async function* chunks() {
-      for (let at = 0; at < bytes.length; at += 4096) yield bytes.slice(at, at + 4096)
+      for (let at = 0; at < bytes.length; at += 4096) yield Promise.resolve(bytes.slice(at, at + 4096))
     }
     await readBrc38JsonStream(
       chunks(),
       {
         streamedStructuredFields: sink,
         streamedFields: brc38IdbStreamedFieldSink(stage, binaryPolicy, row),
-        provisionalRow: async () => {
-          throw new Error('Private streamed fixture fell through to a materialized row')
+        provisionalRow: () => {
+          return promiseFromSync(() => {
+            throw new Error('Private streamed fixture fell through to a materialized row')
+          })
         },
         validateCompleted: async (header, counts) => await semantic.validateCompleted(header, counts),
         discard: async cause => await stage.discard(cause)
@@ -358,7 +362,9 @@ export async function verifyOccupiedPackedIdbHistoryStaging(): Promise<void> {
     )
     while (checkpoint.tableIndex < snapshotSyncTables.indexOf('provenTxReqs'))
       checkpoint = (
-        await journal.commit(checkpoint, checkpoint.tableIndex + 1, null, async () => ({ inserts: 0, updates: 0 }))
+        await journal.commit(checkpoint, checkpoint.tableIndex + 1, null, () =>
+          promiseFromSync(() => ({ inserts: 0, updates: 0 }))
+        )
       ).checkpoint
     const currentPolicy = {
         maximumMetadataBytes: 65536,

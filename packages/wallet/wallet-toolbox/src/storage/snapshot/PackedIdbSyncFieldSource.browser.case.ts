@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { deleteDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
@@ -26,7 +27,7 @@ async function refused(run: () => Promise<unknown>): Promise<void> {
 function utf16(value: string): Uint8Array {
   const bytes = new Uint8Array(value.length * 2),
     view = new DataView(bytes.buffer)
-  for (let index = 0; index < value.length; index++) view.setUint16(index * 2, value.charCodeAt(index), true)
+  for (let index = 0; index < value.length; index++) view.setUint16(index * 2, utf16CodeUnitAt(value, index), true)
   return bytes
 }
 function exact(actual: Uint8Array, expected: Uint8Array): void {

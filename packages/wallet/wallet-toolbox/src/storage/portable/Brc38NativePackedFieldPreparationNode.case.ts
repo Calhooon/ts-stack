@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -41,9 +42,11 @@ export async function verifyNativePackedFieldPreparationRecovery(
     throw new Error('Preparation fixture is not initially pointer-free')
   let escaped: Brc38PrivatePreparedFieldInstaller | undefined
   try {
-    await withBrc38PreparedPrivatePackedFields(store, await freshPage(), expiresAt, undefined, async install => {
-      escaped = install
-      throw failure
+    await withBrc38PreparedPrivatePackedFields(store, await freshPage(), expiresAt, undefined, install => {
+      return promiseFromSync(() => {
+        escaped = install
+        throw failure
+      })
     })
     throw new Error('Interrupted preparation unexpectedly returned')
   } catch (cause) {

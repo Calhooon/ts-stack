@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   Brc38StreamedNotifyProjection,
   type Brc38StreamedNotifyProjectionPolicy
@@ -104,7 +105,7 @@ export async function prepareBrc38StreamedNotifyField(
                   measurement ? projection!.measureChunks(maximum) : projection!.chunks(maximum),
                 check,
                 close: measurement
-                  ? async () => undefined
+                  ? () => promiseFromSync(() => undefined)
                   : async () => {
                       await projection!.close()
                     }

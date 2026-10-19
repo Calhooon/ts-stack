@@ -191,6 +191,37 @@ async function installConsumer(tarballPaths) {
   return consumerDirectory
 }
 
+// Exercise the installed artifact in fresh processes so a cached WASM instance
+// cannot conceal a broken JavaScript fallback or a conditional-export split.
+async function checkPackedArgon2Fallback(consumerDirectory) {
+  const fixture = await fs.readFile(
+    path.join(repositoryRoot, 'scripts', 'fixtures', 'wallet-packed-brc39.json'),
+    'utf8'
+  )
+  await fs.writeFile(path.join(consumerDirectory, 'brc39-fixture.json'), fixture)
+  await fs.writeFile(
+    path.join(consumerDirectory, 'packed-argon2-probe.mjs'),
+    `import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
+const fixture = JSON.parse(await fs.readFile(new URL('./brc39-fixture.json', import.meta.url)))
+globalThis.WebAssembly = undefined
+const wallet = process.argv[2] === 'cjs'
+  ? createRequire(import.meta.url)(${JSON.stringify(expectedPackage)})
+  : await import(${JSON.stringify(expectedPackage)})
+const bytes = Buffer.from(fixture.ciphertextBase64, 'base64')
+assert.deepEqual(await wallet.decryptBRC39(bytes, fixture.password), fixture.document)
+const damaged = bytes.slice()
+damaged[damaged.length - 1] ^= 1
+await assert.rejects(wallet.decryptBRC39(damaged, fixture.password), /authentication|decrypt|GCM/i)
+assert.equal(globalThis.WebAssembly, undefined)
+`
+  )
+  for (const format of ['esm', 'cjs']) {
+    await run(process.execPath, ['packed-argon2-probe.mjs', format], { cwd: consumerDirectory })
+  }
+}
+
 function toolResolver(packageName) {
   return createRequire(path.join(packageDirectory, 'package.json')).resolve(packageName)
 }
@@ -571,6 +602,7 @@ async function main() {
   let consumerDirectory
   try {
     consumerDirectory = await installConsumer(packed.tarballPaths)
+    await checkPackedArgon2Fallback(consumerDirectory)
     const measurements =
       profile === 'browser'
         ? await checkBrowser(consumerDirectory, budget.maximumBytes)

@@ -81,55 +81,34 @@ async function verifyNativeSourceIndexes(trx: Knex.Transaction): Promise<void> {
     ).length
   )
     invalid()
-  for (const key of keys) {
+  const bindings: Array<string | number> = []
+  const checks = keys.map(key => {
     const [name, unique, columns] = nativeSourceIndexes[key]!,
       [table] = brc38ImportTargetIndexes[key],
       source = `CREATE ${unique ? 'UNIQUE ' : ''}INDEX \`${name}\` on \`${table}\` (${columns.map(column => `\`${column}\``).join(', ')})`
-    const actual = await trx('main.sqlite_schema')
-      .where({ type: 'index', name, tbl_name: table })
-      .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source])
-      .count({ count: '*' })
-      .first()
-    if (Number(actual?.count) !== 1) invalid()
-    const indexes: Array<{ unique: number; origin: string; partial: number }> = await trx.raw(
-      'SELECT "unique", origin, partial FROM pragma_index_list(?) WHERE name=? LIMIT 2',
-      [table, name]
-    )
-    if (
-      indexes.length !== 1 ||
-      indexes[0].unique !== Number(unique) ||
-      indexes[0].origin !== 'c' ||
-      indexes[0].partial !== 0
-    )
-      invalid()
-    // A unique tree with nullable keys would not establish a bounded point
-    // contract for NULL values. Observe actual columns, not migration intent.
-    if (unique) {
-      const fields: Array<{ name: string; notnull: number }> = await trx.raw(
-        'SELECT name, "notnull" FROM pragma_table_info(?) WHERE name IN (' +
-          columns.map(() => '?').join(',') +
-          ') LIMIT 4',
-        [table, ...columns]
-      )
-      if (
-        fields.length !== columns.length ||
-        fields.some(field => field.notnull !== 1 || !columns.includes(field.name))
-      )
-        invalid()
-    }
-    const parts: Array<{ seqno: number; cid: number; name: string; desc: number; coll: string }> = await trx.raw(
-      'SELECT seqno, cid, name, "desc", coll FROM pragma_index_xinfo(?) WHERE "key"=1 ORDER BY seqno LIMIT 3',
-      [name]
-    )
-    if (
-      parts.length !== columns.length ||
-      parts.some(
-        (part, i) =>
-          part.seqno !== i || part.cid < 0 || part.name !== columns[i] || part.desc !== 0 || part.coll !== 'BINARY'
-      )
-    )
-      invalid()
-  }
+    bindings.push(name, table, source, table, name, Number(unique), name, name)
+    const parts = columns.map((column, ordinal) => {
+      bindings.push(ordinal, column)
+      return '(seqno=? AND cid>=0 AND name=? AND "desc"=0 AND coll=\'BINARY\')'
+    })
+    if (unique) bindings.push(table, ...columns)
+    return `SELECT
+      (SELECT count(*) FROM main.sqlite_schema WHERE type='index' AND name=? AND tbl_name=? AND CAST(sql AS BLOB)=CAST(? AS BLOB)) AS definition,
+      (SELECT count(*) FROM pragma_index_list(?) WHERE name=? AND "unique"=? AND origin='c' AND partial=0) AS properties,
+      (SELECT count(*) FROM pragma_index_xinfo(?) WHERE "key"=1) AS width,
+      (SELECT count(*) FROM pragma_index_xinfo(?) WHERE "key"=1 AND (${parts.join(' OR ')})) AS parts,
+      ${columns.length} AS expected,
+      ${unique ? `(SELECT count(*) FROM pragma_table_info(?) WHERE name IN (${columns.map(() => '?').join(',')}) AND "notnull"=1)` : columns.length} AS required`
+  })
+  // These checks share the same actual pinned writer and SQLite statement.
+  // Every invocation rechecks all original SQL, uniqueness, nullability,
+  // ordering, expressions, collation and shadow constraints. Only one scalar
+  // crosses the native result boundary; no generation verdict is cached.
+  const result: Array<{ invalid: number }> = await trx.raw(
+    `SELECT count(*) AS invalid FROM (${checks.join(' UNION ALL ')}) WHERE definition<>1 OR properties<>1 OR width<>expected OR parts<>expected OR required<>expected`,
+    bindings
+  )
+  if (result.length !== 1 || Number(result[0].invalid) !== 0) invalid()
 }
 async function namedIndexes(k: Knex): Promise<Array<{ name: string; sql: string; type: string }>> {
   return await k('main.sqlite_schema')

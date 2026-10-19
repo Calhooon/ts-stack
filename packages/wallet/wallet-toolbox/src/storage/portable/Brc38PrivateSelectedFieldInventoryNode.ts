@@ -1,3 +1,5 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -134,15 +136,17 @@ export async function inspectBrc38PrivateSelectedField(
                     signal
                   )
             const current = destination
-            await read(offset, length, async original => {
-              check()
-              if (
-                original.length !== length ||
-                current!.length !== length ||
-                !original.every((value, index) => value === current![index])
-              )
-                invalid()
-              hash.update(current!)
+            await read(offset, length, original => {
+              return promiseFromSync(() => {
+                check()
+                if (
+                  original.length !== length ||
+                  current!.length !== length ||
+                  !original.every((value, index) => value === current![index])
+                )
+                  invalid()
+                hash.update(current!)
+              })
             })
           } finally {
             destination?.fill(0)
@@ -279,9 +283,9 @@ export async function inspectBrc38PrivateSelectedField(
         if (kind === 'text' ? typeof value !== 'string' : !(value instanceof Uint8Array)) invalid()
         if (typeof value === 'string')
           for (let index = 0; index < value.length; index++) {
-            const unit = value.charCodeAt(index)
+            const unit = utf16CodeUnitAt(value, index)
             if (unit >= 0xd800 && unit <= 0xdbff) {
-              const low = value.charCodeAt(++index)
+              const low = utf16CodeUnitAt(value, ++index)
               if (!(low >= 0xdc00 && low <= 0xdfff)) invalid()
             } else if (unit >= 0xdc00 && unit <= 0xdfff) invalid()
           }

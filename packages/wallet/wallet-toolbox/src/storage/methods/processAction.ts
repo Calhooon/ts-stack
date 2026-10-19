@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageActiveWrite } from '../StorageActiveWrite'
 import { StorageReqWrite } from '../StorageReqWrite'
 import { repairBeefProofs } from './repairBeefProofs'
@@ -92,11 +93,14 @@ export async function processAction(
         'action.send_with_count': args.sendWith.length
       }
     },
-    async span => {
-      const result = await processActionCore(storage, auth, args, write, span)
-      span.end({ attributes: { 'action.send_result_count': result.sendWithResults?.length ?? 0 } })
-      return result
-    }
+    span =>
+      mapAwaitFromSync(
+        () => processActionCore(storage, auth, args, write, span),
+        result => {
+          span.end({ attributes: { 'action.send_result_count': result.sendWithResults?.length ?? 0 } })
+          return result
+        }
+      )
   )
 }
 
@@ -120,18 +124,12 @@ async function processActionCore(
   const txidsOfReqsToShareWithWorld: string[] = [...args.sendWith]
 
   if (args.isNewTx) {
-    const vargs = await traceProcessStep(
-      storage,
-      'wallet.storage.process_action.validate',
-      parent,
-      async () => await validateCommitNewTxToStorageArgs(storage, auth, args)
+    const vargs = await traceProcessStep(storage, 'wallet.storage.process_action.validate', parent, () =>
+      awaitFromSync(() => validateCommitNewTxToStorageArgs(storage, auth, args))
     )
     logger?.log('validated new tx updates to storage')
-    ;({ req } = await traceProcessStep(
-      storage,
-      'wallet.storage.process_action.commit',
-      parent,
-      async () => await commitNewTxToStorage(storage, userId, vargs, write)
+    ;({ req } = await traceProcessStep(storage, 'wallet.storage.process_action.commit', parent, () =>
+      awaitFromSync(() => commitNewTxToStorage(storage, userId, vargs, write))
     ))
     logger?.log('committed new tx updates to storage ')
     if (!req) throw new WERR_INTERNAL()
@@ -152,12 +150,10 @@ async function processActionCore(
     }
   }
 
-  const { swr, ndr } = await traceProcessStep(
-    storage,
-    'wallet.storage.process_action.share',
-    parent,
-    async () =>
-      await shareReqsWithWorld(storage, userId, txidsOfReqsToShareWithWorld, args.isDelayed, undefined, logger, write)
+  const { swr, ndr } = await traceProcessStep(storage, 'wallet.storage.process_action.share', parent, () =>
+    awaitFromSync(() =>
+      shareReqsWithWorld(storage, userId, txidsOfReqsToShareWithWorld, args.isDelayed, undefined, logger, write)
+    )
   )
 
   r.sendWithResults = swr
@@ -369,10 +365,12 @@ export async function shareReqsWithWorld(
         })
       } else
         for (const req of readyToSendReqs) {
-          await writes.request(req, async current => {
-            if (['completed', 'unmined'].includes(current.status)) return
-            current.status = 'unsent'
-            if (batch != null) current.batch = batch
+          await writes.request(req, current => {
+            return promiseFromSync(() => {
+              if (['completed', 'unmined'].includes(current.status)) return
+              current.status = 'unsent'
+              if (batch != null) current.batch = batch
+            })
           })
           await writes.status(req, 'sending')
         }
@@ -390,8 +388,10 @@ export async function shareReqsWithWorld(
       await storage.updateProvenTxReq(readyToSendReqIds, { batch })
     } else
       for (const req of readyToSendReqs) {
-        await writes.request(req, async current => {
-          current.batch = batch
+        await writes.request(req, current => {
+          return promiseFromSync(() => {
+            current.batch = batch
+          })
         })
       }
   }

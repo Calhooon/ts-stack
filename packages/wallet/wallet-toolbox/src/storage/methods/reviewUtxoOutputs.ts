@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageActiveWrite, StorageWriterAdmission } from '../StorageActiveWrite'
 import { AuthId, TrxToken } from '../../sdk/WalletStorage.interfaces'
 import { WERR_INVALID_OPERATION, WERR_INVALID_PARAMETER, WERR_UTXO_REVIEW_INCONCLUSIVE } from '../../sdk/WERR_errors'
@@ -130,47 +131,46 @@ function auditDetails(
   })
 }
 
-async function classifyCandidates(
-  storage: StorageProvider,
-  outputs: TableOutput[]
-): Promise<UtxoReviewClassification[]> {
-  const services = storage.getServices()
-  const candidates = outputs.filter(output => output.basketId != null)
-  return await mapWithConcurrency(candidates, UTXO_PROVIDER_MAX_CONCURRENCY, async output => {
-    try {
-      await storage.validateOutputScript(output)
-    } catch (error: unknown) {
-      return {
-        output,
-        status: {
-          verdict: 'unknown' as const,
-          provider: '<script-validation-error>',
-          error
+function classifyCandidates(storage: StorageProvider, outputs: TableOutput[]): Promise<UtxoReviewClassification[]> {
+  return awaitFromSync(() => {
+    const services = storage.getServices()
+    const candidates = outputs.filter(output => output.basketId != null)
+    return mapWithConcurrency(candidates, UTXO_PROVIDER_MAX_CONCURRENCY, async output => {
+      try {
+        await storage.validateOutputScript(output)
+      } catch (error: unknown) {
+        return {
+          output,
+          status: {
+            verdict: 'unknown' as const,
+            provider: '<script-validation-error>',
+            error
+          }
         }
       }
-    }
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    const providerCall = classifyOutputUtxo(services, output)
-    const timedClassification = new Promise<OutputUtxoClassification>(resolve => {
-      timeout = setTimeout(
-        () =>
-          resolve({
-            verdict: 'unknown',
-            provider: '<review-timeout>',
-            error: new Error(`UTXO classification exceeded ${UTXO_REVIEW_PROVIDER_TIMEOUT_MSECS}ms`)
-          }),
-        UTXO_REVIEW_PROVIDER_TIMEOUT_MSECS
-      )
-    })
-    try {
-      return {
-        output,
-        status: await Promise.race([providerCall, timedClassification])
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const providerCall = classifyOutputUtxo(services, output)
+      const timedClassification = new Promise<OutputUtxoClassification>(resolve => {
+        timeout = setTimeout(
+          () =>
+            resolve({
+              verdict: 'unknown',
+              provider: '<review-timeout>',
+              error: new Error(`UTXO classification exceeded ${UTXO_REVIEW_PROVIDER_TIMEOUT_MSECS}ms`)
+            }),
+          UTXO_REVIEW_PROVIDER_TIMEOUT_MSECS
+        )
+      })
+      try {
+        return {
+          output,
+          status: await Promise.race([providerCall, timedClassification])
+        }
+      } finally {
+        if (timeout != null) clearTimeout(timeout)
+        void providerCall.catch(() => undefined)
       }
-    } finally {
-      if (timeout != null) clearTimeout(timeout)
-      void providerCall.catch(() => undefined)
-    }
+    })
   })
 }
 
@@ -225,7 +225,7 @@ async function releaseConfirmedSpent(
       trx
     )
   }
-  const commit = async () => await (write == null ? storage.transaction(release) : write.transaction(release))
+  const commit = () => awaitFromSync(() => (write == null ? storage.transaction(release) : write.transaction(release)))
   if (admission != null && write?.prepareOutsideManager === true) await admission(commit)
   else await commit()
   return releasedOutputIds

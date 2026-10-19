@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageActiveWrite } from '../StorageActiveWrite'
 import { type ValidInternalizeActionArgs, validateInternalizeActionArgs } from '@bsv/sdk/wallet/validationHelpers'
 import {
@@ -302,7 +303,7 @@ class InternalizeActionContext {
     let b = this.baskets[basketName]
     if (b) return b
     b = await this.write.transaction(
-      async trx => await this.storage.findOrInsertOutputBasket(this.userId, basketName, trx),
+      trx => awaitFromSync(() => this.storage.findOrInsertOutputBasket(this.userId, basketName, trx)),
       trx
     )
     this.baskets[basketName] = b
@@ -582,9 +583,13 @@ class InternalizeActionContext {
     }
   }
 
-  private async storeResolvedProvenTx(proven: TableProvenTx, trx?: TrxToken): Promise<TableProvenTx> {
-    const stored = await this.storage.findOrInsertProvenTx(proven, trx)
-    return stored.proven
+  private storeResolvedProvenTx(proven: TableProvenTx, trx?: TrxToken): Promise<TableProvenTx> {
+    return mapAwaitFromSync(
+      () => this.storage.findOrInsertProvenTx(proven, trx),
+      stored => {
+        return stored.proven
+      }
+    )
   }
 
   private async mergeWalletPayments(transactionId: number, trx?: TrxToken): Promise<void> {
@@ -828,17 +833,30 @@ class InternalizeActionContext {
     }
   }
 
-  async markInputsSpent(transactionId: number, trx?: TrxToken): Promise<void> {
-    const transitioned = await this.write.transaction(
-      async trx => await markUserInputsSpent(this.storage, this.userId, this.tx, transactionId, trx),
-      trx
+  markInputsSpent(transactionId: number, trx?: TrxToken): Promise<void> {
+    return mapAwaitFromSync(
+      () =>
+        this.write.transaction(
+          trx => awaitFromSync(() => markUserInputsSpent(this.storage, this.userId, this.tx, transactionId, trx)),
+          trx
+        ),
+      transitioned => {
+        this.spentInputs.push(...transitioned)
+      }
     )
-    this.spentInputs.push(...transitioned)
   }
 
-  async restoreSpentInputs(trx?: TrxToken): Promise<void> {
-    await this.write.transaction(async trx => await restoreInputsToSpendable(this.storage, this.spentInputs, trx), trx)
-    this.spentInputs = []
+  restoreSpentInputs(trx?: TrxToken): Promise<void> {
+    return mapAwaitFromSync(
+      () =>
+        this.write.transaction(
+          trx => awaitFromSync(() => restoreInputsToSpendable(this.storage, this.spentInputs, trx)),
+          trx
+        ),
+      () => {
+        this.spentInputs = []
+      }
+    )
   }
 
   async addBasketTags(basket: BasketInsertionX, outputId: number, trx?: TrxToken) {

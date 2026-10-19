@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, mapAwaitFromSync } from '../utility/promiseFromSync'
 import { unwrap, wrap, type IDBPDatabase } from 'idb'
 import type { StorageIdbSchema } from './schema/StorageIdbSchema'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
@@ -164,14 +165,15 @@ export class PackedIdbConnection {
         if (
           ['get', 'getKey', 'getAll', 'getAllKeys', 'count', 'put', 'add', 'delete', 'clear'].includes(String(property))
         )
-          return async (store: string, ...args: unknown[]) => this.convenience(String(property), store, undefined, args)
+          return (store: string, ...args: unknown[]) =>
+            promiseFromSync(() => this.convenience(String(property), store, undefined, args))
         if (
           ['getFromIndex', 'getKeyFromIndex', 'getAllFromIndex', 'getAllKeysFromIndex', 'countFromIndex'].includes(
             String(property)
           )
         )
-          return async (store: string, index: string, ...args: unknown[]) =>
-            this.convenience(String(property).replace('FromIndex', ''), store, index, args)
+          return (store: string, index: string, ...args: unknown[]) =>
+            promiseFromSync(() => this.convenience(String(property).replace('FromIndex', ''), store, index, args))
         return boundMethod(target, property)
       }
     }) as unknown as IDBPDatabase<StorageIdbSchema>
@@ -215,15 +217,18 @@ export class PackedIdbConnection {
     if (this.#closePromise !== undefined) return this.#closePromise
     this.#open = false
     this.#nativeClose.call(this.#native)
-    this.#closePromise = (async () => {
-      const settled = await Promise.allSettled(this.#pending)
-      const failures = settled
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-        .map(result => result.reason as unknown)
-        .filter(error => !packedIdbIsAbortError(error))
-      if (failures.length !== 0)
-        throw new AggregateError(failures, 'Packed IndexedDB connection transaction drain failed')
-    })()
+    this.#closePromise = (() =>
+      mapAwaitFromSync(
+        () => Promise.allSettled(this.#pending),
+        settled => {
+          const failures = settled
+            .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+            .map(result => result.reason as unknown)
+            .filter(error => !packedIdbIsAbortError(error))
+          if (failures.length !== 0)
+            throw new AggregateError(failures, 'Packed IndexedDB connection transaction drain failed')
+        }
+      ))()
     return this.#closePromise
   }
   private track(tx: PackedIdbTransaction): void {
@@ -616,7 +621,7 @@ export class PackedIdbConnection {
       packedIdbInvalid()
     await tx.objectStore(packedIdbStores.clock).put({ ...charged, revision, transactionMembershipRevision }, 'clock')
   }
-  private async write(
+  private write(
     store: PackedStore,
     tx: PackedIdbTransaction,
     value: unknown,
@@ -624,21 +629,25 @@ export class PackedIdbConnection {
     suppliedKey?: IDBValidKey,
     expectedKey?: IDBValidKey
   ): Promise<IDBValidKey> {
-    return await this.guarded(
-      tx,
-      async () => {
-        if (tx.mode !== 'readwrite' || suppliedKey !== undefined) packedIdbInvalid()
-        const writer = requirePackedIdbWriter(tx),
-          target = writer.objectStore(store.name)
-        const row = await packIdbRow(writer, value, indexedFields(target))
-        const key = packedIdbKey(await (add ? target.add(packedIdbRowValue(row)) : target.put(packedIdbRowValue(row))))
-        if (expectedKey !== undefined && indexedDB.cmp(key, expectedKey) !== 0) packedIdbInvalid()
-        nativeKeyFields(store, row.fields, key)
-        await this.observe(writer, store.name, key, row)
-        return key
-      },
-      true
-    )
+    return awaitFromSync(() => {
+      return this.guarded(
+        tx,
+        async () => {
+          if (tx.mode !== 'readwrite' || suppliedKey !== undefined) packedIdbInvalid()
+          const writer = requirePackedIdbWriter(tx),
+            target = writer.objectStore(store.name)
+          const row = await packIdbRow(writer, value, indexedFields(target))
+          const key = packedIdbKey(
+            await (add ? target.add(packedIdbRowValue(row)) : target.put(packedIdbRowValue(row)))
+          )
+          if (expectedKey !== undefined && indexedDB.cmp(key, expectedKey) !== 0) packedIdbInvalid()
+          nativeKeyFields(store, row.fields, key)
+          await this.observe(writer, store.name, key, row)
+          return key
+        },
+        true
+      )
+    })
   }
   async writeStaged(
     storeName: string,
@@ -695,35 +704,37 @@ export class PackedIdbConnection {
       true
     )
   }
-  async writeStagedRestore(
+  writeStagedRestore(
     tx: PackedIdbTransaction,
     storeName: string,
     fields: Readonly<Record<string, unknown>>,
     staged: Readonly<Record<string, PackedIdbStagedField>>,
     add: boolean
   ): Promise<IDBValidKey> {
-    const effects = this.#restoreEffects.get(tx)
-    if (
-      effects === undefined ||
-      transactions.get(tx) !== this ||
-      effects.sealed ||
-      !effects.stores.includes(storeName) ||
-      effects.raw.mode !== 'readwrite'
-    )
-      packedIdbInvalid()
-    const raw = effects.raw as PackedIdbTransaction<'readwrite'>,
-      store = raw.objectStore(storeName)
-    return await this.guarded(
-      raw,
-      async () => {
-        const row = await attachPackedIdbStages(this, raw, fields, staged, indexedFields(store))
-        const key = packedIdbKey(await (add ? store.add(packedIdbRowValue(row)) : store.put(packedIdbRowValue(row))))
-        nativeKeyFields(store, row.fields, key)
-        await this.observe(raw, storeName, key, row)
-        return key
-      },
-      true
-    )
+    return awaitFromSync(() => {
+      const effects = this.#restoreEffects.get(tx)
+      if (
+        effects === undefined ||
+        transactions.get(tx) !== this ||
+        effects.sealed ||
+        !effects.stores.includes(storeName) ||
+        effects.raw.mode !== 'readwrite'
+      )
+        packedIdbInvalid()
+      const raw = effects.raw as PackedIdbTransaction<'readwrite'>,
+        store = raw.objectStore(storeName)
+      return this.guarded(
+        raw,
+        async () => {
+          const row = await attachPackedIdbStages(this, raw, fields, staged, indexedFields(store))
+          const key = packedIdbKey(await (add ? store.add(packedIdbRowValue(row)) : store.put(packedIdbRowValue(row))))
+          nativeKeyFields(store, row.fields, key)
+          await this.observe(raw, storeName, key, row)
+          return key
+        },
+        true
+      )
+    })
   }
   /** Attach genuine prepared fields and observed wallet rows in the caller's
    * actual operational transaction, alongside its durable checkpoint. This
@@ -928,23 +939,25 @@ export class PackedIdbConnection {
       }
     })
   }
-  private async keys(
+  private keys(
     source: PackedStore | PackedIndex,
     tx: PackedIdbTransaction,
     query?: IDBValidKey | IDBKeyRange | null,
     count?: number
   ): Promise<IDBValidKey[]> {
-    return await this.guarded(tx, async () => {
-      if (count !== undefined && (!Number.isSafeInteger(count) || count < 1 || count > 256)) packedIdbInvalid()
-      const result: IDBValidKey[] = []
-      let cursor = await source.openKeyCursor(query)
-      while (cursor !== null && result.length < (count ?? 256)) {
-        result.push(packedIdbKey(cursor.primaryKey))
-        cursor = await cursor.continue()
-      }
-      if (count === undefined && cursor !== null)
-        throw new SnapshotResourceLimitError('Packed IndexedDB key lists require bounded paging')
-      return result
+    return awaitFromSync(() => {
+      return this.guarded(tx, async () => {
+        if (count !== undefined && (!Number.isSafeInteger(count) || count < 1 || count > 256)) packedIdbInvalid()
+        const result: IDBValidKey[] = []
+        let cursor = await source.openKeyCursor(query)
+        while (cursor !== null && result.length < (count ?? 256)) {
+          result.push(packedIdbKey(cursor.primaryKey))
+          cursor = await cursor.continue()
+        }
+        if (count === undefined && cursor !== null)
+          throw new SnapshotResourceLimitError('Packed IndexedDB key lists require bounded paging')
+        return result
+      })
     })
   }
   private keyCursor(
@@ -976,33 +989,36 @@ export class PackedIdbConnection {
       }
     })
   }
-  private async all(
+  private all(
     source: PackedStore | PackedIndex,
     store: PackedStore,
     tx: PackedIdbTransaction,
     query?: IDBValidKey | IDBKeyRange | null,
     count?: number
   ): Promise<Array<Record<string, unknown>>> {
-    return await this.guarded(tx, async () => {
-      if (count !== undefined && (!Number.isSafeInteger(count) || count < 1)) packedIdbInvalid()
-      const rows: PackedIdbRow[] = [],
-        maximum = count ?? 256
-      let cursor = await source.openCursor(query),
-        allocation = 0
-      while (cursor !== null && rows.length < maximum) {
-        if (rows.length >= 256) throw new SnapshotResourceLimitError('Packed IndexedDB getAll requires bounded paging')
-        const row = metadata(cursor.value, store.name)
-        allocation += packedIdbRowAllocation(row, true)
-        if (allocation > packedIdbAllocationBytes)
-          throw new SnapshotResourceLimitError('Packed IndexedDB getAll allocation exceeded')
-        rows.push(row)
-        cursor = await cursor.continue()
-      }
-      if (count === undefined && cursor !== null)
-        throw new SnapshotResourceLimitError('Packed IndexedDB getAll requires bounded paging')
-      const result: Array<Record<string, unknown>> = []
-      for (const row of rows) result.push(await hydratePackedIdbRow(tx, row, true))
-      return result
+    return awaitFromSync(() => {
+      return this.guarded(tx, async () => {
+        if (count !== undefined && (!Number.isSafeInteger(count) || count < 1)) packedIdbInvalid()
+        const rows: PackedIdbRow[] = [],
+          maximum = count ?? 256
+        let cursor = await source.openCursor(query),
+          allocation = 0
+        while (cursor !== null && rows.length < maximum) {
+          if (rows.length >= 256)
+            throw new SnapshotResourceLimitError('Packed IndexedDB getAll requires bounded paging')
+          const row = metadata(cursor.value, store.name)
+          allocation += packedIdbRowAllocation(row, true)
+          if (allocation > packedIdbAllocationBytes)
+            throw new SnapshotResourceLimitError('Packed IndexedDB getAll allocation exceeded')
+          rows.push(row)
+          cursor = await cursor.continue()
+        }
+        if (count === undefined && cursor !== null)
+          throw new SnapshotResourceLimitError('Packed IndexedDB getAll requires bounded paging')
+        const result: Array<Record<string, unknown>> = []
+        for (const row of rows) result.push(await hydratePackedIdbRow(tx, row, true))
+        return result
+      })
     })
   }
   private async cursor(

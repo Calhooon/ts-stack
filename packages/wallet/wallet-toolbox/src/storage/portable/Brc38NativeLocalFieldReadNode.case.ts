@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import { readBrc38NativeLocalFieldBytes, withBrc38NativeLocalFieldExtent } from './Brc38NativeLocalFieldReadNode'
 import type { Brc38NativeLocalFieldCoordinate } from './Brc38NativeLocalFieldProtocol'
@@ -66,12 +67,15 @@ export async function verifyBrc38NativeLocalFieldReads(
         trx,
         { ...coordinate, offset, length, totalBytes: expected.byteLength },
         working,
-        async bytes => {
-          escaped = bytes
-          if (working.used !== 4096 + 32 * length) throw new Error('Local field scoped bytes lost their actual charge')
-          for (let at = 0; at < length; at++)
-            if (bytes[at] !== expected[offset + at])
-              throw new Error('Actual local field differs from independent fixture bytes')
+        bytes => {
+          return promiseFromSync(() => {
+            escaped = bytes
+            if (working.used !== 4096 + 32 * length)
+              throw new Error('Local field scoped bytes lost their actual charge')
+            for (let at = 0; at < length; at++)
+              if (bytes[at] !== expected[offset + at])
+                throw new Error('Actual local field differs from independent fixture bytes')
+          })
         }
       )
       if (working.used !== 0 || escaped === undefined || escaped.some(byte => byte !== 0))
@@ -86,9 +90,11 @@ export async function verifyBrc38NativeLocalFieldReads(
     selected = { ...nonempty.coordinate, offset: 0, totalBytes: nonempty.expected!.byteLength, length: 1 }
   let retained: Uint8Array | undefined, failure: unknown
   try {
-    await withBrc38NativeLocalFieldExtent(trx, selected, working, async bytes => {
-      retained = bytes
-      throw failedCallback
+    await withBrc38NativeLocalFieldExtent(trx, selected, working, bytes => {
+      return promiseFromSync(() => {
+        retained = bytes
+        throw failedCallback
+      })
     })
   } catch (error) {
     failure = error
@@ -120,8 +126,10 @@ export async function verifyBrc38NativeLocalFieldReads(
       trx,
       selected,
       working,
-      async () => {
-        queried = true
+      () => {
+        return promiseFromSync(() => {
+          queried = true
+        })
       },
       controller.signal
     )

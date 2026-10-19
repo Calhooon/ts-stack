@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import { Brc38IdbImportJournal } from './Brc38IdbImportJournal'
@@ -188,7 +189,7 @@ export async function inspectBrc38IdbRestoreInventory(
           const bytes = new Uint8Array(Math.min(65536, actual.bytes - offset))
           try {
             for (let at = 0; at < bytes.length; at += 2) {
-              const unit = expected.charCodeAt((offset + at) / 2)
+              const unit = utf16CodeUnitAt(expected, (offset + at) / 2)
               bytes[at] = unit & 255
               bytes[at + 1] = unit >>> 8
             }

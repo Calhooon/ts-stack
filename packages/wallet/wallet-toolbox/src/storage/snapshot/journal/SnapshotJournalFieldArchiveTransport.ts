@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../../utility/promiseFromSync'
 import {
   parseSnapshotJournalFieldArchiveReference,
   type SnapshotJournalFieldArchiveReference
@@ -63,14 +64,16 @@ export class SnapshotJournalFieldArchiveTransport {
   ) {
     this.capabilities = validateSnapshotJournalFieldArchiveCapabilities(capabilities)
   }
-  private async call(
+  private call(
     method: SnapshotJournalFieldArchiveMethod,
     fields: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<unknown> {
-    const params = [{ version: 1, identityKey: this.identityKey, ...fields }]
-    parseSnapshotJournalFieldArchiveRpcInput(method, params)
-    return await this.rpc(method, params, signal)
+    return awaitFromSync(() => {
+      const params = [{ version: 1, identityKey: this.identityKey, ...fields }]
+      parseSnapshotJournalFieldArchiveRpcInput(method, params)
+      return this.rpc(method, params, signal)
+    })
   }
   /** Recovers only the server's actual original READY source request. The
    * reference is comparison DATA; it cannot mint another owner or renew TTL. */

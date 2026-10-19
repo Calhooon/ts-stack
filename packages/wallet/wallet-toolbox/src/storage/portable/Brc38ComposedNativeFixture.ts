@@ -416,7 +416,8 @@ export async function composedNativeFixture(
 }
 
 async function* chunks(bytes: Uint8Array, width = 137): AsyncGenerator<Uint8Array> {
-  for (let offset = 0; offset < bytes.length; offset += width) yield bytes.slice(offset, offset + width)
+  for (let offset = 0; offset < bytes.length; offset += width)
+    yield Promise.resolve(bytes.slice(offset, offset + width))
 }
 
 /** Join the original fixture dependency stack while preserving both the

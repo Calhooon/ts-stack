@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { Brc38DestinationSelection } from './Brc38KnexDestinationFence'
 import type { SnapshotJournalReceiptPolicy } from '../snapshot/journal/SnapshotJournalReceipt'
@@ -79,9 +80,11 @@ export async function verifyBrc38NativePriorImportSource(
           for (let offset = 0; offset < expectedRow.field.byteLength;) {
             const length = Math.min(997, policy.maximumReadBytes, expectedRow.field.byteLength - offset)
             let retained: Uint8Array | undefined
-            await actual.withFieldExtent(offset, length, async bytes => {
-              retained = bytes
-              requireCase(bytes.every((byte, at) => byte === expectedRow.field![offset + at]))
+            await actual.withFieldExtent(offset, length, bytes => {
+              return promiseFromSync(() => {
+                retained = bytes
+                requireCase(bytes.every((byte, at) => byte === expectedRow.field![offset + at]))
+              })
             })
             requireCase(retained !== undefined && retained.every(byte => byte === 0))
             offset += length
@@ -106,7 +109,7 @@ export async function verifyBrc38NativePriorImportSource(
   if (escapedRow?.field !== undefined) {
     refused = false
     try {
-      await escapedRow.withFieldExtent(0, 1, async () => undefined)
+      await escapedRow.withFieldExtent(0, 1, () => promiseFromSync(() => undefined))
     } catch {
       refused = true
     }

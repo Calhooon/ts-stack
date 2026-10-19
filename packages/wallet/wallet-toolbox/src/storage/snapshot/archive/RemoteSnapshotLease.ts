@@ -1,3 +1,4 @@
+import { awaitFromSync, awaitVoidFromSync, promiseFromSync } from '../../../utility/promiseFromSync'
 import { parseSnapshotArchiveReaderRequest, type SnapshotArchiveReaderRequest } from './SnapshotArchiveReaderRequest'
 import type { SnapshotArchiveTransport } from './SnapshotArchiveTransport'
 
@@ -100,10 +101,12 @@ export class OwnedRemoteSnapshotLease<Request> {
     this.assertOpen()
     if (this.pending !== undefined)
       throw new WERR_INVALID_OPERATION('Remote snapshot already has an operation in flight')
-    const pending = Promise.resolve().then(async () => {
-      this.assertOpen()
-      return await operation(this.controller.signal)
-    })
+    const pending = Promise.resolve().then(() =>
+      awaitFromSync(() => {
+        this.assertOpen()
+        return operation(this.controller.signal)
+      })
+    )
     // Own settlement immediately, separately from the result returned to the
     // caller. Cleanup drains failures without replacing their public identity.
     this.pending = pending.then(
@@ -129,32 +132,40 @@ export class OwnedRemoteSnapshotLease<Request> {
   }
 
   /** Keep one operation slot and the fixed lease across a single connection-loss retry. */
-  async runIdempotent<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    return await this.run(async signal =>
-      retrySnapshotArchiveOperation(async () => {
-        this.assertOpen()
-        return await operation(signal)
-      })
-    )
+  runIdempotent<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    return awaitFromSync(() => {
+      return this.run(signal =>
+        promiseFromSync(() =>
+          retrySnapshotArchiveOperation(async () => {
+            this.assertOpen()
+            return await operation(signal)
+          })
+        )
+      )
+    })
   }
 
-  async wait(milliseconds: number): Promise<void> {
-    await this.run(
-      async signal =>
-        await new Promise<void>(resolve => {
-          const finish = (): void => {
-            signal.removeEventListener('abort', abort)
-            resolve()
-          }
-          const timer = setTimeout(finish, milliseconds)
-          const abort = (): void => {
-            clearTimeout(timer)
-            // run() checks the recorded close reason after this wait settles.
-            finish()
-          }
-          // run() asserted openness immediately before this synchronous setup.
-          signal.addEventListener('abort', abort, { once: true })
-        })
+  wait(milliseconds: number): Promise<void> {
+    return awaitVoidFromSync(() =>
+      this.run(signal =>
+        awaitFromSync(
+          () =>
+            new Promise<void>(resolve => {
+              const finish = (): void => {
+                signal.removeEventListener('abort', abort)
+                resolve()
+              }
+              const timer = setTimeout(finish, milliseconds)
+              const abort = (): void => {
+                clearTimeout(timer)
+                // run() checks the recorded close reason after this wait settles.
+                finish()
+              }
+              // run() asserted openness immediately before this synchronous setup.
+              signal.addEventListener('abort', abort, { once: true })
+            })
+        )
+      )
     )
   }
 

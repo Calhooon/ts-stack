@@ -1,4 +1,8 @@
 import { readFileSync } from 'node:fs'
+import {
+  readReviewedAnalysisExceptions,
+  reviewedSonarPermission
+} from './pr569-reviewed-analysis.mjs'
 
 // Scope changes require a new reviewed policy change, not a CLI switch.
 export const SONAR_BUDGET = Object.freeze({
@@ -75,6 +79,8 @@ export function evaluateSonarBudget(snapshot, now = Date.now()) {
   }
   if (snapshot.analysisBefore?.analysisDate !== snapshot.analysisAfter?.analysisDate)
     reject('analysis changed while collecting evidence')
+  const reviewed = readReviewedAnalysisExceptions()
+  const reviewedPermissionFindings = []
   const issues = snapshot.issues
   const keys = new Set()
   let maintainabilityFindings = 0
@@ -98,7 +104,11 @@ export function evaluateSonarBudget(snapshot, now = Date.now()) {
       continue
     }
     activeFindings++
-    // Accepted/false-positive states never waive correctness or security.
+    if (reviewedSonarPermission(issue, reviewed, now)) {
+      reviewedPermissionFindings.push(issue.key)
+      continue
+    }
+    // Finding states alone never waive correctness or security.
     if (
       issue?.type !== 'CODE_SMELL' ||
       !Array.isArray(issue.impacts) ||
@@ -165,13 +175,18 @@ export function evaluateSonarBudget(snapshot, now = Date.now()) {
       continue
     }
     const duplication = condition.metricKey === 'new_duplicated_lines_density'
+    const reviewedSecurityRating =
+      condition.metricKey === 'new_security_rating' &&
+      reviewedPermissionFindings.length === 2 &&
+      value === reviewed.reportedSecurityRating
+    const allowed = reviewedSecurityRating ? reviewed.reportedSecurityRating : expected[1]
     if (
       !valid ||
       condition.comparator !== expected[0] ||
       (duplication ? threshold < 0 || threshold > 6 : threshold !== expected[1]) ||
-      (expected[0] === 'GT' ? value > expected[1] : value < expected[1]) ||
+      (expected[0] === 'GT' ? value > allowed : value < allowed) ||
       value < 0 ||
-      (condition.metricKey.endsWith('_rating') && value !== 1) ||
+      (condition.metricKey.endsWith('_rating') && value !== allowed) ||
       (duplication && value > 100) ||
       (condition.metricKey === 'new_security_hotspots_reviewed' && value !== 100)
     )
@@ -190,6 +205,9 @@ export function evaluateSonarBudget(snapshot, now = Date.now()) {
     originalZeroFindingsSatisfied:
       failures.length === 0 && activeFindings === 0 && gate?.status === 'OK',
     scopedBudgetSatisfied: failures.length === 0,
+    reviewedPermissionFindings,
+    reportedSecurityRating: gate?.conditions?.find(c => c.metricKey === 'new_security_rating')
+      ?.actualValue,
     maintainabilityFindings,
     activeFindings,
     issueTotal: snapshot.issueTotal,

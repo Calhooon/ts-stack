@@ -144,7 +144,7 @@ export async function readBrc38JsonBinaryField(
           if (!/^[0-9a-fA-F]$/.test(unit)) invalid()
           unicodeDigits += unit
           if (unicodeDigits.length === 4) {
-            decoded(String.fromCharCode(Number.parseInt(unicodeDigits, 16)))
+            decoded(String.fromCodePoint(Number.parseInt(unicodeDigits, 16)))
             unicodeDigits = undefined
           }
         } else if (escaped) {

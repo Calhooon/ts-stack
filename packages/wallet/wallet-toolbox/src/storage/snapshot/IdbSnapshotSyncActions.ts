@@ -103,7 +103,7 @@ async function currentAction(
       if (new SHA256().update(loan.bytes).digestHex() !== extent.sha256) invalid()
       let value = ''
       for (let index = 0; index < loan.bytes.length; index += 2)
-        value += String.fromCharCode(loan.bytes[index] | (loan.bytes[index + 1] << 8))
+        value += String.fromCodePoint(loan.bytes[index] | (loan.bytes[index + 1] << 8))
       fields[name] = value
     } finally {
       loan.close()

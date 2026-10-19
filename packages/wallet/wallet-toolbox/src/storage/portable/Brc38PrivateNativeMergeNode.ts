@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { copyBrc38ComposedProfileReceipt, type Brc38ComposedProfileReceipt } from './Brc38ComposedProfileReceiptNode'
 import { collectBrc38NativePackedContent } from './Brc38NativePackedTextFieldsNode'
@@ -209,10 +210,12 @@ export class Brc38PrivateNativeMergeNode {
       await this.#available()
       const preview = await previewBrc38PrivateImport(this.#store, this.#storage, 'merge', this.#options.receiptPolicy)
       let rows = 0
-      await this.#store.withAuthenticatedPrivateStructuredDestination(async (header, metadata) => {
-        this.#check()
-        if (header.user.identityKey !== preview.target.identityKey || preview.target.userId === null) invalid()
-        rows = metadata.rows
+      await this.#store.withAuthenticatedPrivateStructuredDestination((header, metadata) => {
+        return promiseFromSync(() => {
+          this.#check()
+          if (header.user.identityKey !== preview.target.identityKey || preview.target.userId === null) invalid()
+          rows = metadata.rows
+        })
       })
       const binding = this.#store.binding!,
         admission: Readonly<Brc38ImportJournalAdmission> = Object.freeze({
@@ -1096,7 +1099,7 @@ export class Brc38PrivateNativeMergeNode {
               })
           )
         )
-        await read(async () => undefined)
+        await read(() => promiseFromSync(() => undefined))
         count(
           await inspectBrc38PrivateRequestInventory(this.#store, this.#storage, this.#source, {
             ...selected,
@@ -1105,14 +1108,14 @@ export class Brc38PrivateNativeMergeNode {
             projectionPolicy: this.#requestProjection
           })
         )
-        await read(async () => undefined)
+        await read(() => promiseFromSync(() => undefined))
         const checkpoint = await inspectBrc38PrivateCheckpointInventory(this.#store, this.#storage, this.#source, {
           ...selected,
           receiptPolicy: options.receiptPolicy,
           sourcePolicy
         })
         count(checkpoint)
-        await read(async () => undefined)
+        await read(() => promiseFromSync(() => undefined))
         // Both reconstruction lifetime scopes have drained. Retire only
         // actual queued unreferenced content; current row pointers and any
         // other actual owner holds remain protected by the shared collector.
@@ -1156,7 +1159,7 @@ export class Brc38PrivateNativeMergeNode {
           if (collected.complete) break
           await new Promise<void>(resolve => setTimeout(resolve, 0))
         }
-        await read(async () => undefined)
+        await read(() => promiseFromSync(() => undefined))
         // Historical original/page records are independently read again after
         // all derived writers; neither a prior history result nor clock DATA
         // serves as membership/semantic authority for this final operation.
@@ -1188,7 +1191,9 @@ export class Brc38PrivateNativeMergeNode {
       )
         invalid()
       if ((await this.#comparisonSource(retired)) !== sourceBefore) invalid()
-      await this.#store.withAuthenticatedPrivateStructuredDestination(async () => await read(async () => undefined))
+      await this.#store.withAuthenticatedPrivateStructuredDestination(
+        async () => await read(() => promiseFromSync(() => undefined))
+      )
       if (freeze) await this.#store.requirePrivateNativeComparison()
       this.#check()
       return Object.freeze({
@@ -1211,7 +1216,7 @@ export class Brc38PrivateNativeMergeNode {
     targetName: string,
     maximumBytes: number
   ): Promise<Readonly<{ bytes: number; sha256: string; image: Readonly<Brc38ComposedDatabaseImage> }>> {
-    return this.#copyComposedDatabase(targetName, maximumBytes, async copy => copy)
+    return this.#copyComposedDatabase(targetName, maximumBytes, copy => promiseFromSync(() => copy))
   }
   /** An independent receiving inspection stays inside the same original merge
    * operation and lifetime. Only the physical SQL facades drain for copying;

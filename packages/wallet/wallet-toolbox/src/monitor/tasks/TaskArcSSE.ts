@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, awaitVoidFromSync } from '../../utility/promiseFromSync'
 import { WalletError } from '../../sdk/WalletError'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import { StorageReqWrite } from '../../storage/StorageReqWrite'
@@ -81,17 +82,20 @@ export class TaskArcadeSSE extends WalletMonitorTask {
       arcApiKey: arcadeApiKey,
       lastEventId,
       EventSourceClass,
-      onEvent: async event =>
-        await new Promise<void>((acknowledge, reject) => {
-          // ArcSSEClient waits for this promise before dispatching the next
-          // event. Keep an independent one-item bound in case a replacement
-          // client violates that contract.
-          if (this.pendingEvents.length > 0) {
-            reject(new Error('Arcade SSE monitor event capacity was exceeded.'))
-            return
-          }
-          this.pendingEvents.push({ event: { ...event }, acknowledge, reject })
-        }),
+      onEvent: event =>
+        awaitFromSync(
+          () =>
+            new Promise<void>((acknowledge, reject) => {
+              // ArcSSEClient waits for this promise before dispatching the next
+              // event. Keep an independent one-item bound in case a replacement
+              // client violates that contract.
+              if (this.pendingEvents.length > 0) {
+                reject(new Error('Arcade SSE monitor event capacity was exceeded.'))
+                return
+              }
+              this.pendingEvents.push({ event: { ...event }, acknowledge, reject })
+            })
+        ),
       onError: err => {
         void this.logSetupEvent(`SSE error: ${safeDiagnostic(err)}`)
       }
@@ -205,7 +209,7 @@ export class TaskArcadeSSE extends WalletMonitorTask {
   ): Promise<void> {
     if (writes == null) {
       if (apply(req) !== false) await req.updateStorageDynamicProperties(this.storage)
-    } else if (!(await writes.request(req, async current => apply(current)))) {
+    } else if (!(await writes.request(req, current => promiseFromSync(() => apply(current))))) {
       throw new WERR_NOT_ACTIVE('SSE observation lost its captured primary profiles')
     }
   }
@@ -270,9 +274,9 @@ export class TaskArcadeSSE extends WalletMonitorTask {
     }
 
     if (req.notify.transactionIds != null) {
-      await this.storage.runAsStorageProvider(async sp => {
-        await sp.updateTransactionsStatus(req.notify.transactionIds ?? [], 'unproven')
-      })
+      await this.storage.runAsStorageProvider(sp =>
+        awaitVoidFromSync(() => sp.updateTransactionsStatus(req.notify.transactionIds ?? [], 'unproven'))
+      )
     }
 
     req.status = 'unmined'
@@ -293,13 +297,13 @@ export class TaskArcadeSSE extends WalletMonitorTask {
     return await this.fetchProofFromServices(req, writes)
   }
 
-  private async applyDoubleSpendStatus(
+  private applyDoubleSpendStatus(
     req: EntityProvenTxReq,
     event: ArcSSEEvent,
     note: ArcadeStatusNote,
     writes?: StorageReqWrite
   ): Promise<string> {
-    return await this.applyTerminalFailure(req, note, classifyArcadeRejection(event), writes)
+    return awaitFromSync(() => this.applyTerminalFailure(req, note, classifyArcadeRejection(event), writes))
   }
 
   private classifyRejection(event: ArcSSEEvent): ArcadeRejectionClassification {
@@ -343,7 +347,7 @@ export class TaskArcadeSSE extends WalletMonitorTask {
         terminal = true
       })
       if (!terminal) return `  req ${req.id} retained advanced proof state\n`
-      const provider = await this.storage.runAsStorageProvider(async sp => sp)
+      const provider = await this.storage.runAsStorageProvider(sp => promiseFromSync(() => sp))
       const quarantined = await applyCapturedTerminalFailure(req, provider, writes, classification.inputConflict)
       if (classification.inputConflict)
         await this.record(req, writes, current => {

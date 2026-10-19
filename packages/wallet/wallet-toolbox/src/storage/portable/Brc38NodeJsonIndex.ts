@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import {
   requirePrivatePath,
   requirePrivateDescriptor,
@@ -486,7 +487,7 @@ export class Brc38NodeJsonIndex implements Brc38JsonMemberIndex {
         body.writeBigUInt64LE(BigInt(number), 4 + index * 8)
       body.writeUInt32LE(record.key.length, 52)
       for (let index = 0; index < record.key.length; index++)
-        body.writeUInt16BE(record.key.charCodeAt(index), 56 + index * 2)
+        body.writeUInt16BE(utf16CodeUnitAt(record.key, index), 56 + index * 2)
       const position = file.size,
         tag = this.tag('member/v2', file, position, body)
       try {

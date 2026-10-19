@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import type { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import {
   brc38JsonTextFieldPolicy,
@@ -19,10 +20,11 @@ export function brc38IdbTextFieldSink(
   )
     throw new RangeError('Private browser scalar TEXT chunks and original allocation differ')
   return Object.freeze({
-    begin: async (table, index, field) => await store.beginTextField(table, index, field, policy.maximumTextBytes),
-    append: async (table, index, field, offset, bytes) =>
-      await store.appendTextField(table, index, field, offset, bytes),
-    finish: async (table, index, descriptor) => await store.finishTextField(table, index, descriptor),
+    begin: (table, index, field) =>
+      awaitFromSync(() => store.beginTextField(table, index, field, policy.maximumTextBytes)),
+    append: (table, index, field, offset, bytes) =>
+      awaitFromSync(() => store.appendTextField(table, index, field, offset, bytes)),
+    finish: (table, index, descriptor) => awaitFromSync(() => store.finishTextField(table, index, descriptor)),
     row
   } satisfies Brc38JsonTextFieldSink)
 }

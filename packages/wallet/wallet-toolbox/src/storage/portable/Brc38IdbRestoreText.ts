@@ -1,3 +1,4 @@
+import { promiseFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection } from '../idbPackedConnection'
@@ -139,11 +140,14 @@ export async function prepareBrc38IdbRestoreText(
     transfer = undefined
     retained.close()
   }
-  const currentReceipt = async (): Promise<void> => {
-    const read = await journal.readMappings(receiptSha256, [])
-    read.close()
-    check()
-  }
+  const currentReceipt = (): Promise<void> =>
+    mapAwaitFromSync(
+      () => journal.readMappings(receiptSha256, []),
+      read => {
+        read.close()
+        check()
+      }
+    )
   const pass = async () => {
     check()
     if (mode === 'scalar') {
@@ -176,9 +180,11 @@ export async function prepareBrc38IdbRestoreText(
       return {
         chunks: rawScalar(),
         unmappedIds: 0,
-        close: async () => {
-          reader.close()
-          scalarReaders.delete(reader)
+        close: () => {
+          return promiseFromSync(() => {
+            reader.close()
+            scalarReaders.delete(reader)
+          })
         }
       }
     }
@@ -197,10 +203,13 @@ export async function prepareBrc38IdbRestoreText(
       return {
         chunks: projection.chunks(Math.min(65536, policy.maximumReadBytes ?? 65536)),
         unmappedIds: projection.unmappedIds,
-        close: async () => {
-          await projection.close()
-          projections.delete(projection)
-        }
+        close: () =>
+          mapAwaitFromSync(
+            () => projection.close(),
+            () => {
+              projections.delete(projection)
+            }
+          )
       }
     }
     const reader = await source.openStructuredField(table, position, field, sourcePolicy, working, policy.expiresAt)
@@ -241,10 +250,13 @@ export async function prepareBrc38IdbRestoreText(
               `${table}[${position}].${field}`
             ),
       unmappedIds: 0,
-      close: async () => {
-        await reader.close()
-        readers.delete(reader)
-      }
+      close: () =>
+        mapAwaitFromSync(
+          () => reader.close(),
+          () => {
+            readers.delete(reader)
+          }
+        )
     }
   }
   try {

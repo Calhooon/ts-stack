@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { openDB, deleteDB } from 'idb'
 import { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import { Brc38SemanticStage, brc38StageTables } from './Brc38SemanticStage'
@@ -72,7 +73,8 @@ export async function verifyPrivateIdbAll13AndReleasedResume(): Promise<void> {
       }),
       bytes = new TextEncoder().encode(original)
     async function* chunks() {
-      for (let offset = 0; offset < bytes.length; offset += 4096) yield bytes.slice(offset, offset + 4096)
+      for (let offset = 0; offset < bytes.length; offset += 4096)
+        yield Promise.resolve(bytes.slice(offset, offset + 4096))
     }
     await readBrc38JsonStream(chunks(), semantic, {
       maximumArchiveBytes: 2097152,
@@ -255,14 +257,17 @@ export async function verifyPrivateIdbStreamedBinaryClosureAndReplay(): Promise<
         async (table, index, row) => await semantic.provisionalRow(table, index, row)
       )
     async function* source() {
-      for (let offset = 0; offset < input.length; offset += 4096) yield input.slice(offset, offset + 4096)
+      for (let offset = 0; offset < input.length; offset += 4096)
+        yield Promise.resolve(input.slice(offset, offset + 4096))
     }
     await readBrc38JsonStream(
       source(),
       {
         streamedFields: sink,
-        provisionalRow: async () => {
-          throw new Error('Binary metadata fell through to an ordinary row')
+        provisionalRow: () => {
+          return promiseFromSync(() => {
+            throw new Error('Binary metadata fell through to an ordinary row')
+          })
         },
         validateCompleted: async (header, counts) => await semantic.validateCompleted(header, counts),
         discard: async cause => await current.discard(cause)

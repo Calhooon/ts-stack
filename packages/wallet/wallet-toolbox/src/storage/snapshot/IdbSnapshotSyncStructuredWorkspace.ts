@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection, type PackedIdbConnection } from '../idbPackedConnection'
 import { PackedIdbJsonIndex } from '../idbPackedJsonIndex'
@@ -66,8 +67,10 @@ export class IdbSnapshotSyncStructuredWorkspace {
     const retained = working.claim(16384 + 8 * 65536)
     let view: PackedIdbReadSnapshot | undefined
     try {
-      await journal.inspect(checkpoint, async read => {
-        if (expiresAt > read.expiresAt) throw new Error('Structured workspace cannot extend the original session')
+      await journal.inspect(checkpoint, read => {
+        return promiseFromSync(() => {
+          if (expiresAt > read.expiresAt) throw new Error('Structured workspace cannot extend the original session')
+        })
       })
       view = await openPackedIdbSnapshot(db, checkpoint.identityKey, storage.chain, {
         lifetimeMs: expiresAt - Date.now(),

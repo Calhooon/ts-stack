@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../src/utility/promiseFromSync'
 import type { WalletScriptVerifier } from '../../src/sdk/WalletScriptVerifier'
 import * as dotenv from 'dotenv'
 import path from 'node:path'
@@ -1695,13 +1696,17 @@ export abstract class TestUtilsWalletStorage {
       currentHeight = Math.max(currentHeight, height)
     }
     const tracker: ChainTracker = {
-      async isValidRootForHeight(root, height, signal) {
-        signal?.throwIfAborted()
-        return roots.has(`${String(height)}:${root.toLowerCase()}`)
+      isValidRootForHeight(root, height, signal) {
+        return promiseFromSync(() => {
+          signal?.throwIfAborted()
+          return roots.has(`${String(height)}:${root.toLowerCase()}`)
+        })
       },
-      async currentHeight(signal) {
-        signal?.throwIfAborted()
-        return currentHeight
+      currentHeight(signal) {
+        return promiseFromSync(() => {
+          signal?.throwIfAborted()
+          return currentHeight
+        })
       }
     }
     jest.spyOn(ctx.services, 'getChainTracker').mockResolvedValue(tracker)

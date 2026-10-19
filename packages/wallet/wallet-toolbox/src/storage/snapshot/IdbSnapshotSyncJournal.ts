@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   parseSnapshotSyncContentRevision,
   snapshotSyncContentConfirms,
@@ -461,7 +462,7 @@ export class IdbSnapshotSyncJournal {
       owner = getPackedIdbConnection(db)
     if (owner === undefined || !owner.isOpen || storage.dbName !== db.name) invalid()
     const journal = new IdbSnapshotSyncJournal(storage, owner)
-    await journal.#run('readonly', async () => undefined)
+    await journal.#run('readonly', () => promiseFromSync(() => undefined))
     return journal
   }
   #check(): void {

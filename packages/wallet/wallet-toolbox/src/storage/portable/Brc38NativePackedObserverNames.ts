@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 /** Internal spelling DATA only. The complete SQL family still establishes
  * schema identity; this noncryptographic name digest never grants authority.
  * Names stay stable when unrelated observers are added or reordered. */
@@ -14,7 +15,7 @@ export function brc38NativePackedObserverName(kind: 'binary' | 'text', name: str
   )
     return name
   let digest = 2166136261
-  for (let i = 0; i < name.length; i++) digest = Math.imul(digest ^ name.charCodeAt(i), 16777619) >>> 0
+  for (let i = 0; i < name.length; i++) digest = Math.imul(digest ^ utf16CodeUnitAt(name, i), 16777619) >>> 0
   return prefix + 'o' + digest.toString(16).padStart(8, '0')
 }
 

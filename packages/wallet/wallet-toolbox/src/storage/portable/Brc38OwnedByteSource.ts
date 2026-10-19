@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
@@ -107,8 +108,8 @@ export class Brc38OwnedByteSource implements AsyncIterableIterator<Uint8Array> {
         finish = iterator.return
       if (typeof next !== 'function' || (finish !== undefined && typeof finish !== 'function'))
         throw new TypeError('Invalid owned source iterator methods')
-      owner.#next = async () => await Reflect.apply(next, iterator, [])
-      owner.#return = finish === undefined ? undefined : async () => await Reflect.apply(finish, iterator, [])
+      owner.#next = () => awaitFromSync(() => Reflect.apply(next, iterator, []))
+      owner.#return = finish === undefined ? undefined : () => awaitFromSync(() => Reflect.apply(finish, iterator, []))
       return owner
     } catch (cause) {
       await owner.close(cause)
@@ -140,10 +141,12 @@ export class Brc38OwnedByteSource implements AsyncIterableIterator<Uint8Array> {
       )
       const next = this.#next
       const pending = Promise.resolve()
-        .then(async () => {
-          this.#check()
-          return await next()
-        })
+        .then(() =>
+          awaitFromSync(() => {
+            this.#check()
+            return next()
+          })
+        )
         .then(result => {
           if (result === null || typeof result !== 'object') throw new TypeError('Invalid owned source read result')
           const done = Boolean(result.done)
@@ -177,9 +180,13 @@ export class Brc38OwnedByteSource implements AsyncIterableIterator<Uint8Array> {
       throw cause
     }
   }
-  async return(): Promise<IteratorResult<Uint8Array>> {
-    await this.close()
-    return { done: true, value: undefined }
+  return(): Promise<IteratorResult<Uint8Array>> {
+    return mapAwaitFromSync(
+      () => this.close(),
+      () => {
+        return { done: true, value: undefined }
+      }
+    )
   }
   async close(cause?: unknown): Promise<void> {
     if (this.#drained) return
@@ -245,7 +252,7 @@ export class Brc38OwnedByteSource implements AsyncIterableIterator<Uint8Array> {
       throw new Brc38StagingCleanupError(
         [this.#cause, error_],
         'Owned byte source retains actual pending I/O and physical cleanup',
-        async () => await this.close(this.#cause)
+        () => awaitFromSync(() => this.close(this.#cause))
       )
     } finally {
       this.#closing = false

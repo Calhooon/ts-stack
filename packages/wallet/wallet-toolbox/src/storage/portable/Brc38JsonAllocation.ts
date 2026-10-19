@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 /** Conservative owned decoded-JSON allowance before JSON.parse. Counting is
  * allocation DATA only: this pass neither validates JSON syntax nor remembers
  * a source/semantic verdict. Actual JSON parsing and source checks remain
@@ -11,7 +12,7 @@ export function brc38JsonDecodedAllocation(json: string): number {
     quoted = false,
     escaped = false
   for (let index = 0; index < json.length; index++) {
-    const unit = json.charCodeAt(index)
+    const unit = utf16CodeUnitAt(json, index)
     if (quoted) {
       if (escaped) escaped = false
       else if (unit === 92) escaped = true

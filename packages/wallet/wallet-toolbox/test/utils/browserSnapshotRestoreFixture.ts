@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../src/utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { MerklePath, Script, Transaction } from '@bsv/sdk'
 import { toBase64 } from '@bsv/sdk/primitives/utils'
@@ -155,16 +156,21 @@ export async function browserSnapshotRestoreFixture(scalar = false, measurement?
     headers = 0,
     chainCurrent = true
   const services = {
-    getChainTracker: async () => ({
-      isValidRootForHeight: async (root: string, height: number) => {
-        roots++
-        return chainCurrent && root === txid && height === 100
-      }
-    }),
-    getHeaderForHeight: async (height: number) => {
-      headers++
-      equal(height, 100)
-      return Array.from(header)
+    getChainTracker: () =>
+      promiseFromSync(() => ({
+        isValidRootForHeight: (root: string, height: number) => {
+          return promiseFromSync(() => {
+            roots++
+            return chainCurrent && root === txid && height === 100
+          })
+        }
+      })),
+    getHeaderForHeight: (height: number) => {
+      return promiseFromSync(() => {
+        headers++
+        equal(height, 100)
+        return Array.from(header)
+      })
     }
   } as unknown as WalletServices
   Object.defineProperty(storage, 'getServices', { value: () => services })

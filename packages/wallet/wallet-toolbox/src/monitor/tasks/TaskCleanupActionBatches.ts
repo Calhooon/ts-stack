@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
 import type { StorageWriterAdmission } from '../../storage/StorageActiveWrite'
 import { Monitor } from '../Monitor'
@@ -26,10 +27,14 @@ export class TaskCleanupActionBatches extends WalletMonitorTask {
       true
     )
     const admission: StorageWriterAdmission = async operation =>
-      await this.storage.runAsStorageProvider(async current => {
-        if (current !== provider) throw new WERR_NOT_ACTIVE('Batch cleanup belongs to a replaced provider')
-        return await operation()
-      }, true)
+      await this.storage.runAsStorageProvider(
+        current =>
+          awaitFromSync(() => {
+            if (current !== provider) throw new WERR_NOT_ACTIVE('Batch cleanup belongs to a replaced provider')
+            return operation()
+          }),
+        true
+      )
     const count =
       provider == null
         ? await this.storage.runAsStorageProvider(cleanupExpiredActionBatches)

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
 import { Brc38PrivateLocalCandidate, type Brc38PrivateLocalCandidateOptions } from './Brc38PrivateLocalCandidateNode'
@@ -131,7 +132,7 @@ export async function verifyBrc38PrivateLocalCandidateResume(
             maximumReadBytes:
               controller.options.maximumReadBytes === 16384 ? 16383 : controller.options.maximumReadBytes + 1
           },
-          async () => undefined
+          () => promiseFromSync(() => undefined)
         )
     )
   } catch {

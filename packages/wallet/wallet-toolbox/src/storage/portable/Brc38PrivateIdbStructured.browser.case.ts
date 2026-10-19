@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import { Brc38StreamedSemanticStage } from './Brc38StreamedSemanticStage'
 import { brc38IdbStreamedFieldSink } from './Brc38IdbStreamedFieldSink'
@@ -76,15 +77,17 @@ async function parse(owner: Brc38PrivateIdbStage, f: ReturnType<typeof setup>, b
     binary = { maximumBinaryBytes: 262144, maximumChunkBytes: 4096 },
     input = new TextEncoder().encode(body)
   async function* source() {
-    for (let at = 0; at < input.length; at += 4096) yield input.slice(at, at + 4096)
+    for (let at = 0; at < input.length; at += 4096) yield Promise.resolve(input.slice(at, at + 4096))
   }
   await readBrc38JsonStream(
     source(),
     {
       streamedFields: brc38IdbStreamedFieldSink(owner, binary, row),
       streamedStructuredFields: brc38IdbStructuredFieldSink(owner, structured, row),
-      provisionalRow: async () => {
-        throw new Error('Structured row fell through to materialized staging')
+      provisionalRow: () => {
+        return promiseFromSync(() => {
+          throw new Error('Structured row fell through to materialized staging')
+        })
       },
       validateCompleted: async (header, counts) => await semantic.validateCompleted(header, counts),
       discard: async cause => await owner.discard(cause)

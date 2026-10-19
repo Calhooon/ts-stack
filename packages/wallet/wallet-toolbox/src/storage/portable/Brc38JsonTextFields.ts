@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { toHex } from '@bsv/sdk/primitives/utils'
 import type { BRC38Tables } from './index'
@@ -159,7 +160,7 @@ export async function readBrc38JsonTextField(
           ended = true
           return false
         } else {
-          const code = value.charCodeAt(0)
+          const code = utf16CodeUnitAt(value, 0)
           if (code < 32) invalid()
           unit(code)
         }

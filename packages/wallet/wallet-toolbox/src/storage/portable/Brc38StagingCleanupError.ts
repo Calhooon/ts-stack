@@ -1,3 +1,5 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
+
 /** One initial teardown attempt for an operation or generator scope. Failure
  * paths call close before propagating their cause; finally calls it for normal
  * completion and iterator return. A rejected initial attempt is never repeated
@@ -14,11 +16,7 @@ export class Brc38CleanupScope {
         complete = resolve
         fail = reject
       })
-      try {
-        void this.cleanup().then(complete, fail)
-      } catch (cause) {
-        fail(cause)
-      }
+      void promiseFromSync(() => this.cleanup()).then(complete, fail)
     }
     return this.#completion
   }

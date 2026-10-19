@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { ghash, multiply } from '@bsv/sdk/primitives/AESGCM'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
@@ -118,10 +119,12 @@ export class Brc39WebCryptoGcm {
     const result: { received?: { value: T } } = {}
     let abandoned = false
     const pending = Promise.resolve()
-      .then(async () => {
-        this.#check()
-        return await operation()
-      })
+      .then(() =>
+        awaitFromSync(() => {
+          this.#check()
+          return operation()
+        })
+      )
       .then(value => {
         result.received = { value }
         if (abandoned || this.#closed) {
@@ -190,19 +193,15 @@ export class Brc39WebCryptoGcm {
       throw cause
     }
   }
-  static async create(
-    key: Uint8Array,
-    nonce: Uint8Array,
-    selected: Brc39WebCryptoGcmOptions
-  ): Promise<Brc39WebCryptoGcm> {
-    return await Brc39WebCryptoGcm.#create(key, nonce, selected, 'decrypt')
+  static create(key: Uint8Array, nonce: Uint8Array, selected: Brc39WebCryptoGcmOptions): Promise<Brc39WebCryptoGcm> {
+    return awaitFromSync(() => Brc39WebCryptoGcm.#create(key, nonce, selected, 'decrypt'))
   }
-  static async createEncryptor(
+  static createEncryptor(
     key: Uint8Array,
     nonce: Uint8Array,
     selected: Brc39WebCryptoGcmOptions
   ): Promise<Brc39WebCryptoGcm> {
-    return await Brc39WebCryptoGcm.#create(key, nonce, selected, 'encrypt')
+    return awaitFromSync(() => Brc39WebCryptoGcm.#create(key, nonce, selected, 'encrypt'))
   }
   static async #create(
     key: Uint8Array,
@@ -262,7 +261,7 @@ export class Brc39WebCryptoGcm {
         throw new Brc38StagingCleanupError(
           [cause, error_],
           'Incremental browser GCM initialization retains native drain',
-          async () => await owner.close()
+          () => awaitFromSync(() => owner.close())
         )
       }
       throw cause
@@ -432,10 +431,8 @@ export class Brc39WebCryptoGcm {
       this.#carry.fill(0)
       this.#carryBytes = 0
     } catch (error_) {
-      throw new Brc38StagingCleanupError(
-        [error_],
-        'Incremental browser GCM retains actual native operation',
-        async () => await this.close()
+      throw new Brc38StagingCleanupError([error_], 'Incremental browser GCM retains actual native operation', () =>
+        awaitFromSync(() => this.close())
       )
     } finally {
       this.#closing = false

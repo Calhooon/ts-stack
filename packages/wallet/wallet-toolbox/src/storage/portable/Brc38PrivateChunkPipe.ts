@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 
 const typedPrototype: object = Object.getPrototypeOf(Uint8Array.prototype)
@@ -99,15 +100,19 @@ export class Brc38PrivateChunkPipe implements AsyncIterable<Uint8Array> {
     this.#claimed = true
     return this.#read()
   }
-  async #nextSlot(): Promise<PrivateChunkSlot | undefined> {
-    await this.#available.promise
-    if (this.#failure !== undefined) throw this.#failure.cause
-    const slot = this.#slot
-    if (slot !== undefined) {
-      this.#slot = undefined
-      this.#available = notification()
-    }
-    return slot
+  #nextSlot(): Promise<PrivateChunkSlot | undefined> {
+    return mapAwaitFromSync(
+      () => this.#available.promise,
+      () => {
+        if (this.#failure !== undefined) throw this.#failure.cause
+        const slot = this.#slot
+        if (slot !== undefined) {
+          this.#slot = undefined
+          this.#available = notification()
+        }
+        return slot
+      }
+    )
   }
   async *#slots() {
     while (true) yield this.#nextSlot()

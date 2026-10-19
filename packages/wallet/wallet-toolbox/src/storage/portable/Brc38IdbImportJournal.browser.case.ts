@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB, openDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
@@ -49,7 +50,7 @@ async function requireNamespaceAbsent(databaseName: string): Promise<void> {
       absent = true
       request.transaction!.abort()
     }
-    request.onerror = () => (absent ? resolve() : reject(request.error))
+    request.onerror = () => (absent ? resolve() : reject(request.error ?? new Error('Namespace inspection failed')))
     request.onsuccess = () => {
       request.result.close()
       reject(new Error('Retired namespace still exists'))
@@ -179,9 +180,11 @@ export async function verifyIdbImportAtomicRollbackLostAckAndOriginalMappings():
       journal.commit(
         f.headerStep,
         prepared.destinationSha256,
-        async () => {
-          staleApplied = true
-          return f.headerDestination
+        () => {
+          return promiseFromSync(() => {
+            staleApplied = true
+            return f.headerDestination
+          })
         },
         'f'.repeat(64)
       )
@@ -199,9 +202,11 @@ export async function verifyIdbImportAtomicRollbackLostAckAndOriginalMappings():
     equal(await journal.read(), header)
     let replayed = false
     equal(
-      await journal.commit(f.headerStep, f.headerDestination, async () => {
-        replayed = true
-        throw new Error('Must not reapply')
+      await journal.commit(f.headerStep, f.headerDestination, () => {
+        return promiseFromSync(() => {
+          replayed = true
+          throw new Error('Must not reapply')
+        })
       }),
       header
     )
@@ -252,7 +257,9 @@ export async function verifyIdbImportAtomicRollbackLostAckAndOriginalMappings():
       references: []
     })
     await rejects(() =>
-      journal.commit({ ...f.rowStep, pageSha256: 'f'.repeat(64) }, f.rowDestination, async () => f.rowDestination)
+      journal.commit({ ...f.rowStep, pageSha256: 'f'.repeat(64) }, f.rowDestination, () =>
+        promiseFromSync(() => f.rowDestination)
+      )
     )
     equal(f.workingAllocation.used, 0)
   } finally {
@@ -401,12 +408,14 @@ export async function verifyIdbImportOriginalWorkingRefusalAndNamespaceDefaults(
       new StorageIdb({ ...StorageProvider.createStorageBaseOptions('test'), packed: {} }).dbName,
       'wallet-toolbox-testnet-packed-v1'
     )
-    await rejects(
-      async () =>
-        new StorageIdb({
-          ...StorageProvider.createStorageBaseOptions('test'),
-          isolatedRestore: { profileId: identifier() }
-        })
+    await rejects(() =>
+      promiseFromSync(
+        () =>
+          new StorageIdb({
+            ...StorageProvider.createStorageBaseOptions('test'),
+            isolatedRestore: { profileId: identifier() }
+          })
+      )
     )
   } finally {
     inspection.close()
@@ -441,21 +450,25 @@ export async function verifyIdbImportRejectsUnawaitedProviderAndMapperEffects():
     equal(await inspection.get('_wallet_packed_clock', 'clock'), clock)
     equal(await journal.read(), original)
     await rejects(() =>
-      journal.commit(f.headerStep, original.destinationSha256, async writer => {
-        void writer.transaction
-          .objectStore('users')
-          .add(f.user)
-          .catch(() => undefined)
-        return f.headerDestination
+      journal.commit(f.headerStep, original.destinationSha256, writer => {
+        return promiseFromSync(() => {
+          void writer.transaction
+            .objectStore('users')
+            .add(f.user)
+            .catch(() => undefined)
+          return f.headerDestination
+        })
       })
     )
     equal(await inspection.count('users'), 0)
     equal(await inspection.get('_wallet_packed_clock', 'clock'), clock)
     equal(await journal.read(), original)
     await rejects(() =>
-      journal.commit(f.headerStep, original.destinationSha256, async writer => {
-        void writer.map('provenTx', 1, 1)
-        return f.headerDestination
+      journal.commit(f.headerStep, original.destinationSha256, writer => {
+        return promiseFromSync(() => {
+          void writer.map('provenTx', 1, 1)
+          return f.headerDestination
+        })
       })
     )
     equal(await inspection.count(idbImportJournalStores.ids), 0)
@@ -640,9 +653,11 @@ export async function verifyIdbStreamedOriginalReferencesAreAtomicWithRowsAndChe
     equal((await inspector.get(packedIdbStores.contents, descriptor.content)).refs, 2)
     let applied = false
     equal(
-      await journal.commit(f.rowStep, complete.destinationSha256, async () => {
-        applied = true
-        throw new Error('Lost ACK must not reapply')
+      await journal.commit(f.rowStep, complete.destinationSha256, () => {
+        return promiseFromSync(() => {
+          applied = true
+          throw new Error('Lost ACK must not reapply')
+        })
       }),
       complete
     )

@@ -229,7 +229,12 @@ export class Brc38PrivateNativeOwnershipNode {
       const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
       database = actual.nativeKnex(createKnex, client, attempt.session, 0)
       owner.assertLive()
-      if (recovery !== undefined) await owner.requireComparison(database)
+      if (recovery !== undefined) {
+        // The Root0 pool is lazy. Acquire its actual physical lease before
+        // checking the retained kernel phase, as on comparison-root reopen.
+        await database.raw('SELECT brc38_private_comparison_phase() AS phase')
+        await owner.requireComparison(database)
+      }
       return Object.freeze({ owner, database })
     } catch (cause) {
       try {

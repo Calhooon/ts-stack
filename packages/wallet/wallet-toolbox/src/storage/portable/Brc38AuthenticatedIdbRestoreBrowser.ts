@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection } from '../idbPackedConnection'
 import {
@@ -130,18 +131,27 @@ async function runAuthenticatedBrc39BrowserRestore(
     cleanup = async () => {
       const causes: unknown[] = []
       for (const close of [
-        async () => {
-          await prepared?.close()
-          prepared = undefined
-        },
-        async () => {
-          await journal?.close()
-          journal = undefined
-        },
-        async () => {
-          await stage?.discard(new Error('Authenticated browser restore source retirement'))
-          stage = undefined
-        }
+        () =>
+          mapAwaitFromSync(
+            () => prepared?.close(),
+            () => {
+              prepared = undefined
+            }
+          ),
+        () =>
+          mapAwaitFromSync(
+            () => journal?.close(),
+            () => {
+              journal = undefined
+            }
+          ),
+        () =>
+          mapAwaitFromSync(
+            () => stage?.discard(new Error('Authenticated browser restore source retirement')),
+            () => {
+              stage = undefined
+            }
+          )
       ])
         try {
           await close()
@@ -333,14 +343,18 @@ async function runAuthenticatedBrc39BrowserRestore(
 
 /** Original inactive-only entry point remains additive and cannot read or
  * rewrite an activated profile. Complete reports confer no activation grant. */
-export async function restoreAuthenticatedBrc39BrowserInactive(
+export function restoreAuthenticatedBrc39BrowserInactive(
   source: AsyncIterable<Uint8Array>,
   password: string,
   selected: Brc38AuthenticatedIdbRestoreOptions
 ): Promise<Readonly<Brc38AuthenticatedIdbRestoreResult & { inactive: true }>> {
-  const result = await runAuthenticatedBrc39BrowserRestore(source, password, selected)
-  if (!result.inactive) invalid()
-  return Object.freeze({ ...result, inactive: true as const })
+  return mapAwaitFromSync(
+    () => runAuthenticatedBrc39BrowserRestore(source, password, selected),
+    result => {
+      if (!result.inactive) invalid()
+      return Object.freeze({ ...result, inactive: true as const })
+    }
+  )
 }
 
 /** Explicit publication/activation, including restart and lost ACK. EVERY
@@ -348,12 +362,14 @@ export async function restoreAuthenticatedBrc39BrowserInactive(
  * proofs and all13/global inventory under the original finite admission.
  * Existing activated profiles are inspected, never reinserted or overwritten.
  * This local transition does not select a different existing manager primary. */
-export async function publishAuthenticatedBrc39BrowserProfile(
+export function publishAuthenticatedBrc39BrowserProfile(
   source: AsyncIterable<Uint8Array>,
   password: string,
   selected: Brc38AuthenticatedIdbRestoreOptions,
   target: 'PUBLISHED' | 'ACTIVATED'
 ): Promise<Readonly<Brc38AuthenticatedIdbRestoreResult>> {
-  if (!['PUBLISHED', 'ACTIVATED'].includes(target)) invalid()
-  return await runAuthenticatedBrc39BrowserRestore(source, password, selected, target)
+  return awaitFromSync(() => {
+    if (!['PUBLISHED', 'ACTIVATED'].includes(target)) invalid()
+    return runAuthenticatedBrc39BrowserRestore(source, password, selected, target)
+  })
 }

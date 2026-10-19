@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   copyBrc38ImportDecodedValue,
   chargeBrc38ImportDecodedBudget,
@@ -592,9 +593,11 @@ export async function prepareBrc38ImportEntityMerge(
       const adapter = new Proxy(storage, {
         get(_target, property) {
           if (property === 'invalidatePreparedBeefs')
-            return async () => {
-              invalidates = true
-              return 0
+            return () => {
+              return promiseFromSync(() => {
+                invalidates = true
+                return 0
+              })
             }
           if (property === 'findTransactions' || property === 'findOutputs')
             return async (args: { partial: Record<string, string | number>; trx: Knex.Transaction }) => {
@@ -609,18 +612,20 @@ export async function prepareBrc38ImportEntityMerge(
               return await secondary(trx, storage, scope.userId, index, args.partial, budget)
             }
           if (typeof property !== 'string' || !allowed.has(property)) return invalid()
-          return async (...args: unknown[]) => {
-            if (args.at(-1) !== trx || operations.length >= 8192) invalid()
-            const mapping =
-              property === 'insert' + form.method && form.entity !== undefined && typeof incomingId === 'number'
-                ? { entity: form.entity, incomingId }
-                : undefined
-            operations.push({
-              method: property,
-              arguments: copy(args.slice(0, -1), budget),
-              ...(mapping === undefined ? {} : { mapping })
+          return (...args: unknown[]) => {
+            return promiseFromSync(() => {
+              if (args.at(-1) !== trx || operations.length >= 8192) invalid()
+              const mapping =
+                property === 'insert' + form.method && form.entity !== undefined && typeof incomingId === 'number'
+                  ? { entity: form.entity, incomingId }
+                  : undefined
+              operations.push({
+                method: property,
+                arguments: copy(args.slice(0, -1), budget),
+                ...(mapping === undefined ? {} : { mapping })
+              })
+              return 1
             })
-            return 1
           }
         }
       })

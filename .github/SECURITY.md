@@ -148,3 +148,15 @@ For a suspected release compromise:
 5. deprecate and forward-fix immutable npm versions or roll deployments back to
    a previously verified image digest; and
 6. coordinate advisory, consumer guidance, and post-incident control changes.
+
+The separately reviewed PR569 analysis operations in
+[`governance/pr569-reviewed-analysis-exceptions.json`](../governance/pr569-reviewed-analysis-exceptions.json)
+are the sole additional exception: CodeQL353 intentional private JSON evidence
+storage and two exact Sonar S2612 required public artifact permissions. Owner
+BraydenLangley reviewed the operator-delegated decision on October 19. Exact
+alert identities and SHA-256 source checks apply only to PR569 before October 24
+at 23:59:59 UTC. The Sonar inventory and original failed verdict remain visible;
+reviewed permission keys are reported separately. Their original security C
+metric is covered only when both exact findings are present; all other
+security ratings and findings retain strict enforcement. Every other finding, metric,
+platform and merge gate remains required. Changed source requires fresh review.

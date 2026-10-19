@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../../utility/promiseFromSync'
 import {
   parseSnapshotSyncContentPosition,
   assertSnapshotSyncContentPositionNotFuture,
@@ -25,14 +26,17 @@ export class RemoteSnapshotOpeningCleanupError extends Error {
   }
 }
 
-async function accepted(
+function accepted(
   transport: SnapshotArchiveTransport,
   lease: RemoteSnapshotLease,
   request: SnapshotArchiveReaderRequest
 ): Promise<Readonly<SnapshotArchiveRequestReceipt> | undefined> {
-  // The exact durable tuple deduplicates admission; never renew or recapture.
-  const result = await lease.runIdempotent(signal => transport.admit(request, signal))
-  return result.outcome === 'accepted' ? result.receipt : undefined
+  return mapAwaitFromSync(
+    () => lease.runIdempotent(signal => transport.admit(request, signal)),
+    result => {
+      return result.outcome === 'accepted' ? result.receipt : undefined
+    }
+  )
 }
 
 async function waitForCapture(

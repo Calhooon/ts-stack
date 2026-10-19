@@ -1,3 +1,4 @@
+import { awaitVoidFromSync } from '../../../utility/promiseFromSync'
 import { ProvenTxReqStatus, ProvenTxReqTerminalStatus, ReqHistoryNote } from '../../../sdk/types'
 import { TrxToken } from '../../../sdk/WalletStorage.interfaces'
 import { WERR_INTERNAL, WERR_INVALID_PARAMETER } from '../../../sdk/WERR_errors'
@@ -353,9 +354,7 @@ export class EntityProvenTxReq extends EntityBase<TableProvenTxReq> {
       await sp.updateProvenTxReqDynamics(this.id, update, trx)
     } else {
       const wsm = storage as WalletStorageManager
-      await wsm.runAsStorageProvider(async sp => {
-        await sp.updateProvenTxReqDynamics(this.id, update, trx)
-      })
+      await wsm.runAsStorageProvider(sp => awaitVoidFromSync(() => sp.updateProvenTxReqDynamics(this.id, update, trx)))
     }
   }
 

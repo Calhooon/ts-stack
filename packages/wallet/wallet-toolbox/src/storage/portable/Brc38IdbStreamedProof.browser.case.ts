@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { MerklePath, Script, Transaction } from '@bsv/sdk'
 import { toBase64 } from '@bsv/sdk/primitives/utils'
@@ -99,14 +100,17 @@ async function fixture() {
       ),
       bytes = new TextEncoder().encode(JSON.stringify(data))
     async function* chunks() {
-      for (let offset = 0; offset < bytes.length; offset += 4096) yield bytes.slice(offset, offset + 4096)
+      for (let offset = 0; offset < bytes.length; offset += 4096)
+        yield Promise.resolve(bytes.slice(offset, offset + 4096))
     }
     await readBrc38JsonStream(
       chunks(),
       {
         streamedFields: sink,
-        provisionalRow: async () => {
-          throw new Error('Streamed proof fixture fell through to ordinary rows')
+        provisionalRow: () => {
+          return promiseFromSync(() => {
+            throw new Error('Streamed proof fixture fell through to ordinary rows')
+          })
         },
         validateCompleted: async (header, counts) => await semantic.validateCompleted(header, counts),
         discard: async cause => await source.discard(cause)
@@ -130,16 +134,21 @@ export async function verifyPrivateIdbProofCurrentChainAndIndependentHeader(): P
   let roots = 0,
     headers = 0
   const services = {
-    getChainTracker: async () => ({
-      isValidRootForHeight: async (root: string, height: number) => {
-        roots++
-        return root === f.txid && height === 100
-      }
-    }),
-    getHeaderForHeight: async (height: number) => {
-      headers++
-      equal(height, 100)
-      return Array.from(f.header)
+    getChainTracker: () =>
+      promiseFromSync(() => ({
+        isValidRootForHeight: (root: string, height: number) => {
+          return promiseFromSync(() => {
+            roots++
+            return root === f.txid && height === 100
+          })
+        }
+      })),
+    getHeaderForHeight: (height: number) => {
+      return promiseFromSync(() => {
+        headers++
+        equal(height, 100)
+        return Array.from(f.header)
+      })
     }
   } as unknown as WalletServices
   try {
@@ -170,12 +179,15 @@ export async function verifyPrivateIdbProofCurrentChainAndIndependentHeader(): P
     equal([roots, headers, f.workingAllocation.used], [1, 1, 0])
     const stale = {
         ...services,
-        getChainTracker: async () => ({
-          isValidRootForHeight: async () => {
-            roots++
-            return false
-          }
-        })
+        getChainTracker: () =>
+          promiseFromSync(() => ({
+            isValidRootForHeight: () => {
+              return promiseFromSync(() => {
+                roots++
+                return false
+              })
+            }
+          }))
       } as unknown as WalletServices,
       refused = await failure(() =>
         inspectBrc38PrivateIdbStreamedProof(f.source, { getServices: () => stale }, 0, f.policy)
@@ -184,7 +196,7 @@ export async function verifyPrivateIdbProofCurrentChainAndIndependentHeader(): P
     equal([roots, headers, f.workingAllocation.used], [2, 1, 0])
     const wrong = {
       ...services,
-      getHeaderForHeight: async () => Array.from(new Uint8Array(80))
+      getHeaderForHeight: () => promiseFromSync(() => Array.from(new Uint8Array(80)))
     } as unknown as WalletServices
     await failure(() => inspectBrc38PrivateIdbStreamedProof(f.source, { getServices: () => wrong }, 0, f.policy))
     const copied = Object.create(Object.getPrototypeOf(f.source)) as Brc38PrivateIdbStage
@@ -215,15 +227,18 @@ export async function verifyPrivateIdbProofLateNetworkRetainsOriginalResources()
         entered = done
       }),
       services = {
-        getChainTracker: async () => ({
-          isValidRootForHeight: async () => {
-            entered()
-            return await pending
-          }
-        }),
-        getHeaderForHeight: async () => {
-          headers++
-          return Array.from(f.header)
+        getChainTracker: () =>
+          promiseFromSync(() => ({
+            isValidRootForHeight: async () => {
+              entered()
+              return await pending
+            }
+          })),
+        getHeaderForHeight: () => {
+          return promiseFromSync(() => {
+            headers++
+            return Array.from(f.header)
+          })
         }
       } as unknown as WalletServices
     let cleanup: Brc38StagingCleanupError | undefined

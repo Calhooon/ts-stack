@@ -5460,6 +5460,13 @@ are still required, and the measured latency remains a performance baseline.
 
 ## Mutation test compiler configuration
 
+Wallet Jest mutation runs serialize the physical Worker asset and fixture
+lifecycle shared by a Stryker sandbox. The canonical portable-chunks campaign
+also restarts its test worker after twenty runs, bounding the observed retained
+Jest VM contexts. This changes neither mutant/test selection nor score, invalid,
+NoCoverage or timeout rules. Earlier concurrent and unbounded-reuse crashes are
+failed diagnostic samples; complete final-source reports remain required.
+
 The canonical mutation configuration captures the original source checkout
 path to `tsconfig.jest.json` before Stryker copies Jest and its test root. It inherits the package's strict compiler settings and
 preserves the existing CommonJS/bundler test transform. The relocated-root
@@ -6353,3 +6360,16 @@ remains scoped to its own window. Separate recovery advertisements preserve old
 peer negotiation. Persisted references contain comparison DATA, never SQL source
 or writer authority. These paths do not grant primary selection. Remote primary
 handoff, stale-writer fencing and full-system qualification remain required.
+
+The unpublished 2.15.0 readiness corrections acquire the actual native comparison
+lease before recovery admission and recheck committed `WAL_ACTIVATING` state
+before physical promotion. Published native wallets enable SQLite passive
+checkpointing after promotion and reopen; retained readers, original WAL quotas,
+ABI and pins remain authoritative. Schema verification compares exact SQL bytes
+inside SQLite and returns bounded scalar counts. Prepared-content admission
+performs the complete fresh binary/TEXT/preparation checks once through their
+existing composition instead of repeating full nested checks. Forwarding operations share
+Promise and await implementations to reduce generated mobile state machines,
+while preserving immediate work, fresh promises and original rejection objects.
+No API, wire, persisted-schema or consumer migration is required. Qualification
+must cover the final complete source; earlier partial runs do not establish it.

@@ -280,7 +280,7 @@ export async function prepareIdbSnapshotSyncProvenTxs(
               if (new SHA256().update(loan.bytes).digestHex() !== extent.sha256) invalid()
               let value = ''
               for (let offset = 0; offset < loan.bytes.length; offset += 2)
-                value += String.fromCharCode(loan.bytes[offset] | (loan.bytes[offset + 1] << 8))
+                value += String.fromCodePoint(loan.bytes[offset] | (loan.bytes[offset + 1] << 8))
               currentFields[name] = value
             } finally {
               loan.close()

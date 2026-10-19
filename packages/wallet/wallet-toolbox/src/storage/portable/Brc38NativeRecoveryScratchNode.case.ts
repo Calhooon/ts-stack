@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { expect } from '@jest/globals'
 import createKnex from 'knex'
 import { join } from 'node:path'
@@ -68,7 +69,7 @@ export async function brc38PendingNativeRecoveryScratchCase(
       executable,
       Object.freeze({ ...retired }) as Brc38NativeLocalBaselineSource,
       policy,
-      async () => undefined
+      () => promiseFromSync(() => undefined)
     )
   ).rejects.toThrow()
   await expect(
@@ -79,7 +80,7 @@ export async function brc38PendingNativeRecoveryScratchCase(
       executable,
       retired,
       policy,
-      async () => undefined
+      () => promiseFromSync(() => undefined)
     )
   ).rejects.toThrow('Actual pending recovery target inventory')
 }

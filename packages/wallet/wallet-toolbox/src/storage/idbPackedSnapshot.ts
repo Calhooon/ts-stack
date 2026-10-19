@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, mapAwaitFromSync } from '../utility/promiseFromSync'
 import { packedIdbSnapshotContentRevision } from './snapshot/PackedIdbSnapshotContentRevision'
 import {
   parseSnapshotSyncContentPosition,
@@ -142,36 +143,39 @@ function unmarked(value: unknown): Record<string, unknown> {
   if (Object.keys(packed.extents).length !== 0) packedIdbInvalid()
   return packed.fields
 }
-async function versionAt(
+function versionAt(
   tx: PackedIdbTransaction,
   store: string,
   key: IDBValidKey,
   revision: number
 ): Promise<PackedIdbRow | undefined> {
-  const cursor = await tx
-    .objectStore(packedIdbStores.versions)
-    .openCursor(IDBKeyRange.bound([store, key, 0], [store, key, revision]), 'prev')
-  if (cursor === null) return undefined
-  const value = cursor.value
-  if (
-    value.store !== store ||
-    indexedDB.cmp(value.key as IDBValidKey, key) !== 0 ||
-    typeof value.revision !== 'number' ||
-    value.revision > revision ||
-    typeof value.deleted !== 'boolean'
+  return mapAwaitFromSync(
+    () =>
+      tx
+        .objectStore(packedIdbStores.versions)
+        .openCursor(IDBKeyRange.bound([store, key, 0], [store, key, revision]), 'prev'),
+    cursor => {
+      if (cursor === null) return undefined
+      const value = cursor.value
+      if (
+        value.store !== store ||
+        indexedDB.cmp(value.key as IDBValidKey, key) !== 0 ||
+        typeof value.revision !== 'number' ||
+        value.revision > revision ||
+        typeof value.deleted !== 'boolean'
+      )
+        packedIdbInvalid()
+      return value.deleted ? undefined : unpackPackedIdbMetadata(value.value)
+    }
   )
-    packedIdbInvalid()
-  return value.deleted ? undefined : unpackPackedIdbMetadata(value.value)
 }
-async function own(
-  tx: PackedIdbTransaction,
-  store: string,
-  id: unknown,
-  revision: number,
-  userId: number
-): Promise<boolean> {
-  const row = await versionAt(tx, store, packedIdbPositive(id), revision)
-  return row !== undefined && row.fields.userId === userId
+function own(tx: PackedIdbTransaction, store: string, id: unknown, revision: number, userId: number): Promise<boolean> {
+  return mapAwaitFromSync(
+    () => versionAt(tx, store, packedIdbPositive(id), revision),
+    row => {
+      return row !== undefined && row.fields.userId === userId
+    }
+  )
 }
 /** Historic reverse references are looked up at the same captured ceiling as
  * the parent rows. A current index cannot establish an old archive closure. */
@@ -226,23 +230,26 @@ async function rowSelected(
   }
   if (table === 'provenTxReqs') {
     if (typeof r.txid !== 'string' || !/^[0-9a-f]{64}$/.test(r.txid)) packedIdbInvalid()
-    return await referenced(tx, 'transactions', 'txid', r.txid, revision, async txRow => txRow.fields.userId === userId)
+    return await referenced(tx, 'transactions', 'txid', r.txid, revision, txRow =>
+      promiseFromSync(() => txRow.fields.userId === userId)
+    )
   }
   if (table === 'provenTxs') {
     const id = packedIdbPositive(r.provenTxId)
-    if (await referenced(tx, 'transactions', 'proof', id, revision, async txRow => txRow.fields.userId === userId))
-      return true
-    return await referenced(tx, 'proven_tx_reqs', 'proof', id, revision, async req => {
-      if (typeof req.fields.txid !== 'string') packedIdbInvalid()
-      return await referenced(
-        tx,
-        'transactions',
-        'txid',
-        req.fields.txid,
-        revision,
-        async txRow => txRow.fields.userId === userId
+    if (
+      await referenced(tx, 'transactions', 'proof', id, revision, txRow =>
+        promiseFromSync(() => txRow.fields.userId === userId)
       )
-    })
+    )
+      return true
+    return await referenced(tx, 'proven_tx_reqs', 'proof', id, revision, req =>
+      awaitFromSync(() => {
+        if (typeof req.fields.txid !== 'string') packedIdbInvalid()
+        return referenced(tx, 'transactions', 'txid', req.fields.txid, revision, txRow =>
+          promiseFromSync(() => txRow.fields.userId === userId)
+        )
+      })
+    )
   }
   if (r.userId !== userId) return false
   if (table === 'certificateFields' && !(await own(tx, 'certificates', r.certificateId, revision, userId)))
@@ -425,91 +432,99 @@ export async function openPackedIdbSnapshot(
       inFlight = undefined
     }
   }
-  const page = async <T extends WalletSnapshotTable>(
+  const page = <T extends WalletSnapshotTable>(
     table: T,
     previous: WalletSnapshotCursor | undefined,
     limits: PackedIdbPageLimits | undefined,
     hydrate: boolean
   ): Promise<(WalletSnapshotPage<T> & { examined: number }) | PackedIdbMetadataPage<T>> =>
-    operation(async tx => {
-      if (!Object.hasOwn(tables, table)) packedIdbInvalid()
-      const maximumRows = bounded(limits?.maxRows, 128, 256),
-        maximumBytes = bounded(limits?.maxBytes, 262144, packedIdbAllocationBytes),
-        maximumExamined = bounded(limits?.maxExamined, 256, 256),
-        after = previous === undefined ? undefined : keyFrom(table, previous),
-        store = tables[table]
-      if (limits?.order !== undefined && !['native', 'portable', 'replica'].includes(limits.order)) packedIdbInvalid()
-      const order = limits?.order ?? 'native',
-        orderedKey = (key: IDBValidKey): IDBValidKey =>
-          order === 'portable'
-            ? packedIdbPortableKey(store, key)
-            : order === 'replica'
-              ? packedIdbReplicaKey(store, key)
-              : key,
-        seek = after === undefined ? undefined : orderedKey(after),
-        range = IDBKeyRange.bound(
-          seek === undefined ? [store] : [store, seek],
-          [store + '\u0000'],
-          after !== undefined
-        ),
-        heads = tx.objectStore(packedIdbStores.heads)
-      let cursor = order === 'native' ? await heads.openCursor(range) : await heads.index(order).openCursor(range),
-        examined = 0,
-        payloadBytes = 0,
-        last = previous
-      const pending: Array<{ row: PackedIdbRow; cursor: WalletSnapshotCursor }> = []
-      while (cursor !== null && examined < maximumExamined && pending.length < maximumRows) {
-        current()
-        const native = packedIdbKey(cursor.value.key)
-        if (
-          cursor.value.store !== store ||
-          indexedDB.cmp(cursor.primaryKey, [store, native]) !== 0 ||
-          indexedDB.cmp(cursor.key, [store, orderedKey(native)]) !== 0 ||
-          JSON.stringify(cursor.value.portableKey) !== JSON.stringify(packedIdbPortableKey(store, native)) ||
-          JSON.stringify(cursor.value.replicaKey) !== JSON.stringify(packedIdbReplicaKey(store, native))
-        )
-          packedIdbInvalid()
-        const row = await versionAt(tx, store, native, source.revision)
-        if (row !== undefined && (await rowSelected(tx, table, row, source.revision, source.userId))) {
-          const charge = hydrate
-            ? packedIdbRowAllocation(row, false)
-            : packedIdbMetadataCharge(row.fields) + Object.keys(row.extents).length * 256
-          if (charge > maximumBytes - payloadBytes) {
-            if (pending.length === 0)
-              throw new SnapshotResourceLimitError(
-                'Packed IndexedDB snapshot row exceeds selected budget; use field metadata/extents'
-              )
-            break
-          }
-          pending.push({ row, cursor: position(table, native) })
-          payloadBytes += charge
-        }
-        examined++
-        last = position(table, native)
-        cursor = await cursor.continue()
-      }
-      if (hydrate) {
-        const rows: Array<PackedSnapshotRow<WalletSnapshotTables[T]>> = []
-        for (const item of pending)
-          rows.push(
-            (await hydratePackedIdbRow(tx, item.row, false, maximumBytes)) as unknown as PackedSnapshotRow<
-              WalletSnapshotTables[T]
-            >
+    promiseFromSync(() =>
+      operation(async tx => {
+        if (!Object.hasOwn(tables, table)) packedIdbInvalid()
+        const maximumRows = bounded(limits?.maxRows, 128, 256),
+          maximumBytes = bounded(limits?.maxBytes, 262144, packedIdbAllocationBytes),
+          maximumExamined = bounded(limits?.maxExamined, 256, 256),
+          after = previous === undefined ? undefined : keyFrom(table, previous),
+          store = tables[table]
+        if (limits?.order !== undefined && !['native', 'portable', 'replica'].includes(limits.order)) packedIdbInvalid()
+        const order = limits?.order ?? 'native',
+          orderedKey = (key: IDBValidKey): IDBValidKey =>
+            order === 'portable'
+              ? packedIdbPortableKey(store, key)
+              : order === 'replica'
+                ? packedIdbReplicaKey(store, key)
+                : key,
+          seek = after === undefined ? undefined : orderedKey(after),
+          range = IDBKeyRange.bound(
+            seek === undefined ? [store] : [store, seek],
+            [store + '\u0000'],
+            after !== undefined
+          ),
+          heads = tx.objectStore(packedIdbStores.heads)
+        let cursor = order === 'native' ? await heads.openCursor(range) : await heads.index(order).openCursor(range),
+          examined = 0,
+          payloadBytes = 0,
+          last = previous
+        const pending: Array<{ row: PackedIdbRow; cursor: WalletSnapshotCursor }> = []
+        while (cursor !== null && examined < maximumExamined && pending.length < maximumRows) {
+          current()
+          const native = packedIdbKey(cursor.value.key)
+          if (
+            cursor.value.store !== store ||
+            indexedDB.cmp(cursor.primaryKey, [store, native]) !== 0 ||
+            indexedDB.cmp(cursor.key, [store, orderedKey(native)]) !== 0 ||
+            JSON.stringify(cursor.value.portableKey) !== JSON.stringify(packedIdbPortableKey(store, native)) ||
+            JSON.stringify(cursor.value.replicaKey) !== JSON.stringify(packedIdbReplicaKey(store, native))
           )
-        return { rows, payloadBytes, examined, done: cursor === null, ...(last === undefined ? {} : { cursor: last }) }
-      }
-      return {
-        rows: pending.map(item => ({
-          fields: item.row.fields as Partial<PackedSnapshotRow<WalletSnapshotTables[T]>>,
-          extents: item.row.extents,
-          cursor: item.cursor
-        })),
-        payloadBytes,
-        examined,
-        done: cursor === null,
-        ...(last === undefined ? {} : { cursor: last })
-      }
-    })
+            packedIdbInvalid()
+          const row = await versionAt(tx, store, native, source.revision)
+          if (row !== undefined && (await rowSelected(tx, table, row, source.revision, source.userId))) {
+            const charge = hydrate
+              ? packedIdbRowAllocation(row, false)
+              : packedIdbMetadataCharge(row.fields) + Object.keys(row.extents).length * 256
+            if (charge > maximumBytes - payloadBytes) {
+              if (pending.length === 0)
+                throw new SnapshotResourceLimitError(
+                  'Packed IndexedDB snapshot row exceeds selected budget; use field metadata/extents'
+                )
+              break
+            }
+            pending.push({ row, cursor: position(table, native) })
+            payloadBytes += charge
+          }
+          examined++
+          last = position(table, native)
+          cursor = await cursor.continue()
+        }
+        if (hydrate) {
+          const rows: Array<PackedSnapshotRow<WalletSnapshotTables[T]>> = []
+          for (const item of pending)
+            rows.push(
+              (await hydratePackedIdbRow(tx, item.row, false, maximumBytes)) as unknown as PackedSnapshotRow<
+                WalletSnapshotTables[T]
+              >
+            )
+          return {
+            rows,
+            payloadBytes,
+            examined,
+            done: cursor === null,
+            ...(last === undefined ? {} : { cursor: last })
+          }
+        }
+        return {
+          rows: pending.map(item => ({
+            fields: item.row.fields as Partial<PackedSnapshotRow<WalletSnapshotTables[T]>>,
+            extents: item.row.extents,
+            cursor: item.cursor
+          })),
+          payloadBytes,
+          examined,
+          done: cursor === null,
+          ...(last === undefined ? {} : { cursor: last })
+        }
+      })
+    )
   const close = (): Promise<void> => {
     if (closePromise !== undefined) return closePromise
     closed = true
@@ -642,38 +657,39 @@ export async function openPackedIdbSnapshot(
             : { cursor: { ...metadata.cursor, after: [...metadata.cursor.after] } })
         }
       },
-      readFieldExtent: async (table, cursor, field, offset, length, selectedExpected) => {
-        const expected = Object.freeze({
-          kind: selectedExpected.kind,
-          bytes: selectedExpected.bytes,
-          sha256: selectedExpected.sha256
+      readFieldExtent: (table, cursor, field, offset, length, selectedExpected) =>
+        awaitFromSync(() => {
+          const expected = Object.freeze({
+            kind: selectedExpected.kind,
+            bytes: selectedExpected.bytes,
+            sha256: selectedExpected.sha256
+          })
+          return operation(async tx => {
+            if (
+              !Object.hasOwn(tables, table) ||
+              typeof field !== 'string' ||
+              field.length < 1 ||
+              field.length > 128 ||
+              cursor.archivePosition !== undefined ||
+              !Number.isSafeInteger(expected.bytes) ||
+              expected.bytes < 0 ||
+              (expected.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(expected.sha256))
+            )
+              packedIdbInvalid()
+            const row = await versionAt(tx, tables[table], keyFrom(table, cursor), source.revision)
+            if (row === undefined || !(await rowSelected(tx, table, row, source.revision, source.userId)))
+              packedIdbInvalid()
+            const actual = row.extents[field]
+            if (
+              actual === undefined ||
+              expected.kind !== (actual.kind === 'utf16' ? 'utf16le' : 'binary') ||
+              actual.bytes !== expected.bytes ||
+              (expected.sha256 !== undefined && actual.sha256 !== expected.sha256)
+            )
+              packedIdbInvalid()
+            return await readPackedIdbExtent(tx, actual, offset, length)
+          })
         })
-        return await operation(async tx => {
-          if (
-            !Object.hasOwn(tables, table) ||
-            typeof field !== 'string' ||
-            field.length < 1 ||
-            field.length > 128 ||
-            cursor.archivePosition !== undefined ||
-            !Number.isSafeInteger(expected.bytes) ||
-            expected.bytes < 0 ||
-            (expected.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(expected.sha256))
-          )
-            packedIdbInvalid()
-          const row = await versionAt(tx, tables[table], keyFrom(table, cursor), source.revision)
-          if (row === undefined || !(await rowSelected(tx, table, row, source.revision, source.userId)))
-            packedIdbInvalid()
-          const actual = row.extents[field]
-          if (
-            actual === undefined ||
-            expected.kind !== (actual.kind === 'utf16' ? 'utf16le' : 'binary') ||
-            actual.bytes !== expected.bytes ||
-            (expected.sha256 !== undefined && actual.sha256 !== expected.sha256)
-          )
-            packedIdbInvalid()
-          return await readPackedIdbExtent(tx, actual, offset, length)
-        })
-      }
     },
     readPage: async (table, cursor, limits) =>
       (await page(table, cursor, limits, true)) as WalletSnapshotPage<typeof table> & { examined: number },

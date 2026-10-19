@@ -1,3 +1,4 @@
+import { awaitFromSync, awaitVoidFromSync } from '../../utility/promiseFromSync'
 import {
   Brc38SemanticStage,
   type Brc38SemanticStageOptions,
@@ -190,7 +191,7 @@ export class Brc38StreamedSemanticStage {
           pending.row.texts
         )
       },
-      count: async table => await store.count(table),
+      count: table => awaitFromSync(() => store.count(table)),
       row: async (table, index) => {
         const actual = await store.streamedRow(table, index)
         return actual === undefined ? undefined : await this.checkedView(table, index, detach(actual))
@@ -203,9 +204,9 @@ export class Brc38StreamedSemanticStage {
         await this.checkedTexts(table, index, detached)
         return Object.freeze(Object.keys(detached.texts ?? {}))
       },
-      has: async (namespace, key) => await store.has(namespace, key),
-      seal: async (header, counts) => await store.sealStreamed(header, counts),
-      discard: async cause => await store.discard(cause)
+      has: (namespace, key) => awaitFromSync(() => store.has(namespace, key)),
+      seal: (header, counts) => awaitFromSync(() => store.sealStreamed(header, counts)),
+      discard: cause => awaitFromSync(() => store.discard(cause))
     }
     this.semantic = new Brc38SemanticStage(bridge, options)
   }
@@ -250,7 +251,7 @@ export class Brc38StreamedSemanticStage {
     if (this.pending !== undefined) throw new Error('Field-aware semantic staging still owns a provisional row')
     await this.semantic.validateCompleted(header, counts)
   }
-  async discard(cause: unknown): Promise<void> {
-    await this.semantic.discard(cause)
+  discard(cause: unknown): Promise<void> {
+    return awaitVoidFromSync(() => this.semantic.discard(cause))
   }
 }

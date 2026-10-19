@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Brc38StructuredProjectionOwners } from './Brc38StructuredProjectionOwners'
 import { brc38WorkingAllocation, type Brc38WorkingAllocation, type Brc38WorkingCharge } from './Brc38WorkingAllocation'
 import { Brc38CleanupScope, Brc38StagingCleanupError } from './Brc38StagingCleanupError'
@@ -506,7 +507,7 @@ export class Brc38StreamedHistoryProjection {
                   chunks: (maximum: number) =>
                     measurement ? projection.measureChunks(maximum) : projection.chunks(maximum),
                   check,
-                  close: measurement ? async () => undefined : cleanup
+                  close: measurement ? () => promiseFromSync(() => undefined) : cleanup
                 }
           for await (const bytes of stringifyBrc38StructuredJsonSpan(
             projection.sources[0],

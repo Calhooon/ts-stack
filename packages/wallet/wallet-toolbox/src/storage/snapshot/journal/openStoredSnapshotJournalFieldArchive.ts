@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import type { StorageKnex } from '../../StorageKnex'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { KnexSnapshotArchiveStore } from '../archive/KnexSnapshotArchiveStore'
@@ -62,8 +63,10 @@ export async function openStoredSnapshotJournalFieldArchive(
       // The inherited network call is unreachable: all six operations below
       // perform concrete SQL ownership checks on this original root.
       super(
-        async () => {
-          throw new WERR_INVALID_OPERATION('Stored artifact has no network source')
+        () => {
+          return promiseFromSync(() => {
+            throw new WERR_INVALID_OPERATION('Stored artifact has no network source')
+          })
         },
         identityKey,
         manifest.binding.sourceStorage.storageIdentityKey,
@@ -139,8 +142,10 @@ export async function openStoredSnapshotJournalFieldArchive(
       await this.actual()
       return bytes
     }
-    override async cancelRequest() {
-      this.stopped = true
+    override cancelRequest() {
+      return promiseFromSync(() => {
+        this.stopped = true
+      })
     }
   }
   return await openRemoteSnapshotJournalFieldArchive(new StoredTransport(), request.position ?? undefined, {

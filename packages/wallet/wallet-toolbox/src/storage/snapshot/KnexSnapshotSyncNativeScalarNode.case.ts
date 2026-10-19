@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import { KnexSnapshotSyncDestination, type KnexSnapshotSyncFieldRead } from './KnexSnapshotSyncDestination'
 import type { SnapshotSyncCheckpoint } from './SnapshotSync'
@@ -17,8 +18,10 @@ export async function verifyNativeScalarFieldSession(
   }>
 ): Promise<void> {
   const { storage, source, checkpoint, expectedBaskets } = fixture,
-    destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Scalar field component performed proof I/O')
+    destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Scalar field component performed proof I/O')
+      })
     })
   if (
     checkpoint.tableIndex !== 1 ||

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../src/utility/promiseFromSync'
 import { MerklePath, Script, Transaction } from '@bsv/sdk'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import type { WalletServices } from '../src/sdk/WalletServices.interfaces'
@@ -102,12 +103,15 @@ export async function seedSnapshotMeasurement(
   })
   await storage.updateUser(user.userId, { activeStorage: settings.storageIdentityKey })
   const services = {
-    getChainTracker: async () => ({
-      isValidRootForHeight: async (root: string, height: number) => root === txid && height === 100
-    }),
-    getHeaderForHeight: async (height: number) => {
-      if (height !== 100) throw new Error('Measurement requested a different independent header')
-      return Array.from(header)
+    getChainTracker: () =>
+      promiseFromSync(() => ({
+        isValidRootForHeight: (root: string, height: number) => promiseFromSync(() => root === txid && height === 100)
+      })),
+    getHeaderForHeight: (height: number) => {
+      return promiseFromSync(() => {
+        if (height !== 100) throw new Error('Measurement requested a different independent header')
+        return Array.from(header)
+      })
     }
   } as unknown as WalletServices
   // Avoid starting unrelated backfill/service tasks in a measurement fixture.

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import { createHash } from 'node:crypto'
 import {
@@ -127,9 +128,11 @@ export class NativeSnapshotSyncStructuredSource {
     this.check()
     const allocation = this.working.claim(16384 + 8 * 65536)
     try {
-      await this.destination.inspectNativeFieldSession(this.#checkpoint, this.signal, async read => {
-        this.check()
-        if (read.sourceUserId !== this.#binding.userId || this.expiresAt > read.expiresAt) invalid()
+      await this.destination.inspectNativeFieldSession(this.#checkpoint, this.signal, read => {
+        return promiseFromSync(() => {
+          this.check()
+          if (read.sourceUserId !== this.#binding.userId || this.expiresAt > read.expiresAt) invalid()
+        })
       })
       this.check()
     } finally {
@@ -331,8 +334,10 @@ export class NativeSnapshotJournalStructuredSource {
   async fresh(): Promise<void> {
     const allowance = this.working.claim(16384 + 8 * 65536)
     try {
-      await this.inspect(async () => {
-        this.check()
+      await this.inspect(() => {
+        return promiseFromSync(() => {
+          this.check()
+        })
       })
     } finally {
       allowance.close()

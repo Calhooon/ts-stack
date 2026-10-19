@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { readBrc38ImportJournal, type Brc38ImportJournalAdmission } from './Brc38ImportJournal'
@@ -820,24 +821,26 @@ async function inspectFieldRows(
         if (baseline) {
           let copiedCharge: Brc38WorkingCharge | undefined
           try {
-            const original = await Brc38NativeLocalBaselineSource.withOwnedRow(source, localTable, rowId, async row => {
-              check()
-              const bytes = Object.values(row.metadata).reduce<number>(
-                (sum, value) => sum + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
-                0
-              )
-              if (!Number.isSafeInteger(bytes) || bytes > 1048576 || row.fields.length > 64) invalid()
-              copiedCharge = working.claim(131072 + 32 * bytes + 1024 * row.fields.length)
-              if (
-                Object.values(row.metadata).some(
-                  value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+            const original = await Brc38NativeLocalBaselineSource.withOwnedRow(source, localTable, rowId, row => {
+              return promiseFromSync(() => {
+                check()
+                const bytes = Object.values(row.metadata).reduce<number>(
+                  (sum, value) => sum + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
+                  0
                 )
-              )
-                invalid()
-              return Object.freeze({
-                rowId: row.rowId,
-                metadata: Object.freeze({ ...row.metadata }),
-                fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+                if (!Number.isSafeInteger(bytes) || bytes > 1048576 || row.fields.length > 64) invalid()
+                copiedCharge = working.claim(131072 + 32 * bytes + 1024 * row.fields.length)
+                if (
+                  Object.values(row.metadata).some(
+                    value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+                  )
+                )
+                  invalid()
+                return Object.freeze({
+                  rowId: row.rowId,
+                  metadata: Object.freeze({ ...row.metadata }),
+                  fields: Object.freeze(row.fields.map(field => Object.freeze({ ...field })))
+                })
               })
             })
             await inspect(original)

@@ -223,7 +223,13 @@ interface NativeDriver {
   requireSourceRetirementFrozenOwned(session: NativeSession): Promise<void>
   requireSourceRetirementProcessFrozenOwned(session: NativeSession): Promise<void>
   withOwnedNativeImmediateWriter<T>(root: Knex, work: (writer: Knex.Transaction) => Promise<T>): Promise<T>
-  nativeKnex(knex: typeof createKnex, client: unknown, session: NativeSession, slot: number): Knex
+  nativeKnex(
+    knex: typeof createKnex,
+    client: unknown,
+    session: NativeSession,
+    slot: number,
+    passiveCheckpoint?: boolean
+  ): Knex
   queryOwned(
     session: NativeSession,
     slot: number,
@@ -1308,7 +1314,7 @@ export class Brc38PublishedProfileNode {
         throw new Error('Composed native kernel lost its actual physical owner binding')
       const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
       owner.catalog = driver().nativeKnex(createKnex, client, owner.session, 2)
-      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0)
+      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0, true)
       owner.token = owner.session.identity
       this.#db = owner.catalog
       this.#closed = false
@@ -1449,8 +1455,15 @@ export class Brc38PublishedProfileNode {
     } else if (!['WAL_ACTIVATING', 'WAL'].includes(backend.phase))
       throw new Error('Composed backend phase did not advance')
     await check()
+    const pending = await readBrc38NativeBackend(this.#db, await this.#readCatalogRow(), driver().componentBuild)
+    if (
+      JSON.stringify(pending) !==
+      JSON.stringify({ ...backend, phase: backend.phase === 'DELETE_ACTIVE' ? 'WAL_ACTIVATING' : backend.phase })
+    )
+      throw new Error('Composed committed WAL preparation changed before promotion')
     owner.phase = 'wal-pending'
     await driver().promoteWalOwned(owner.session)
+    await owner.wallet.raw('PRAGMA wal_autocheckpoint=1')
     if ((await owner.wallet.raw('PRAGMA journal_mode'))[0]?.journal_mode !== 'wal')
       throw new Error('Composed target actual WAL mode differs')
     await this.#db.transaction(async catalog => {
@@ -2255,6 +2268,7 @@ export class Brc38PublishedProfileNode {
       if (reopeningWal) {
         owner.phase = 'wal-pending'
         await driver().promoteWalOwned(owner.session)
+        await owner.wallet!.raw('PRAGMA wal_autocheckpoint=1')
       }
       if (this.#wallet === undefined) {
         this.#wallet = new StorageKnex({
@@ -2344,8 +2358,18 @@ export class Brc38PublishedProfileNode {
         await this.#db.transaction(
           async trx => await writeBrc38NativeBackend(trx, backend, { ...backend, phase: 'WAL_ACTIVATING' })
         )
+      // Re-read the committed transition before changing the physical wallet.
+      // The durable pending phase is also the recovery boundary when this
+      // process stops after catalog commit and before WAL promotion.
+      const pending = await readBrc38NativeBackend(this.#db, await this.#readCatalogRow(), driver().componentBuild)
+      if (
+        JSON.stringify(pending) !==
+        JSON.stringify({ ...backend, phase: backend.phase === 'DELETE_ACTIVE' ? 'WAL_ACTIVATING' : backend.phase })
+      )
+        throw new Error('Native WAL committed pending record changed before promotion')
       owner.phase = 'wal-pending'
       await driver().promoteWalOwned(owner.session)
+      await owner.wallet!.raw('PRAGMA wal_autocheckpoint=1')
       if (owner.wallet === undefined || (await owner.wallet.raw('PRAGMA journal_mode'))[0]?.journal_mode !== 'wal')
         throw new Error('Native wallet WAL mode differs after promotion')
       await this.#db.transaction(async trx => {
@@ -2846,7 +2870,7 @@ export class Brc38PublishedProfileNode {
         throw new Error('Native reopen actual kernel binding differs')
       const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
       owner.catalog = driver().nativeKnex(createKnex, client, owner.session, 2)
-      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0)
+      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0, true)
       const fresh = await readRow(owner.catalog)
       if (
         JSON.stringify(fresh) !== JSON.stringify(row) ||
@@ -3165,6 +3189,7 @@ export class Brc38PublishedProfileNode {
       await this.#requireUncommittedCurrentRecovery()
       await driver().admitDeleteOwned(owner.session)
       await driver().promoteWalOwned(owner.session)
+      await owner.wallet!.raw('PRAGMA wal_autocheckpoint=1')
       owner.phase = 'wal'
       const wallet = new StorageKnex({
         ...StorageProvider.createStorageBaseOptions(this.#fixed.binding.chain),
@@ -3602,7 +3627,7 @@ export class Brc38PublishedProfileNode {
         throw new Error('Pending recovery copy lost its actual target native owner')
       const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
       owner.catalog = driver().nativeKnex(createKnex, client, owner.session, 2)
-      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0)
+      owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0, true)
       owner.token = owner.session.identity
       owner.phase = 'validating'
       profile.#db = owner.catalog
@@ -3836,7 +3861,7 @@ export class Brc38PublishedProfileNode {
             throw new Error('Pending target lost its actual new native kernel binding')
           const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
           owner.catalog = driver().nativeKnex(createKnex, client, owner.session, 2)
-          owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0)
+          owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0, true)
           owner.token = owner.session.identity
           profile.#db = owner.catalog
           owner.phase = 'validating'
@@ -4259,7 +4284,7 @@ export class Brc38PublishedProfileNode {
           throw new Error('Reacquired native owner binding differs')
         const client: unknown = require('knex/lib/dialects/sqlite3/index.js')
         owner.catalog = driver().nativeKnex(createKnex, client, owner.session, 2)
-        owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0)
+        owner.wallet = driver().nativeKnex(createKnex, client, owner.session, 0, true)
         const row = await readRow(owner.catalog)
         if (
           row.state !== receipt.state ||

@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync } from '../../utility/promiseFromSync'
 import { WalletError } from '../../sdk/WalletError'
 import { StorageReqWrite } from '../../storage/StorageReqWrite'
 import { WERR_NOT_ACTIVE } from '../../sdk/WERR_errors'
@@ -111,10 +112,12 @@ export class TaskUnFail extends WalletMonitorTask {
       log += "proof unavailable or rejected; returned to status 'invalid'\n"
       if (writes == null) await req.updateStorageDynamicProperties(this.storage)
       else if (
-        !(await writes.request(req, async current => {
-          if (current.status !== 'unfail') return
-          current.status = 'invalid'
-          current.addHistoryNote({ what: 'unfailProofRejected' }, true)
+        !(await writes.request(req, current => {
+          return promiseFromSync(() => {
+            if (current.status !== 'unfail') return
+            current.status = 'invalid'
+            current.addHistoryNote({ what: 'unfailProofRejected' }, true)
+          })
         }))
       )
         throw new WERR_NOT_ACTIVE('Unfail observation lost its captured primary profiles')
@@ -143,8 +146,8 @@ export class TaskUnFail extends WalletMonitorTask {
     const writes = this.writeCaptures.get(req)
     this.writeCaptures.delete(req)
     if (writes?.preparesOutsideManager === true)
-      return await writes.prepare(
-        async sp => await sp.unfailTransactionsForProof(req, indent, { status: 'unmined', attempts: 0 }, writes)
+      return await writes.prepare(sp =>
+        awaitFromSync(() => sp.unfailTransactionsForProof(req, indent, { status: 'unmined', attempts: 0 }, writes))
       )
     return await this.storage.runAsStorageProvider(async sp =>
       writes == null

@@ -1,3 +1,4 @@
+import { awaitVoidFromSync } from '../../../utility/promiseFromSync'
 import { parseSnapshotJournalReceiptBindingData } from './SnapshotJournalReceiptData'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import type { SnapshotJournalReconciliationSource, SnapshotJournalDestinationLimits } from './SnapshotJournalProvider'
@@ -60,18 +61,19 @@ export async function* runSnapshotJournalSourceDataReconciliation(
               maximumRows: limits.maximumRows,
               maximumBytes: limits.maximumPayloadBytes
             },
-            async (digest, index, identities) => {
-              await destination.stagePacket(
-                expected,
-                encodeSnapshotJournalArchiveIdentities(
-                  context,
-                  digest,
-                  index,
-                  identities,
-                  binding.journal.receipt.highWater
+            (digest, index, identities) =>
+              awaitVoidFromSync(() =>
+                destination.stagePacket(
+                  expected,
+                  encodeSnapshotJournalArchiveIdentities(
+                    context,
+                    digest,
+                    index,
+                    identities,
+                    binding.journal.receipt.highWater
+                  )
                 )
               )
-            }
           )
           const bytes = encodeSnapshotJournalArchiveFrame(context, captured.page),
             verified = decodeSnapshotJournalArchivePacket(bytes, context, binding.journal.receipt.highWater)

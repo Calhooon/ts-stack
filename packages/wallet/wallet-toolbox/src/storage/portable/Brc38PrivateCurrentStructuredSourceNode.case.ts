@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
@@ -91,8 +92,10 @@ export async function verifyPrivateCurrentStructuredSources(
     let copiedRefused = false,
       copiedWork = false
     try {
-      await withBrc38PrivateCurrentStructuredSource(storage, copied, fixture, policy, async () => {
-        copiedWork = true
+      await withBrc38PrivateCurrentStructuredSource(storage, copied, fixture, policy, () => {
+        return promiseFromSync(() => {
+          copiedWork = true
+        })
       })
     } catch {
       copiedRefused = true
@@ -147,9 +150,14 @@ export async function verifyPrivateCurrentCheckpointDelta(
     let earlyExitRefused = false
     try {
       await withBrc38PrivateCurrentCheckpointDelta(storage, trx, syncStateId, policy, delta, async chunks => {
-        for await (const part of chunks) {
-          part.fill(0)
-          break
+        const iterator = chunks[Symbol.asyncIterator](),
+          first = await iterator.next()
+        if (!first.done) {
+          try {
+            first.value.fill(0)
+          } finally {
+            await iterator.return?.()
+          }
         }
       })
     } catch (cause) {

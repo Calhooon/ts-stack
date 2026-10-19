@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection, requirePackedIdbTransaction } from '../idbPackedConnection'
 import type { PackedIdbStagedField } from '../idbPackedStaging'
@@ -142,11 +143,14 @@ export async function prepareBrc38IdbRestoreRow(
     owned?.close()
     allowance.close()
   }
-  const currentReceipt = async () => {
-    const read = await journal.readMappings(receiptSha256, [])
-    read.close()
-    check()
-  }
+  const currentReceipt = () =>
+    mapAwaitFromSync(
+      () => journal.readMappings(receiptSha256, []),
+      read => {
+        read.close()
+        check()
+      }
+    )
   try {
     check()
     await currentReceipt()

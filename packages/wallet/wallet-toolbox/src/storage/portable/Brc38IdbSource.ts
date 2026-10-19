@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import type { StorageIdb } from '../StorageIdb'
 import type { PackedIdbMetadataRow, PackedIdbReadSnapshot } from '../idbPackedSnapshot'
@@ -99,7 +100,7 @@ async function text(
     hash.update(bytes)
     let piece = ''
     for (let index = 0; index < bytes.length; index += 2)
-      piece += String.fromCharCode(bytes[index] | (bytes[index + 1] << 8))
+      piece += String.fromCodePoint(bytes[index] | (bytes[index + 1] << 8))
     pieces.push(piece)
   }
   if (hash.digestHex() !== field.sha256) throw new TypeError('BRC-38 IDB text digest differs')
@@ -418,18 +419,18 @@ export async function openBrc38IdbSource(
                                       start: selected.start,
                                       end: selected.end
                                     }
-                                    return currentIndex(async () => await index.put(offset, member))
+                                    return currentIndex(() => awaitFromSync(() => index.put(offset, member)))
                                   },
-                                  seal: () => currentIndex(async () => await index.seal()),
+                                  seal: () => currentIndex(() => awaitFromSync(() => index.seal())),
                                   lookup: (offset: number, key: string) =>
-                                    currentIndex(async () => await index.lookup(offset, key)),
+                                    currentIndex(() => awaitFromSync(() => index.lookup(offset, key))),
                                   nextEntry: (offset: number, after?: string) =>
-                                    currentIndex(async () => await index.nextEntry(offset, after)),
+                                    currentIndex(() => awaitFromSync(() => index.nextEntry(offset, after))),
                                   entries: async function* (offset: number) {
                                     const iterator = index.entries(offset)
                                     try {
                                       for (;;) {
-                                        const next = await currentIndex(async () => await iterator.next())
+                                        const next = await currentIndex(() => awaitFromSync(() => iterator.next()))
                                         if (next.done) return
                                         yield next.value
                                       }
@@ -437,9 +438,13 @@ export async function openBrc38IdbSource(
                                       await iterator.return(undefined)
                                     }
                                   },
-                                  async close() {
-                                    await index.close()
-                                    indexes.delete(index)
+                                  close() {
+                                    return mapAwaitFromSync(
+                                      () => index.close(),
+                                      () => {
+                                        indexes.delete(index)
+                                      }
+                                    )
                                   }
                                 }
                               } catch (error_) {

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { MerklePath, Script, Transaction, UnlockingScript } from '@bsv/sdk'
 import type { WalletServices } from '../../sdk/WalletServices.interfaces'
@@ -68,16 +69,21 @@ export async function verifyIdbSnapshotSyncProvenTxs(expiresAt: number): Promise
     roots = 0,
     headers = 0
   const services = {
-    getChainTracker: async () => ({
-      isValidRootForHeight: async (root: string, height: number) => {
-        roots++
-        return root === txid && height === 100
-      }
-    }),
-    getHeaderForHeight: async (height: number) => {
-      headers++
-      same(height, 100)
-      return Array.from(header)
+    getChainTracker: () =>
+      promiseFromSync(() => ({
+        isValidRootForHeight: (root: string, height: number) => {
+          return promiseFromSync(() => {
+            roots++
+            return root === txid && height === 100
+          })
+        }
+      })),
+    getHeaderForHeight: (height: number) => {
+      return promiseFromSync(() => {
+        headers++
+        same(height, 100)
+        return Array.from(header)
+      })
     }
   } as unknown as WalletServices
   target.setServices(services)
@@ -106,7 +112,7 @@ export async function verifyIdbSnapshotSyncProvenTxs(expiresAt: number): Promise
     await sourceStorage.db!.put('transactions', { ...transaction, userId: 77, transactionId: 26, provenTxId: 21 })
     await target.db!.put('transactions', { ...transaction, userId: 1, transactionId: 8, provenTxId: 3 })
     source = await openPackedIdbSyncSource(sourceStorage, identityKey, { lifetimeMs: expiresAt - Date.now() })
-    const destination = new IdbSnapshotSyncDestination(target, async () => new Map()),
+    const destination = new IdbSnapshotSyncDestination(target, () => promiseFromSync(() => new Map())),
       cp = await destination.begin(
         {
           version: 1,

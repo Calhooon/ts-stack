@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { deleteDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
@@ -162,7 +163,7 @@ export async function verifyIdbSnapshotSyncProvenTxReqs(
       notify: JSON.stringify({ transactionIds: [26, 999, -2, 0, 1.5], extra: padding })
     })
     source = await openPackedIdbSyncSource(sourceStorage, identityKey, { lifetimeMs: expiresAt - Date.now() })
-    const destination = new IdbSnapshotSyncDestination(target, async () => new Map()),
+    const destination = new IdbSnapshotSyncDestination(target, () => promiseFromSync(() => new Map())),
       journal = await IdbSnapshotSyncJournal.open(target)
     let cp = await destination.begin(
       {
@@ -175,7 +176,8 @@ export async function verifyIdbSnapshotSyncProvenTxReqs(
       'source'
     )
     for (let table = 0; table < 4; table++)
-      cp = (await journal.commit(cp, table + 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+      cp = (await journal.commit(cp, table + 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 }))))
+        .checkpoint
     const transactionPage = await source.fieldReader!.readMetadataPage('transactions', undefined, {
       maxRows: 8,
       maxBytes: 262144
@@ -186,7 +188,8 @@ export async function verifyIdbSnapshotSyncProvenTxReqs(
     await prepared.close()
     prepared = undefined
     for (let table = 5; table < 11; table++)
-      cp = (await journal.commit(cp, table + 1, null, async () => ({ inserts: 0, updates: 0 }))).checkpoint
+      cp = (await journal.commit(cp, table + 1, null, () => promiseFromSync(() => ({ inserts: 0, updates: 0 }))))
+        .checkpoint
     const page = await source.fieldReader!.readMetadataPage('provenTxReqs', undefined, { maxRows: 8, maxBytes: 262144 })
     same(page.rows.length, 3)
     if (page.rows.some(row => row.fields.rawTx !== undefined)) throw new Error('Request metadata hydrated raw payload')

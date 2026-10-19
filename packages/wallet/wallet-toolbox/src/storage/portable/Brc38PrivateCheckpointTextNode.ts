@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { StorageKnex } from '../StorageKnex'
@@ -193,21 +194,23 @@ export async function withBrc38PreparedPrivateCheckpointText<T>(
         invalid()
       return row
     }
-  const cleanupScope1 = new Brc38CleanupScope(async () => {
-    live = false
-    if (retained !== undefined) {
-      const failure = retained
-      // Preserve the reservation with the concrete failed actor's cleanup.
-      throw new Brc38StagingCleanupError(
-        [failure],
-        'Private checkpoint staging retains actual source/read cleanup',
-        async () => {
-          await failure.retryCleanup()
-          reservation.close()
-        }
-      )
-    }
-    reservation.close()
+  const cleanupScope1 = new Brc38CleanupScope(() => {
+    return promiseFromSync(() => {
+      live = false
+      if (retained !== undefined) {
+        const failure = retained
+        // Preserve the reservation with the concrete failed actor's cleanup.
+        throw new Brc38StagingCleanupError(
+          [failure],
+          'Private checkpoint staging retains actual source/read cleanup',
+          async () => {
+            await failure.retryCleanup()
+            reservation.close()
+          }
+        )
+      }
+      reservation.close()
+    })
   })
   try {
     const delta = Object.freeze(

@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import {
   decodePortableRow as fromPortableRow,
   type JsonValue,
@@ -690,25 +691,30 @@ function remapEntityIdMap(idMap: Record<number, number>, importIdMap: Record<num
   }
 }
 
-async function assertRestoreTargetEmpty(storage: StorageProvider): Promise<void> {
-  const counts = await Promise.all([
-    storage.countUsers({ partial: {} }),
-    storage.countProvenTxs({ partial: {} }),
-    storage.countProvenTxReqs({ partial: {} }),
-    storage.countOutputBaskets({ partial: {} }),
-    storage.countTransactions({ partial: {} }),
-    storage.countCommissions({ partial: {} }),
-    storage.countOutputs({ partial: {} }),
-    storage.countOutputTags({ partial: {} }),
-    storage.countOutputTagMaps({ partial: {} }),
-    storage.countTxLabels({ partial: {} }),
-    storage.countTxLabelMaps({ partial: {} }),
-    storage.countCertificates({ partial: {} }),
-    storage.countCertificateFields({ partial: {} }),
-    storage.countSyncStates({ partial: {} }),
-    storage.countMonitorEvents({ partial: {} })
-  ])
-  if (counts.some(c => c > 0)) throw new Error('BRC-38 restore requires an empty target storage except settings')
+function assertRestoreTargetEmpty(storage: StorageProvider): Promise<void> {
+  return mapAwaitFromSync(
+    () =>
+      Promise.all([
+        storage.countUsers({ partial: {} }),
+        storage.countProvenTxs({ partial: {} }),
+        storage.countProvenTxReqs({ partial: {} }),
+        storage.countOutputBaskets({ partial: {} }),
+        storage.countTransactions({ partial: {} }),
+        storage.countCommissions({ partial: {} }),
+        storage.countOutputs({ partial: {} }),
+        storage.countOutputTags({ partial: {} }),
+        storage.countOutputTagMaps({ partial: {} }),
+        storage.countTxLabels({ partial: {} }),
+        storage.countTxLabelMaps({ partial: {} }),
+        storage.countCertificates({ partial: {} }),
+        storage.countCertificateFields({ partial: {} }),
+        storage.countSyncStates({ partial: {} }),
+        storage.countMonitorEvents({ partial: {} })
+      ]),
+    counts => {
+      if (counts.some(c => c > 0)) throw new Error('BRC-38 restore requires an empty target storage except settings')
+    }
+  )
 }
 
 function countDecodedRows(data: DecodedBRC38): number {

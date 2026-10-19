@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { TableProvenTxReq, TableTransaction } from '../schema/tables'
 import { KnexSnapshotSyncDestination } from './KnexSnapshotSyncDestination'
@@ -40,8 +41,10 @@ export async function verifyNativeSnapshotSyncProvenTxReqs(
       inserts >= 0 &&
       inserts <= expected.length
   )
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Request entered legacy proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Request entered legacy proof I/O')
+      })
     }),
     page = await source.fieldReader.readMetadataPage('provenTxReqs', checkpoint.cursor, { maxRows: 2, maxBytes: 32768 })
   requireCase(
@@ -96,8 +99,10 @@ export async function verifyNativeSnapshotSyncRequestStale(
     | Readonly<{ kind: 'mapping'; userId: number; incomingId: number; localId: number }>
 ): Promise<void> {
   requireCase(source.fieldReader !== undefined && snapshotSyncTables[checkpoint.tableIndex] === 'provenTxReqs')
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Unexpected proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Unexpected proof I/O')
+      })
     }),
     before = await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey),
     page = await source.fieldReader.readMetadataPage('provenTxReqs', checkpoint.cursor, {

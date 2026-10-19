@@ -165,7 +165,7 @@ export async function deriveBrc39OwnedNodeKey(
       // Worker errors/output contain no password or key and are not logged.
       // Unexpected output is drained with an explicit bound and revokes delivery.
       let output = 0,
-        failure: unknown,
+        failure: Error | undefined,
         received = false
       const ownWorker = worker
       const rejectOutput = (chunk: Buffer) => {
@@ -196,7 +196,7 @@ export async function deriveBrc39OwnedNodeKey(
           }
         })
         ownWorker.once('error', error => {
-          failure = error
+          failure = error instanceof Error ? error : new Error('BRC-39 KDF worker failed', { cause: error })
         })
         ownWorker.once('exit', code => {
           if (failure !== undefined) reject(failure)

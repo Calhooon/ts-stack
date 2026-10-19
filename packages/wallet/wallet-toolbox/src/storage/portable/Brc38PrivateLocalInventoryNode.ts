@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -315,10 +316,12 @@ async function inspectTables(
                           signal
                         )
                   const actual = bytes
-                  await row.withFieldExtent(field.field, offset, length, async original => {
-                    check()
-                    if (!equal(actual, original)) invalid()
-                    hash.update(actual)
+                  await row.withFieldExtent(field.field, offset, length, original => {
+                    return promiseFromSync(() => {
+                      check()
+                      if (!equal(actual, original)) invalid()
+                      hash.update(actual)
+                    })
                   })
                 } finally {
                   bytes?.fill(0)

@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import type { StorageIdb } from '../StorageIdb'
 import { getPackedIdbConnection, type PackedIdbConnection } from '../idbPackedConnection'
@@ -48,12 +49,12 @@ export async function stageIdbSnapshotSyncInlineText(
       const count = Math.min(32768, value.length - offset),
         bytes = new Uint8Array(count * 2)
       for (let index = 0; index < count; index++) {
-        const unit = value.charCodeAt(offset + index)
+        const unit = utf16CodeUnitAt(value, offset + index)
         bytes[index * 2] = unit & 255
         bytes[index * 2 + 1] = unit >>> 8
       }
       try {
-        yield bytes
+        yield Promise.resolve(bytes)
         check()
         offset += count
       } finally {

@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { expect } from '@jest/globals'
 import type { Brc38ProfileInventoryNode } from './Brc38ProfileInventoryNode'
 import type { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
@@ -69,14 +70,16 @@ export async function brc39ExpiredPendingRecoveryComparisonCase(
                     await Brc38PrivateNativeMergeNode.inspectRetiredRecoveryImage(
                       merge,
                       receipt,
-                      async (image, actualReceipt, policy, assertRetained) => {
-                        comparison.assertRetained()
-                        assertRetained()
-                        expect(image).toEqual(expected)
-                        expect(actualReceipt).toEqual(receipt)
-                        expect(policy.expiresAt).toBe(candidate.operationExpiresAt)
-                        comparison.assertRetained()
-                        assertRetained()
+                      (image, actualReceipt, policy, assertRetained) => {
+                        return promiseFromSync(() => {
+                          comparison.assertRetained()
+                          assertRetained()
+                          expect(image).toEqual(expected)
+                          expect(actualReceipt).toEqual(receipt)
+                          expect(policy.expiresAt).toBe(candidate.operationExpiresAt)
+                          comparison.assertRetained()
+                          assertRetained()
+                        })
                       }
                     )
                   })

@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../utility/promiseFromSync'
 import type { StorageProvider } from './StorageProvider'
 import type { StorageActiveWrite, StorageWriterAdmission } from './StorageActiveWrite'
 import type { TrxToken } from '../sdk/WalletStorage.interfaces'
@@ -65,15 +66,21 @@ export class StorageReqWrite {
       throw new WERR_INVALID_OPERATION('Transaction was not declared by this captured actor')
     const ids = await this.admit(
       async () =>
-        await actor.write.transaction(async trx => {
-          const rows = await this.storage.findTransactions({
-            partial: { txid, userId: actor.userId },
-            noRawTx: true,
-            trx
-          })
-          if (rows.length === 0) throw new WERR_UNAUTHORIZED('No committed transaction belongs to the original actor')
-          return rows.map(row => row.transactionId)
-        })
+        await actor.write.transaction(trx =>
+          mapAwaitFromSync(
+            () =>
+              this.storage.findTransactions({
+                partial: { txid, userId: actor.userId },
+                noRawTx: true,
+                trx
+              }),
+            rows => {
+              if (rows.length === 0)
+                throw new WERR_UNAUTHORIZED('No committed transaction belongs to the original actor')
+              return rows.map(row => row.transactionId)
+            }
+          )
+        )
     )
     users.set(actor.userId, ids)
   }
@@ -139,7 +146,7 @@ export class StorageReqWrite {
     const write = this.profiles.get(userId)
     if (write == null) return false
     try {
-      await this.admit(async () => await write.transaction(apply))
+      await this.admit(() => awaitFromSync(() => write.transaction(apply)))
       return true
     } catch (error) {
       if (!isObsolete(error)) throw error
@@ -187,7 +194,7 @@ export class StorageReqWrite {
       req.unpackApi()
     }
     if (this.actor != null) {
-      await this.admit(async () => await this.actor!.write.transaction(run))
+      await this.admit(() => awaitFromSync(() => this.actor!.write.transaction(run)))
       publish()
       return true
     }

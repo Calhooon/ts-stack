@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { MerklePath } from '@bsv/sdk'
 import { ReaderUint8Array } from '@bsv/sdk/primitives/ReaderUint8Array'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
@@ -226,12 +227,12 @@ export async function inspectBrc38StreamedProofReader(
         deadline
       )
       const services = storage.getServices(),
-        chain = await network.run(async () => await services.getChainTracker())
+        chain = await network.run(() => awaitFromSync(() => services.getChainTracker()))
       check()
-      if ((await network.run(async () => await chain.isValidRootForHeight(root, height))) !== true)
+      if ((await network.run(() => awaitFromSync(() => chain.isValidRootForHeight(root, height)))) !== true)
         throw new StaleSyncProofError()
       check()
-      const header = await network.run(async () => await services.getHeaderForHeight(height))
+      const header = await network.run(() => awaitFromSync(() => services.getHeaderForHeight(height)))
       check()
       if (header.length !== 80) invalid('active block header must be 80 bytes')
       const headerHash = toHex(new SHA256().update(new SHA256().update(header).digest()).digest().reverse()),

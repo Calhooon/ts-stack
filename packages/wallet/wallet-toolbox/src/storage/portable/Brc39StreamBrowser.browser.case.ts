@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { BrowserArgon2idWorkerBackend } from '../../utility/BrowserArgon2idWorker'
 import {
   registerArgon2idBackend,
@@ -33,7 +34,7 @@ function source(bytes: Uint8Array, width: number): Brc39BrowserStreamPlaintext {
   return {
     chunks: (async function* () {
       for (let offset = 0; offset < bytes.byteLength; offset += width)
-        yield bytes.subarray(offset, Math.min(bytes.byteLength, offset + width))
+        yield Promise.resolve(bytes.subarray(offset, Math.min(bytes.byteLength, offset + width)))
     })(),
     validateCompleted: async () => {},
     close: async () => {}
@@ -47,13 +48,17 @@ function output() {
     get discarded() {
       return discarded
     },
-    appendUntrusted: async (bytes: Uint8Array) => {
-      parts.push(bytes.slice())
+    appendUntrusted: (bytes: Uint8Array) => {
+      return promiseFromSync(() => {
+        parts.push(bytes.slice())
+      })
     },
-    discard: async () => {
-      for (const bytes of parts) bytes.fill(0)
-      parts.length = 0
-      discarded++
+    discard: () => {
+      return promiseFromSync(() => {
+        for (const bytes of parts) bytes.fill(0)
+        parts.length = 0
+        discarded++
+      })
     }
   }
 }
@@ -88,13 +93,17 @@ export async function verifyBrowserStreamExportIndependentLegacyDecoder(factory:
         original = source(plaintext, width)
       let validated = false,
         closed = false
-      original.validateCompleted = async () => {
-        validated = true
+      original.validateCompleted = () => {
+        return promiseFromSync(() => {
+          validated = true
+        })
       }
-      original.close = async () => {
-        if (!validated || join(sink.parts).byteLength !== 97 + plaintext.byteLength)
-          throw new Error('Browser source close occurred without semantics or before complete ciphertext')
-        closed = true
+      original.close = () => {
+        return promiseFromSync(() => {
+          if (!validated || join(sink.parts).byteLength !== 97 + plaintext.byteLength)
+            throw new Error('Browser source close occurred without semantics or before complete ciphertext')
+          closed = true
+        })
       }
       const result = await encryptBrc39BrowserStreamToQuarantine(original, 'Cafe\u0301', sink, {
         ...selected(),
@@ -135,7 +144,7 @@ export async function verifyBrowserStreamExportSemanticFailureAndCancellation():
     backend: AsyncArgon2idBackend = {
       preload: async () => {},
       isReady: () => true,
-      deriveKey: async () => new Uint8Array(32).fill(79)
+      deriveKey: () => promiseFromSync(() => new Uint8Array(32).fill(79))
     }
   registerArgon2idBackend(backend)
   try {
@@ -145,16 +154,20 @@ export async function verifyBrowserStreamExportSemanticFailureAndCancellation():
         signal = new AbortController(),
         reason = new Error(mode)
       if (mode === 'semantic')
-        original.validateCompleted = async () => {
-          throw reason
+        original.validateCompleted = () => {
+          return promiseFromSync(() => {
+            throw reason
+          })
         }
       if (mode === 'source-close') {
         let first = true
-        original.close = async () => {
-          if (first) {
-            first = false
-            throw reason
-          }
+        original.close = () => {
+          return promiseFromSync(() => {
+            if (first) {
+              first = false
+              throw reason
+            }
+          })
         }
       }
       const options = {

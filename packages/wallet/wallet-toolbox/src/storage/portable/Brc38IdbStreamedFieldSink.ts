@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import type { Brc38PrivateIdbStage } from './Brc38PrivateIdbStage'
 import {
   brc38JsonStreamedFieldPolicy,
@@ -19,11 +20,11 @@ export function brc38IdbStreamedFieldSink(
   )
     throw new RangeError('Private browser binary and original staging allocation differ')
   return Object.freeze({
-    begin: async (table, index, field, encoding) =>
-      await store.beginBinaryField(table, index, field, encoding, policy.maximumBinaryBytes),
-    append: async (table, index, field, offset, bytes) =>
-      await store.appendBinaryField(table, index, field, offset, bytes),
-    finish: async (table, index, field) => await store.finishBinaryField(table, index, field),
+    begin: (table, index, field, encoding) =>
+      awaitFromSync(() => store.beginBinaryField(table, index, field, encoding, policy.maximumBinaryBytes)),
+    append: (table, index, field, offset, bytes) =>
+      awaitFromSync(() => store.appendBinaryField(table, index, field, offset, bytes)),
+    finish: (table, index, field) => awaitFromSync(() => store.finishBinaryField(table, index, field)),
     row
   } satisfies Brc38JsonStreamedFieldSink)
 }

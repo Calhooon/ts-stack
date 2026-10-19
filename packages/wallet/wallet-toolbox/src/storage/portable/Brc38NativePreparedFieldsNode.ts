@@ -1,13 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import type { Knex } from 'knex'
-import {
-  requireBrc38PackedRead,
-  requireBrc38PackedWriter,
-  hasBrc38NativePackedSchema
-} from './Brc38NativePackedSchemaNode'
-import { hasBrc38NativePackedTextSchema } from './Brc38NativePackedTextSchemaNode'
+import { requireBrc38PackedRead, requireBrc38PackedWriter } from './Brc38NativePackedSchemaNode'
 import {
   hasBrc38NativePreparedFieldsSchema,
+  hasBrc38NativePreparedContentSchema,
   nativePreparedFieldsTable,
   type Brc38NativePreparedFamily
 } from './Brc38NativePreparedFieldSchemaNode'
@@ -44,12 +40,7 @@ function matches(actual: Lifetime | undefined, expected: Readonly<Lifetime>): bo
   )
 }
 async function schema(k: Knex.Transaction): Promise<void> {
-  if (
-    !(await hasBrc38NativePreparedFieldsSchema(k)) ||
-    !(await hasBrc38NativePackedSchema(k)) ||
-    !(await hasBrc38NativePackedTextSchema(k))
-  )
-    invalid()
+  if (!(await hasBrc38NativePreparedContentSchema(k))) invalid()
 }
 /** Actual issued lifetime, never source authentication, a completed content
  * proof, row-selection policy, write admission, durable ACK or activation.

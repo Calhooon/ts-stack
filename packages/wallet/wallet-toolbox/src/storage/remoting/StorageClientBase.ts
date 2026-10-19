@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync, awaitVoidFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import type { StorageWriterAdmission } from '../StorageActiveWrite'
 import type { PrimaryHandoffControl, PrimaryHandoffControlOptions } from '../PrimaryHandoffControl'
 import { canonicalPrimaryHandoffPlan } from '../PrimaryHandoffPlan'
@@ -485,15 +486,18 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     if (!this.snapshotArchivesEnabled) return undefined
     return new RemoteSnapshotSyncDestination(
       (method, params, signal) => this.snapshotRpcCall(method, params, signal),
-      async () => {
-        const settings = await this.makeAvailable()
-        return {
-          storageIdentityKey: settings.storageIdentityKey,
-          supportsDestination: settings.snapshotSyncDestination !== undefined,
-          supportsContentSource: settings.snapshotSyncContent?.source === true,
-          supportsContentDestination: settings.snapshotSyncContent?.destination === true
-        }
-      },
+      () =>
+        mapAwaitFromSync(
+          () => this.makeAvailable(),
+          settings => {
+            return {
+              storageIdentityKey: settings.storageIdentityKey,
+              supportsDestination: settings.snapshotSyncDestination !== undefined,
+              supportsContentSource: settings.snapshotSyncContent?.source === true,
+              supportsContentDestination: settings.snapshotSyncContent?.destination === true
+            }
+          }
+        ),
       async (identityKey, options) => {
         const transport = await this.getSnapshotArchiveTransport(identityKey)
         return transport === undefined ? undefined : await openRemoteSnapshot(transport, options)
@@ -576,29 +580,37 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return this.snapshotArchivesEnabled && (await this.makeAvailable()).snapshotJournalFieldArchive !== undefined
   }
 
-  async supportsSnapshotJournalFieldArchiveRecovery(): Promise<boolean> {
-    const settings = await this.journalFieldRecoverySettings()
-    return (
-      this.snapshotArchivesEnabled &&
-      settings.snapshotJournalFieldArchiveRecoveryVersion === 1 &&
-      settings.snapshotJournalFieldArchive !== undefined
+  supportsSnapshotJournalFieldArchiveRecovery(): Promise<boolean> {
+    return mapAwaitFromSync(
+      () => this.journalFieldRecoverySettings(),
+      settings => {
+        return (
+          this.snapshotArchivesEnabled &&
+          settings.snapshotJournalFieldArchiveRecoveryVersion === 1 &&
+          settings.snapshotJournalFieldArchive !== undefined
+        )
+      }
     )
   }
-  private async fieldArchiveRecoveryTransport(identityKey: string, signal?: AbortSignal) {
-    const settings = await this.journalFieldRecoverySettings(signal)
-    if (
-      !this.snapshotArchivesEnabled ||
-      settings.snapshotJournalFieldArchiveRecoveryVersion !== 1 ||
-      settings.snapshotJournalFieldArchive === undefined ||
-      this.snapshotSource === undefined
-    )
-      return undefined
-    return new SnapshotJournalFieldArchiveTransport(
-      (method, params, signal) => this.snapshotRpcCall(method, params, signal),
-      identityKey,
-      this.snapshotSource.identityKey,
-      this.snapshotSource.chain,
-      settings.snapshotJournalFieldArchive
+  private fieldArchiveRecoveryTransport(identityKey: string, signal?: AbortSignal) {
+    return mapAwaitFromSync(
+      () => this.journalFieldRecoverySettings(signal),
+      settings => {
+        if (
+          !this.snapshotArchivesEnabled ||
+          settings.snapshotJournalFieldArchiveRecoveryVersion !== 1 ||
+          settings.snapshotJournalFieldArchive === undefined ||
+          this.snapshotSource === undefined
+        )
+          return undefined
+        return new SnapshotJournalFieldArchiveTransport(
+          (method, params, signal) => this.snapshotRpcCall(method, params, signal),
+          identityKey,
+          this.snapshotSource.identityKey,
+          this.snapshotSource.chain,
+          settings.snapshotJournalFieldArchive
+        )
+      }
     )
   }
   async resumeSnapshotJournalFieldArchive(
@@ -620,12 +632,16 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     if (transport === undefined) throw new WERR_INVALID_OPERATION('Exact field source retirement is not negotiated')
     await transport.retire(reference)
   }
-  async supportsSnapshotJournalFieldRecovery(): Promise<boolean> {
-    const settings = await this.journalFieldRecoverySettings()
-    return (
-      this.snapshotArchivesEnabled &&
-      settings.snapshotJournalFields !== undefined &&
-      settings.snapshotJournalFieldRecoveryVersion === 1
+  supportsSnapshotJournalFieldRecovery(): Promise<boolean> {
+    return mapAwaitFromSync(
+      () => this.journalFieldRecoverySettings(),
+      settings => {
+        return (
+          this.snapshotArchivesEnabled &&
+          settings.snapshotJournalFields !== undefined &&
+          settings.snapshotJournalFieldRecoveryVersion === 1
+        )
+      }
     )
   }
   async findSnapshotJournalFieldUpload(
@@ -651,9 +667,7 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     const admission = options.admission
     return admission === undefined
       ? undefined
-      : async () => {
-          await admission(async () => this.getSettings())
-        }
+      : () => awaitVoidFromSync(() => admission(() => promiseFromSync(() => this.getSettings())))
   }
 
   async supportsSnapshotJournalFieldSync(): Promise<boolean> {
@@ -728,8 +742,8 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       )
     signal?.addEventListener('abort', abort, { once: true })
     try {
-      const settings = await retrySnapshotArchiveOperation(
-        async () => await this.snapshotRpcCall('makeAvailable', [], controller.signal)
+      const settings = await retrySnapshotArchiveOperation(() =>
+        awaitFromSync(() => this.snapshotRpcCall('makeAvailable', [], controller.signal))
       )
       return this.acceptRemoteSettings(settings)
     } finally {
@@ -768,13 +782,15 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     admission: StorageWriterAdmission,
     operation: () => Promise<T>
   ): Promise<T> {
-    const dispatched = await admission(async () => {
-      const result = operation()
-      void result.catch(() => undefined)
-      return { result }
+    const dispatched = await admission(() => {
+      return promiseFromSync(() => {
+        const result = operation()
+        void result.catch(() => undefined)
+        return { result }
+      })
     })
     const result = await dispatched.result
-    await admission(async () => {})
+    await admission(() => promiseFromSync(() => {}))
     return result
   }
 
@@ -823,18 +839,21 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     const settings = this.settings ?? this.acceptRemoteSettings(await invoke('makeAvailable', []))
     if (!this.snapshotArchivesEnabled || settings.primaryHandoff === undefined) return undefined
     const local = normalizeStorageIdentityKey(settings.storageIdentityKey)
-    const call = async (method: PrimaryHandoffMethod, auth: AuthId, ...params: unknown[]): Promise<unknown> =>
-      await invoke(method, [auth.identityKey, ...params])
+    const call = (method: PrimaryHandoffMethod, auth: AuthId, ...params: unknown[]): Promise<unknown> =>
+      awaitFromSync(() => invoke(method, [auth.identityKey, ...params]))
     const status = (value: unknown) => {
       const result = parsePrimaryHandoffStatus(value)
       if (result.localStorageIdentityKey !== local) throw new TypeError('Primary control storage identity changed')
       return result
     }
     return {
-      status: async auth => {
-        const value = await call('primaryHandoffStatus', auth)
-        return value === null ? undefined : status(value)
-      },
+      status: auth =>
+        mapAwaitFromSync(
+          () => call('primaryHandoffStatus', auth),
+          value => {
+            return value === null ? undefined : status(value)
+          }
+        ),
       prepareSource: async (auth, id, target) => {
         const value = parsePrimaryHandoffSource(await call('preparePrimaryHandoffSource', auth, id, target))
         if (value.storageIdentityKey !== local) throw new TypeError('Primary source storage identity changed')
@@ -1073,8 +1092,10 @@ export abstract class StorageClientBase implements WalletStorageProvider {
   protected abstract rpcCall<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T>
 
   /** Share the asynchronous rejection boundary, including custom transports that throw synchronously. */
-  private async forwardRpc<T>(method: string, params: unknown[]): Promise<T> {
-    return this.rpcCall<T>(method, params)
+  private forwardRpc<T>(method: string, params: unknown[]): Promise<T> {
+    return promiseFromSync(() => {
+      return this.rpcCall<T>(method, params)
+    })
   }
 
   protected nextRequestId(): number {
@@ -1246,22 +1267,26 @@ export abstract class StorageClientBase implements WalletStorageProvider {
     return this.forwardRpc<StorageProcessActionResults>('processAction', [auth, args])
   }
 
-  async prepareNoSendExpiry(auth: AuthId, args: ValidCreateActionArgs): Promise<StoragePrepareNoSendExpiryResult> {
-    return await this.rpcCall<StoragePrepareNoSendExpiryResult>('prepareNoSendExpiry', [auth, withBeefBytes(args)])
+  prepareNoSendExpiry(auth: AuthId, args: ValidCreateActionArgs): Promise<StoragePrepareNoSendExpiryResult> {
+    return awaitFromSync(() =>
+      this.rpcCall<StoragePrepareNoSendExpiryResult>('prepareNoSendExpiry', [auth, withBeefBytes(args)])
+    )
   }
 
-  async activateNoSendExpiry(
+  activateNoSendExpiry(
     auth: AuthId,
     args: StorageActivateNoSendExpiryArgs
   ): Promise<StorageActivateNoSendExpiryResult> {
-    return await this.rpcCall<StorageActivateNoSendExpiryResult>('activateNoSendExpiry', [
-      auth,
-      { ...args, target: withBeefBytes(args.target) }
-    ])
+    return awaitFromSync(() =>
+      this.rpcCall<StorageActivateNoSendExpiryResult>('activateNoSendExpiry', [
+        auth,
+        { ...args, target: withBeefBytes(args.target) }
+      ])
+    )
   }
 
-  async armNoSendExpiry(auth: AuthId, args: StorageArmNoSendExpiryArgs): Promise<void> {
-    await this.rpcCall<void>('armNoSendExpiry', [auth, args])
+  armNoSendExpiry(auth: AuthId, args: StorageArmNoSendExpiryArgs): Promise<void> {
+    return awaitVoidFromSync(() => this.rpcCall<void>('armNoSendExpiry', [auth, args]))
   }
 
   getCapabilities(): Promise<StorageCapabilities> {
@@ -1381,18 +1406,23 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param storageIdentityKey the identity key of the remote storage being sync'd
    * @returns `TableSyncState` and whether a new record was created.
    */
-  async findOrInsertSyncStateAuth(
+  findOrInsertSyncStateAuth(
     auth: AuthId,
     storageIdentityKey: string,
     storageName: string
   ): Promise<{ syncState: TableSyncState; isNew: boolean }> {
-    const r = await this.rpcCall<{ syncState: TableSyncState; isNew: boolean }>('findOrInsertSyncStateAuth', [
-      auth,
-      storageIdentityKey,
-      storageName
-    ])
-    r.syncState = validateEntity(r.syncState, ['when'])
-    return r
+    return mapAwaitFromSync(
+      () =>
+        this.rpcCall<{ syncState: TableSyncState; isNew: boolean }>('findOrInsertSyncStateAuth', [
+          auth,
+          storageIdentityKey,
+          storageName
+        ]),
+      r => {
+        r.syncState = validateEntity(r.syncState, ['when'])
+        return r
+      }
+    )
   }
 
   /**
@@ -1450,15 +1480,19 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param args `FindCertificatesArgs` determines which certificates to retrieve and whether to include fields.
    * @returns array of certificates matching args.
    */
-  async findCertificatesAuth(auth: AuthId, args: FindCertificatesArgs): Promise<TableCertificateX[]> {
-    const r = await this.rpcCall<TableCertificateX[]>('findCertificatesAuth', [auth, args])
-    validateEntities(r)
-    if (args.includeFields) {
-      for (const c of r) {
-        if (c.fields != null) validateEntities(c.fields)
+  findCertificatesAuth(auth: AuthId, args: FindCertificatesArgs): Promise<TableCertificateX[]> {
+    return mapAwaitFromSync(
+      () => this.rpcCall<TableCertificateX[]>('findCertificatesAuth', [auth, args]),
+      r => {
+        validateEntities(r)
+        if (args.includeFields) {
+          for (const c of r) {
+            if (c.fields != null) validateEntities(c.fields)
+          }
+        }
+        return r
       }
-    }
-    return r
+    )
   }
 
   /**
@@ -1471,10 +1505,14 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param args `FindOutputBasketsArgs` determines which baskets to retrieve.
    * @returns array of output baskets matching args.
    */
-  async findOutputBasketsAuth(auth: AuthId, args: FindOutputBasketsArgs): Promise<TableOutputBasket[]> {
-    const r = await this.rpcCall<TableOutputBasket[]>('findOutputBasketsAuth', [auth, args])
-    validateEntities(r)
-    return r
+  findOutputBasketsAuth(auth: AuthId, args: FindOutputBasketsArgs): Promise<TableOutputBasket[]> {
+    return mapAwaitFromSync(
+      () => this.rpcCall<TableOutputBasket[]>('findOutputBasketsAuth', [auth, args]),
+      r => {
+        validateEntities(r)
+        return r
+      }
+    )
   }
 
   /**
@@ -1487,10 +1525,14 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param args `FindOutputsArgs` determines which outputs to retrieve.
    * @returns array of outputs matching args.
    */
-  async findOutputsAuth(auth: AuthId, args: FindOutputsArgs): Promise<TableOutput[]> {
-    const r = await this.rpcCall<TableOutput[]>('findOutputsAuth', [auth, args])
-    validateEntities(r)
-    return r
+  findOutputsAuth(auth: AuthId, args: FindOutputsArgs): Promise<TableOutput[]> {
+    return mapAwaitFromSync(
+      () => this.rpcCall<TableOutput[]>('findOutputsAuth', [auth, args]),
+      r => {
+        validateEntities(r)
+        return r
+      }
+    )
   }
 
   /**
@@ -1503,10 +1545,14 @@ export abstract class StorageClientBase implements WalletStorageProvider {
    * @param args `FindProvenTxReqsArgs` determines which proof requests to retrieve.
    * @returns array of proof requests matching args.
    */
-  async findProvenTxReqs(args: FindProvenTxReqsArgs): Promise<TableProvenTxReq[]> {
-    const r = await this.rpcCall<TableProvenTxReq[]>('findProvenTxReqs', [args])
-    validateEntities(r)
-    return r
+  findProvenTxReqs(args: FindProvenTxReqsArgs): Promise<TableProvenTxReq[]> {
+    return mapAwaitFromSync(
+      () => this.rpcCall<TableProvenTxReq[]>('findProvenTxReqs', [args]),
+      r => {
+        validateEntities(r)
+        return r
+      }
+    )
   }
 
   /**
@@ -1689,14 +1735,16 @@ export abstract class StorageClientBase implements WalletStorageProvider {
       capabilities
     )
     try {
-      const chunk = (await receiveSyncTransfer(manifest, async offset => {
-        this.onSyncTransferProgress?.({ direction: 'read', bytes: offset, totalBytes: manifest.totalBytes })
-        return await this.transferPartCall<SyncTransferPart>('readSyncTransferPart', {
-          identityKey: args.identityKey,
-          transferId: manifest.transferId,
-          offset
+      const chunk = (await receiveSyncTransfer(manifest, offset =>
+        awaitFromSync(() => {
+          this.onSyncTransferProgress?.({ direction: 'read', bytes: offset, totalBytes: manifest.totalBytes })
+          return this.transferPartCall<SyncTransferPart>('readSyncTransferPart', {
+            identityKey: args.identityKey,
+            transferId: manifest.transferId,
+            offset
+          })
         })
-      })) as SyncChunk
+      )) as SyncChunk
       this.onSyncTransferProgress?.({ direction: 'read', bytes: manifest.totalBytes, totalBytes: manifest.totalBytes })
       if (
         chunk?.userIdentityKey !== args.identityKey ||

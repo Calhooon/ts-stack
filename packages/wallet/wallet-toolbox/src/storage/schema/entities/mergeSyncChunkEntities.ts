@@ -1,3 +1,4 @@
+import { awaitFromSync, mapAwaitFromSync } from '../../../utility/promiseFromSync'
 import type { SyncChunk, TrxToken } from '../../../sdk/WalletStorage.interfaces'
 import { maxDate } from '../../../utility/utilityHelpers'
 import { runInSeries } from '../../../utility/runInSeries'
@@ -27,14 +28,16 @@ export async function mergeSyncChunkEntities(
   trx?: TrxToken,
   options?: { preserveManagedChangePolicy?: true }
 ): Promise<{ done: boolean; maxUpdated_at: Date | undefined; updates: number; inserts: number }> {
-  const findBasket: typeof EntityOutputBasket.mergeFind = async (storage, identity, incoming, map, token) =>
-    await EntityOutputBasket.mergeFind(
-      storage,
-      identity,
-      incoming,
-      map,
-      token,
-      options?.preserveManagedChangePolicy === true
+  const findBasket: typeof EntityOutputBasket.mergeFind = (storage, identity, incoming, map, token) =>
+    awaitFromSync(() =>
+      EntityOutputBasket.mergeFind(
+        storage,
+        identity,
+        incoming,
+        map,
+        token,
+        options?.preserveManagedChangePolicy === true
+      )
     )
   const mes = [
     new MergeEntity(chunk.provenTxs, EntityProvenTx.mergeFind, syncMap.provenTx),
@@ -69,16 +72,20 @@ export async function mergeSyncChunkEntities(
   }
 
   // Child entities depend on ID mappings committed by their predecessors.
-  await runInSeries(mes, async me => {
-    const r = await me.merge(since, writer, userId, syncMap, trx)
-    // The counts become the offsets for the next chunk.
-    me.esm.count += me.stateArray?.length || 0
-    updates += r.updates
-    inserts += r.inserts
-    maxUpdated_at = maxDate(maxUpdated_at, me.esm.maxUpdated_at)
-    // If any entity type either did not report results or if there were at least one, then we aren't done.
-    if (me.stateArray === undefined || me.stateArray.length > 0) done = false
-  })
+  await runInSeries(mes, me =>
+    mapAwaitFromSync(
+      () => me.merge(since, writer, userId, syncMap, trx),
+      r => {
+        // The counts become the offsets for the next chunk.
+        me.esm.count += me.stateArray?.length || 0
+        updates += r.updates
+        inserts += r.inserts
+        maxUpdated_at = maxDate(maxUpdated_at, me.esm.maxUpdated_at)
+        // If any entity type either did not report results or if there were at least one, then we aren't done.
+        if (me.stateArray === undefined || me.stateArray.length > 0) done = false
+      }
+    )
+  )
 
   if (done) for (const me of mes) me.esm.count = 0
   return { done, maxUpdated_at, updates, inserts }

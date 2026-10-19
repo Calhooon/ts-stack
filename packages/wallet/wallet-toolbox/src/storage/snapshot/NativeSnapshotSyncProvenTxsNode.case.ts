@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { TableProvenTx } from '../schema/tables'
 import { KnexSnapshotSyncDestination } from './KnexSnapshotSyncDestination'
@@ -36,8 +37,10 @@ export async function verifyNativeSnapshotSyncProvenTxs(
       expected.length > 0 &&
       expected.length <= 4
   )
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Native field proof component performed legacy whole-payload preparation')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Native field proof component performed legacy whole-payload preparation')
+      })
     }),
     page = await source.fieldReader.readMetadataPage('provenTxs', checkpoint.cursor, { maxRows: 4, maxBytes: 32768 })
   requireCase(
@@ -84,8 +87,10 @@ export async function verifyNativeSnapshotSyncProofStaleCurrent(
   foreground: Readonly<TableProvenTx>
 ): Promise<void> {
   requireCase(source.fieldReader !== undefined && snapshotSyncTables[checkpoint.tableIndex] === 'provenTxs')
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Unexpected legacy proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Unexpected legacy proof I/O')
+      })
     }),
     before = await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey),
     page = await source.fieldReader.readMetadataPage('provenTxs', checkpoint.cursor, { maxRows: 4, maxBytes: 32768 }),
@@ -120,8 +125,10 @@ export async function verifyNativeSnapshotSyncProofRejectedReplacement(
   existing: Readonly<TableProvenTx>
 ): Promise<void> {
   requireCase(source.fieldReader !== undefined)
-  const destination = new KnexSnapshotSyncDestination(storage, async () => {
-      throw new Error('Unexpected legacy proof I/O')
+  const destination = new KnexSnapshotSyncDestination(storage, () => {
+      return promiseFromSync(() => {
+        throw new Error('Unexpected legacy proof I/O')
+      })
     }),
     before = await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey),
     page = await source.fieldReader.readMetadataPage('provenTxs', checkpoint.cursor, { maxRows: 4, maxBytes: 32768 })

@@ -43,7 +43,7 @@ export async function snapshotSyncSmallText(
         if (descriptor.kind === 'utf8') result += decoder.decode(bytes, { stream: true })
         else
           for (let index = 0; index < bytes.length; index += 2)
-            result += String.fromCharCode(bytes[index] | (bytes[index + 1] << 8))
+            result += String.fromCodePoint(bytes[index] | (bytes[index + 1] << 8))
         offset += length
       } finally {
         if (bytes instanceof Uint8Array) bytes.fill(0)

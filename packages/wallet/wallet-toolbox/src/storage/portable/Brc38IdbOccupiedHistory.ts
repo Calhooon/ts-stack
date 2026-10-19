@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { Brc38PrivateIdbStage, type Brc38PrivateIdbStructuredRead } from './Brc38PrivateIdbStage'
 import {
   brc38PrivateIdbStructuredPolicy,
@@ -255,8 +256,10 @@ export async function prepareBrc38IdbOccupiedHistory(
     const owners: Brc38StructuredProjectionOwners = Object.freeze({
       check,
       openIndex: openProjectionIndex,
-      readMappings: async () => {
-        throw new Error('Request-history union does not consume ID mappings')
+      readMappings: () => {
+        return promiseFromSync(() => {
+          throw new Error('Request-history union does not consume ID mappings')
+        })
       }
     })
     field = await Brc38StreamedHistoryProjection.prepareField(

@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 
@@ -89,10 +90,13 @@ export class Brc38OwnedPreparation {
       try {
         await this.#drain(job)
       } catch (error_) {
-        const cleanup = async () => {
-          await this.#drain(job)
-          this.#cleanup = undefined
-        }
+        const cleanup = () =>
+          mapAwaitFromSync(
+            () => this.#drain(job),
+            () => {
+              this.#cleanup = undefined
+            }
+          )
         this.#cleanup = new Brc38StagingCleanupError(
           [cause, error_],
           'Private preparation retains actual non-cancellable work until drainage',

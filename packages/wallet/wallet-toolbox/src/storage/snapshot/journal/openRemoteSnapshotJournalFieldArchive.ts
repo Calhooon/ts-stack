@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../../utility/promiseFromSync'
 import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
 import {
   parseSnapshotJournalFieldArchiveReference,
@@ -222,7 +223,9 @@ export async function openRemoteSnapshotJournalFieldArchive(
     const read = async (sequence: number, signal: AbortSignal) => {
       const receipt = directory.receipts[sequence],
         packet = decodeSnapshotJournalFieldArchivePacket(
-          await retrySnapshotArchiveOperation(async () => await transport.page(request, directory, sequence, signal)),
+          await retrySnapshotArchiveOperation(() =>
+            awaitFromSync(() => transport.page(request, directory, sequence, signal))
+          ),
           { stream: receipt.stream, tableId: receipt.tableId },
           directory.manifest.binding.journal.receipt.highWater
         )
@@ -378,7 +381,9 @@ export async function openRemoteSnapshotJournalFieldArchive(
           if (group === undefined || group[0].index.descriptor.bytes !== descriptor.bytes)
             throw new TypeError('Field content does not belong to this artifact')
           if (length === 0) {
-            const current = await retrySnapshotArchiveOperation(async () => await transport.status(request, signal))
+            const current = await retrySnapshotArchiveOperation(() =>
+              awaitFromSync(() => transport.status(request, signal))
+            )
             if (
               current.state !== 'ready' ||
               current.archiveId !== directory.manifest.archiveId ||

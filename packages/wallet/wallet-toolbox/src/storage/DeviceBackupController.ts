@@ -1,3 +1,4 @@
+import { mapAwaitFromSync } from '../utility/promiseFromSync'
 import type { WalletStorageProvider } from '../sdk/WalletStorage.interfaces'
 import type { Chain } from '../sdk/types'
 import type { WalletStorageManager } from './WalletStorageManager'
@@ -181,10 +182,13 @@ export class DeviceBackupController {
         try {
           await lifecycleDeadline(actualWrite)
         } catch (cause) {
-          const cleanup = async () => {
-            await lifecycleDeadline(settled)
-            this.retainedCleanup = undefined
-          }
+          const cleanup = () =>
+            mapAwaitFromSync(
+              () => lifecycleDeadline(settled),
+              () => {
+                this.retainedCleanup = undefined
+              }
+            )
           try {
             await cleanup()
           } catch (error_) {
@@ -447,15 +451,19 @@ export class DeviceBackupController {
     this.suspended = true
     await this.drainLifecycle()
   }
-  private async drainLifecycle(): Promise<void> {
-    const outcomes = await Promise.allSettled([this.cancelActive(), this.preferenceUpdate ?? Promise.resolve()])
-    const failures = outcomes
-      .filter((value): value is PromiseRejectedResult => value.status === 'rejected')
-      .map(value => value.reason)
-    if (this.retainedCleanup !== undefined && !failures.includes(this.retainedCleanup))
-      failures.push(this.retainedCleanup)
-    if (failures.length === 1) throw failures[0]
-    if (failures.length > 1) throw new AggregateError(failures, 'Device backup lifecycle drain failed')
+  private drainLifecycle(): Promise<void> {
+    return mapAwaitFromSync(
+      () => Promise.allSettled([this.cancelActive(), this.preferenceUpdate ?? Promise.resolve()]),
+      outcomes => {
+        const failures = outcomes
+          .filter((value): value is PromiseRejectedResult => value.status === 'rejected')
+          .map(value => value.reason)
+        if (this.retainedCleanup !== undefined && !failures.includes(this.retainedCleanup))
+          failures.push(this.retainedCleanup)
+        if (failures.length === 1) throw failures[0]
+        if (failures.length > 1) throw new AggregateError(failures, 'Device backup lifecycle drain failed')
+      }
+    )
   }
   resume(): void {
     if (this.closed || this.active !== undefined || this.retainedCleanup !== undefined || this.preferenceWrite)

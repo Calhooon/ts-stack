@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
@@ -184,13 +185,15 @@ export async function inspectBrc38PrivatePriorImports(
             )
               invalid()
             const cell = cells[0]
-            await actual.withFieldExtent(offset, cell.bytes, async originalBytes => {
-              check()
-              if (
-                originalBytes.byteLength !== cell.payload.byteLength ||
-                !originalBytes.every((byte, at) => byte === cell.payload[at])
-              )
-                invalid()
+            await actual.withFieldExtent(offset, cell.bytes, originalBytes => {
+              return promiseFromSync(() => {
+                check()
+                if (
+                  originalBytes.byteLength !== cell.payload.byteLength ||
+                  !originalBytes.every((byte, at) => byte === cell.payload[at])
+                )
+                  invalid()
+              })
             })
             full.update(cell.payload)
             offset += cell.bytes

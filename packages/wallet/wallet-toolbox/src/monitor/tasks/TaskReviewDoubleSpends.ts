@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitVoidFromSync } from '../../utility/promiseFromSync'
 import { EntityProvenTxReq } from '../../storage/schema/entities/EntityProvenTxReq'
 import { WalletError } from '../../sdk/WalletError'
 import { TableProvenTxReq } from '../../storage/schema/tables'
@@ -138,16 +139,18 @@ export class TaskReviewDoubleSpends extends WalletMonitorTask {
         } else {
           const entity = new EntityProvenTxReq(req)
           let changed = false
-          const committed = await writes.request(entity, async current => {
-            changed = false
-            // A late proof, terminal input conflict or newer review cannot be
-            // overwritten by the pre-observation snapshot. This callback only
-            // updates cache metadata; validated proof recovery owns finances.
-            durableInputConflict = hasDurableInputConflict(current.api)
-            canUnfail = status === 'mined' || (status === 'known' && !durableInputConflict)
-            if (current.status !== 'doubleSpend' || current.updated_at > updatedBefore || !canUnfail) return false
-            current.status = 'unfail'
-            changed = true
+          const committed = await writes.request(entity, current => {
+            return promiseFromSync(() => {
+              changed = false
+              // A late proof, terminal input conflict or newer review cannot be
+              // overwritten by the pre-observation snapshot. This callback only
+              // updates cache metadata; validated proof recovery owns finances.
+              durableInputConflict = hasDurableInputConflict(current.api)
+              canUnfail = status === 'mined' || (status === 'known' && !durableInputConflict)
+              if (current.status !== 'doubleSpend' || current.updated_at > updatedBefore || !canUnfail) return false
+              current.status = 'unfail'
+              changed = true
+            })
           })
           canUnfail = committed && changed
           retained = !committed || entity.status === 'doubleSpend'
@@ -167,9 +170,9 @@ export class TaskReviewDoubleSpends extends WalletMonitorTask {
     }
 
     if (legacyUnfails.length > 0) {
-      await this.storage.runAsStorageProvider(async sp => {
-        await sp.updateProvenTxReq(legacyUnfails, { status: 'unfail' })
-      })
+      await this.storage.runAsStorageProvider(sp =>
+        awaitVoidFromSync(() => sp.updateProvenTxReq(legacyUnfails, { status: 'unfail' }))
+      )
     }
 
     return JSON.stringify({

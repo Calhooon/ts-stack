@@ -339,38 +339,61 @@ function installedDefinition(sql: string): InstalledDefinition | undefined {
 async function validateDefinition(k: Knex, sql: string): Promise<void> {
   const definition = installedDefinition(sql)
   if (!definition) throw new WERR_INVALID_OPERATION('Invalid generated schema definition')
-  const rows: Array<{ sql: string }> = await k('sqlite_master')
+  const row = (await k('sqlite_master')
     .where({ type: definition.type, name: definition.name })
-    .select(k.raw('substr(sql,1,65537) AS sql'))
-    .limit(2)
-  if (rows.length !== 1 || rows[0].sql !== sql)
-    throw new WERR_INVALID_OPERATION('Rebuild schema definition mismatch: ' + definition.name)
+    .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
+    .count({ matches: '*' })
+    .first()) as { matches: unknown } | undefined
+  if (row?.matches !== 1) throw new WERR_INVALID_OPERATION('Rebuild schema definition mismatch: ' + definition.name)
 }
 async function validateDefinitions(k: Knex, expected: string[]): Promise<void> {
-  // Each read binds at most sixteen exact type/name pairs. Validation still
-  // compares every original SQL definition, in its original order.
-  const pages = Array.from({ length: Math.ceil(expected.length / 16) }, (_, index) =>
-    expected.slice(index * 16, (index + 1) * 16)
-  )
-  await runInSeries(pages, async page => {
-    const definitions = page.map(sql => (typeof sql === 'string' ? installedDefinition(sql) : undefined))
+  // Keep the original sixteen-object ceiling and bound encoded bindings too.
+  // Exact SQL is compared in SQLite; only two scalar counts cross the native
+  // reply boundary, instead of up to sixteen 65KiB schema strings.
+  const pages: string[][] = [],
+    encoder = new TextEncoder()
+  let page: string[] = [],
+    bytes = 0
+  for (const sql of expected) {
+    const definition = typeof sql === 'string' ? installedDefinition(sql) : undefined
+    const amount =
+      definition === undefined ? 0 : encoder.encode(definition.type + definition.name + definition.sql).length
+    if (page.length !== 0 && (page.length === 16 || amount > 32768 - bytes)) {
+      pages.push(page)
+      page = []
+      bytes = 0
+    }
+    page.push(sql)
+    bytes += amount
+    if (bytes > 32768) {
+      pages.push(page)
+      page = []
+      bytes = 0
+    }
+  }
+  if (page.length !== 0) pages.push(page)
+  await runInSeries(pages, async group => {
+    const definitions = group.map(sql => (typeof sql === 'string' ? installedDefinition(sql) : undefined))
     if (definitions.includes(undefined)) {
-      // Preserve the original error ordering for malformed caller-supplied plans.
-      await runInSeries(page, async sql => await validateDefinition(k, sql))
+      await runInSeries(group, async sql => await validateDefinition(k, sql))
       return
     }
     const selected = definitions.filter((definition): definition is InstalledDefinition => definition !== undefined)
-    const rows: InstalledDefinition[] = await k('sqlite_master')
+    const row = (await k('sqlite_master')
       .where(query => {
-        for (const { type, name } of selected) void query.orWhere({ type, name })
+        for (const definition of selected)
+          void query.orWhere(part => {
+            void part
+              .where({ type: definition.type, name: definition.name })
+              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
+          })
       })
-      .select('type', k.raw('substr(name,1,129) AS name'), k.raw('substr(sql,1,65537) AS sql'))
-      .limit(selected.length + 1)
-    for (const definition of selected) {
-      const matches = rows.filter(row => row.type === definition.type && row.name === definition.name)
-      if (matches.length !== 1 || matches[0].sql !== definition.sql)
-        throw new WERR_INVALID_OPERATION('Rebuild schema definition mismatch: ' + definition.name)
-    }
+      .count({ matches: '*' })
+      .countDistinct({ names: 'name' })
+      .first()) as { matches: unknown; names: unknown } | undefined
+    if (row?.matches !== selected.length || row.names !== selected.length)
+      // Preserve first-mismatch errors and historical duplicate expected entries.
+      await runInSeries(group, async sql => await validateDefinition(k, sql))
   })
 }
 /** Exact generated DDL ownership; never adopt a similarly named foreign object. */

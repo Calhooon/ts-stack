@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import {
@@ -109,9 +110,11 @@ export async function withBrc38PrivateLocalBaselineRow<T>(
                   bytes = field.bytes!
                 for (let offset = 0; offset < bytes;) {
                   const amount = Math.min(policy.maximumReadBytes, bytes - offset)
-                  await actual.withFieldExtent(field.field, offset, amount, async extent => {
-                    check()
-                    hash.update(extent)
+                  await actual.withFieldExtent(field.field, offset, amount, extent => {
+                    return promiseFromSync(() => {
+                      check()
+                      hash.update(extent)
+                    })
                   })
                   offset += amount
                   check()

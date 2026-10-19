@@ -36,6 +36,26 @@ The held #569 branch uses provisional artifact allowances based on the complete 
 
 `platform-budget.json` retains the original baselines, measured source and job, owner, earliest review date, and removal conditions. Review follows full implementation, validation, feature completion, and goal achievement. These artifact allowances apply the operator's direction to use measured, judicious limits and are separate from the earlier browser allowance. They do not change exports, dependencies, compiler settings, source maps, licenses, runtime memory, native or production limits, or negative controls. Passing an artifact budget does not qualify mobile behavior or physical devices. Earlier failed samples remain failed evidence.
 
+## Readiness artifact optimization
+
+The readiness build compacts internal code while retaining function/class names,
+properties, debugger statements, licenses and complete source maps. Internal
+JSON, IndexedDB and wallet modules have separate private chunks; the package's
+public entry points and conditional exports stay the same. The build includes
+only the used Noble Argon2id fallback and its dependencies, with the same pinned
+implementation and algorithm parameters. SDK and IndexedDB package identities
+remain external. Shared Promise/await forwarding reduces duplicated generated
+state machines without changing immediate work, suspension order or rejection
+objects.
+
+The platform gate also decrypts a fixed public BRC-39 fixture through fresh
+installed ESM and CommonJS consumers with WebAssembly disabled, and refuses a
+modified authentication tag. The fixture was produced with hash-wasm and Node
+AES-GCM independently of the JavaScript fallback; its legacy KDF values do not
+change encryption defaults. Original Metro/Hermes ceilings and reproducibility,
+composition and source-map checks remain required. Measurements from earlier
+failed experiments do not qualify the final source.
+
 ## Receiving already-broadcast payments
 
 The 2.14.9 source candidate completes broadcast results even when storage

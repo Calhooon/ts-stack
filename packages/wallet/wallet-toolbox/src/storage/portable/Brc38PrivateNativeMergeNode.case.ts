@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
 import { Brc38PrivateLocalCandidate, Brc38PrivateCompositionRequiredError } from './Brc38PrivateLocalCandidateNode'
@@ -269,8 +270,10 @@ export async function verifyBrc38PrivateNativeMergePolicyResume(
             controller.store,
             source,
             { ...controller.options, structuredResources: bounded },
-            async () => {
-              callbackReached = true
+            () => {
+              return promiseFromSync(() => {
+                callbackReached = true
+              })
             }
           )
       )

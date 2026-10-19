@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { StorageKnex } from '../StorageKnex'
 import type { Brc38StagingAdmissionNode, Brc38StagingReservation } from './Brc38StagingAdmissionNode'
 import {
@@ -70,7 +71,9 @@ export async function mergeAuthenticatedBrc39NativeInactive(
   password: string,
   selected: Brc38AuthenticatedNativeMergeOptions
 ): Promise<Readonly<Brc38AuthenticatedNativeMergeResult>> {
-  return await withAuthenticatedBrc39NativeMerge(encrypted, password, selected, async (_, result) => result)
+  return await withAuthenticatedBrc39NativeMerge(encrypted, password, selected, (_, result) =>
+    promiseFromSync(() => result)
+  )
 }
 
 /** Internal lifecycle adapter for the composed publication controller. The

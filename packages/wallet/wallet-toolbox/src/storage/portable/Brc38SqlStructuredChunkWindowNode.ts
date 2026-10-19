@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import type { Brc38StageTable } from './Brc38SemanticStage'
@@ -43,8 +44,10 @@ export async function visitBrc38SqlStructuredChunkWindows(
   visit: (bytes: Uint8Array, offset: number) => void
 ): Promise<Readonly<{ bytes: number; sha256: string }>> {
   requireBrc38PackedRead(k)
-  return await visitChunkWindows(k, table, selected, maximumReadBytes, check, visit, async () => {
-    requireBrc38PackedRead(k)
+  return await visitChunkWindows(k, table, selected, maximumReadBytes, check, visit, () => {
+    return promiseFromSync(() => {
+      requireBrc38PackedRead(k)
+    })
   })
 }
 /** Provisional archive staging precedes authenticated native handoff. The

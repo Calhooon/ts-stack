@@ -110,7 +110,8 @@ export async function withBrc38NativeStreamedContractFixture(
       })
     closes.push(async () => await root.close())
     async function* chunks(): AsyncGenerator<Uint8Array> {
-      for (let offset = 0; offset < bytes.length; offset += 137) yield bytes.slice(offset, offset + 137)
+      for (let offset = 0; offset < bytes.length; offset += 137)
+        yield Promise.resolve(bytes.slice(offset, offset + 137))
     }
     const staged = await stageAuthenticatedBrc39PrivateImport(chunks(), authenticatedStagePassword, root, selected)
     closes.push(async () => await staged.reservation.store.close())

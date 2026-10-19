@@ -3,6 +3,17 @@ import { resolve } from 'node:path'
 
 // Additive #544 DATA/field coverage; existing identities and controls remain.
 const walletDataAdditions = {
+  'wallet-portable-canonical-chunks': {
+    mutate: ['src/utility/promiseFromSync.ts', 'src/utility/utf16CodeUnitAt.ts'],
+    additionalInputs: [
+      'src/utility/promiseFromSync.test.ts',
+      'src/utility/utf16CodeUnitAt.test.ts'
+    ],
+    tests: [
+      '<rootDir>/src/utility/promiseFromSync.test.ts',
+      '<rootDir>/src/utility/utf16CodeUnitAt.test.ts'
+    ]
+  },
   'wallet-snapshot-journal': {
     mutate: [
       'src/storage/snapshot/journal/SnapshotJournalContentRevision.ts',
@@ -6930,7 +6941,7 @@ function snapshotSyncMutationTargets(repositoryRoot) {
         repositoryRoot,
         'packages/wallet/wallet-toolbox',
         'src/storage/WalletStorageManager.ts',
-        'private async runSnapshotCopy(',
+        'private runSnapshotCopy(',
         'async syncFromReader('
       ),
       sourceLineRange(
@@ -8265,11 +8276,19 @@ export function buildMutationTargets(repositoryRoot) {
       }
     }
   }
+  // Bound the observed VM-context accumulation in this canonical serialization
+  // campaign. Restarting a worker retains every mutant/test and all score,
+  // invalid/no-coverage and per-test timeout controls.
+  targets['wallet-portable-canonical-chunks'].runnerOptions.maxTestRunnerReuse = 20
   for (const target of Object.values(targets)) {
     if (
       target.packageDirectory === 'packages/wallet/wallet-toolbox' &&
       target.runnerOptions?.jest
     ) {
+      // Stryker's Jest processes share one sandbox. The source-owned lifecycle
+      // prepares physical Worker siblings and deletes a fixed fixture directory;
+      // concurrent invocations would violate those exclusive ownership contracts.
+      target.runnerOptions.concurrency = 1
       target.runnerOptions.jest.config = {
         ...target.runnerOptions.jest.config,
         transform: {

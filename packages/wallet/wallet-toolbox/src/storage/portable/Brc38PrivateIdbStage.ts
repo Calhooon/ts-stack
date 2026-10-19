@@ -1,3 +1,4 @@
+import { awaitFromSync, awaitVoidFromSync, mapAwaitFromSync } from '../../utility/promiseFromSync'
 import { unwrap, wrap, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { toArray } from '@bsv/sdk/primitives/utils'
@@ -557,7 +558,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
       createdUpgrade = false,
       created = false,
       database: IDBPDatabase<Schema> | undefined,
-      upgradeFailure: unknown,
+      upgradeFailure: Error | undefined,
       timer: ReturnType<typeof setTimeout> | undefined,
       namespaceDeleted = false
     const completion = new Promise<IDBPDatabase<Schema>>((resolve, reject) => {
@@ -601,7 +602,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
           for (const table of brc38StageTables) transaction.objectStore('counts').add(0, table)
           createdUpgrade = true
         } catch (cause) {
-          upgradeFailure = cause
+          upgradeFailure = cause instanceof Error ? cause : new Error('Private IndexedDB upgrade failed', { cause })
           try {
             request.transaction?.abort()
           } catch {
@@ -1019,19 +1020,25 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
       )
     })
   }
-  async count(table: Brc38StageTable): Promise<number> {
-    if (!brc38StageTables.includes(table)) invalid()
-    return await this.#run('readonly', async tx => {
-      const amount = await tx.objectStore('counts').get(table)
-      if (typeof amount !== 'number') invalid()
-      bound(amount, 0, this.#limits.maximumRows)
-      return amount
+  count(table: Brc38StageTable): Promise<number> {
+    return awaitFromSync(() => {
+      if (!brc38StageTables.includes(table)) invalid()
+      return this.#run('readonly', tx =>
+        mapAwaitFromSync(
+          () => tx.objectStore('counts').get(table),
+          amount => {
+            if (typeof amount !== 'number') invalid()
+            bound(amount, 0, this.#limits.maximumRows)
+            return amount
+          }
+        )
+      )
     })
   }
   /** Fresh bounded staging metadata for restore preparation. A sealed marker,
    * returned header, binding or count is DATA, not envelope authentication or
    * a previous semantic verdict. The crypto/source owner remains mandatory. */
-  async sealedMetadata(): Promise<
+  sealedMetadata(): Promise<
     Readonly<{
       header: Readonly<BRC38WalletData>
       counts: Readonly<Record<Brc38StageTable, number>>
@@ -1041,92 +1048,103 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
       originalLimitsJson: string
     }>
   > {
-    this.#fieldIdle()
-    return await this.#run('readonly', async tx => {
-      const meta = await this.#metadata(tx)
-      if (
-        meta.state !== 'sealed' ||
-        meta.header === null ||
-        meta.binaryFields !== meta.binaryReferences ||
-        meta.jsonIndexes !== 0 ||
-        meta.jsonMembers !== 0
-      )
-        invalid()
-      if (512 + 16 * meta.header.length > this.#limits.maximumRowAllocationBytes)
-        throw new SnapshotResourceLimitError(
-          'Private browser sealed header exceeds its original preparation allocation'
+    return awaitFromSync(() => {
+      this.#fieldIdle()
+      return this.#run('readonly', async tx => {
+        const meta = await this.#metadata(tx)
+        if (
+          meta.state !== 'sealed' ||
+          meta.header === null ||
+          meta.binaryFields !== meta.binaryReferences ||
+          meta.jsonIndexes !== 0 ||
+          meta.jsonMembers !== 0
         )
-      const bytes = toArray(meta.header, 'utf8').length
-      if (512 + 16 * bytes > this.#limits.maximumRowAllocationBytes)
-        throw new SnapshotResourceLimitError(
-          'Private browser sealed header exceeds its original preparation allocation'
+          invalid()
+        if (512 + 16 * meta.header.length > this.#limits.maximumRowAllocationBytes)
+          throw new SnapshotResourceLimitError(
+            'Private browser sealed header exceeds its original preparation allocation'
+          )
+        const bytes = toArray(meta.header, 'utf8').length
+        if (512 + 16 * bytes > this.#limits.maximumRowAllocationBytes)
+          throw new SnapshotResourceLimitError(
+            'Private browser sealed header exceeds its original preparation allocation'
+          )
+        const counts = {} as Record<Brc38StageTable, number>
+        let rows = 0
+        for (const table of brc38StageTables) {
+          const count = await tx.objectStore('counts').get(table)
+          if (typeof count !== 'number') invalid()
+          bound(count, 0, this.#limits.maximumRows)
+          rows += count
+          counts[table] = count
+        }
+        if (
+          rows !== meta.rows ||
+          (await tx.objectStore('counts').count()) !== brc38StageTables.length ||
+          (await tx.objectStore('rows').count()) !== rows ||
+          (await tx.objectStore('keys').count()) !== meta.keys ||
+          (await tx.objectStore('fields').count()) !== meta.binaryFields ||
+          (await tx.objectStore('chunks').count()) !== meta.binaryChunks ||
+          (await tx.objectStore('jsonIndexes').count()) !== 0 ||
+          (await tx.objectStore('jsonMembers').count()) !== 0
         )
-      const counts = {} as Record<Brc38StageTable, number>
-      let rows = 0
-      for (const table of brc38StageTables) {
-        const count = await tx.objectStore('counts').get(table)
-        if (typeof count !== 'number') invalid()
-        bound(count, 0, this.#limits.maximumRows)
-        rows += count
-        counts[table] = count
-      }
-      if (
-        rows !== meta.rows ||
-        (await tx.objectStore('counts').count()) !== brc38StageTables.length ||
-        (await tx.objectStore('rows').count()) !== rows ||
-        (await tx.objectStore('keys').count()) !== meta.keys ||
-        (await tx.objectStore('fields').count()) !== meta.binaryFields ||
-        (await tx.objectStore('chunks').count()) !== meta.binaryChunks ||
-        (await tx.objectStore('jsonIndexes').count()) !== 0 ||
-        (await tx.objectStore('jsonMembers').count()) !== 0
-      )
-        invalid()
-      const header: Readonly<BRC38WalletData> = JSON.parse(meta.header)
-      // This is the ordinary parser's original header contract. Full archive
-      // row/field/graph semantics and GCM remain independently replayed owners.
-      if (
-        header.user?.identityKey !== this.#bound.binding.identityKey ||
-        header.sourceStorage?.storageIdentityKey !== this.#bound.binding.sourceStorageIdentityKey ||
-        header.sourceStorage?.chain !== this.#bound.binding.chain
-      )
-        invalid()
-      return Object.freeze({
-        header,
-        counts: Object.freeze(counts),
-        rows,
-        binding: this.#bound.binding,
-        bindingSha256: this.#bound.digest,
-        originalLimitsJson: this.#bound.limitsJson
+          invalid()
+        const header: Readonly<BRC38WalletData> = JSON.parse(meta.header)
+        // This is the ordinary parser's original header contract. Full archive
+        // row/field/graph semantics and GCM remain independently replayed owners.
+        if (
+          header.user?.identityKey !== this.#bound.binding.identityKey ||
+          header.sourceStorage?.storageIdentityKey !== this.#bound.binding.sourceStorageIdentityKey ||
+          header.sourceStorage?.chain !== this.#bound.binding.chain
+        )
+          invalid()
+        return Object.freeze({
+          header,
+          counts: Object.freeze(counts),
+          rows,
+          binding: this.#bound.binding,
+          bindingSha256: this.#bound.digest,
+          originalLimitsJson: this.#bound.limitsJson
+        })
       })
     })
   }
-  async row(table: Brc38StageTable, index: number): Promise<Readonly<PortableRow> | undefined> {
-    if (!brc38StageTables.includes(table)) invalid()
-    bound(index, 0, this.#limits.maximumRows - 1)
-    return await this.#run('readonly', async tx => {
-      const value = await tx.objectStore('rows').get([table, index])
-      if (value === undefined) return undefined
-      if (value.binaryPayload !== undefined || value.structuredPayload !== undefined || value.textPayload !== undefined)
-        throw new Error('Field-aware browser row requires the explicit streamed reader')
-      if (
-        typeof value.payload !== 'string' ||
-        value.payload.length > this.#limits.maximumRowBytes ||
-        toArray(value.payload, 'utf8').length !== value.bytes ||
-        value.bytes > this.#limits.maximumRowBytes ||
-        512 + 16 * value.bytes > this.#limits.maximumRowAllocationBytes ||
-        hash(value.payload) !== value.digest
+  row(table: Brc38StageTable, index: number): Promise<Readonly<PortableRow> | undefined> {
+    return awaitFromSync(() => {
+      if (!brc38StageTables.includes(table)) invalid()
+      bound(index, 0, this.#limits.maximumRows - 1)
+      return this.#run('readonly', tx =>
+        mapAwaitFromSync(
+          () => tx.objectStore('rows').get([table, index]),
+          value => {
+            if (value === undefined) return undefined
+            if (
+              value.binaryPayload !== undefined ||
+              value.structuredPayload !== undefined ||
+              value.textPayload !== undefined
+            )
+              throw new Error('Field-aware browser row requires the explicit streamed reader')
+            if (
+              typeof value.payload !== 'string' ||
+              value.payload.length > this.#limits.maximumRowBytes ||
+              toArray(value.payload, 'utf8').length !== value.bytes ||
+              value.bytes > this.#limits.maximumRowBytes ||
+              512 + 16 * value.bytes > this.#limits.maximumRowAllocationBytes ||
+              hash(value.payload) !== value.digest
+            )
+              invalid()
+            return JSON.parse(value.payload) as PortableRow
+          }
+        )
       )
-        invalid()
-      return JSON.parse(value.payload) as PortableRow
     })
   }
-  async has(namespace: string, key: string): Promise<boolean> {
-    if (typeof namespace !== 'string' || namespace.length > 64 || typeof key !== 'string' || key.length > 65536)
-      invalid()
-    return await this.#run(
-      'readonly',
-      async tx => (await tx.objectStore('keys').getKey([namespace, key])) !== undefined
-    )
+  has(namespace: string, key: string): Promise<boolean> {
+    return awaitFromSync(() => {
+      if (typeof namespace !== 'string' || namespace.length > 64 || typeof key !== 'string' || key.length > 65536)
+        invalid()
+      return this.#run('readonly', async tx => (await tx.objectStore('keys').getKey([namespace, key])) !== undefined)
+    })
   }
   async seal(header: Readonly<BRC38WalletData>, counts: Readonly<Record<Brc38StageTable, number>>): Promise<void> {
     this.#fieldIdle()
@@ -1234,13 +1252,8 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
     if (!['base64', 'number-array'].includes(encoding)) invalid()
     await this.#beginField(table, index, field, encoding, maximumBytes)
   }
-  async beginStructuredField(
-    table: Brc38StageTable,
-    index: number,
-    field: string,
-    maximumBytes: number
-  ): Promise<void> {
-    await this.#beginField(table, index, field, 'utf8-json', maximumBytes)
+  beginStructuredField(table: Brc38StageTable, index: number, field: string, maximumBytes: number): Promise<void> {
+    return awaitVoidFromSync(() => this.#beginField(table, index, field, 'utf8-json', maximumBytes))
   }
   async beginTextField(table: Brc38StageTable, index: number, field: string, maximumBytes: number): Promise<void> {
     bound(maximumBytes, 0, Math.min(1000000000, this.#limits.maximumLogicalBytes))
@@ -1286,39 +1299,41 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
         .put({ ...meta, binaryFields: meta.binaryFields + 1, logicalBytes: meta.logicalBytes + 512 }, 1)
     })
   }
-  async appendBinaryField(
+  appendBinaryField(
     table: Brc38StageTable,
     index: number,
     field: string,
     offset: number,
     input: Uint8Array
   ): Promise<void> {
-    await this.#appendField(
-      table,
-      index,
-      field,
-      field === 'noSendExpiryReclaimRawTx' ? 'number-array' : 'base64',
-      offset,
-      input
+    return awaitVoidFromSync(() =>
+      this.#appendField(
+        table,
+        index,
+        field,
+        field === 'noSendExpiryReclaimRawTx' ? 'number-array' : 'base64',
+        offset,
+        input
+      )
     )
   }
-  async appendStructuredField(
+  appendStructuredField(
     table: Brc38StageTable,
     index: number,
     field: string,
     offset: number,
     input: Uint8Array
   ): Promise<void> {
-    await this.#appendField(table, index, field, 'utf8-json', offset, input)
+    return awaitVoidFromSync(() => this.#appendField(table, index, field, 'utf8-json', offset, input))
   }
-  async appendTextField(
+  appendTextField(
     table: Brc38StageTable,
     index: number,
     field: string,
     offset: number,
     input: Uint8Array
   ): Promise<void> {
-    await this.#appendField(table, index, field, 'utf8', offset, input)
+    return awaitVoidFromSync(() => this.#appendField(table, index, field, 'utf8', offset, input))
   }
   async #appendField(
     table: Brc38StageTable,
@@ -1392,25 +1407,27 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
   /** Small current field DATA without loading/decoding the complete row. The
    * source owner/controller must still compare the actual row descriptor and
    * replay authentication/semantics before destination effects can publish. */
-  async binaryFieldDescriptor(
+  binaryFieldDescriptor(
     table: Brc38StageTable,
     index: number,
     field: string
   ): Promise<Readonly<Brc38JsonStreamedField>> {
-    const encoding = field === 'noSendExpiryReclaimRawTx' ? 'number-array' : 'base64'
-    this.#coordinate(table, index, field, encoding)
-    return await this.#run('readonly', async tx => {
-      const meta = await this.#metadata(tx),
-        value = this.#field(await tx.objectStore('fields').get([table, index, field]))
-      if (
-        meta.state !== 'sealed' ||
-        value.encoding !== encoding ||
-        !value.referenced ||
-        value.sha256 === null ||
-        (await tx.objectStore('rows').getKey([table, index])) === undefined
-      )
-        invalid()
-      return Object.freeze({ field, encoding, bytes: value.bytes, sha256: value.sha256 })
+    return awaitFromSync(() => {
+      const encoding = field === 'noSendExpiryReclaimRawTx' ? 'number-array' : 'base64'
+      this.#coordinate(table, index, field, encoding)
+      return this.#run('readonly', async tx => {
+        const meta = await this.#metadata(tx),
+          value = this.#field(await tx.objectStore('fields').get([table, index, field]))
+        if (
+          meta.state !== 'sealed' ||
+          value.encoding !== encoding ||
+          !value.referenced ||
+          value.sha256 === null ||
+          (await tx.objectStore('rows').getKey([table, index])) === undefined
+        )
+          invalid()
+        return Object.freeze({ field, encoding, bytes: value.bytes, sha256: value.sha256 })
+      })
     })
   }
   async *readStructuredFieldChunks(
@@ -1579,14 +1596,16 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
   }
   /** A fresh row DATA read whose actual retained decoded result stays charged
    * until disposed. A previous row/size/hash is never reused as admission. */
-  async ownedStreamedRow(
+  ownedStreamedRow(
     table: Brc38StageTable,
     index: number,
     selected: Brc38WorkingAllocation
   ): Promise<Readonly<{ row: Brc38JsonStreamedRow | undefined; close(): void }>> {
-    const working = brc38WorkingAllocation(selected)
-    if (working === undefined || working.maximum > this.#limits.maximumRowAllocationBytes) invalid()
-    return await this.#readStreamedRow(table, index, working)
+    return awaitFromSync(() => {
+      const working = brc38WorkingAllocation(selected)
+      if (working === undefined || working.maximum > this.#limits.maximumRowAllocationBytes) invalid()
+      return this.#readStreamedRow(table, index, working)
+    })
   }
   async #readStreamedRow(
     table: Brc38StageTable,
@@ -1730,11 +1749,15 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
           }
         }
       }
-      await this.#run('readonly', async tx => {
-        const actual = await this.#metadata(tx)
-        if (actual.binaryFields !== fields || actual.binaryReferences !== fields || actual.binaryChunks !== chunks)
-          invalid()
-      })
+      await this.#run('readonly', tx =>
+        mapAwaitFromSync(
+          () => this.#metadata(tx),
+          actual => {
+            if (actual.binaryFields !== fields || actual.binaryReferences !== fields || actual.binaryChunks !== chunks)
+              invalid()
+          }
+        )
+      )
       await this.#seal(JSON.parse(capturedHeader) as BRC38WalletData, expected, true)
     })
   }
@@ -1858,8 +1881,9 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
           encoding: 'utf8',
           length: descriptor.bytes,
           sha256: descriptor.sha256,
-          read: async (offset, length) => await this.#readStructuredExtent(table, index, descriptor, offset, length),
-          openIndex: async () => await this.#openJsonIndex(table, index, descriptor, policy)
+          read: (offset, length) =>
+            awaitFromSync(() => this.#readStructuredExtent(table, index, descriptor, offset, length)),
+          openIndex: () => awaitFromSync(() => this.#openJsonIndex(table, index, descriptor, policy))
         }
         await validateBrc38StructuredWalletField(
           descriptor.field,
@@ -2039,16 +2063,18 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
               start: member.start,
               end: member.end
             })
-            await operation(async () => await actual!.put(offset, copy))
+            await operation(() => awaitFromSync(() => actual!.put(offset, copy)))
           },
-          seal: async () => await operation(async () => await actual!.seal()),
-          lookup: async (offset, key) => await operation(async () => await actual!.lookup!(offset, key)),
-          nextEntry: async (offset, after) => {
-            indexCheck()
-            if (indexClosed || iterators.size !== 0)
-              throw new Error('Private browser index already owns its retained member iterator')
-            return await operation(async () => await actual!.nextEntry!(offset, after))
-          },
+          seal: () => awaitFromSync(() => operation(() => awaitFromSync(() => actual!.seal()))),
+          lookup: (offset, key) =>
+            awaitFromSync(() => operation(() => awaitFromSync(() => actual!.lookup!(offset, key)))),
+          nextEntry: (offset, after) =>
+            awaitFromSync(() => {
+              indexCheck()
+              if (indexClosed || iterators.size !== 0)
+                throw new Error('Private browser index already owns its retained member iterator')
+              return operation(() => awaitFromSync(() => actual!.nextEntry!(offset, after)))
+            }),
           entries: offset => {
             indexCheck()
             if (indexClosed || iterators.size !== 0)
@@ -2059,7 +2085,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
             output = (async function* (): AsyncGenerator<Brc38JsonMember> {
               try {
                 while (true) {
-                  const result = await operation(async () => await iterator.next())
+                  const result = await operation(() => awaitFromSync(() => iterator.next()))
                   if (result.done) {
                     iteratorClosed = true
                     return
@@ -2136,17 +2162,19 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
           charge.close()
         }
       },
-      openIndex: async () =>
-        await openIndex({
-          sourceBytes: descriptor.bytes,
-          maximumTemporaryIndexBytes: policy.maximumTemporaryIndexBytes,
-          maximumTemporaryPhysicalBytes: policy.maximumTemporaryIndexBytes,
-          maximumMembers: policy.maximumIndexMembers,
-          maximumAllocationBytes: working.maximum,
-          workingAllocation: working,
-          expiresAt,
-          signal: policy.signal
-        })
+      openIndex: () =>
+        awaitFromSync(() =>
+          openIndex({
+            sourceBytes: descriptor.bytes,
+            maximumTemporaryIndexBytes: policy.maximumTemporaryIndexBytes,
+            maximumTemporaryPhysicalBytes: policy.maximumTemporaryIndexBytes,
+            maximumMembers: policy.maximumIndexMembers,
+            maximumAllocationBytes: working.maximum,
+            workingAllocation: working,
+            expiresAt,
+            signal: policy.signal
+          })
+        )
     })
     const reader: Brc38PrivateIdbStructuredRead = Object.freeze({
       source,
@@ -2174,7 +2202,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
             throw new Brc38StagingCleanupError(
               failures,
               'Private browser structured reader retains native index cleanup',
-              async () => await reader.close()
+              () => awaitFromSync(() => reader.close())
             )
           reservation.close()
           this.#structuredReaders.delete(reader)
@@ -2188,55 +2216,57 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
     this.#structuredReaders.add(reader)
     return reader
   }
-  async #readStructuredExtent(
+  #readStructuredExtent(
     table: Brc38StageTable,
     index: number,
     descriptor: Brc38JsonStructuredField,
     offset: number,
     length: number
   ): Promise<Uint8Array> {
-    bound(offset, 0, descriptor.bytes)
-    bound(length, 0, Math.min(65536, descriptor.bytes - offset))
-    if (4096 + 32 * length > this.#limits.maximumRowAllocationBytes)
-      throw new SnapshotResourceLimitError('Private browser structured read allocation reached')
-    return await this.#run('readonly', async tx => {
-      const actual = this.#field(await tx.objectStore('fields').get([table, index, descriptor.field]))
-      if (actual.encoding !== 'utf8-json' || actual.bytes !== descriptor.bytes || actual.sha256 !== descriptor.sha256)
-        invalid()
-      const result = new Uint8Array(length),
-        chunks = tx.objectStore('chunks')
-      let used = 0,
-        at = offset
-      while (used < length) {
-        const cursor = await chunks.openCursor(
-          IDBKeyRange.bound([table, index, descriptor.field, 0], [table, index, descriptor.field, at]),
-          'prev'
-        )
-        if (cursor === null) invalid()
-        const start = cursor.key[3],
-          stored = cursor.value,
-          bytes = detachBrc38PrivateChunk(
-            stored.bytes,
-            Math.min(65536, Math.floor((this.#limits.maximumRowAllocationBytes - 4096) / 32))
+    return awaitFromSync(() => {
+      bound(offset, 0, descriptor.bytes)
+      bound(length, 0, Math.min(65536, descriptor.bytes - offset))
+      if (4096 + 32 * length > this.#limits.maximumRowAllocationBytes)
+        throw new SnapshotResourceLimitError('Private browser structured read allocation reached')
+      return this.#run('readonly', async tx => {
+        const actual = this.#field(await tx.objectStore('fields').get([table, index, descriptor.field]))
+        if (actual.encoding !== 'utf8-json' || actual.bytes !== descriptor.bytes || actual.sha256 !== descriptor.sha256)
+          invalid()
+        const result = new Uint8Array(length),
+          chunks = tx.objectStore('chunks')
+        let used = 0,
+          at = offset
+        while (used < length) {
+          const cursor = await chunks.openCursor(
+            IDBKeyRange.bound([table, index, descriptor.field, 0], [table, index, descriptor.field, at]),
+            'prev'
           )
-        try {
-          if (
-            start > at ||
-            at >= start + bytes.length ||
-            stored.size !== bytes.length ||
-            stored.sha256 !== new SHA256().update(bytes).digestHex() ||
-            4096 + 16 * (length + bytes.length) > this.#limits.maximumRowAllocationBytes
-          )
-            invalid()
-          const amount = Math.min(length - used, start + bytes.length - at)
-          result.set(bytes.subarray(at - start, at - start + amount), used)
-          used += amount
-          at += amount
-        } finally {
-          bytes.fill(0)
+          if (cursor === null) invalid()
+          const start = cursor.key[3],
+            stored = cursor.value,
+            bytes = detachBrc38PrivateChunk(
+              stored.bytes,
+              Math.min(65536, Math.floor((this.#limits.maximumRowAllocationBytes - 4096) / 32))
+            )
+          try {
+            if (
+              start > at ||
+              at >= start + bytes.length ||
+              stored.size !== bytes.length ||
+              stored.sha256 !== new SHA256().update(bytes).digestHex() ||
+              4096 + 16 * (length + bytes.length) > this.#limits.maximumRowAllocationBytes
+            )
+              invalid()
+            const amount = Math.min(length - used, start + bytes.length - at)
+            result.set(bytes.subarray(at - start, at - start + amount), used)
+            used += amount
+            at += amount
+          } finally {
+            bytes.fill(0)
+          }
         }
-      }
-      return result
+        return result
+      })
     })
   }
   async #openJsonIndex(
@@ -2349,75 +2379,91 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
             invalid()
           await tx.objectStore('jsonIndexes').put({ ...record, state: 'sealed' }, id)
         }),
-      nextEntry: async (objectOffset, after) => {
-        bound(objectOffset, 0, descriptor.bytes - 1)
-        if (after !== undefined && (typeof after !== 'string' || after.length > 8192)) invalid()
-        return await operation('readonly', 'sealed', async tx => {
-          const cursor = await tx
-            .objectStore('jsonMembers')
-            .openCursor(
-              IDBKeyRange.bound(
-                after === undefined ? [id, objectOffset] : [id, objectOffset, after],
-                [id, objectOffset, []],
-                after !== undefined
-              )
+      nextEntry: (objectOffset, after) =>
+        awaitFromSync(() => {
+          bound(objectOffset, 0, descriptor.bytes - 1)
+          if (after !== undefined && (typeof after !== 'string' || after.length > 8192)) invalid()
+          return operation('readonly', 'sealed', tx =>
+            mapAwaitFromSync(
+              () =>
+                tx
+                  .objectStore('jsonMembers')
+                  .openCursor(
+                    IDBKeyRange.bound(
+                      after === undefined ? [id, objectOffset] : [id, objectOffset, after],
+                      [id, objectOffset, []],
+                      after !== undefined
+                    )
+                  ),
+              cursor => {
+                if (cursor === null) return undefined
+                const value = member(cursor.value)
+                if (
+                  cursor.key[0] !== id ||
+                  cursor.key[1] !== objectOffset ||
+                  cursor.key[2] !== value.key ||
+                  cursor.value.charge !== 256 + 2 * value.key.length ||
+                  (after !== undefined && value.key <= after)
+                )
+                  invalid()
+                return value
+              }
             )
-          if (cursor === null) return undefined
-          const value = member(cursor.value)
-          if (
-            cursor.key[0] !== id ||
-            cursor.key[1] !== objectOffset ||
-            cursor.key[2] !== value.key ||
-            cursor.value.charge !== 256 + 2 * value.key.length ||
-            (after !== undefined && value.key <= after)
           )
-            invalid()
-          return value
-        })
-      },
+        }),
       entries: async function* (objectOffset) {
         bound(objectOffset, 0, descriptor.bytes - 1)
         let after: string | undefined
         while (true) {
-          const item = await operation('readonly', 'sealed', async tx => {
-            const cursor = await tx
-              .objectStore('jsonMembers')
-              .openCursor(
-                IDBKeyRange.bound(
-                  after === undefined ? [id, objectOffset] : [id, objectOffset, after],
-                  [id, objectOffset, []],
-                  after !== undefined
+          const item = await operation('readonly', 'sealed', tx =>
+            mapAwaitFromSync(
+              () =>
+                tx
+                  .objectStore('jsonMembers')
+                  .openCursor(
+                    IDBKeyRange.bound(
+                      after === undefined ? [id, objectOffset] : [id, objectOffset, after],
+                      [id, objectOffset, []],
+                      after !== undefined
+                    )
+                  ),
+              cursor => {
+                if (cursor === null) return undefined
+                const value = member(cursor.value)
+                if (
+                  cursor.key[0] !== id ||
+                  cursor.key[1] !== objectOffset ||
+                  cursor.key[2] !== value.key ||
+                  cursor.value.charge !== 256 + 2 * value.key.length ||
+                  (after !== undefined && value.key <= after)
                 )
-              )
-            if (cursor === null) return undefined
-            const value = member(cursor.value)
-            if (
-              cursor.key[0] !== id ||
-              cursor.key[1] !== objectOffset ||
-              cursor.key[2] !== value.key ||
-              cursor.value.charge !== 256 + 2 * value.key.length ||
-              (after !== undefined && value.key <= after)
+                  invalid()
+                return value
+              }
             )
-              invalid()
-            return value
-          })
+          )
           if (item === undefined) return
           after = item.key
           yield item
         }
       },
-      lookup: async (objectOffset, key) => {
-        bound(objectOffset, 0, descriptor.bytes - 1)
-        if (typeof key !== 'string' || key.length > 8192) invalid()
-        return await operation('readonly', 'sealed', async tx => {
-          const stored = await tx.objectStore('jsonMembers').get([id, objectOffset, key])
-          if (stored === undefined) return undefined
-          const value = member(stored)
-          bound(stored.firstKeyOffset, objectOffset + 1, value.keyOffset)
-          if (stored.key !== key || stored.charge !== 256 + 2 * key.length) invalid()
-          return { ...value, firstKeyOffset: stored.firstKeyOffset }
-        })
-      },
+      lookup: (objectOffset, key) =>
+        awaitFromSync(() => {
+          bound(objectOffset, 0, descriptor.bytes - 1)
+          if (typeof key !== 'string' || key.length > 8192) invalid()
+          return operation('readonly', 'sealed', tx =>
+            mapAwaitFromSync(
+              () => tx.objectStore('jsonMembers').get([id, objectOffset, key]),
+              stored => {
+                if (stored === undefined) return undefined
+                const value = member(stored)
+                bound(stored.firstKeyOffset, objectOffset + 1, value.keyOffset)
+                if (stored.key !== key || stored.charge !== 256 + 2 * key.length) invalid()
+                return { ...value, firstKeyOffset: stored.firstKeyOffset }
+              }
+            )
+          )
+        }),
       close: () => {
         if (closing !== undefined) return closing
         closed = true
@@ -2503,7 +2549,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
           throw new Brc38StagingCleanupError(
             [cause],
             'Private browser retains its actual structured index cleanup',
-            async () => await index.close()
+            () => awaitFromSync(() => index.close())
           )
         })
         return closing
@@ -2549,7 +2595,7 @@ export class Brc38PrivateIdbStage implements Brc38StageStore, Brc38StreamedStage
         throw new Brc38StagingCleanupError(
           [cause, error_],
           'Private browser JSON acquisition retains its actual index cleanup',
-          async () => await index.close()
+          () => awaitFromSync(() => index.close())
         )
       }
       throw cause

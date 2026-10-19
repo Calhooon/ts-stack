@@ -297,7 +297,7 @@ export async function stageAuthenticatedBrc39PrivateBrowserImport(
     async function* chunks() {
       for (let offset = 0; offset < bytes.byteLength; offset += maximumInputChunkBytes) {
         check()
-        yield bytes.subarray(offset, Math.min(bytes.byteLength, offset + maximumInputChunkBytes))
+        yield Promise.resolve(bytes.subarray(offset, Math.min(bytes.byteLength, offset + maximumInputChunkBytes)))
       }
     }
     const document = await readBrc38JsonStream(

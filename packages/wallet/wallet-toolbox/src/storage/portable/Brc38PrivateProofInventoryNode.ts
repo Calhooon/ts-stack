@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import type { Knex } from 'knex'
 import type { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
 import { readBrc38ImportJournal, type Brc38ImportJournalAdmission } from './Brc38ImportJournal'
@@ -169,31 +170,33 @@ export async function inspectBrc38PrivateProofInventory(
       let current: Model | undefined, retained: Brc38WorkingCharge | undefined
       try {
         if (baseline)
-          current = await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_txs', rowId, async row => {
-            check()
-            const bytes = Object.values(row.metadata).reduce<number>(
-              (n, value) => n + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
-              0
-            )
-            if (
-              !Number.isSafeInteger(bytes) ||
-              bytes > 131072 ||
-              row.fields.length !== 2 ||
-              Object.values(row.metadata).some(
-                value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+          current = await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'proven_txs', rowId, row => {
+            return promiseFromSync(() => {
+              check()
+              const bytes = Object.values(row.metadata).reduce<number>(
+                (n, value) => n + (typeof value === 'string' ? Buffer.byteLength(value) : 16),
+                0
               )
-            )
-              invalid()
-            retained = working.claim(131072 + 32 * bytes)
-            const field = (name: string): Field => {
-              const item = row.fields.find(value => value.field === name)
-              if (item?.kind !== 'blob' || item.bytes === null || item.bytes < 1) invalid()
-              return Object.freeze({ origin: 'local', sourceRowId: row.rowId, bytes: item.bytes })
-            }
-            return Object.freeze({
-              metadata: Object.freeze({ ...row.metadata }),
-              rawTx: field('rawTx'),
-              merklePath: field('merklePath')
+              if (
+                !Number.isSafeInteger(bytes) ||
+                bytes > 131072 ||
+                row.fields.length !== 2 ||
+                Object.values(row.metadata).some(
+                  value => value !== null && !['string', 'number', 'bigint'].includes(typeof value)
+                )
+              )
+                invalid()
+              retained = working.claim(131072 + 32 * bytes)
+              const field = (name: string): Field => {
+                const item = row.fields.find(value => value.field === name)
+                if (item?.kind !== 'blob' || item.bytes === null || item.bytes < 1) invalid()
+                return Object.freeze({ origin: 'local', sourceRowId: row.rowId, bytes: item.bytes })
+              }
+              return Object.freeze({
+                metadata: Object.freeze({ ...row.metadata }),
+                rawTx: field('rawTx'),
+                merklePath: field('merklePath')
+              })
             })
           })
         let afterAlias = 0,
@@ -367,21 +370,25 @@ export async function inspectBrc38PrivateProofInventory(
       afterArtifact: number | null = null
     const epochKeys = await Brc38NativeLocalBaselineSource.ownedPage(source, 'prepared_beef_metadata', null, 2)
     if (epochKeys.length !== 1 || epochKeys[0] !== 1) invalid()
-    await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'prepared_beef_metadata', 1, async row => {
-      sourceEpoch = integer(row.metadata.proofEpoch, true)
+    await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'prepared_beef_metadata', 1, row => {
+      return promiseFromSync(() => {
+        sourceEpoch = integer(row.metadata.proofEpoch, true)
+      })
     })
     for (;;) {
       check()
       const keys = await Brc38NativeLocalBaselineSource.ownedPage(source, 'prepared_beefs', afterArtifact, 1)
       if (keys.length === 0) break
       if (++sourceArtifacts > maximumRows) invalid()
-      await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'prepared_beefs', keys[0], async row => {
-        check()
-        if (row.metadata.state === 'ready') {
-          const id = integer(row.metadata.preparedBeefId)
-          if (id < 1) invalid()
-          if (firstReady === null || id < firstReady) firstReady = id
-        }
+      await Brc38NativeLocalBaselineSource.withOwnedRow(source, 'prepared_beefs', keys[0], row => {
+        return promiseFromSync(() => {
+          check()
+          if (row.metadata.state === 'ready') {
+            const id = integer(row.metadata.preparedBeefId)
+            if (id < 1) invalid()
+            if (firstReady === null || id < firstReady) firstReady = id
+          }
+        })
       })
       afterArtifact = keys[0]
     }

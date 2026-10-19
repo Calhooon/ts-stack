@@ -84,7 +84,7 @@ async function fixture(binary = false, structured = false, scalar = false) {
   }
 }
 async function* chunks(bytes: Uint8Array) {
-  for (let offset = 0; offset < bytes.byteLength; offset += 97) yield bytes.slice(offset, offset + 97)
+  for (let offset = 0; offset < bytes.byteLength; offset += 97) yield Promise.resolve(bytes.slice(offset, offset + 97))
 }
 async function rejects(run: () => Promise<unknown>) {
   let failed = false

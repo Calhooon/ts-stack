@@ -1,3 +1,4 @@
+import { utf16CodeUnitAt } from '../../utility/utf16CodeUnitAt'
 import { browserSnapshotRestoreFixture as fixture } from '../../../test/utils/browserSnapshotRestoreFixture'
 import { deleteDB, openDB } from 'idb'
 import { StorageIdb } from '../StorageIdb'
@@ -35,7 +36,7 @@ async function failure(work: () => Promise<unknown>): Promise<unknown> {
   throw new Error('Complete browser restore admitted a refused operation')
 }
 async function* chunks(bytes: Uint8Array) {
-  for (let at = 0; at < bytes.length; at += 4093) yield bytes.slice(at, at + 4093)
+  for (let at = 0; at < bytes.length; at += 4093) yield Promise.resolve(bytes.slice(at, at + 4093))
 }
 export async function verifyCompleteBrowserRestoreResumeAndIndependentNativeInventory(): Promise<void> {
   const f = await fixture(),
@@ -187,7 +188,7 @@ export async function verifyCompleteBrowserScalarTextRestoreAndOriginalInventory
         archived = await read(provenance),
         oracle = new Uint8Array(2 * expected.value.length)
       for (let index = 0; index < expected.value.length; index++) {
-        const unit = expected.value.charCodeAt(index)
+        const unit = utf16CodeUnitAt(expected.value, index)
         oracle[2 * index] = unit & 255
         oracle[2 * index + 1] = unit >>> 8
       }

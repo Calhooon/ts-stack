@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../../utility/promiseFromSync'
 import type { Brc38ImportTargetIndex } from '../../portable/Brc38ImportTargetIndexes'
 import type { SyncMap } from '../../schema/entities/EntityBase'
 import type { SnapshotJournalHashedFieldDelta } from './SnapshotJournalFieldTypes'
@@ -516,16 +517,18 @@ export class SnapshotJournalPreparedEntityMerge {
       )
         invalid()
     }
-    const close = async () => {
-      closed = true
-      for (const bytes of buffers) bytes.fill(0)
-      buffers.clear()
-      for (const row of [normalized, completeRow])
-        if (row !== undefined)
-          for (const [name, value] of Object.entries(row)) {
-            if (value instanceof Uint8Array || Array.isArray(value)) value.fill(0)
-            delete row[name]
-          }
+    const close = () => {
+      return promiseFromSync(() => {
+        closed = true
+        for (const bytes of buffers) bytes.fill(0)
+        buffers.clear()
+        for (const row of [normalized, completeRow])
+          if (row !== undefined)
+            for (const [name, value] of Object.entries(row)) {
+              if (value instanceof Uint8Array || Array.isArray(value)) value.fill(0)
+              delete row[name]
+            }
+      })
     }
     try {
       check()

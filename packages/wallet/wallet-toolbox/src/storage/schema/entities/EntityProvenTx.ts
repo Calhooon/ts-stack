@@ -1,3 +1,4 @@
+import { awaitVoidFromSync } from '../../../utility/promiseFromSync'
 import { GetMerklePathResult, WalletServices } from '../../../sdk/WalletServices.interfaces'
 import { TrxToken } from '../../../sdk/WalletStorage.interfaces'
 import { arraysEqual, verifyId, verifyOneOrNone } from '../../../utility/utilityHelpers'
@@ -41,8 +42,8 @@ export class EntityProvenTx extends EntityBase<TableProvenTx> {
     )
   }
 
-  private static async invalidatePreparedProofs(storage: EntityStorage, trx?: TrxToken): Promise<void> {
-    await invalidatePreparedSyncProofs(storage, trx)
+  private static invalidatePreparedProofs(storage: EntityStorage, trx?: TrxToken): Promise<void> {
+    return awaitVoidFromSync(() => invalidatePreparedSyncProofs(storage, trx))
   }
 
   /**

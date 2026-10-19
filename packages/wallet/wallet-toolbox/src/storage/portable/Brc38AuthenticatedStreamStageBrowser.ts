@@ -1,3 +1,4 @@
+import { awaitFromSync } from '../../utility/promiseFromSync'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { Brc39StreamFrame } from './Brc39Frame'
 import { Brc39WebCryptoGcm } from './Brc39WebCryptoGcm'
@@ -200,26 +201,20 @@ export async function stageAuthenticatedBrc39StreamBrowserImport(
       fieldSink =
         binary === undefined || streamed === undefined
           ? undefined
-          : brc38IdbStreamedFieldSink(
-              owner,
-              binary,
-              async (table, index, row) => await streamed.provisionalRow(table, index, row)
+          : brc38IdbStreamedFieldSink(owner, binary, (table, index, row) =>
+              awaitFromSync(() => streamed.provisionalRow(table, index, row))
             ),
       structuredSink =
         structured === undefined || streamed === undefined
           ? undefined
-          : brc38IdbStructuredFieldSink(
-              owner,
-              structured,
-              async (table, index, row) => await streamed.provisionalRow(table, index, row)
+          : brc38IdbStructuredFieldSink(owner, structured, (table, index, row) =>
+              awaitFromSync(() => streamed.provisionalRow(table, index, row))
             ),
       textSink =
         text === undefined || streamed === undefined
           ? undefined
-          : brc38IdbTextFieldSink(
-              owner,
-              text,
-              async (table, index, row) => await streamed.provisionalRow(table, index, row)
+          : brc38IdbTextFieldSink(owner, text, (table, index, row) =>
+              awaitFromSync(() => streamed.provisionalRow(table, index, row))
             )
     parsing = readBrc38JsonStream(
       output,
@@ -227,7 +222,7 @@ export async function stageAuthenticatedBrc39StreamBrowserImport(
         streamedFields: fieldSink,
         streamedStructuredFields: structuredSink,
         streamedTextFields: textSink,
-        provisionalRow: async (table, index, row) => await semantic.provisionalRow(table, index, row),
+        provisionalRow: (table, index, row) => awaitFromSync(() => semantic.provisionalRow(table, index, row)),
         validateCompleted: async (header, counts) => {
           if (!authenticated || !sourceDrained)
             throw new Error('Streamed browser completion requires current complete authentication and source drain')

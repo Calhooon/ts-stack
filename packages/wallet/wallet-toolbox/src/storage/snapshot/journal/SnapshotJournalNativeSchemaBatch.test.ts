@@ -69,6 +69,18 @@ async function measured(k: Knex.Transaction): Promise<Awaited<ReturnType<typeof 
   if (result === undefined) throw new Error('Independent measured schema response missing')
   expect(result.length).toBeGreaterThan(8)
   expect(queries.length).toBeLessThan(result.length + 1)
+  expect(queries.filter(sql => sql.includes(' OVER ()')).length).toBe(Math.ceil(result.length / 8))
+  const pagesFit = result.every(
+    (_row, index) =>
+      index % 8 !== 0 ||
+      result
+        .slice(index, index + 8)
+        .reduce(
+          (sum, row) => sum + Object.values(row).reduce((bytes, value) => bytes + Buffer.byteLength(value ?? ''), 0),
+          0
+        ) <= 16384
+  )
+  if (pagesFit) expect(queries).toHaveLength(1 + Math.ceil(result.length / 8))
   expect(Math.max(...responses)).toBeLessThanOrEqual(16384)
   expect(responses.length).toBe(queries.length)
   return result

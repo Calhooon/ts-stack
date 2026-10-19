@@ -1,3 +1,4 @@
+import { promiseFromSync } from '../../utility/promiseFromSync'
 import {
   Brc38SemanticStage,
   type Brc38StageRecord,
@@ -87,35 +88,47 @@ export function memoryStageStore() {
     discarded = 0,
     maximumReturnedRows = 0
   const store: Brc38StageStore = {
-    async append(record: Brc38StageRecord) {
-      const rowKey = JSON.stringify([record.table, record.index])
-      if (rows.has(rowKey)) throw new Error('Duplicate staged row')
-      const keys = record.uniqueKeys.map(value => JSON.stringify([value.namespace, value.key]))
-      if (keys.some(value => unique.has(value))) throw new Error('Duplicate staged unique key')
-      rows.set(rowKey, JSON.parse(JSON.stringify(record.row)) as PortableRow)
-      for (const value of keys) unique.add(value)
-      for (const value of record.memberships) members.add(JSON.stringify([value.namespace, value.key]))
+    append(record: Brc38StageRecord) {
+      return promiseFromSync(() => {
+        const rowKey = JSON.stringify([record.table, record.index])
+        if (rows.has(rowKey)) throw new Error('Duplicate staged row')
+        const keys = record.uniqueKeys.map(value => JSON.stringify([value.namespace, value.key]))
+        if (keys.some(value => unique.has(value))) throw new Error('Duplicate staged unique key')
+        rows.set(rowKey, JSON.parse(JSON.stringify(record.row)) as PortableRow)
+        for (const value of keys) unique.add(value)
+        for (const value of record.memberships) members.add(JSON.stringify([value.namespace, value.key]))
+      })
     },
-    async count(table) {
-      return [...rows.keys()].filter(value => (JSON.parse(value) as [string, number])[0] === table).length
+    count(table) {
+      return promiseFromSync(() => {
+        return [...rows.keys()].filter(value => (JSON.parse(value) as [string, number])[0] === table).length
+      })
     },
-    async row(table, index) {
-      maximumReturnedRows = Math.max(maximumReturnedRows, 1)
-      return rows.get(JSON.stringify([table, index]))
+    row(table, index) {
+      return promiseFromSync(() => {
+        maximumReturnedRows = Math.max(maximumReturnedRows, 1)
+        return rows.get(JSON.stringify([table, index]))
+      })
     },
-    async has(namespace, key) {
-      const value = JSON.stringify([namespace, key])
-      return unique.has(value) || members.has(value)
+    has(namespace, key) {
+      return promiseFromSync(() => {
+        const value = JSON.stringify([namespace, key])
+        return unique.has(value) || members.has(value)
+      })
     },
-    async seal(value) {
-      header = value
-      sealed++
+    seal(value) {
+      return promiseFromSync(() => {
+        header = value
+        sealed++
+      })
     },
-    async discard() {
-      rows.clear()
-      unique.clear()
-      members.clear()
-      discarded++
+    discard() {
+      return promiseFromSync(() => {
+        rows.clear()
+        unique.clear()
+        members.clear()
+        discarded++
+      })
     }
   }
   return {
@@ -143,7 +156,7 @@ export const options: Brc38SemanticStageOptions = {
 }
 export async function* source(data: BRC38WalletData) {
   const bytes = new TextEncoder().encode(JSON.stringify(data))
-  for (let index = 0; index < bytes.length; index += 127) yield bytes.slice(index, index + 127)
+  for (let index = 0; index < bytes.length; index += 127) yield Promise.resolve(bytes.slice(index, index + 127))
 }
 export async function importToMemoryStage(data: BRC38WalletData, selected: Brc38SemanticStageOptions = options) {
   const state = memoryStageStore(),

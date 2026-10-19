@@ -1,3 +1,4 @@
+import { promiseFromSync, awaitFromSync } from '../../utility/promiseFromSync'
 import { StorageReqWrite } from '../../storage/StorageReqWrite'
 import { WERR_NOT_ACTIVE, WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
 import { MonitorStorage, Monitor } from '../Monitor'
@@ -38,8 +39,10 @@ export abstract class WalletMonitorTask {
    *
    * Called before first call to `trigger`
    */
-  async asyncSetup(): Promise<void> {
-    // Default no-op; override in subclasses that require async setup
+  asyncSetup(): Promise<void> {
+    return promiseFromSync(() => {
+      // Default no-op; override in subclasses that require async setup
+    })
   }
 
   /**
@@ -70,10 +73,14 @@ export async function captureMonitorReqWrite(
     txids,
     undefined,
     async operation =>
-      await task.storage.runAsStorageProvider(async current => {
-        if (current !== provider) throw new WERR_NOT_ACTIVE('Monitor preparation belongs to a replaced provider')
-        return await operation()
-      }, true)
+      await task.storage.runAsStorageProvider(
+        current =>
+          awaitFromSync(() => {
+            if (current !== provider) throw new WERR_NOT_ACTIVE('Monitor preparation belongs to a replaced provider')
+            return operation()
+          }),
+        true
+      )
   )
   if (!captured.hasParticipatingProfiles) return undefined
   if (captured.requiresSerializedPreparation)
