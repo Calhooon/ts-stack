@@ -976,6 +976,11 @@
       "packageName": "@bsv/output-knowledge",
       "materials": [],
       "reason": "New first-party implementation with peer dependencies but no incorporated third-party source; retain an explicit scoped notice."
+    },
+    {
+      "path": "infra/webrtpay-relay",
+      "materials": "all",
+      "reason": "container distribution notice bundle"
     }
   ],
   "clearances": [

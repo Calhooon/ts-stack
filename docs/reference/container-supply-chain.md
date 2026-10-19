@@ -27,14 +27,14 @@ multi-platform digest before merge.
 The infrastructure images are deployable artifacts, so their build inputs,
 review gates, provenance, and rollback identity are part of the public release
 contract. The controls here do not create another service. They make the
-existing seven images auditable and ensure the artifact reviewed by CI is the
+existing eight images auditable and ensure the artifact reviewed by CI is the
 artifact that reaches a registry.
 
 ## Sources of truth
 
 `governance/container-images.json` is the complete release inventory. It owns:
 
-- the seven Docker build contexts and their `linux/amd64` platform;
+- the eight Docker build contexts and their `linux/amd64` platform;
 - the exact digest-pinned Node base and its human-readable expected version;
 - the reviewed runtime-package pins needed to remediate vulnerabilities still
   present in that immutable base;
@@ -67,13 +67,15 @@ and availability must be assessed separately from image identity, without adding
 credentials or changing service health checks, budgets, platforms or
 release/deployment behavior.
 
-Jobs that execute MongoDB use `ubuntu-22.04` while retaining their exact database
-image/binary versions and all Linux/amd64 checks. These are the container runtime
+MongoDB-dependent qualification jobs use `ubuntu-22.04` with their governed
+image/binary pins and all Linux/amd64 checks. Main PR #1259 changes only the
+container-runtime service fixture to MongoDB 7.0.45; native package fixtures
+retain their original pinned binaries. These are the container runtime
 contract, package artifacts (including optional native diagnostics), ordinary and
 dependent tests, browser packages, other-package coverage and mutation execution.
 The October 18, 2026
 Ubuntu 24.04 [runner image](https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md)
-moved to kernel `7.0.0-1017-azure`, where that MongoDB
+moved to kernel `7.0.0-1017-azure`, where the pinned MongoDB 8.0 native
 build refuses startup. MongoDB tracks the allocator incompatibility in
 [SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912) and the required
 Ubuntu-specific kernel recognition in
