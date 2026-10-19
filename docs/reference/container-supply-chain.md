@@ -3,7 +3,7 @@ id: container-supply-chain
 title: 'Container Supply Chain'
 kind: reference
 version: '1.3.0'
-last_updated: '2026-10-16'
+last_updated: '2026-10-19'
 last_verified: '2026-10-16'
 review_cadence_days: 30
 status: stable
@@ -64,6 +64,21 @@ upgrade. Docker Hub remains the dependency-discovery source. These build and
 qualification routes avoid the observed Docker Hub pull limits and authentication
 timeouts without adding credentials or changing service health checks, budgets,
 platforms or release/deployment behavior.
+
+The container runtime-contract job uses `ubuntu-22.04` while retaining its exact
+MongoDB image digest and all Linux/amd64 service checks. The October 18, 2026
+Ubuntu 24.04 [runner image](https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md)
+moved to kernel `7.0.0-1017-azure`, where that MongoDB
+build refuses startup. MongoDB tracks the allocator incompatibility in
+[SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912) and the required
+Ubuntu-specific kernel recognition in
+[SERVER-131779](https://jira.mongodb.org/browse/SERVER-131779), fixed in 8.0.35.
+The current Ubuntu 22.04 [runner image](https://github.com/actions/runner-images/blob/ubuntu22/20261012.322/images/ubuntu/Ubuntu2204-Readme.md)
+uses kernel `6.8.0-1064-azure`, outside the affected
+range. Return this job to Ubuntu 24.04 after a reviewed, digest-pinned MongoDB
+update with that fix passes the complete runtime contract on its actual kernel.
+This selects a compatible CI host; it changes no deployed database, image,
+health check, case, timeout or availability gate.
 
 Repository health requires the discovery tag and digest, the registry's
 expected version and digest, and every digest-only release `FROM` instruction

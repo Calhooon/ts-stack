@@ -209,7 +209,7 @@ recorded in the PR completion evidence.
 ## Remaining final acceptance gates
 
 - [ ] Pass complete uninstrumented coverage on the final published source, including the original 300-run disclosure and coordinator properties.
-- [ ] Pass the full 151-target/398-row governed mutation campaign and independently reconcile every raw result.
+- [ ] Pass the full 153-target/400-row governed mutation campaign and independently reconcile every raw result. The two WebRTCPay targets from `main` supplement every original target, partition and gate.
 - [ ] Verify final packed consumers, platforms, conformance, actual CodeQL and zero-new Sonar findings on the same published head.
 
 These gates remain open. Demonstrated reference components do not by themselves complete Checkpoint 2.

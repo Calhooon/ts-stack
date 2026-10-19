@@ -77,7 +77,9 @@ jobs:
     name: Runtime / ${{ matrix.component.name }}
     if: needs.scope.outputs.has-runtime == 'true'
     needs: scope
-    runs-on: ubuntu-24.04
+    # Keep the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    # Return to 24.04 after qualifying the Ubuntu kernel fix in MongoDB 8.0.35+.
+    runs-on: ubuntu-22.04
     timeout-minutes: 35
     permissions:
       contents: read
