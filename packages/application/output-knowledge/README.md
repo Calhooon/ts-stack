@@ -491,6 +491,10 @@ Verification and source-ingress commits use bounded contention retries. Exhauste
 verification, replay, retention or contention budgets remain explicit retryable
 limits; applications can schedule another `flush` when resources are available.
 
+`BitcoinKnowledge.advance` propagates an installed clock failure and releases its
+single-pass guard. After the clock recovers, retry the same worker and store; a
+failed initial clock read leaves the journal unchanged.
+
 `OutputKnowledge` coordinates sources, a protocol worker and an optional domain
 projector. It advances a source iterator only after receipt commits, bounds pending
 ingress, and keeps source generations separate from the partition's verification

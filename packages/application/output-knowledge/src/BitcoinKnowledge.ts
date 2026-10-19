@@ -250,8 +250,8 @@ export class BitcoinKnowledge implements KnowledgeReducer, OutputKnowledgeWorker
     if (this.advancing)
       throw new OutputProtocolError('limited', 'Bitcoin worker pass already in progress')
     this.advancing = true
-    const deadline = this.now() + runtimeLimits(this.options.limits).deadlineMs
     try {
+      const deadline = this.now() + runtimeLimits(this.options.limits).deadlineMs
       for (let attempt = 0; attempt < 8; attempt++) {
         try {
           await this.pass(store, signal, deadline)

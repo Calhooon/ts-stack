@@ -144,6 +144,25 @@ describe('opt-in proposal qualification inside the Bitcoin journal', () => {
     expect((await two.store.revision()).received).toBe('1')
   })
 
+  it('releases the pass guard when the installed clock throws before replay', async () => {
+    let clockFailure: Error | undefined
+    const { store, worker } = open({
+      clock: () => {
+        if (clockFailure) throw clockFailure
+        return 10000
+      }
+    })
+    await initialize(store)
+    const before = await store.inspect()
+    const failure = new Error('clock temporarily unavailable')
+    clockFailure = failure
+    await expect(worker.advance(store, signal())).rejects.toBe(failure)
+    clockFailure = undefined
+    expect(await store.inspect()).toEqual(before)
+    await expect(worker.advance(store, signal())).resolves.toBeUndefined()
+    expect(await store.revision()).toEqual(before.revision)
+  })
+
   it('allows only one pass at a time and releases the guard after a held read completes', async () => {
     const { store, worker } = open()
     await initialize(store)
