@@ -85,6 +85,14 @@ with that fix pass their complete native/runtime contracts on the actual kernel.
 This selects a compatible CI host; it changes no deployed database, image,
 health check, case, timeout or availability gate.
 
+The package-artifact lane allows 25 minutes for its complete existing workload.
+On October 19, 2026, [the 20-minute attempt](https://github.com/bsv-blockchain/ts-stack/actions/runs/39306050557/job/118245360631)
+completed all three optional native/property diagnostics (14m01), compiled
+examples, packed consumers (5m08), and the npm artifact dry run, then exceeded the
+outer limit during cleanup at 20m41. The extra five minutes cover orchestration
+and normal variance; every test, seed, assertion, intrinsic deadline, mutation
+threshold, CPU/heap/concurrency setting and required merge-gate dependency is retained.
+
 Repository health requires the discovery tag and digest, the registry's
 expected version and digest, and every digest-only release `FROM` instruction
 to reconcile in one change. Runtime Dockerfiles deliberately omit the tag

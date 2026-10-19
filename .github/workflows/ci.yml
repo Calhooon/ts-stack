@@ -464,7 +464,9 @@ jobs:
     needs: prepare
     # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    # Three original diagnostics plus all packed consumers took 20m41 with cleanup.
+    # Preserve their intrinsic deadlines; allow bounded orchestration headroom.
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
