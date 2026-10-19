@@ -462,7 +462,8 @@ jobs:
     name: Package artifacts and documentation consumers
     if: always() && !cancelled() && needs.prepare.result == 'success'
     needs: prepare
-    runs-on: ubuntu-latest
+    # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -845,7 +846,8 @@ jobs:
     name: Tests / non-coverage packages
     if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.standard-packages != '[]'
     needs: prepare
-    runs-on: ubuntu-latest
+    # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -888,7 +890,8 @@ jobs:
     name: Tests / affected dependents (${{ matrix.shard }}/${{ matrix.total }})
     if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.dependent-test-packages != '[]'
     needs: prepare
-    runs-on: ubuntu-latest
+    # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -952,7 +955,8 @@ jobs:
     name: Platform / browser packages (${{ matrix.shard }}/${{ matrix.total }})
     if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.browser-packages != '[]'
     needs: prepare
-    runs-on: ubuntu-latest
+    # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1354,7 +1358,8 @@ jobs:
     name: Coverage / ${{ matrix.application && 'application state' || 'other affected packages' }} (${{ matrix.shard }}/${{ matrix.total }})
     if: always() && !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.coverage-other-packages != '[]'
     needs: prepare
-    runs-on: ubuntu-latest
+    # Preserve the pinned MongoDB on a compatible kernel (SERVER-121912/131779).
+    runs-on: ubuntu-22.04
     timeout-minutes: 35
     permissions:
       contents: read

@@ -4,7 +4,7 @@ title: 'Container Supply Chain'
 kind: reference
 version: '1.3.0'
 last_updated: '2026-10-19'
-last_verified: '2026-10-16'
+last_verified: '2026-10-19'
 review_cadence_days: 30
 status: stable
 tags: [reference, infrastructure, containers, security, releases]
@@ -55,18 +55,23 @@ releases while its digest lets Scorecard verify pinning. The inventory's
 registry mirrors remain in `references` and must be resolved and compared
 during review. This avoids making routine dependency discovery depend on public
 ECR's unauthenticated rate limits without weakening multi-registry verification.
-Runtime builds use Docker's official `public.ecr.aws/docker/library/node` mirror
-at the identical governed digest. CI's Postgres, MySQL and Mongo service images
-also use the official public mirror at their existing immutable digests. Review
+Runtime Dockerfile defaults use Docker's official
+`public.ecr.aws/docker/library/node` mirror at the identical governed digest;
+CI selects the canonical discovery reference through the named contexts above.
+CI's Postgres, MySQL and Mongo service images use canonical Docker Hub references
+at their existing immutable digests. Review
 must verify the index bytes and selected Linux/amd64 manifest and configuration
 against those identities; a registry route change does not authorize an image
-upgrade. Docker Hub remains the dependency-discovery source. These build and
-qualification routes avoid the observed Docker Hub pull limits and authentication
-timeouts without adding credentials or changing service health checks, budgets,
-platforms or release/deployment behavior.
+upgrade. Docker Hub remains the dependency-discovery source. Registry transport
+and availability must be assessed separately from image identity, without adding
+credentials or changing service health checks, budgets, platforms or
+release/deployment behavior.
 
-The container runtime-contract job uses `ubuntu-22.04` while retaining its exact
-MongoDB image digest and all Linux/amd64 service checks. The October 18, 2026
+Jobs that execute MongoDB use `ubuntu-22.04` while retaining their exact database
+image/binary versions and all Linux/amd64 checks. These are the container runtime
+contract, package artifacts (including optional native diagnostics), ordinary and
+dependent tests, browser packages, other-package coverage and mutation execution.
+The October 18, 2026
 Ubuntu 24.04 [runner image](https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md)
 moved to kernel `7.0.0-1017-azure`, where that MongoDB
 build refuses startup. MongoDB tracks the allocator incompatibility in
@@ -75,8 +80,8 @@ Ubuntu-specific kernel recognition in
 [SERVER-131779](https://jira.mongodb.org/browse/SERVER-131779), fixed in 8.0.35.
 The current Ubuntu 22.04 [runner image](https://github.com/actions/runner-images/blob/ubuntu22/20261012.322/images/ubuntu/Ubuntu2204-Readme.md)
 uses kernel `6.8.0-1064-azure`, outside the affected
-range. Return this job to Ubuntu 24.04 after a reviewed, digest-pinned MongoDB
-update with that fix passes the complete runtime contract on its actual kernel.
+range. Return these jobs to Ubuntu 24.04 after reviewed, pinned MongoDB updates
+with that fix pass their complete native/runtime contracts on the actual kernel.
 This selects a compatible CI host; it changes no deployed database, image,
 health check, case, timeout or availability gate.
 
@@ -136,8 +141,9 @@ one without an upstream fix, blocks the merge. A finding must be fixed or
 entered in the repository's time-bounded exception registry with an owner,
 evidence, review date, and objective removal condition.
 
-All base-image and deployment references use a readable version tag plus a
-content digest. Dependabot proposes reviewed Docker refreshes alongside the
+Dependency-discovery references and deployment examples use a readable version
+tag plus a content digest; runtime Dockerfile bases use the digest tied to the
+registry's expected version. Dependabot proposes reviewed Docker refreshes alongside the
 monthly stack-maintenance change. OpenSSF Scorecard runs on `main`, weekly, and
 when repository rules change; its SARIF is retained for 90 days and uploaded to
 GitHub code scanning.
