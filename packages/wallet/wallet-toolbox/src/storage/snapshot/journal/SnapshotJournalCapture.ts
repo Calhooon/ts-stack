@@ -38,6 +38,7 @@ import { SnapshotResourceLimitError } from '../SnapshotResourceLimitError'
 import { retainReadSnapshot, type RetainedReadSnapshotOptions } from '../RetainedReadSnapshot'
 import {
   readKnexSnapshotArchiveHeader,
+  readKnexSnapshotArchiveMetadata,
   createKnexSnapshotArchiveSource,
   type KnexSnapshotArchiveHeader
 } from '../archive/KnexSnapshotArchiveSource'
@@ -286,7 +287,10 @@ async function capture(options: CaptureOptions): Promise<void> {
         actual.ceiling !== request.ceiling
       )
         return invalid()
-      const currentHeader = await readKnexSnapshotArchiveHeader(storage, identityKey, current)
+      // The complete generation above already verifies index ownership in this
+      // same current transaction. Read every profile/version predicate freshly
+      // without repeating that generation validation just to obtain metadata.
+      const currentHeader = await readKnexSnapshotArchiveMetadata(storage, identityKey, current)
       const epochs: Array<{ epoch: unknown }> = await current('snapshot_sync_primary_epochs')
         .where('userId', binding.userId)
         .select(
@@ -300,15 +304,13 @@ async function capture(options: CaptureOptions): Promise<void> {
       if (
         epochs.length > 1 ||
         snapshotJournalRevision(epochs[0]?.epoch ?? '0') !== primary.epoch ||
-        (currentHeader.header.user.activeStorage ?? null) !== primary.activeStorage ||
-        currentHeader.header.user.userId !== binding.userId ||
-        currentHeader.header.user.identityKey.toLowerCase() !== binding.identityKey ||
-        currentHeader.header.sourceStorage.storageIdentityKey !== binding.storageIdentity ||
-        currentHeader.header.sourceStorage.chain !== binding.chain ||
-        createHash('sha256')
-          .update('snapshot-journal-schema-v1\n')
-          .update(currentHeader.header.sourceSchema)
-          .digest('hex') !== binding.schema ||
+        (currentHeader.user.activeStorage ?? null) !== primary.activeStorage ||
+        currentHeader.user.userId !== binding.userId ||
+        currentHeader.user.identityKey.toLowerCase() !== binding.identityKey ||
+        currentHeader.sourceStorage.storageIdentityKey !== binding.storageIdentity ||
+        currentHeader.sourceStorage.chain !== binding.chain ||
+        createHash('sha256').update('snapshot-journal-schema-v1\n').update(currentHeader.sourceSchema).digest('hex') !==
+          binding.schema ||
         JSON.stringify(await readSnapshotJournalReceipt(current, binding, receipt)) !== JSON.stringify(receipt)
       )
         return invalid()
@@ -584,7 +586,10 @@ export function retainSnapshotJournalCapture(
         return await view.read(async token => {
           await owned.verifyLive()
           const trx = storage!.toDb(token)
-          const header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
+          // These indexes belong to this same immutable retained transaction,
+          // as in its archive page reader. Current generation/profile/receipt
+          // validation remains independent before and after each bounded read.
+          const header = owned.header
           const indexes = {
             profile: header.profileIndexes,
             relation: header.relationIndexes,
@@ -673,7 +678,7 @@ export function retainSnapshotJournalCapture(
         return await view.read(async token => {
           await owned.verifyLive()
           const trx = storage!.toDb(token),
-            header = await readKnexSnapshotArchiveHeader(storage!, identityKey, trx)
+            header = owned.header
           const interval: SnapshotJournalInterval = {
             ...(request.bootstrap === true ? { bootstrap: true as const } : {}),
             stream: request.stream,

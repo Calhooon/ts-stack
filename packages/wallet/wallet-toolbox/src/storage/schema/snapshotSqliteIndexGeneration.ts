@@ -403,6 +403,23 @@ export async function validateInstalled(k: Knex, plan: Plan): Promise<void> {
   await validateInstallLock(k)
   if ((await readSourcePlan(k)).source !== plan.source)
     throw new WERR_INVALID_OPERATION('Rebuild source schema changed')
+  await validateInstalledObjects(k, plan)
+}
+
+/** Construct and validate our own complete plan in one pinned transaction.
+ * No callback or write occurs between the source observation and validation.
+ * Caller-supplied plans and unpinned connections retain the independent source
+ * comparison in validateInstalled; no verdict is stored on the connection. */
+export async function readInstalledPlan(k: Knex): Promise<Plan> {
+  const plan = await readPlan(k)
+  if (k.isTransaction) {
+    await validateInstallLock(k)
+    await validateInstalledObjects(k, plan)
+  } else await validateInstalled(k, plan)
+  return plan
+}
+
+async function validateInstalledObjects(k: Knex, plan: Plan): Promise<void> {
   await validateDefinitions(k, [...plan.ddl, ...plan.triggers])
   // A second handler on a rowless event view could change membership effects
   // while every expected SQL definition still matched. Inspect the complete

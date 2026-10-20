@@ -75,21 +75,22 @@ export async function readKnexSnapshotSourceSchema(k: Knex, config?: Knex.Migrat
   return row.name
 }
 
-/** Read source metadata and index ownership in the caller's already pinned view. */
-export async function readKnexSnapshotArchiveHeader(storage: StorageKnex, identityKey: string, k: Knex) {
-  const generation = await readGenerationIndexState(k, storage.knex.client.config.migrations)
+/** Metadata DATA only. This does not establish index or journal ownership. */
+export async function readKnexSnapshotArchiveMetadata(storage: StorageKnex, identityKey: string, k: Knex) {
   const sourceStorage = await storage.readSettings(k)
   const user = await storage.findUserByIdentityKey(identityKey, k)
   if (user === undefined) throw new WERR_INVALID_PARAMETER('identityKey', 'an existing wallet profile')
+  return { sourceStorage, user, sourceSchema: await readSnapshotArchiveSourceSchema(storage, k) }
+}
+
+/** Read source metadata and index ownership in the caller's already pinned view. */
+export async function readKnexSnapshotArchiveHeader(storage: StorageKnex, identityKey: string, k: Knex) {
+  const generation = await readGenerationIndexState(k, storage.knex.client.config.migrations)
   return {
     // This records the actual producer of THIS retained view. Every field
     // operation still checks its live native transaction before reading.
     nativeFields: isBrc38NativeBinaryReadTransaction(k),
-    header: {
-      sourceStorage,
-      user,
-      sourceSchema: await readSnapshotArchiveSourceSchema(storage, k)
-    },
+    header: await readKnexSnapshotArchiveMetadata(storage, identityKey, k),
     profileIndexes: generation ?? (await readSnapshotProfileIndexState(k, storage.knex.client.config.migrations)),
     relationIndexes: generation ?? (await readSnapshotRelationIndexState(k, storage.knex.client.config.migrations)),
     globalIndexes: generation ?? (await readSnapshotGlobalIndexState(k, storage.knex.client.config.migrations)),

@@ -1,7 +1,7 @@
 import { isOwnedNativeSqlite } from './ownedNativeSqliteRuntimeNode'
 import { WERR_INVALID_OPERATION } from '../../sdk/WERR_errors'
 import type { Knex } from 'knex'
-import { readPlan, validateInstalled, metadata, progress } from './snapshotSqliteIndexGeneration'
+import { readInstalledPlan, metadata, progress } from './snapshotSqliteIndexGeneration'
 import { valid, type Position } from './snapshotSqliteIndexBootstrap'
 export const migration = '2026-10-02-001 repair snapshot SQLite conflict maintenance'
 export type SnapshotIndexState = boolean | 'v2'
@@ -15,8 +15,7 @@ export async function readGenerationIndexState(
     !(await k.schema.hasTable(metadata))
   )
     return undefined
-  const plan = await readPlan(k)
-  await validateInstalled(k, plan)
+  await readInstalledPlan(k)
   const rows: Position[] = await k(progress).select('*').orderBy('stream').limit(13)
   if (rows.length !== 12 || rows.some((row, index) => row.stream !== index || !valid(row)))
     throw new WERR_INVALID_OPERATION('Invalid generation progress')

@@ -19,6 +19,24 @@ explicitly author their intended source timestamp after actual activation, so
 older, equal and newer header policies are all exercised independently of the
 current UTC date. Original cases, limits and production timestamp policy remain.
 
+Current journal-source checks read profile metadata after complete generation
+validation in the same SQL transaction. Delta and field pages retain their
+private index metadata from the original pinned view, while fresh current
+generation, profile, primary, receipt and expiry checks still bracket every
+bounded read. No schema verdict survives a current transaction, and the
+original operation deadlines remain unchanged.
+
+Transactional index-state reads construct and fully validate their own fresh
+source plan in the same pinned transaction. Supplied plans and unpinned reads
+retain their independent source comparison; no validation result is cached
+between operations. Complete physical definitions, reserved inventories,
+source binding, progress and publication checks remain required.
+
+Knex source options, certificate finder ordering and fresh native context checks
+now have private helpers with unchanged statements. Source-bound mutation
+execution can schedule those helpers separately within the existing job limit;
+the complete current-source mutant inventory and original test selection remain.
+
 All five private SQLite pool factories close their actual raw connection if setup fails before Knex pool ownership. Failed raw or pool teardown retains the original setup and cleanup causes and concrete retry owners; each independent cleanup still runs before any directory deletion. Private quarantine append and validation also refuse a physically closed writer, including an empty append. Valid data, API, schema, deadline and resource limits are unchanged.
 
 Journal identity validation receives detached reference and association DATA, so callback edits cannot rewrite the original validated source identity during persistence. No API or schema migration is required.

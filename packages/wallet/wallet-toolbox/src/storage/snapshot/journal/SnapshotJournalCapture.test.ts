@@ -87,6 +87,41 @@ async function fixture(complete = true) {
 
 afterEach(() => jest.restoreAllMocks())
 
+test('pinned page indexes cannot authorize a source after its current generation loses an owned observer', async () => {
+  const f = await fixture()
+  const source = await f.storage.openSnapshotJournalSource(identity, request)
+  let failure: unknown
+  try {
+    const page = {
+      bootstrap: true as const,
+      stream: 'scope' as const,
+      tableId: 0 as const,
+      low: snapshotJournalRevision('0'),
+      maximumRows: 32,
+      maximumBytes: 1048576
+    }
+    await expect(source.readDeltaPage(page, async () => undefined)).resolves.toBeDefined()
+    const observer = 'snapshot_identity_after_tx_labels_INSERT'
+    expect(await f.k('sqlite_master').where({ type: 'trigger', name: observer }).first('sql')).toBeDefined()
+    await f.k.raw('DROP TRIGGER ??', [observer])
+    // The old retained schema still contains the observer. A new bounded read
+    // must inspect the actual current generation rather than reuse that view.
+    failure = await source.readDeltaPage(page, async () => undefined).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('Rebuild schema definition mismatch')
+  } finally {
+    try {
+      if (failure === undefined) await source.close()
+      else {
+        await expect(source.close()).rejects.toBe(failure)
+        await expect(source.closed).rejects.toBe(failure)
+      }
+    } finally {
+      await f.close()
+    }
+  }
+})
+
 test('actual retained content revisions ignore capture-only clocks and refuse closed sources', async () => {
   const f = await fixture()
   try {

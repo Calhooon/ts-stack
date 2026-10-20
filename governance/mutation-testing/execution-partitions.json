@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "engine": "9.6.1",
   "canonicalTargets": 99,
-  "executionRows": 246,
+  "executionRows": 247,
   "units": [
     {
       "target": "wallet-snapshot-remote-reader",
@@ -359,9 +359,9 @@
       "packageDirectory": "packages/wallet/wallet-toolbox",
       "originalMutate": ["src/storage/portable/Brc38KnexSource.ts"],
       "sourceHashes": {
-        "src/storage/portable/Brc38KnexSource.ts": "9b0b70d5e6cc110361a3eb57d31a09fb1b693086f2fdb8ce049b04ff835835f7"
+        "src/storage/portable/Brc38KnexSource.ts": "fc93982d4893340905aeed452b401ae46f278ac88cbc63fbe0654eb99ed90afb"
       },
-      "canonicalCount": 1326,
+      "canonicalCount": 1329,
       "packingHint": 250,
       "parts": [
         {
@@ -398,15 +398,24 @@
             "src/storage/portable/Brc38KnexSource.ts:450-454",
             "src/storage/portable/Brc38KnexSource.ts:455-461",
             "src/storage/portable/Brc38KnexSource.ts:466-497",
-            "src/storage/portable/Brc38KnexSource.ts:502-504"
+            "src/storage/portable/Brc38KnexSource.ts:502-504",
+            "src/storage/portable/Brc38KnexSource.ts:505-540"
           ],
-          "count": 99,
+          "count": 171,
           "id": "range-004"
         },
         {
-          "mutate": ["src/storage/portable/Brc38KnexSource.ts:515-1026"],
-          "count": 587,
+          "mutate": [
+            "src/storage/portable/Brc38KnexSource.ts:548-599",
+            "src/storage/portable/Brc38KnexSource.ts:610-636"
+          ],
+          "count": 161,
           "id": "range-005"
+        },
+        {
+          "mutate": ["src/storage/portable/Brc38KnexSource.ts:648-1052"],
+          "count": 357,
+          "id": "range-006"
         }
       ]
     },

@@ -174,6 +174,22 @@ test('validation binds the observed source schema and rejects malformed generate
   }
 })
 
+test('each transactional generation read freshly binds the complete source schema', async () => {
+  const k = await fixture('BINARY', false, false)
+  try {
+    await installGeneration(k)
+    await expect(k.transaction(async trx => await readGenerationIndexState(trx))).resolves.toBe(false)
+    await k.raw('CREATE INDEX extra_source_index ON tx_labels(userId)')
+    await expect(k.transaction(async trx => await readGenerationIndexState(trx))).rejects.toThrow(
+      'Rebuild source binding mismatch'
+    )
+    await k.raw('DROP INDEX extra_source_index')
+    await expect(k.transaction(async trx => await readGenerationIndexState(trx))).resolves.toBe(false)
+  } finally {
+    await k.destroy()
+  }
+})
+
 test.each(['absent', 'extra', 'wrong id', 'invalid complete', 'binary legacy'])(
   'generation metadata must be one correctly typed source-bound row: %s',
   async kind => {
@@ -372,6 +388,9 @@ test.each([
     if (kind === 'changed lock') await k.raw('ALTER TABLE snapshot_index_install_lock_v2 ADD COLUMN extra INTEGER')
     const before = await k('transactions')
     await expect(readGenerationIndexState(k)).rejects.toBeInstanceOf(WERR_INVALID_OPERATION)
+    await expect(k.transaction(async trx => await readGenerationIndexState(trx))).rejects.toBeInstanceOf(
+      WERR_INVALID_OPERATION
+    )
     if (kind === 'missing lock' || kind === 'changed lock') {
       await expect(dropGenerationForDataDeletion(k)).rejects.toBeInstanceOf(WERR_INVALID_OPERATION)
       expect(await k.schema.hasTable(names.profile)).toBe(true)

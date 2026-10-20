@@ -502,17 +502,7 @@ async function* grouped(
 ): AsyncGenerator<Row> {
   for await (const source of groupedEntries(rows, maximum, resolveTies)) yield source.row
 }
-/** Coherent SQL source. Supply a dedicated reader provider so an idle
- * file consumer does not occupy the foreground/writer pool. All metadata,
- * closure checks and thirteen keyset streams own the same retained transaction.
- * Portable order may need different SQL indexes; no performance or capability
- * claim is made by constructing this source. SQLite locale ties retain the
- * original finder scan order; other provider collation still requires qualification. */
-export async function openBrc38KnexSource(
-  storage: StorageKnex,
-  identityKey: string,
-  selected: Brc38KnexSourceOptions
-): Promise<Brc38StreamSource> {
+function ownSourceOptions(storage: StorageKnex, identityKey: string, selected: Brc38KnexSourceOptions) {
   const options = Object.freeze({
     ...selected,
     ...(selected.streamedBinary === undefined ? {} : { streamedBinary: Object.freeze({ ...selected.streamedBinary }) }),
@@ -546,6 +536,117 @@ export async function openBrc38KnexSource(
   }
   if (!/^(02|03)[0-9a-fA-F]{64}$/.test(identityKey)) throw new TypeError('Compressed profile identity required')
   options.signal?.throwIfAborted()
+  return options
+}
+
+async function resolveCertificateFinderTies(
+  storage: StorageKnex,
+  view: RetainedReadSnapshot,
+  userId: number,
+  active: () => void,
+  group: SourceRow[]
+): Promise<void> {
+  if (storage.dbtype !== 'SQLite') return
+  active()
+  await view.read(async trx => {
+    const k = storage.toDb(trx),
+      original = storage.findCertificateFieldsQuery({ partial: { userId } }).toSQL(),
+      plan: Array<{ detail: string }> = await k.raw('EXPLAIN QUERY PLAN ' + original.sql, original.bindings)
+    // The unpaged finder is one table scan. Its chosen index (including
+    // custom index direction/collation), or its rowid scan, determines the
+    // stable order before the legacy locale sort. Do not fetch its payload.
+    if (plan.length !== 1 || typeof plan[0].detail !== 'string' || plan[0].detail.length > 1024)
+      throw new Error('Unsupported BRC-38 certificate finder plan')
+    const indexed = /^(SCAN|SEARCH) certificate_fields USING (?:COVERING )?INDEX (.+)$/.exec(plan[0].detail)
+    if (indexed === null && plan[0].detail !== 'SCAN certificate_fields')
+      throw new Error('Unsupported BRC-38 certificate finder order')
+    let indexName: string | undefined
+    if (indexed !== null) {
+      indexName = indexed[2]
+      if (indexed[1] === 'SEARCH') {
+        // Conditions follow the final " ("; an index name itself may
+        // contain spaces, parentheses and quotes. Knex quotes it below.
+        const suffix = indexName.lastIndexOf(' (')
+        if (suffix < 1 || !indexName.endsWith(')')) throw new Error('Unsupported BRC-38 certificate finder index')
+        indexName = indexName.slice(0, suffix)
+      }
+    }
+    const table =
+      indexName === undefined
+        ? k.raw('?? NOT INDEXED', ['certificate_fields'])
+        : k.raw('?? INDEXED BY ??', ['certificate_fields', indexName])
+    const ordinals: Array<{ ordinal: string }> = await k
+      .select(k.raw('cast(?? as text) as ??', ['certificate_fields._rowid_', 'ordinal']))
+      .from(table)
+      .where({ userId, certificateId: group[0].row.certificateId })
+      .limit(group.length + 1)
+    if (ordinals.length !== group.length) throw new Error('BRC-38 certificate finder membership changed')
+    const ranks = new Map<bigint, bigint>()
+    for (const [index, item] of ordinals.entries()) {
+      if (typeof item.ordinal !== 'string' || !/^-?\d{1,19}$/.test(item.ordinal))
+        throw new Error('Invalid BRC-38 certificate finder identity')
+      const id = BigInt(item.ordinal)
+      if (ranks.has(id)) throw new Error('Duplicate BRC-38 certificate finder identity')
+      ranks.set(id, BigInt(index))
+    }
+    for (const source of group) {
+      const rank = source.ordinal === undefined ? undefined : ranks.get(source.ordinal)
+      if (rank === undefined) throw new Error('BRC-38 certificate finder identity changed')
+      source.ordinal = rank
+    }
+    active()
+  })
+}
+
+async function verifySourceNativeContext(
+  storage: StorageKnex,
+  identityKey: string,
+  options: Readonly<Brc38KnexSourceOptions>,
+  header: Awaited<ReturnType<typeof readKnexSnapshotArchiveHeader>>,
+  userId: number,
+  active: () => void,
+  k: Knex,
+  table?: WalletSnapshotTable
+): Promise<void> {
+  active()
+  if (!isOwnedNativeSqlite(k)) throw new Error('BRC-38 source native owner changed')
+  const protocol: Array<{ abi: number }> = await k.raw('SELECT brc38_text_read_protocol() AS abi')
+  if (
+    protocol.length !== 1 ||
+    !brc38NativeTextProtocolSupports('provenTxReqs', protocol[0].abi) ||
+    !brc38NativeTextProtocolSupports('syncStates', protocol[0].abi) ||
+    (options.streamedText !== undefined &&
+      table !== undefined &&
+      Object.hasOwn(brc38StreamedTextFields, table) &&
+      !brc38NativeTextProtocolSupports(table as Brc38NativeTextRead['table'], protocol[0].abi))
+  )
+    throw new Error('BRC-38 native TEXT producer protocol differs')
+  const now = await readKnexSnapshotArchiveHeader(storage, identityKey, k)
+  if (
+    now.header.sourceSchema !== header.header.sourceSchema ||
+    now.header.user.userId !== userId ||
+    now.header.user.identityKey !== identityKey ||
+    now.header.user.activeStorage !== header.header.user.activeStorage ||
+    now.header.sourceStorage.storageIdentityKey !== header.header.sourceStorage.storageIdentityKey ||
+    now.header.sourceStorage.chain !== storage.chain ||
+    now.header.sourceStorage.dbtype !== 'SQLite'
+  )
+    throw new Error('BRC-38 actual retained profile/schema/primary/network differs')
+  active()
+}
+
+/** Coherent SQL source. Supply a dedicated reader provider so an idle
+ * file consumer does not occupy the foreground/writer pool. All metadata,
+ * closure checks and thirteen keyset streams own the same retained transaction.
+ * Portable order may need different SQL indexes; no performance or capability
+ * claim is made by constructing this source. SQLite locale ties retain the
+ * original finder scan order; other provider collation still requires qualification. */
+export async function openBrc38KnexSource(
+  storage: StorageKnex,
+  identityKey: string,
+  selected: Brc38KnexSourceOptions
+): Promise<Brc38StreamSource> {
+  const options = ownSourceOptions(storage, identityKey, selected)
   const view: RetainedReadSnapshot = await storage.openReadSnapshot(options)
   let closed: Promise<void> | undefined,
     revoked = false,
@@ -621,88 +722,13 @@ export async function openBrc38KnexSource(
     if (user.identityKey !== identityKey || sourceStorage.chain !== storage.chain)
       throw new Error('BRC-38 source profile or network changed')
     const context: PageContext = { storage, userId, options }
-    const resolveCertificateTies = async (group: SourceRow[]): Promise<void> => {
-      if (storage.dbtype !== 'SQLite') return
-      active()
-      await view.read(async trx => {
-        const k = storage.toDb(trx),
-          original = storage.findCertificateFieldsQuery({ partial: { userId } }).toSQL(),
-          plan: Array<{ detail: string }> = await k.raw('EXPLAIN QUERY PLAN ' + original.sql, original.bindings)
-        // The unpaged finder is one table scan. Its chosen index (including
-        // custom index direction/collation), or its rowid scan, determines the
-        // stable order before the legacy locale sort. Do not fetch its payload.
-        if (plan.length !== 1 || typeof plan[0].detail !== 'string' || plan[0].detail.length > 1024)
-          throw new Error('Unsupported BRC-38 certificate finder plan')
-        const indexed = /^(SCAN|SEARCH) certificate_fields USING (?:COVERING )?INDEX (.+)$/.exec(plan[0].detail)
-        if (indexed === null && plan[0].detail !== 'SCAN certificate_fields')
-          throw new Error('Unsupported BRC-38 certificate finder order')
-        let indexName: string | undefined
-        if (indexed !== null) {
-          indexName = indexed[2]
-          if (indexed[1] === 'SEARCH') {
-            // Conditions follow the final " ("; an index name itself may
-            // contain spaces, parentheses and quotes. Knex quotes it below.
-            const suffix = indexName.lastIndexOf(' (')
-            if (suffix < 1 || !indexName.endsWith(')')) throw new Error('Unsupported BRC-38 certificate finder index')
-            indexName = indexName.slice(0, suffix)
-          }
-        }
-        const table =
-          indexName === undefined
-            ? k.raw('?? NOT INDEXED', ['certificate_fields'])
-            : k.raw('?? INDEXED BY ??', ['certificate_fields', indexName])
-        const ordinals: Array<{ ordinal: string }> = await k
-          .select(k.raw('cast(?? as text) as ??', ['certificate_fields._rowid_', 'ordinal']))
-          .from(table)
-          .where({ userId, certificateId: group[0].row.certificateId })
-          .limit(group.length + 1)
-        if (ordinals.length !== group.length) throw new Error('BRC-38 certificate finder membership changed')
-        const ranks = new Map<bigint, bigint>()
-        for (const [index, item] of ordinals.entries()) {
-          if (typeof item.ordinal !== 'string' || !/^-?\d{1,19}$/.test(item.ordinal))
-            throw new Error('Invalid BRC-38 certificate finder identity')
-          const id = BigInt(item.ordinal)
-          if (ranks.has(id)) throw new Error('Duplicate BRC-38 certificate finder identity')
-          ranks.set(id, BigInt(index))
-        }
-        for (const source of group) {
-          const rank = source.ordinal === undefined ? undefined : ranks.get(source.ordinal)
-          if (rank === undefined) throw new Error('BRC-38 certificate finder identity changed')
-          source.ordinal = rank
-        }
-        active()
-      })
-    }
+    const resolveCertificateTies = (group: SourceRow[]) =>
+      resolveCertificateFinderTies(storage, view, userId, active, group)
     const completed = new Set<WalletSnapshotTable>()
     const snapshotId = Utils.toHex(Random(32))
     const binaryReader = createKnexWalletSnapshotBinaryReader(storage, userId, snapshotId, view)
-    const nativeContext = async (k: Knex, table?: WalletSnapshotTable): Promise<void> => {
-      active()
-      if (!isOwnedNativeSqlite(k)) throw new Error('BRC-38 source native owner changed')
-      const protocol: Array<{ abi: number }> = await k.raw('SELECT brc38_text_read_protocol() AS abi')
-      if (
-        protocol.length !== 1 ||
-        !brc38NativeTextProtocolSupports('provenTxReqs', protocol[0].abi) ||
-        !brc38NativeTextProtocolSupports('syncStates', protocol[0].abi) ||
-        (options.streamedText !== undefined &&
-          table !== undefined &&
-          Object.hasOwn(brc38StreamedTextFields, table) &&
-          !brc38NativeTextProtocolSupports(table as Brc38NativeTextRead['table'], protocol[0].abi))
-      )
-        throw new Error('BRC-38 native TEXT producer protocol differs')
-      const now = await readKnexSnapshotArchiveHeader(storage, identityKey, k)
-      if (
-        now.header.sourceSchema !== header.header.sourceSchema ||
-        now.header.user.userId !== userId ||
-        now.header.user.identityKey !== identityKey ||
-        now.header.user.activeStorage !== header.header.user.activeStorage ||
-        now.header.sourceStorage.storageIdentityKey !== header.header.sourceStorage.storageIdentityKey ||
-        now.header.sourceStorage.chain !== storage.chain ||
-        now.header.sourceStorage.dbtype !== 'SQLite'
-      )
-        throw new Error('BRC-38 actual retained profile/schema/primary/network differs')
-      active()
-    }
+    const nativeContext = (k: Knex, table?: WalletSnapshotTable) =>
+      verifySourceNativeContext(storage, identityKey, options, header, userId, active, k, table)
     async function* rawRows(table: WalletSnapshotTable) {
       let after: readonly (number | string)[] | undefined,
         done = false
