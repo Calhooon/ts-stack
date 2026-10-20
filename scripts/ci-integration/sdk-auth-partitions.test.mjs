@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { buildMutationTargets } from '../../governance/mutation-testing/targets.mjs'
-import { partitionMutationTarget } from '../mutation-partitions.mjs'
+import { partitionMutationTarget, partitionedTargetIds } from '../mutation-partitions.mjs'
 import { targetEvidence } from '../mutation-final-qualification.mjs'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
@@ -19,9 +19,7 @@ const tuple = mutant =>
     mutant.statusReason
   ])
 const targets = buildMutationTargets(root)
-for (const id of ['sdk-auth-http', 'wallet-retained-snapshot'].filter(id =>
-  Object.hasOwn(targets, id)
-))
+for (const id of partitionedTargetIds().filter(id => Object.hasOwn(targets, id)))
   test(`actual pinned ${id} partitions exhaust the original canonical mutant inventory and complete test configuration`, async () => {
     const target = targets[id]
     const canonical = await targetEvidence(root, target, id)

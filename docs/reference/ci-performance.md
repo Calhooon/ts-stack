@@ -3,8 +3,8 @@ id: ci-performance
 title: 'CI Performance Governance'
 kind: reference
 version: '1.4.0'
-last_updated: '2026-10-02'
-last_verified: '2026-10-02'
+last_updated: '2026-10-20'
+last_verified: '2026-10-20'
 review_cadence_days: 30
 status: stable
 tags: [reference, ci, performance, github-actions]
@@ -290,13 +290,13 @@ defect yield or an optimal percentage threshold by itself.
 ### SDKAuth execution partitions
 
 The existing `sdk-auth-http` target remains one canonical policy/property
-registration. Its source specifications are grouped by file into core validation
-and Peer, AuthFetch client, and SimplifiedFetchTransport. Every range of a file
+registration. Its source specifications are grouped by file into core validation,
+Peer, AuthFetch client, and SimplifiedFetchTransport. Every range of a file
 stays in one part; a new canonical helper defaults to core, and unsupported
 wildcard/unknown partition inputs fail. Each part retains the complete original
 Jest test selection, four workers and governed property inputs. The current pinned
-inventory replays to 95 + 137 + 91 = 323 mutants, exactly matching the unpartitioned
-canonical inventory.
+inventory replays to 73 + 22 + 137 + 91 = 323 mutants, exactly matching the
+unpartitioned canonical inventory.
 
 A part's score is diagnostic. It still requires complete actual source/config/
 mutant evidence and zero uncovered/invalid outcomes. Only the combined original
@@ -341,3 +341,38 @@ This source proof cannot qualify a newer wallet head: its owner must compare
 the full pinned inventory/configuration on the final source before adoption.
 Registry, runtime, assertions, workers, deadlines and thresholds remain owned
 and unchanged by the partition facility.
+
+### Line-split execution partitions
+
+Full qualification wall time is bounded by its slowest target. Before line
+splitting, `brc52-envelope` took 22–32 minutes in every release campaign: all 358
+mutants of one file share almost the complete 291-test selection, so a file
+partition cannot divide it. A line plan in `scripts/mutation-partitions.mjs`
+cuts a file at explicit declaration markers instead. Each marker must start
+exactly one source line, in order, so an edit that moves, removes or duplicates
+one fails closed. The segments are contiguous from line 1 to the last line, and
+every original specification is intersected with each segment, so overlapping
+canonical ranges keep their original union.
+
+The canonical registry, inventory, tests, workers, property inputs and score
+gate are unchanged. The combined report merges a split file's mutants only when
+every part carries the identical source, orders them by partition, and must
+then equal the canonical whole-target inventory exactly; a dropped or
+double-tested mutant fails. `scripts/ci-integration/sdk-auth-partitions.test.mjs`
+replays every partitioned target against the pinned instrumenter on each PR.
+
+Current pinned inventories:
+
+| Target             | Parts                                                  | Mutants |
+| ------------------ | ------------------------------------------------------ | ------- |
+| `brc52-envelope`   | 64 + 64 + 64 + 50 + 70 + 46 (lines)                    | 358     |
+| `brc52-status`     | 201 + 164 (lines)                                      | 365     |
+| `brc52-disclosure` | 192 + 134 (lines)                                      | 326     |
+| `air-gap-codec`    | decoder 94 + 105 (lines), encoder 75, coding/base64 80 | 354     |
+| `webrtpay-frames`  | 110 + 119 (lines)                                      | 229     |
+| `mandala-encoding` | mandala 93, strict CBOR 352, BSV-21 336                | 781     |
+| `webrtpay-codes`   | codes 273, SDP 532                                     | 805     |
+
+Each extra part repeats the target's dry run and job setup, so total compute
+rises while the campaign tail falls. The matrix grows from 41 to 56 jobs under
+the unchanged 20-job limit.

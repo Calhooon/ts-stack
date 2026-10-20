@@ -73,13 +73,26 @@ function checkedPartition(identity, targetId, expected, seen, packet, policy, mo
   const execution = JSON.parse(executionBytes)
   return { part, checked, execution }
 }
+// A line-split file appears in several partition reports. Merge its mutants only
+// when every part reports the identical source and language; the combined
+// inventory is then rechecked against the canonical whole-target inventory, so
+// a duplicated or missing mutant still fails.
 function addPartitionFiles(files, partitionId, reportBytes) {
   for (const [file, value] of Object.entries(JSON.parse(reportBytes).files)) {
-    if (Object.hasOwn(files, file)) throw new Error('Partition source files overlap')
-    files[file] = {
-      ...value,
-      mutants: value.mutants.map(mutant => ({ ...mutant, id: `${partitionId}/${mutant.id}` }))
+    const mutants = value.mutants.map(mutant => ({ ...mutant, id: `${partitionId}/${mutant.id}` }))
+    if (!Object.hasOwn(files, file)) {
+      files[file] = { ...value, mutants }
+      continue
     }
+    const existing = files[file]
+    if (existing.source !== value.source || existing.language !== value.language)
+      throw new Error('Partition source files overlap with different content')
+    // Order by partition so the aggregate never depends on packet arrival order;
+    // the stable sort keeps each part's own mutant order.
+    const partOf = mutant => mutant.id.slice(0, mutant.id.indexOf('/'))
+    existing.mutants = [...existing.mutants, ...mutants].sort((left, right) =>
+      compare(partOf(left), partOf(right))
+    )
   }
 }
 
