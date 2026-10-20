@@ -175,3 +175,76 @@ test('preserves the exact cancellation reason before work and between output chu
     expect(error).toBe(reason)
   }
 })
+
+test('reports canonical validation errors for absent entries and every unsupported scalar kind', () => {
+  const message = 'Canonical portable values require finite JSON scalars without null or absent array entries',
+    hole = Array<unknown>(1)
+  for (const value of [hole, null, undefined, NaN, Infinity, -Infinity, 1n, Symbol('value'), () => true]) {
+    const first = () => canonicalPortableChunks(value, options).next()
+    expect(first).toThrow(TypeError)
+    expect(first).toThrow(message)
+  }
+})
+
+test('admits exactly sixty-four nesting levels for arrays and object members', () => {
+  for (const kind of ['array', 'object']) {
+    let value: unknown = true,
+      expected = 'true'
+    for (let depth = 0; depth < 64; depth++) {
+      value = kind === 'array' ? [value] : { child: value }
+      expected = kind === 'array' ? '[' + expected + ']' : '{"child":' + expected + '}'
+    }
+    expect(encoded(value)).toBe(expected)
+    const tooDeep = kind === 'array' ? [value] : { child: value }
+    expect(() => canonicalPortableChunks(tooDeep, options).next()).toThrow(
+      'Canonical portable nesting exceeds 64 levels'
+    )
+  }
+})
+
+test('admits an exact array allocation and refuses an impossible array before inspecting its children', () => {
+  const exact = canonicalPortableChunks([true], { maximumValueBytes: 128 })
+  expect(Buffer.concat([...exact]).toString()).toBe('[true]')
+  const get = jest.fn(() => true),
+    array = Object.defineProperty([], '0', { enumerable: true, get })
+  expect(() => canonicalPortableChunks(array, { maximumValueBytes: 127 }).next()).toThrow(
+    'Canonical portable array exceeds its allocation budget'
+  )
+  expect(get).not.toHaveBeenCalled()
+})
+
+test('preserves the terminal BMP code unit before an independently invalid surrogate', () => {
+  expect(encoded('\uffff😀\uffff')).toBe(JSON.stringify('\uffff😀\uffff'))
+  expect(() => canonicalPortableChunks('\uffff\ud800', options).next()).toThrow(TypeError)
+  expect(() => canonicalPortableChunks({ ['\uffff\udfff']: true }, options).next()).toThrow(TypeError)
+})
+
+test('retains useful option errors before allocating or consuming a value', () => {
+  expect(() => canonicalPortableChunks(true, { maximumValueBytes: 0 }).next()).toThrow(
+    'maximumValueBytes must be an integer from 1 to 16777216'
+  )
+  expect(() => canonicalPortableChunks(true, { ...options, maximumChunkBytes: 63 }).next()).toThrow(
+    'maximumChunkBytes must be an integer from 64 to 65536'
+  )
+})
+
+test('bounds escaped encoding windows as well as the returned buffers', () => {
+  const original = TextEncoder.prototype.encode,
+    windows: number[] = [],
+    observe = jest.spyOn(TextEncoder.prototype, 'encode').mockImplementation(function (
+      this: TextEncoder,
+      input?: string
+    ) {
+      const bytes = original.call(this, input)
+      windows.push(bytes.byteLength)
+      return bytes
+    })
+  try {
+    const value = '\u0000'.repeat(2048) + '😀'.repeat(100)
+    expect(encoded(value)).toBe(JSON.stringify(value))
+    expect(windows.length).toBeGreaterThan(1)
+    expect(Math.max(...windows)).toBeLessThanOrEqual(options.maximumChunkBytes)
+  } finally {
+    observe.mockRestore()
+  }
+})

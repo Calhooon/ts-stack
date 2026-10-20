@@ -59,6 +59,49 @@ test('two fresh bounded metadata statements retain every original identity and D
   }
 })
 
+test('fresh identities share cross-table index reads in groups of at most sixteen names', async () => {
+  const k = await fixture()
+  try {
+    const initialQueries: string[] = [],
+      initialObserver = (query: { sql: string }) => initialQueries.push(query.sql),
+      originalDefinitions = await original(k)
+    k.on('query', initialObserver)
+    try {
+      expect(await readIdentities(k, sources)).toEqual(originalDefinitions)
+    } finally {
+      k.off('query', initialObserver)
+    }
+    expect(initialQueries.filter(sql => sql.includes('pragma_index_xinfo'))).toHaveLength(1)
+    for (let index = 0; index < 18; index++)
+      await k.raw('CREATE UNIQUE INDEX ?? ON ?? (owner,code)', [
+        'independent_identity_group_' + index,
+        index % 2 === 0 ? 'identity_a' : 'identity_b'
+      ])
+    const expected = await original(k),
+      queries: Array<{ sql: string; bindings: unknown[] }> = [],
+      observe = (query: { sql: string; bindings: unknown[] }) => queries.push(query)
+    k.on('query', observe)
+    let actual: Awaited<ReturnType<typeof readIdentities>>
+    try {
+      actual = await readIdentities(k, sources)
+    } finally {
+      k.off('query', observe)
+    }
+    expect(actual).toEqual(expected)
+    expect(actual.map(identityDDL)).toEqual(expected.map(identityDDL))
+    const parts = queries.filter(query => query.sql.includes('pragma_index_xinfo'))
+    expect(parts).toHaveLength(2)
+    expect(parts.every(query => query.bindings.length > 0 && query.bindings.length <= 16)).toBe(true)
+    expect(parts.reduce((sum, query) => sum + query.bindings.length, 0)).toBe(20)
+    expect(queries.some(query => query.sql.startsWith('PRAGMA index_xinfo'))).toBe(false)
+    await k.raw('DROP INDEX independent_identity_group_0')
+    expect(await readIdentities(k, sources)).toEqual(await original(k))
+    expect(await readIdentities(k, sources)).not.toEqual(expected)
+  } finally {
+    await k.destroy()
+  }
+})
+
 test('valid unique-index changes and rollback are read afresh', async () => {
   const k = await fixture()
   try {

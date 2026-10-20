@@ -119,7 +119,10 @@ export async function inspectBrc38PrivateMergeHistory(
       .where({ userId: admission.scope.userId, identityKey: binding.binding.identityKey })
       .select('userId')
       .limit(2)
-    if (profile.length !== 1 || (await count(k, 'users')) !== 1) invalid()
+    // An occupied source may contain other profiles. The separate complete
+    // user inventory compares every original row; this history scope must
+    // identify exactly the selected user without rejecting those profiles.
+    if (profile.length !== 1) invalid()
     const settings = await k('settings')
       .where({ chain: binding.binding.chain, storageIdentityKey: binding.binding.targetStorageIdentityKey })
       .select('chain')

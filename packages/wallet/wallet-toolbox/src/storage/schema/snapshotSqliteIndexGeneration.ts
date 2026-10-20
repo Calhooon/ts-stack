@@ -380,14 +380,16 @@ async function validateDefinitions(k: Knex, expected: string[]): Promise<void> {
     }
     const selected = definitions.filter((definition): definition is InstalledDefinition => definition !== undefined)
     const bindings: string[] = []
-    const conditions = selected
+    const values = selected
       .map(definition => {
-        bindings.push(definition.name, definition.type, definition.sql)
-        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
+        bindings.push(definition.type, definition.name, definition.sql)
+        return '(?,?,CAST(? AS BLOB))'
       })
-      .join(' OR ')
+      .join(',')
+    // One bounded tuple set preserves the exact type/name/SQL comparison and
+    // avoids recompiling and evaluating a separate OR branch per definition.
     const row = (await k('sqlite_master')
-      .whereRaw('(' + conditions + ')', bindings)
+      .whereRaw('(type,name,CAST(sql AS BLOB)) IN (VALUES ' + values + ')', bindings)
       .count({ matches: '*' })
       .countDistinct({ names: 'name' })
       .first()) as { matches: unknown; names: unknown } | undefined

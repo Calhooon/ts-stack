@@ -66,6 +66,19 @@ those no-op entries must not be rewritten as deployed schema changes.
 
 ## Current unpublished candidate status
 
+Occupied native merge-history validation identifies the selected user without
+requiring that it be the only stored profile. The separate complete user
+inventory still compares every original profile, physical key and cell. Native
+source-index validation compiles its thirteen complete index checks into one
+scalar query with shared virtual-table reads, retaining the original native
+heap, exact SQL, uniqueness, nullability, ordering, collation and shadow checks.
+Snapshot-generation definition reads use bounded exact type/name/SQL tuple
+comparisons in their original binding order. Source identity construction groups
+fresh index metadata across tables in batches of at most sixteen names; invalid
+primary or partial-index layouts retain the original ordered refusal path.
+No schema verdict survives the construction. No API, schema, native ABI or resource-limit migration is needed;
+complete current-head qualification remains required.
+
 Private candidate migrations resolve their transactional migration names when an actual
 source adapter is created, after the public/native import graph has initialized.
 Entering through the public migration owner therefore preserves the same selected

@@ -4,7 +4,8 @@ import type { Knex } from 'knex'
 import {
   readSqliteIdentityObservations,
   readSqliteIndexObservations,
-  type SqliteIdentityObservation
+  type SqliteIdentityObservation,
+  type SqliteIndexObservation
 } from './snapshotSqliteIdentityObservations'
 // Metadata-bound conflict witnesses are maintained by the additive SQLite generation.
 export interface SourceIdentity {
@@ -42,10 +43,44 @@ export async function readIdentities(k: Knex, sources: SourceIdentity[]): Promis
     k,
     sources.map(source => source.table)
   )
+  // These are fresh DATA rows from this construction, never a retained schema
+  // verdict. Group parts across tables under the same sixteen-name bound.
+  // An unsupported primary or partial constraint keeps the original ordered
+  // individual path so later metadata cannot replace its first refusal.
+  let parts: Map<string, SqliteIndexObservation> | undefined
+  if (
+    observed !== undefined &&
+    sources.every((source, position) => {
+      const value = observed[position],
+        primary = value?.columns.filter(column => column.pk !== 0)
+      return (
+        value?.table === source.table &&
+        primary?.length === 1 &&
+        primary[0].name === source.key &&
+        primary[0].type.toLowerCase() === 'integer' &&
+        value.indexes.every(index => index.unique === 0 || index.partial === 0)
+      )
+    })
+  ) {
+    const names = [
+      ...new Set(observed.flatMap(value => value.indexes.filter(index => index.unique !== 0).map(index => index.name)))
+    ]
+    parts = new Map()
+    for (let offset = 0; offset < names.length; offset += 16) {
+      const group = await readSqliteIndexObservations(k, names.slice(offset, offset + 16))
+      if (group === undefined) {
+        parts = undefined
+        break
+      }
+      for (const observation of group) parts.set(observation.name, observation)
+    }
+  }
   const identities: IdentityDefinition[] = []
   await runInSeries(sources.entries(), async ([index, source]) => {
     const selected = observed?.[index]
-    identities.push(await readIdentityCurrent(k, source, selected?.table === source.table ? selected : undefined))
+    identities.push(
+      await readIdentityCurrent(k, source, selected?.table === source.table ? selected : undefined, parts)
+    )
   })
   return identities
 }
@@ -53,7 +88,8 @@ export async function readIdentities(k: Knex, sources: SourceIdentity[]): Promis
 async function readIdentityCurrent(
   k: Knex,
   source: SourceIdentity,
-  observed?: SqliteIdentityObservation
+  observed?: SqliteIdentityObservation,
+  currentParts?: ReadonlyMap<string, SqliteIndexObservation>
 ): Promise<IdentityDefinition> {
   const columns: Column[] = observed?.columns ?? (await k.raw('PRAGMA table_xinfo(??)', [source.table]))
   const primary = columns.filter(column => column.pk !== 0)
@@ -69,12 +105,14 @@ async function readIdentityCurrent(
   // Partial constraints retain the original individual reads and first-error
   // ordering. The public single-identity reader also retains that legacy path.
   const observedParts =
-    observed !== undefined && uniqueIndexes.every(index => index.partial === 0)
-      ? await readSqliteIndexObservations(
-          k,
-          uniqueIndexes.map(index => index.name)
-        )
-      : undefined
+    observed !== undefined && currentParts !== undefined
+      ? uniqueIndexes.map(index => currentParts.get(index.name))
+      : observed !== undefined && uniqueIndexes.every(index => index.partial === 0)
+        ? await readSqliteIndexObservations(
+            k,
+            uniqueIndexes.map(index => index.name)
+          )
+        : undefined
   await runInSeries(uniqueIndexes.entries(), async ([position, index]) => {
     if (index.partial !== 0) throw new WERR_INVALID_OPERATION('Unsupported partial unique identity')
     const metadata: Array<{

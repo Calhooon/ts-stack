@@ -81,32 +81,31 @@ async function verifyNativeSourceIndexes(trx: Knex.Transaction): Promise<void> {
     ).length
   )
     invalid()
-  const bindings: Array<string | number> = []
-  const checks = keys.map(key => {
+  const bindings: Array<string | number> = [],
+    columnBindings: Array<string | number> = []
+  const requested = keys.map(key => {
     const [name, unique, columns] = nativeSourceIndexes[key]!,
       [table] = brc38ImportTargetIndexes[key],
       source = `CREATE ${unique ? 'UNIQUE ' : ''}INDEX \`${name}\` on \`${table}\` (${columns.map(column => `\`${column}\``).join(', ')})`
-    bindings.push(name, table, source, table, name, Number(unique), name, name)
-    const parts = columns.map((column, ordinal) => {
-      bindings.push(ordinal, column)
-      return '(seqno=? AND cid>=0 AND name=? AND "desc"=0 AND coll=\'BINARY\')'
-    })
-    if (unique) bindings.push(table, ...columns)
-    return `SELECT
-      (SELECT count(*) FROM main.sqlite_schema WHERE type='index' AND name=? AND tbl_name=? AND CAST(sql AS BLOB)=CAST(? AS BLOB)) AS definition,
-      (SELECT count(*) FROM pragma_index_list(?) WHERE name=? AND "unique"=? AND origin='c' AND partial=0) AS properties,
-      (SELECT count(*) FROM pragma_index_xinfo(?) WHERE "key"=1) AS width,
-      (SELECT count(*) FROM pragma_index_xinfo(?) WHERE "key"=1 AND (${parts.join(' OR ')})) AS parts,
-      ${columns.length} AS expected,
-      ${unique ? `(SELECT count(*) FROM pragma_table_info(?) WHERE name IN (${columns.map(() => '?').join(',')}) AND "notnull"=1)` : columns.length} AS required`
+    bindings.push(name, table, source, Number(unique), columns.length)
+    for (let ordinal = 0; ordinal < columns.length; ordinal++) columnBindings.push(name, ordinal, columns[ordinal])
+    return '(?,?,?,?,?)'
   })
-  // These checks share the same actual pinned writer and SQLite statement.
-  // Every invocation rechecks all original SQL, uniqueness, nullability,
-  // ordering, expressions, collation and shadow constraints. Only one scalar
-  // crosses the native result boundary; no generation verdict is cached.
+  const columns = Array.from({ length: columnBindings.length / 3 }, () => '(?,?,?)')
+  // Compile each virtual-table read once, rather than a separate copy for
+  // every index. All thirteen trees still receive every fresh check inside
+  // the same actual pinned writer and one scalar-result statement. This fits
+  // the original native heap without caching any generation verdict.
   const result: Array<{ invalid: number }> = await trx.raw(
-    `SELECT count(*) AS invalid FROM (${checks.join(' UNION ALL ')}) WHERE definition<>1 OR properties<>1 OR width<>expected OR parts<>expected OR required<>expected`,
-    bindings
+    `WITH requested(name,tableName,source,isUnique,width) AS (VALUES ${requested.join(',')}),
+      expectedColumns(indexName,ordinal,columnName) AS (VALUES ${columns.join(',')})
+    SELECT count(*) AS invalid FROM requested r WHERE
+      (SELECT count(*) FROM main.sqlite_schema s WHERE s.type='index' AND s.name=r.name AND s.tbl_name=r.tableName AND CAST(s.sql AS BLOB)=CAST(r.source AS BLOB))<>1 OR
+      (SELECT count(*) FROM pragma_index_list(r.tableName) p WHERE p.name=r.name AND p."unique"=r.isUnique AND p.origin='c' AND p.partial=0)<>1 OR
+      (SELECT count(*) FROM pragma_index_xinfo(r.name) p WHERE p."key"=1)<>r.width OR
+      (SELECT count(*) FROM pragma_index_xinfo(r.name) p JOIN expectedColumns e ON e.indexName=r.name AND p.seqno=e.ordinal AND p.name=e.columnName WHERE p."key"=1 AND p.cid>=0 AND p."desc"=0 AND p.coll='BINARY')<>r.width OR
+      (r.isUnique=1 AND (SELECT count(*) FROM pragma_table_info(r.tableName) p JOIN expectedColumns e ON e.indexName=r.name AND p.name=e.columnName WHERE p."notnull"=1)<>r.width)`,
+    [...bindings, ...columnBindings]
   )
   if (result.length !== 1 || Number(result[0].invalid) !== 0) invalid()
 }

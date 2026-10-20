@@ -1,5 +1,17 @@
 ## Held #569 implementation candidate — unreleased
 
+Native merge-history scope admits other original user profiles while retaining
+the exact selected-user check and complete independent user inventory. Source
+index validation shares virtual-table reads across all thirteen original
+indexes in one fresh scalar query, fitting the original native heap without
+removing any schema, uniqueness, nullability, ordering, collation or shadow
+check. Snapshot definitions use bounded exact type/name/SQL tuple comparisons.
+Fresh source-identity index metadata groups span tables within the original
+sixteen-name ceiling, preserving invalid-layout refusal ordering and retaining
+no schema verdict between constructions.
+No API, schema, native ABI or resource limit changes; full qualification remains
+required.
+
 The internal native field preparer now accepts actual issued authenticated field frames. A matching native SEALED content version is independently rehashed under its actual producer and lifetime before reuse, avoiding another payload download; a miss retains source hash/replay and stored EOF verification. Cached TEXT also decodes actual target bytes to EOF. Status I/O stays outside native writers, and copied frames or ordinary SQL connections cannot enroll as native producers. The new genuine native/HTTP rollback and reuse case is authored but unexecuted; target financial merge/ordinary-store cache integration, remote primary handoff and full qualification remain incomplete.
 
 The candidate now exposes separately negotiated authenticated journal field artifacts to full and mobile clients. The version-four offered tuple binds its actual durable reservation, nonce, deadline and lower bound; metadata reads skip payload downloads and bounded extents verify their original artifact/frame ownership and packet integrity. The source hashes and deduplicates fields, captures streamed notification identities and physically closes before READY. Existing row/version-three APIs, authentication and resource limits remain. Target-owned verified cache/semantic promotion and full remote primary handoff still require integration; whole-system qualification remains pending.
