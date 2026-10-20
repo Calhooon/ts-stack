@@ -231,3 +231,18 @@ export function mutationExecutionMatrix(selected, targets) {
 export function partitionedTargetIds() {
   return [...plans.keys()]
 }
+
+// Longest-processing-time-first scheduling: GitHub starts matrix jobs in listed
+// order up to the concurrency limit, so list the slowest measured parts first
+// and the short ones fill the remaining slots. Order only changes when a part
+// starts, never which parts run. A part without a measurement (new or renamed)
+// sorts first, so it can never be left as an unplanned tail.
+export function longestFirst(matrix, seconds) {
+  const cost = row => seconds[`${row.target}/${row.partition}`] ?? Number.MAX_SAFE_INTEGER
+  return {
+    include: matrix.include
+      .map((row, index) => ({ row, index }))
+      .sort((left, right) => cost(right.row) - cost(left.row) || left.index - right.index)
+      .map(({ row }) => row)
+  }
+}

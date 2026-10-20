@@ -8,7 +8,8 @@ import {
   partitionMutationTarget,
   selectedMutationPartition,
   mutationExecutionMatrix,
-  partitionedMutationTargets
+  partitionedMutationTargets,
+  longestFirst
 } from './mutation-partitions.mjs'
 const target = {
   mutate: [
@@ -198,4 +199,28 @@ test('line partitions intersect every original range with contiguous segments th
     () => partitionMutationTarget('brc52-envelope', { mutate: ['src/brc52/envelope.ts'] }),
     /package directory/
   )
+})
+
+test('longest-first scheduling reorders but never adds, drops or duplicates parts', () => {
+  const matrix = {
+    include: [
+      { target: 'short', partition: 'whole' },
+      { target: 'split', partition: 'a' },
+      { target: 'new', partition: 'whole' },
+      { target: 'split', partition: 'b' },
+      { target: 'tie', partition: 'whole' }
+    ]
+  }
+  const seconds = { 'short/whole': 40, 'split/a': 300, 'split/b': 90, 'tie/whole': 90 }
+  const ordered = longestFirst(matrix, seconds).include
+  assert.deepEqual(ordered, [
+    { target: 'new', partition: 'whole' },
+    { target: 'split', partition: 'a' },
+    { target: 'split', partition: 'b' },
+    { target: 'tie', partition: 'whole' },
+    { target: 'short', partition: 'whole' }
+  ])
+  const key = row => `${row.target}/${row.partition}`
+  assert.deepEqual(ordered.map(key).sort(), matrix.include.map(key).sort())
+  assert.deepEqual(longestFirst({ include: [] }, seconds), { include: [] })
 })

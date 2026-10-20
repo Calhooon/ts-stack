@@ -398,3 +398,25 @@ Verdicts cannot change: a mutant with a failing test is Killed regardless of
 later tests. A local same-machine run of `brc52-envelope/envelope-2` produced
 identical verdicts for all 64 mutants (61 Killed, 3 Survived) while tests run
 per mutant fell from 138.8 to 19.2 and wall time from 117 to 50 seconds.
+
+### Longest-first campaign scheduling
+
+GitHub starts matrix jobs in listed order up to the concurrency limit. With the
+registry order, long parts could start last and run alone at the end. The
+`matrix` command now lists parts longest first from
+`governance/mutation-testing/durations.json` (measured hosted job seconds), the
+longest-processing-time-first heuristic for parallel machine scheduling. Order
+changes only when a part starts, never which parts run; an unmeasured part sorts
+first. Refresh the durations after a campaign whose part timings changed.
+
+Fork benchmark, same runners, about six concurrent jobs, every gate passing:
+
+| Campaign                  | Wall   | Longest part                | Total part time |
+| ------------------------- | ------ | --------------------------- | --------------- |
+| Unchanged main            | 26m36s | 23m44s `brc52-envelope`     | 167m39s         |
+| Partitions only           | 35m17s | 14m51s `sdk-auth-http/core` | 164m49s         |
+| Partitions + stop-on-kill | 17m01s | 6m10s `sdk-auth-http/core`  | 105m48s         |
+
+Partitions alone were slower there because long parts queued behind short ones,
+which longest-first ordering addresses. With twenty slots the campaign is bounded
+by its longest part or total part time divided by twenty.
