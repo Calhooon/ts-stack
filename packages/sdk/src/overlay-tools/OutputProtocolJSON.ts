@@ -1,5 +1,8 @@
 import { outputAssert, OutputProtocolError } from './OutputProtocolError.js'
 
+// Capture the realm intrinsic once; each method lookup and input check stays fresh.
+const outputObjectIntrinsic = Object
+
 export type OutputJSON = null | boolean | number | string | OutputJSON[] | OutputJSONObject
 export interface OutputJSONObject {
   [key: string]: OutputJSON
@@ -13,7 +16,7 @@ export interface OutputJSONLimits {
   mapKeys: number
 }
 
-export const OUTPUT_JSON_LIMITS: Readonly<OutputJSONLimits> = Object.freeze({
+export const OUTPUT_JSON_LIMITS: Readonly<OutputJSONLimits> = outputObjectIntrinsic.freeze({
   bytes: 4 * 1024 * 1024,
   depth: 32,
   arrayElements: 4096,
@@ -25,7 +28,7 @@ const encoder = new TextEncoder()
 // for every complete input, including after malformed UTF-8.
 let utf8Decoder: TextDecoder | undefined
 
-const resourceMessages = Object.freeze([
+const resourceMessages = outputObjectIntrinsic.freeze([
   'Output JSON byte limit',
   'JSON depth limit',
   'JSON map limit',
@@ -38,8 +41,8 @@ function outputJSONLimit(condition: boolean, resource: 0 | 1 | 2 | 3 = 0): asser
 
 /** Accept plain records from other realms as well as null-prototype records. */
 export function isOutputPlainObject(value: object): boolean {
-  const prototype: object | null = Object.getPrototypeOf(value) as object | null
-  return prototype === null || Object.getPrototypeOf(prototype) === null
+  const prototype: object | null = outputObjectIntrinsic.getPrototypeOf(value) as object | null
+  return prototype === null || outputObjectIntrinsic.getPrototypeOf(prototype) === null
 }
 
 function limitsFor(limits: Partial<OutputJSONLimits>): OutputJSONLimits {
@@ -48,10 +51,10 @@ function limitsFor(limits: Partial<OutputJSONLimits>): OutputJSONLimits {
   // defaults do not need to be revalidated for every record.
   if (limits === OUTPUT_JSON_LIMITS) return OUTPUT_JSON_LIMITS
   const result = { ...limits }
-  for (const key of Object.keys(result) as (keyof OutputJSONLimits)[]) {
+  for (const key of outputObjectIntrinsic.keys(result) as (keyof OutputJSONLimits)[]) {
     const value = result[key] ?? 0
     outputAssert(
-      Object.hasOwn(OUTPUT_JSON_LIMITS, key) &&
+      outputObjectIntrinsic.hasOwn(OUTPUT_JSON_LIMITS, key) &&
         Number.isSafeInteger(value) &&
         value > 0 &&
         value <= OUTPUT_JSON_LIMITS[key],
@@ -364,14 +367,14 @@ function emitOutputJSONString(frame: OutputJSONFrame, text: string, suffix = '')
 function visitOutputJSONArray(frame: OutputJSONFrame, node: unknown[], depth: number): void {
   outputJSONLimit(node.length <= frame.bounds.arrayElements, 3)
   outputAssert(
-    Object.getOwnPropertyNames(node).length === node.length + 1 &&
-      Object.keys(node).length === node.length,
+    outputObjectIntrinsic.getOwnPropertyNames(node).length === node.length + 1 &&
+      outputObjectIntrinsic.keys(node).length === node.length,
     'Sparse or decorated JSON array'
   )
   emitOutputJSON(frame, '[', true)
   for (let i = 0; i < node.length; i++) {
     if (i > 0) emitOutputJSON(frame, ',', true)
-    const descriptor = Object.getOwnPropertyDescriptor(node, i)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, i)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON array accessor or hole')
     visitOutputJSON(frame, descriptor.value, depth + 1)
   }
@@ -381,14 +384,14 @@ function visitOutputJSONArray(frame: OutputJSONFrame, node: unknown[], depth: nu
 function visitOutputJSONObject(frame: OutputJSONFrame, node: object, depth: number): void {
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
   // RFC 8785 orders primitive property-name strings by UTF-16 code units.
-  const keys = Object.getOwnPropertyNames(node)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node)
   // The fresh primitive names use one fixed locale-independent comparator.
   keys.sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
   emitOutputJSON(frame, '{', true)
   let index = 0
   for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index++ > 0) emitOutputJSON(frame, ',', true)
     // The colon is the next byte before visiting the value. One emission
@@ -412,7 +415,7 @@ function visitOutputJSON(frame: OutputJSONFrame, node: unknown, depth: number): 
     // The preceding scalar branch has already handled null.
     outputAssert(typeof node === 'object', 'Expected a JSON value')
     outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-    outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+    outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
     frame.path.add(node)
     if (Array.isArray(node)) visitOutputJSONArray(frame, node, depth)
     else visitOutputJSONObject(frame, node, depth)
@@ -434,7 +437,7 @@ function ownOutputJSONRecordPrototypes(value: OutputJSON): OutputJSON {
         if (child !== null && typeof child === 'object') ownOutputJSONRecordPrototypes(child)
       }
     } else {
-      Object.setPrototypeOf(value, null)
+      outputObjectIntrinsic.setPrototypeOf(value, null)
       ownOutputJSONRecordFields(value)
     }
   }
@@ -444,7 +447,7 @@ function ownOutputJSONRecordPrototypes(value: OutputJSON): OutputJSON {
 /** Only freshly constructed records whose prototype is already null enter here.
  * Native enumeration reads ordinary own data from this private bounded graph. */
 function ownOutputJSONRecordFields(value: OutputJSONObject): void {
-  for (const child of Object.values(value)) {
+  for (const child of outputObjectIntrinsic.values(value)) {
     if (child !== null && typeof child === 'object') ownOutputJSONRecordPrototypes(child)
   }
 }
@@ -614,7 +617,7 @@ function visitOutputJSONInlineRecord(frame: OutputJSONFrame, node: unknown, dept
   }
   outputJSONLimit(depth <= frame.bounds.depth, 1)
   outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-  outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+  outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
   frame.path.add(node)
   if (Array.isArray(node)) {
     visitOutputJSONArray(frame, node, depth)
@@ -622,12 +625,12 @@ function visitOutputJSONInlineRecord(frame: OutputJSONFrame, node: unknown, dept
     return
   }
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
-  const keys = Object.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
   emitOutputJSON(frame, '{', true)
   let index = 0
   for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index++ > 0) emitOutputJSON(frame, ',', true)
     emitOutputJSONString(frame, key, ':')
@@ -681,7 +684,7 @@ function visitOwnedOutputJSONInlineRecord(
   }
   outputJSONLimit(depth <= frame.bounds.depth, 1)
   outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-  outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+  outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
   frame.path.add(node)
   const owned = Array.isArray(node)
     ? ownOutputJSONInlineArray(frame, node, depth)
@@ -697,18 +700,18 @@ function ownOutputJSONInlineArray(
 ): OutputJSON[] {
   outputJSONLimit(node.length <= frame.bounds.arrayElements, 3)
   outputAssert(
-    Object.getOwnPropertyNames(node).length === node.length + 1 &&
-      Object.keys(node).length === node.length,
+    outputObjectIntrinsic.getOwnPropertyNames(node).length === node.length + 1 &&
+      outputObjectIntrinsic.keys(node).length === node.length,
     'Sparse or decorated JSON array'
   )
   const owned: OutputJSON[] = []
   emitOutputJSON(frame, '[', true)
   for (let i = 0; i < node.length; i++) {
     if (i > 0) emitOutputJSON(frame, ',', true)
-    const descriptor = Object.getOwnPropertyDescriptor(node, i)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, i)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON array accessor or hole')
     // Define ordinary own data without consulting an inherited array setter.
-    Object.defineProperty(owned, i, {
+    outputObjectIntrinsic.defineProperty(owned, i, {
       value: visitOwnedOutputJSONInlineRecord(frame, descriptor.value, depth + 1),
       enumerable: true,
       writable: true,
@@ -725,13 +728,13 @@ function ownOutputJSONInlineObject(
   depth: number
 ): OutputJSONObject {
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
-  const keys = Object.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
-  const owned = Object.create(null) as OutputJSONObject
+  const owned = outputObjectIntrinsic.create(null) as OutputJSONObject
   emitOutputJSON(frame, '{', true)
   let index = 0
   for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index++ > 0) emitOutputJSON(frame, ',', true)
     emitOutputJSONString(frame, key, ':')
@@ -841,7 +844,7 @@ class OutputJSONOwnedParser {
     const frame = this.#frame
     frame.o++
     this.#whitespace()
-    const result = Object.create(null) as OutputJSONObject
+    const result = outputObjectIntrinsic.create(null) as OutputJSONObject
     const keys = new Set<string>()
     let previous: string | undefined
     if (frame.t[frame.o] === '}') {
@@ -879,7 +882,7 @@ class OutputJSONOwnedParser {
     }
     for (;;) {
       outputJSONLimit(size < frame.b.arrayElements, 3)
-      Object.defineProperty(result, size, {
+      outputObjectIntrinsic.defineProperty(result, size, {
         value: this.#value(depth + 1),
         enumerable: true,
         writable: true,
@@ -989,7 +992,7 @@ function visitOutputJSONInlineRecords(
   }
   outputAssert(typeof node === 'object', 'Expected a JSON value')
   outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-  outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+  outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
   frame.path.add(node)
   return Array.isArray(node)
     ? visitOutputJSONOwnedArray(frame, node, depth, own)
@@ -1004,19 +1007,19 @@ function visitOutputJSONOwnedArray(
 ): OutputJSON[] | undefined {
   outputJSONLimit(node.length <= frame.bounds.arrayElements, 3)
   outputAssert(
-    Object.getOwnPropertyNames(node).length === node.length + 1 &&
-      Object.keys(node).length === node.length,
+    outputObjectIntrinsic.getOwnPropertyNames(node).length === node.length + 1 &&
+      outputObjectIntrinsic.keys(node).length === node.length,
     'Sparse or decorated JSON array'
   )
   const result: OutputJSON[] | undefined = own ? [] : undefined
   emitOutputJSON(frame, '[', true)
   for (let i = 0; i < node.length; i++) {
     if (i > 0) emitOutputJSON(frame, ',', true)
-    const descriptor = Object.getOwnPropertyDescriptor(node, i)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, i)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON array accessor or hole')
     const value = visitOutputJSONInlineRecords(frame, descriptor.value, depth + 1, own)
     if (result !== undefined)
-      Object.defineProperty(result, i, {
+      outputObjectIntrinsic.defineProperty(result, i, {
         value,
         enumerable: true,
         writable: true,
@@ -1036,13 +1039,13 @@ function visitOutputJSONOwnedObject(
 ): OutputJSONObject | undefined {
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
   // Fresh primitive names use the fixed UTF-16 comparator required by JCS.
-  const keys = Object.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
-  const result: OutputJSONObject | undefined = own ? Object.create(null) : undefined
+  const result: OutputJSONObject | undefined = own ? outputObjectIntrinsic.create(null) : undefined
   emitOutputJSON(frame, '{', true)
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index > 0) emitOutputJSON(frame, ',', true)
     emitOutputJSONRecordString(frame, key, ':')
@@ -1142,7 +1145,7 @@ function ownCountedOutputJSON(
   }
   outputAssert(typeof node === 'object', 'Expected a JSON value')
   outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-  outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+  outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
   frame.path.add(node)
   return Array.isArray(node)
     ? ownCountedOutputJSONArray(frame, node, depth)
@@ -1156,17 +1159,17 @@ function ownCountedOutputJSONArray(
 ): OutputJSON[] {
   outputJSONLimit(node.length <= frame.bounds.arrayElements, 3)
   outputAssert(
-    Object.getOwnPropertyNames(node).length === node.length + 1 &&
-      Object.keys(node).length === node.length,
+    outputObjectIntrinsic.getOwnPropertyNames(node).length === node.length + 1 &&
+      outputObjectIntrinsic.keys(node).length === node.length,
     'Sparse or decorated JSON array'
   )
   const result: OutputJSON[] = []
   countOutputJSONChunk(frame, '[', true)
   for (let i = 0; i < node.length; i++) {
     if (i > 0) countOutputJSONChunk(frame, ',', true)
-    const descriptor = Object.getOwnPropertyDescriptor(node, i)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, i)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON array accessor or hole')
-    Object.defineProperty(result, i, {
+    outputObjectIntrinsic.defineProperty(result, i, {
       value: ownCountedOutputJSON(frame, descriptor.value, depth + 1),
       enumerable: true,
       writable: true,
@@ -1184,13 +1187,13 @@ function ownCountedOutputJSONObject(
   depth: number
 ): OutputJSONObject {
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
-  const keys = Object.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
-  const result: OutputJSONObject = Object.create(null)
+  const result: OutputJSONObject = outputObjectIntrinsic.create(null)
   countOutputJSONChunk(frame, '{', true)
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index > 0) countOutputJSONChunk(frame, ',', true)
     countOutputJSONRecordString(frame, key, ':')
@@ -1264,7 +1267,7 @@ function visitOutputJSONDirectRecord(frame: OutputJSONFrame, node: unknown, dept
   }
   outputAssert(typeof node === 'object', 'Expected a JSON value')
   outputAssert(!frame.path.has(node), 'Cyclic JSON value')
-  outputAssert(Object.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
+  outputAssert(outputObjectIntrinsic.getOwnPropertySymbols(node).length === 0, 'Symbol JSON key')
   frame.path.add(node)
   if (Array.isArray(node)) emitOutputJSONDirectArray(frame, node, depth)
   else emitOutputJSONDirectObject(frame, node, depth)
@@ -1274,14 +1277,14 @@ function visitOutputJSONDirectRecord(frame: OutputJSONFrame, node: unknown, dept
 function emitOutputJSONDirectArray(frame: OutputJSONFrame, node: unknown[], depth: number): void {
   outputJSONLimit(node.length <= frame.bounds.arrayElements, 3)
   outputAssert(
-    Object.getOwnPropertyNames(node).length === node.length + 1 &&
-      Object.keys(node).length === node.length,
+    outputObjectIntrinsic.getOwnPropertyNames(node).length === node.length + 1 &&
+      outputObjectIntrinsic.keys(node).length === node.length,
     'Sparse or decorated JSON array'
   )
   emitOutputJSON(frame, '[', true)
   for (let index = 0; index < node.length; index++) {
     if (index > 0) emitOutputJSON(frame, ',', true)
-    const descriptor = Object.getOwnPropertyDescriptor(node, index)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, index)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON array accessor or hole')
     visitOutputJSONDirectRecord(frame, descriptor.value, depth + 1)
   }
@@ -1291,12 +1294,12 @@ function emitOutputJSONDirectArray(frame: OutputJSONFrame, node: unknown[], dept
 function emitOutputJSONDirectObject(frame: OutputJSONFrame, node: object, depth: number): void {
   outputAssert(isOutputPlainObject(node), 'Expected plain JSON object')
   // Canonical JSON requires unsigned UTF-16 ordering, independent of locale.
-  const keys = Object.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
+  const keys = outputObjectIntrinsic.getOwnPropertyNames(node).sort(compareOutputJSONKeys)
   outputJSONLimit(keys.length <= frame.bounds.mapKeys, 2)
   emitOutputJSON(frame, '{', true)
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]
-    const descriptor = Object.getOwnPropertyDescriptor(node, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(node, key)
     outputAssert(descriptor?.enumerable && 'value' in descriptor, 'JSON accessor or hidden key')
     if (index > 0) emitOutputJSON(frame, ',', true)
     emitOutputJSONRecordString(frame, key, ':')

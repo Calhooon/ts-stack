@@ -13,6 +13,9 @@ import {
   type OutputJSONObject
 } from './OutputProtocolJSON.js'
 
+// Capture the realm intrinsic once; each method lookup and input check stays fresh.
+const outputObjectIntrinsic = Object
+
 export type OutputHex32 = ReturnType<typeof outputHex32>
 export type OutputIdentity = ReturnType<typeof outputIdentity>
 export type OutputBytes = ReturnType<typeof toBase64>
@@ -57,7 +60,7 @@ export interface OutputSignedPacket<T> {
 }
 
 /** Registered digest domains. New protocols must register a distinct domain. */
-export const OUTPUT_DIGEST_DOMAINS = Object.freeze([
+export const OUTPUT_DIGEST_DOMAINS = outputObjectIntrinsic.freeze([
   'capabilities',
   'lookup-query',
   'service-rules',
@@ -210,14 +213,17 @@ function outputObject(
     'Expected object'
   )
   outputAssert(isOutputPlainObject(value), 'Expected plain object')
-  outputAssert(Object.getOwnPropertySymbols(value).length === 0, 'Unexpected symbol key')
+  outputAssert(
+    outputObjectIntrinsic.getOwnPropertySymbols(value).length === 0,
+    'Unexpected symbol key'
+  )
   const allowed = captured ?? new Set([...required, ...optional])
   for (const key of required) {
-    if (!Object.hasOwn(value, key)) outputAssert(false, `Missing ${key}`)
+    if (!outputObjectIntrinsic.hasOwn(value, key)) outputAssert(false, `Missing ${key}`)
   }
-  for (const key of Object.getOwnPropertyNames(value)) {
+  for (const key of outputObjectIntrinsic.getOwnPropertyNames(value)) {
     if (!allowed.has(key)) outputAssert(false, `Unknown ${key}`)
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    const descriptor = outputObjectIntrinsic.getOwnPropertyDescriptor(value, key)
     outputAssert(
       descriptor?.enumerable && 'value' in descriptor,
       'Accessor or hidden protocol field'
@@ -256,9 +262,13 @@ export function validateOutputExtensions(
         !Array.isArray(value.extensions),
       'Invalid extensions'
     )
-    outputAssert(Object.keys(value.extensions).length <= 32, 'Extension limit', 'limited')
+    outputAssert(
+      outputObjectIntrinsic.keys(value.extensions).length <= 32,
+      'Extension limit',
+      'limited'
+    )
     canonicalOutputJSON(value.extensions)
-    for (const iri of Object.keys(value.extensions)) {
+    for (const iri of outputObjectIntrinsic.keys(value.extensions)) {
       outputString(iri)
       outputAssert(/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(iri), 'Expected absolute extension IRI')
     }
@@ -276,7 +286,7 @@ function validateCriticalExtensions(
   for (const iri of critical) {
     outputString(iri)
     outputAssert(
-      value.extensions !== undefined && Object.hasOwn(value.extensions, iri),
+      value.extensions !== undefined && outputObjectIntrinsic.hasOwn(value.extensions, iri),
       'Missing critical extension value'
     )
     outputAssert(supported.includes(iri), 'Unsupported critical extension', 'unsupported')
