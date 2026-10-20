@@ -884,3 +884,64 @@ it('does not publish expired currentness when its durable invalidation fails', a
   await worker.advance(store, abort())
   expect(reports((await store.read()).assessments).every(row => row.state === 'stale')).toBe(true)
 })
+
+describe('Bitcoin currentness worker clock and durable expiry failures', () => {
+  it('accepts the Unix epoch as a valid currentness clock', async () => {
+    const { store, worker } = open(undefined, [rule()], { now: 0 })
+    await initialize(store)
+    await expect(worker.advance(store, abort())).resolves.toBeUndefined()
+    expect(await store.revision()).toEqual({ received: '1', accepted: '1' })
+  })
+
+  it.each([
+    [Number.NaN, 'invalid', 'Invalid currentness clock', false],
+    [Number.POSITIVE_INFINITY, 'limited', 'Bitcoin journal replay deadline exhausted', true],
+    [0.5, 'invalid', 'Invalid currentness clock', false]
+  ] as const)(
+    'rejects invalid currentness clock %s and permits recovery',
+    async (invalid, code, message, retryable) => {
+      const { store, worker, clock } = open()
+      await initialize(store)
+      const retained = await store.inspect()
+      clock.now = invalid
+      await expect(worker.advance(store, abort())).rejects.toMatchObject({
+        code,
+        message,
+        retryable
+      })
+      expect(await store.inspect()).toEqual(retained)
+      clock.now = base
+      await expect(worker.advance(store, abort())).resolves.toBeUndefined()
+    }
+  )
+
+  it.each(['limited', 'equivocation'] as const)(
+    'preserves a %s expiry refusal without extending source freshness',
+    async status => {
+      const { store, worker, clock } = open()
+      await initialize(store)
+      await ingest(store, worker, batch('expiry-refusal', [output()], clock.now))
+      const retained = await store.inspect(),
+        reason = `Injected expiry ${status} refusal`,
+        commit = jest.spyOn(store, 'commit').mockResolvedValue({ status, reason })
+      clock.now += 2000
+      try {
+        await expect(worker.advance(store, abort())).rejects.toMatchObject({
+          code: status,
+          message: reason,
+          retryable: false
+        })
+        expect(commit).toHaveBeenCalledTimes(1)
+        expect(await store.inspect()).toEqual(retained)
+        await expect(store.read()).rejects.toMatchObject({ code: 'expired' })
+      } finally {
+        commit.mockRestore()
+      }
+      await worker.advance(store, abort())
+      expect(reports((await store.read()).assessments).every(row => row.state === 'stale')).toBe(
+        true
+      )
+      expect((await store.inspect()).entries.at(-1)?.body.kind).toBe('invalidate')
+    }
+  )
+})

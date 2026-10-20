@@ -851,3 +851,278 @@ it('derives spent currentness for an admitted spend observation from actual SDK-
   expect(accepted.assessments.find(row => row.outpoint.txid === tx('Q'))?.state).toBe('spent')
   expect(accepted.facts.some(row => row.txid === tx('QC'))).toBe(true)
 })
+
+describe('Bitcoin worker admission and durable commit failures', () => {
+  it.each([0, -1, 4097, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid proof-check budget %s before opening storage',
+    maximumChecks => {
+      expect(
+        () =>
+          new BitcoinKnowledge({
+            journalId: 'invalid-budget',
+            partition,
+            nonFinal: true,
+            verifier: new SDKEvidenceVerifier(resolver),
+            maximumChecks
+          })
+      ).toThrow(
+        expect.objectContaining({
+          code: 'invalid',
+          message: 'Invalid proof-check budget',
+          retryable: false
+        })
+      )
+    }
+  )
+
+  it('rejects an absent prospective transition with the protocol error identity', async () => {
+    const { worker } = open()
+    await expect(worker.prepare([], signal())).rejects.toMatchObject({
+      code: 'invalid',
+      message: 'Missing prospective journal transition',
+      retryable: false
+    })
+  })
+
+  it.each(['limited', 'equivocation'] as const)(
+    'preserves a %s commit refusal and leaves received evidence retryable',
+    async status => {
+      const { store, worker } = open()
+      await initialize(store)
+      await receive(store, batch('refused', [output('Q')]))
+      const retained = await store.inspect(),
+        reason = `Injected durable ${status} refusal`,
+        commit = jest.spyOn(store, 'commit').mockResolvedValue({ status, reason })
+      try {
+        await expect(worker.advance(store, signal())).rejects.toMatchObject({
+          code: status,
+          message: reason,
+          retryable: false
+        })
+        expect(commit).toHaveBeenCalledTimes(1)
+        expect(await store.inspect()).toEqual(retained)
+      } finally {
+        commit.mockRestore()
+      }
+      await worker.advance(store, signal())
+      expect((await store.read()).reconciled.memberships).toHaveLength(1)
+      expect((await store.read()).pendingGroups).toEqual([])
+    }
+  )
+
+  it('retries a conflicted durable acceptance and eventually commits the genuine proof once', async () => {
+    const actual = new SDKEvidenceVerifier(resolver),
+      verify = jest.spyOn(actual, 'verify'),
+      { store, worker } = open(undefined, actual)
+    await initialize(store)
+    await receive(store, batch('retry-conflict', [output('Q')]))
+    const commit = jest.spyOn(store, 'commit').mockResolvedValueOnce({
+      status: 'conflict',
+      reason: 'Concurrent durable revision'
+    })
+    try {
+      await worker.advance(store, signal())
+      expect(commit).toHaveBeenCalledTimes(2)
+      expect(verify).toHaveBeenCalled()
+      const history = await store.inspect()
+      expect(history.entries.filter(entry => entry.body.kind === 'accept')).toHaveLength(1)
+      expect((await store.read()).pendingGroups).toEqual([])
+      expect((await store.read()).reconciled.memberships).toHaveLength(1)
+    } finally {
+      commit.mockRestore()
+    }
+  })
+
+  it('bounds durable revision contention to eight attempts and releases the next pass', async () => {
+    const { store, worker } = open()
+    await initialize(store)
+    await receive(store, batch('contention', [output('Q')]))
+    const retained = await store.inspect(),
+      commit = jest.spyOn(store, 'commit').mockResolvedValue({
+        status: 'conflict',
+        reason: 'Concurrent durable revision'
+      })
+    try {
+      await expect(worker.advance(store, signal())).rejects.toMatchObject({
+        code: 'conflict',
+        message: 'Knowledge contention attempt budget exhausted',
+        retryable: true
+      })
+      expect(commit).toHaveBeenCalledTimes(8)
+      expect(await store.inspect()).toEqual(retained)
+    } finally {
+      commit.mockRestore()
+    }
+    await worker.advance(store, signal())
+    expect((await store.read()).pendingGroups).toEqual([])
+  })
+
+  it.each(['limited', 'equivocation'] as const)(
+    'preserves a %s refusal on the second ordered group without accepting its prefix twice',
+    async status => {
+      const { store, worker } = open()
+      await initialize(store)
+      await receive(store, batch('first-group', [output('Q')], '0', '0', 'snapshot'))
+      await receive(store, batch('second-group', [output('A')], '1', '0', 'live'))
+      const original = store.commit.bind(store),
+        reason = `Injected second-group ${status} refusal`
+      let calls = 0
+      const commit = jest.spyOn(store, 'commit').mockImplementation(async (...args) => {
+        calls++
+        return calls === 2 ? { status, reason } : original(...args)
+      })
+      try {
+        await expect(worker.advance(store, signal())).rejects.toMatchObject({
+          code: status,
+          message: reason,
+          retryable: false
+        })
+        expect(calls).toBe(2)
+        expect(
+          (await store.inspect()).entries.filter(entry => entry.body.kind === 'accept')
+        ).toHaveLength(1)
+        expect((await store.read()).pendingGroups).toHaveLength(1)
+      } finally {
+        commit.mockRestore()
+      }
+      await worker.advance(store, signal())
+      const ready = await store.read()
+      expect(ready.pendingGroups).toEqual([])
+      expect(ready.reconciled.memberships).toHaveLength(2)
+      expect(
+        (await store.inspect()).entries.filter(entry => entry.body.kind === 'accept')
+      ).toHaveLength(2)
+    }
+  )
+})
+
+describe('Bitcoin worker retained proof scheduling', () => {
+  it.each(['Q', 'badSignature'])(
+    'replays the genuine %s verdict without repeating cryptographic work or a durable transition',
+    async name => {
+      const verifier = new SDKEvidenceVerifier(resolver),
+        verify = jest.spyOn(verifier, 'verify'),
+        { worker, store } = open(undefined, verifier)
+      await initialize(store)
+      await receive(store, batch(`retained-${name}`, [output(name)]))
+      await worker.advance(store, signal())
+      const calls = verify.mock.calls.length,
+        retained = await store.inspect(),
+        snapshot = await store.read()
+      expect(calls).toBeGreaterThan(0)
+      expect(
+        new Set(
+          verify.mock.calls.map(([input, selected]) =>
+            JSON.stringify([input.variantId, selected.view.id])
+          )
+        ).size
+      ).toBe(calls)
+      expect(verify.mock.results.length).toBe(calls)
+      if (name === 'badSignature')
+        expect(snapshot.reconciled.transactions.find(row => row.txid === tx(name))?.status).toBe(
+          'invalid'
+        )
+      else expect(snapshot.reconciled.memberships).toHaveLength(1)
+      await worker.advance(store, signal())
+      expect(verify).toHaveBeenCalledTimes(calls)
+      expect(await store.inspect()).toEqual(retained)
+      expect(await store.read()).toEqual(snapshot)
+    }
+  )
+
+  it('does not append the same limited proof result on every bounded retry', async () => {
+    const verify = jest.fn<EvidenceVerifier['verify']>(async (input, selected) => ({
+        status: 'limited',
+        contextId: selected.id,
+        variantId: input.variantId,
+        reason: 'Scheduled proof backend is temporarily unavailable',
+        dependencies: []
+      })),
+      { worker, store } = open(undefined, { verify })
+    await initialize(store)
+    await receive(store, batch('limited-proof', [output('Q')]))
+    await expect(worker.advance(store, signal())).rejects.toMatchObject({
+      code: 'limited',
+      message: 'Evidence work retained; another bounded pass is required',
+      retryable: true
+    })
+    const retained = await store.inspect(),
+      calls = verify.mock.calls.length
+    await expect(worker.advance(store, signal())).rejects.toMatchObject({
+      code: 'limited',
+      message: 'Evidence work retained; another bounded pass is required',
+      retryable: true
+    })
+    expect(verify.mock.calls.length).toBeGreaterThan(calls)
+    expect(await store.inspect()).toEqual(retained)
+    expect((await store.read()).pendingGroups).toHaveLength(1)
+  })
+
+  it('stops proof work at the inclusive pass deadline and retains it for a fresh bounded retry', async () => {
+    const start = Date.now()
+    let now = start,
+      atBoundary = true
+    const actual = new SDKEvidenceVerifier(resolver),
+      verify = jest.fn<EvidenceVerifier['verify']>(async (...args) => {
+        const result = await actual.verify(...args)
+        if (atBoundary) now = start + 100
+        return result
+      }),
+      storage = new MemoryJournal('proof-deadline'),
+      worker = new BitcoinKnowledge({
+        journalId: storage.namespace,
+        partition,
+        nonFinal: true,
+        verifier: { verify },
+        limits: { deadlineMs: 100 },
+        now: () => now
+      }),
+      store = new KnowledgeStore(storage, worker, { partition })
+    stores.push(store)
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      await initialize(store)
+      await receive(store, batch('deadline-proof', [output('A')]))
+      await expect(worker.advance(store, signal())).rejects.toMatchObject({
+        code: 'limited',
+        message: 'Evidence work retained; another bounded pass is required',
+        retryable: true
+      })
+      expect(verify).toHaveBeenCalledTimes(1)
+      expect((await store.read()).pendingGroups).toHaveLength(1)
+      atBoundary = false
+      await worker.advance(store, signal())
+      expect(verify.mock.calls.length).toBeGreaterThan(1)
+      expect((await store.read()).pendingGroups).toEqual([])
+      expect((await store.read()).reconciled.memberships).toHaveLength(1)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+})
+
+it('prepares an independently replayed acceptance with fresh genuine proof material', async () => {
+  const { worker, store } = open()
+  await initialize(store)
+  await receive(store, batch('independent-prepare', [output('Q')]))
+  await worker.advance(store, signal())
+  const entries = (await store.inspect()).entries,
+    acceptance = entries.findIndex(entry => entry.body.kind === 'accept'),
+    prospective = entries.slice(0, acceptance + 1),
+    actual = new SDKEvidenceVerifier(resolver),
+    verify = jest.spyOn(actual, 'verify'),
+    independent = new BitcoinKnowledge({
+      journalId: store.journalId,
+      partition,
+      nonFinal: true,
+      verifier: actual
+    })
+  expect(acceptance).toBeGreaterThan(0)
+  const prepared = await independent.prepare(prospective, signal())
+  expect(verify).toHaveBeenCalled()
+  expect(prepared.local).toEqual(prospective.at(-1)!.local)
+  const calls = verify.mock.calls.length
+  expect(prepared.input).toEqual(await independent.reduce(prospective, signal()))
+  expect(verify).toHaveBeenCalledTimes(calls)
+  expect(await store.inspect()).toEqual({ entries, revision: entries.at(-1)!.revision })
+})
