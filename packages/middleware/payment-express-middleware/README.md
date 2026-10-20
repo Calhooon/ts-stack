@@ -5,7 +5,9 @@ format checks, preserving its previous SDK2 peer floor without importing new
 SDK3-only helper modules. Strict packed SDK2.8.11 and SDK3 installations use their
 actual original wallet, peer and cryptographic classes. Authentication, fatal
 UTF8 decoding, exact signed content types, resource bounds and payment/replay
-checks remain unchanged. Optional new AuthFetch payment APIs require the SDK3.3.0
+checks remain unchanged. Multipart separators and closing framing compare exact
+bytes, preserving binary payload prefixes and refusing non-ASCII lookalikes.
+Optional new AuthFetch payment APIs require the SDK3.3.0
 candidate; supported SDK2 receivers do not require an unpublished SDK2.9 release.
 The original large numeric-array requests above legacy structural limits still
 refuse; this fix does not claim a complete compatibility or platform gate.

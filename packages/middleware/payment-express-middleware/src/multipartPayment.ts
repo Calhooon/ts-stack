@@ -51,10 +51,12 @@ function partHeaders(
 function partEnd(source: Buffer, delimiter: Buffer, start: number): number {
   let end = source.indexOf(delimiter, start)
   while (end !== -1) {
-    const suffix = source
-      .subarray(end + delimiter.length, end + delimiter.length + 2)
-      .toString('ascii')
-    if (suffix === '\r\n' || suffix === '--') return end
+    const suffix = end + delimiter.length
+    if (
+      (source[suffix] === 13 && source[suffix + 1] === 10) ||
+      (source[suffix] === 45 && source[suffix + 1] === 45)
+    )
+      return end
     end = source.indexOf(delimiter, end + delimiter.length)
   }
   return malformed()
@@ -71,11 +73,14 @@ function readPart(source: Buffer, delimiter: Buffer, position: number): Part {
   if (contentType !== undefined) paymentPayloadContentType(contentType)
   const end = partEnd(source, delimiter, start)
   const suffix = end + delimiter.length
-  const final = source.subarray(suffix, suffix + 2).toString('ascii') === '--'
+  const final = source[suffix] === 45 && source[suffix + 1] === 45
   const next = suffix + 2
   if (final) {
-    const epilogue = source.subarray(next).toString('ascii')
-    if (epilogue !== '' && epilogue !== '\r\n') malformed()
+    if (
+      next !== source.length &&
+      !(next + 2 === source.length && source[next] === 13 && source[next + 1] === 10)
+    )
+      malformed()
   }
   return { name: disposition[1], contentType, bytes: source.subarray(start, end), next, final }
 }

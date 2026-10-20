@@ -110,6 +110,30 @@ describe('authenticated BRC-118 extraction', () => {
     expect(() => parse(wire(part('x-bsv-payment', payment)), contentType)).toThrow()
   })
 
+  it.each([0, 1, 2, 3])('rejects a high-bit closing framing byte at offset %i', offset => {
+    const bytes = wire(part('x-bsv-payment', payment))
+    bytes[bytes.length - 4 + offset] |= 128
+    expect(() => parse(bytes)).toThrow('Malformed multipart payment')
+  })
+
+  it.each([
+    [141, 10],
+    [13, 138],
+    [173, 45],
+    [45, 173]
+  ])('preserves a binary boundary prefix followed by bytes %j', (first, second) => {
+    const body = Buffer.concat([
+      Buffer.from(`binary\r\n--${boundary}`),
+      Buffer.from([first, second, 0, 255]),
+      Buffer.from('still payload')
+    ])
+    const parsed = parse(
+      wire(part('x-bsv-payment', payment), part('body', body, 'application/octet-stream'))
+    )
+    expect(parsed.paymentJSON).toBe(payment)
+    expect(Buffer.from(parsed.body!)).toEqual(body)
+  })
+
   it.each([null, 'not raw bytes', [], { length: 0, buffer: new ArrayBuffer(0) }])(
     'rejects a tampered raw-body type %# before reading framing',
     value => {
