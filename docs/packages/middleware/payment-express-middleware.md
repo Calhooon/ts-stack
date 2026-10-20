@@ -3,7 +3,7 @@ id: pkg-payment-express-middleware
 title: '@bsv/payment-express-middleware'
 kind: package
 domain: middleware
-version: '2.1.9'
+version: '2.1.10'
 source_repo: 'bsv-blockchain/ts-stack'
 last_updated: '2026-09-24'
 last_verified: '2026-09-24'

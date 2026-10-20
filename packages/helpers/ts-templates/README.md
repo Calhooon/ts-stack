@@ -1,5 +1,7 @@
 # BSV Script Templates
 
+Patch candidate `2.0.1` updates packed first-party runtime or development dependency ranges. This metadata-only patch preserves public APIs, peer ranges, wire formats and defaults. No additional consumer or data migration is required; earlier migration guidance still applies.
+
 BSV BLOCKCHAIN | Script Templates
 
 A collection of script templates for use with the official BSV TypeScript SDK

@@ -3,7 +3,7 @@ id: pkg-auth
 title: '@bsv/auth'
 kind: package
 domain: middleware
-version: '0.1.6'
+version: '0.1.7'
 last_updated: '2026-08-27'
 last_verified: '2026-08-27'
 review_cadence_days: 30

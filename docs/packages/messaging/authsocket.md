@@ -3,7 +3,7 @@ id: pkg-authsocket
 title: '@bsv/authsocket'
 kind: package
 domain: messaging
-version: '2.1.9'
+version: '2.1.10'
 source_repo: 'bsv-blockchain/ts-stack'
 last_updated: '2026-08-27'
 last_verified: '2026-08-27'

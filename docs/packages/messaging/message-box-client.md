@@ -3,7 +3,7 @@ id: pkg-message-box-client
 title: '@bsv/message-box-client'
 kind: package
 domain: messaging
-version: '2.6.0'
+version: '2.6.1'
 source_repo: 'bsv-blockchain/ts-stack'
 last_updated: '2026-09-25'
 last_verified: '2026-09-25'

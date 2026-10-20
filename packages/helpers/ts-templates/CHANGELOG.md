@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+- Prepare `2.0.1` as a dependency-manifest patch candidate; retain existing APIs, peer ranges, defaults and migration requirements.
+
 ### 2.0.0 candidate — BRC-162 (breaking)
 
 ### Removed

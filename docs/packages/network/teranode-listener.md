@@ -4,7 +4,7 @@ title: '@bsv/teranode-listener'
 kind: package
 domain: network
 npm: '@bsv/teranode-listener'
-version: '1.1.7'
+version: '1.1.8'
 last_updated: '2026-08-26'
 last_verified: '2026-08-26'
 review_cadence_days: 30
