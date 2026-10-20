@@ -829,7 +829,22 @@ test.each(['discard', 'close'] as const)(
 test('complete native journal owns compact key trees and refuses an extra attached clock consumer', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
     await fixture.withWriter(async trx => {
-      const before = await readSnapshotJournalSqliteGeneration(trx, previewReceiptPolicy)
+      const transfers: string[] = []
+      const observe = (query: { sql: string; bindings?: unknown[] }): void => {
+        if (query.sql.includes('CAST(rowid AS TEXT) AS position') && query.bindings?.includes('snapshot_journal_'))
+          transfers.push(query.sql)
+      }
+      let before: Awaited<ReturnType<typeof readSnapshotJournalSqliteGeneration>>
+      trx.on('query', observe)
+      try {
+        before = await readSnapshotJournalSqliteGeneration(trx, previewReceiptPolicy)
+      } finally {
+        trx.removeListener('query', observe)
+      }
+      // Captured independently from the unchanged pre-optimization native
+      // fixture. Source JSON, ordering and exact source binding stay identical.
+      expect(before.source).toBe('5cdc6870cb7ce1440b02c78f41708c012ecaca6d56f1141befc448e939345f96')
+      expect(transfers).toHaveLength(0)
       expect(before.complete).toBe(true)
       const witnessTables = [
         'transactions',
@@ -935,6 +950,21 @@ test('complete native journal owns compact key trees and refuses an extra attach
         } finally {
           await trx.raw('ROLLBACK TO independent_shared_journal_damage')
           await trx.raw('RELEASE independent_shared_journal_damage')
+        }
+        expect(await readSnapshotJournalSqliteGeneration(trx, previewReceiptPolicy)).toEqual(before)
+        await trx.raw('SAVEPOINT independent_shared_journal_changed_bytes')
+        try {
+          const changed = original.sql.replace(' BEGIN ', ' BEGIN /* independent exact-definition change */ ')
+          expect(changed).not.toBe(original.sql)
+          await trx.raw('DROP TRIGGER ??', [name])
+          await trx.raw(changed)
+          expect((await trx('main.sqlite_schema').where({ type: 'trigger', name }).first('sql')).sql).toBe(changed)
+          await expect(readSnapshotJournalSqliteGeneration(trx, previewReceiptPolicy)).rejects.toThrow(
+            'Invalid or unowned'
+          )
+        } finally {
+          await trx.raw('ROLLBACK TO independent_shared_journal_changed_bytes')
+          await trx.raw('RELEASE independent_shared_journal_changed_bytes')
         }
         expect(await readSnapshotJournalSqliteGeneration(trx, previewReceiptPolicy)).toEqual(before)
       }

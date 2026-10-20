@@ -7,6 +7,7 @@ import {
   type SnapshotJournalReceiptPolicy
 } from './SnapshotJournalReceipt'
 import type { Knex } from 'knex'
+import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from '../../portable/Brc38SqlFieldSchemaBatch'
 import { SNAPSHOT_JOURNAL_FIELD_CACHE_MIGRATION } from '../../schema/snapshotSqlMigration'
 import { createHash, randomUUID } from 'node:crypto'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
@@ -74,10 +75,10 @@ export async function readBoundedSnapshotJournalSqliteSchema(
   sources: readonly string[] | null,
   excludedSourceNames: ReadonlySet<string> = new Set()
 ): Promise<SchemaObject[]> {
-  const check = (): void => {
-    if (!k.isTransaction || !local(k)) invalid()
-  }
-  check()
+  if (!k.isTransaction || !local(k)) return invalid()
+  return await readSchemaRows(k, schemaSelection(k, sources), sources, excludedSourceNames)
+}
+function schemaSelection(k: Knex, sources: readonly string[] | null) {
   const selection = k('sqlite_master')
   if (sources === null)
     selection
@@ -89,6 +90,18 @@ export async function readBoundedSnapshotJournalSqliteSchema(
       })
       .whereRaw('substr(name,1,17)<>?', ['sqlite_autoindex_'])
   else selection.whereIn('tbl_name', [...sources])
+  return selection
+}
+async function readSchemaRows(
+  k: Knex.Transaction,
+  selection: Knex.QueryBuilder,
+  sources: readonly string[] | null,
+  excludedSourceNames: ReadonlySet<string>
+): Promise<SchemaObject[]> {
+  const check = (): void => {
+    if (!k.isTransaction || !local(k)) invalid()
+  }
+  check()
   const positions: Array<{ position: string }> = await selection
     .select(k.raw('CAST(rowid AS TEXT) AS position'))
     .orderBy(['type', 'name'])
@@ -441,7 +454,7 @@ async function plan(k: Knex, config?: Knex.MigratorConfig, forceSigned = false):
   ]
   const expectedNames = new Set(objects.map(object => object.name))
   const rows: SchemaObject[] = isOwnedNativeSqlite(k)
-    ? await readBoundedSnapshotJournalSqliteSchema(k as Knex.Transaction, sources, expectedNames)
+    ? await readNativeSourceSchema(k as Knex.Transaction, sources, expectedNames)
     : await k('sqlite_master')
         .whereIn('tbl_name', sources)
         .select('type', 'name', 'tbl_name', k.raw('substr(sql,1,65537) AS sql'))
@@ -456,6 +469,53 @@ async function plan(k: Knex, config?: Knex.MigratorConfig, forceSigned = false):
   return {
     source: createHash('sha256').update('snapshot-journal-sqlite-source-v1\n').update(source).digest('hex'),
     objects
+  }
+}
+/** The complete original catalog count still fences this source. Owned journal
+ * objects undergo independent exact comparisons below; only their non-source
+ * SQL payloads are omitted from the source JSON transfer in this same view. */
+async function readNativeSourceSchema(
+  k: Knex.Transaction,
+  sources: readonly string[],
+  excluded: ReadonlySet<string>
+): Promise<SchemaObject[]> {
+  const selection = schemaSelection(k, sources),
+    total = (await selection.clone().count({ count: '*' }).first()) as { count: unknown } | undefined
+  if (typeof total?.count !== 'number' || !Number.isSafeInteger(total.count) || total.count < 0 || total.count > 512)
+    return invalid()
+  return await readSchemaRows(k, selection.whereNotIn('name', [...excluded]), sources, excluded)
+}
+/** Validate every original reserved definition in SQLite under the existing
+ * 32-definition/32KiB envelope. Scalar counts never cache a schema verdict;
+ * unknown/extra/absent/altered families still fail in this actual transaction. */
+async function validateNativeReserved(k: Knex.Transaction, objects: readonly ObjectDefinition[]): Promise<void> {
+  const total = (await schemaSelection(k, null).count({ count: '*' }).first()) as { count: unknown } | undefined
+  if (total?.count !== objects.length || objects.length > 512) return invalid()
+  const expected = new Map(objects.map(object => [object.name, { type: object.type, sql: object.sql }]))
+  if (expected.size !== objects.length) return invalid()
+  for (const batch of brc38SqliteDefinitionBatches(expected)) {
+    // A historical definition larger than the current binding envelope keeps
+    // its original bounded read path rather than enlarging a native request.
+    if (
+      batch.definitions.some(
+        value =>
+          Buffer.byteLength(value.name) + Buffer.byteLength(value.type) + Buffer.byteLength(value.sql ?? '') > 32768
+      )
+    ) {
+      const actual = await reserved(k)
+      if (
+        actual.length !== objects.length ||
+        objects.some(
+          value =>
+            actual.filter(row => row.name === value.name && row.type === value.type && row.sql === value.sql).length !==
+            1
+        )
+      )
+        return invalid()
+      return
+    }
+    const current = await readBrc38SqliteDefinitionBatch(k, batch, 'main.sqlite_schema')
+    if (current.matches !== batch.definitions.length || current.names !== batch.definitions.length) return invalid()
   }
 }
 async function reserved(k: Knex): Promise<SchemaObject[]> {
@@ -544,11 +604,14 @@ async function validate(
   p: Plan,
   policy: SnapshotJournalReceiptPolicy
 ): Promise<SnapshotJournalSqliteGeneration> {
-  const actual = await reserved(k)
-  if (actual.length !== p.objects.length) return invalid()
-  for (const expected of p.objects) {
-    const matches = actual.filter(object => object.name === expected.name && object.type === expected.type)
-    if (matches.length !== 1 || matches[0].sql !== expected.sql) return invalid()
+  if (isOwnedNativeSqlite(k)) await validateNativeReserved(k as Knex.Transaction, p.objects)
+  else {
+    const actual = await reserved(k)
+    if (actual.length !== p.objects.length) return invalid()
+    for (const expected of p.objects) {
+      const matches = actual.filter(object => object.name === expected.name && object.type === expected.type)
+      if (matches.length !== 1 || matches[0].sql !== expected.sql) return invalid()
+    }
   }
   const rows = await k(SNAPSHOT_JOURNAL_SQLITE_GENERATION).select('*').limit(2)
   if (rows.length !== 1) return invalid()
