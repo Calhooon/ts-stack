@@ -123,9 +123,19 @@ describe('opt-in proposal qualification inside the Bitcoin journal', () => {
     'refuses an invalid local clock before sealing any proposal context: %s',
     now => {
       const { store } = open({ clock: () => now })
-      return expect(initialize(store)).rejects.toMatchObject({ code: 'invalid' })
+      return expect(initialize(store)).rejects.toMatchObject({
+        code: 'invalid',
+        message: 'Invalid proposal clock'
+      })
     }
   )
+
+  it('accepts the Unix epoch as a valid initial proposal clock', async () => {
+    const { store, worker } = open({ clock: () => 0 })
+    await expect(initialize(store)).resolves.toBeUndefined()
+    await expect(worker.advance(store, signal())).resolves.toBeUndefined()
+    expect((await store.read()).revision).toEqual({ received: '1', accepted: '1' })
+  })
 
   it('rejects a pre-cancelled pass and a worker used with another journal', async () => {
     const one = open(),
@@ -135,7 +145,8 @@ describe('opt-in proposal qualification inside the Bitcoin journal', () => {
     const abort = new AbortController()
     abort.abort()
     await expect(one.worker.advance(one.store, abort.signal)).rejects.toMatchObject({
-      code: 'cancelled'
+      code: 'cancelled',
+      message: 'Bitcoin knowledge work cancelled'
     })
     await expect(one.worker.advance(two.store, signal())).rejects.toMatchObject({
       code: 'unauthorized'
@@ -182,7 +193,10 @@ describe('opt-in proposal qualification inside the Bitcoin journal', () => {
     const first = worker.advance(store, signal())
     try {
       await reached
-      await expect(worker.advance(store, signal())).rejects.toMatchObject({ code: 'limited' })
+      await expect(worker.advance(store, signal())).rejects.toMatchObject({
+        code: 'limited',
+        message: 'Bitcoin worker pass already in progress'
+      })
     } finally {
       release()
       pending.mockRestore()
@@ -207,7 +221,11 @@ describe('opt-in proposal qualification inside the Bitcoin journal', () => {
       try {
         await expect(worker.advance(store, signal())).rejects.toMatchObject({
           code: mode === 'attempts' ? 'conflict' : 'limited',
-          retryable: true
+          retryable: true,
+          message:
+            mode === 'attempts'
+              ? 'Knowledge contention attempt budget exhausted'
+              : 'Knowledge contention deadline exhausted'
         })
         expect(commit).toHaveBeenCalledTimes(mode === 'attempts' ? 8 : 1)
         expect(await store.revision()).toEqual(before)

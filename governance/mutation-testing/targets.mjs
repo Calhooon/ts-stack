@@ -2261,7 +2261,8 @@ export function buildMutationTargets(repositoryRoot) {
           '<rootDir>/test/source-generation-state.test.ts',
           '<rootDir>/test/knowledge-read-window.test.ts',
           '<rootDir>/test/proposal-core.property.test.ts',
-          '<rootDir>/test/proposal-source-policy.test.ts'
+          '<rootDir>/test/proposal-source-policy.test.ts',
+          '<rootDir>/test/worker-traces.test.ts'
         ],
         // Bound Jest ESM worker reuse after repeated runner memory exhaustion.
         { esm: true, buildCommand: 'pnpm build', maxTestRunnerReuse: 8 }

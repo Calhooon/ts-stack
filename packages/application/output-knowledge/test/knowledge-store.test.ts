@@ -13,6 +13,11 @@ import {
   type JournalStorage
 } from '../src/index.js'
 import { context, partition } from './evidence-fixture.js'
+import {
+  DEFAULT_JOURNAL_LIMITS,
+  journalEntryBytes,
+  journalPayload
+} from '../src/storage/Journal.js'
 
 import { emptyReducer as reducer } from './empty-reducer.js'
 
@@ -33,6 +38,219 @@ function wrapper(storage: JournalStorage, overrides: Partial<JournalStorage>): J
 }
 
 describe('knowledge store journal port', () => {
+  it.each([-1, 0, 1])(
+    'enforces the cumulative retention byte boundary with %i bytes of headroom',
+    async headroom => {
+      const first = initial(),
+        second = invalidation(),
+        bytes =
+          journalPayload(first, DEFAULT_JOURNAL_LIMITS).bytes +
+          journalPayload(second, DEFAULT_JOURNAL_LIMITS).bytes,
+        storage = new MemoryJournal('test'),
+        store = new KnowledgeStore(storage, reducer(), {
+          partition,
+          maximumBytes: bytes + headroom
+        })
+      try {
+        expect((await store.commit('0', first)).status).toBe('committed')
+        const result = await store.commit('1', second)
+        expect(result.status).toBe(headroom < 0 ? 'limited' : 'committed')
+        if (headroom < 0)
+          expect(result).toMatchObject({
+            reason: expect.stringContaining('Knowledge retention bound')
+          })
+        expect((await store.read()).revision).toEqual(
+          headroom < 0 ? { received: '1', accepted: '1' } : { received: '2', accepted: '2' }
+        )
+        expect(await storage.head()).toMatchObject({
+          bytes: headroom < 0 ? journalPayload(first, DEFAULT_JOURNAL_LIMITS).bytes : bytes
+        })
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it.each(['accepted revision', 'duplicate key', 'underreported entries'] as const)(
+    'fails closed on retained journal %s without publishing a snapshot',
+    async fault => {
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      await storage.append('1', invalidation())
+      const entries = await storage.read('0', 2),
+        head = await storage.head()
+      if (fault === 'accepted revision') entries[1].revision.accepted = '1'
+      if (fault === 'duplicate key') {
+        entries[1] = { ...structuredClone(entries[0]), revision: { received: '2', accepted: '2' } }
+        head.bytes = entries.reduce((bytes, entry) => bytes + journalEntryBytes(entry), 0)
+      }
+      if (fault === 'underreported entries') head.entries = 1
+      const store = new KnowledgeStore(
+        wrapper(storage, {
+          head: async () => head,
+          read: async () => structuredClone(entries)
+        }),
+        reducer(),
+        { partition, ...(fault === 'underreported entries' ? { maximumEntries: 1 } : {}) }
+      )
+      try {
+        await expect(store.read()).rejects.toMatchObject({
+          code: fault === 'underreported entries' ? 'limited' : 'reset-required',
+          message: expect.stringContaining(
+            fault === 'underreported entries'
+              ? 'replay retention bound'
+              : 'integrity or revision continuity'
+          )
+        })
+        expect(await storage.head()).toMatchObject({ received: '2', accepted: '2', entries: 2 })
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it.each<[string, (input: AcceptedInput) => void]>([
+    [
+      'partition',
+      input => {
+        input.partition = { ...partition, account: 'other' }
+      }
+    ],
+    [
+      'context partition',
+      input => {
+        input.context.partition = { ...partition, account: 'other' }
+      }
+    ],
+    [
+      'generation',
+      input => {
+        input.generation = '1'
+      }
+    ],
+    [
+      'received revision',
+      input => {
+        input.revision.received = '2'
+      }
+    ],
+    [
+      'accepted revision',
+      input => {
+        input.revision.accepted = '2'
+      }
+    ],
+    [
+      'context identity',
+      input => {
+        input.reconciled.contextId = 'other'
+      }
+    ],
+    [
+      'journal identity',
+      input => {
+        input.reconciled.journalId = 'other'
+      }
+    ],
+    [
+      'reconciliation frontier',
+      input => {
+        input.reconciled.through = '2'
+      }
+    ]
+  ])('rejects a reducer with an inconsistent %s before appending', async (_, corrupt) => {
+    const storage = new MemoryJournal('test'),
+      honest = reducer(),
+      store = new KnowledgeStore(
+        storage,
+        {
+          async reduce(entries, signal) {
+            // A reducer is an installed port, not authority to change the journal identity.
+            const input = JSON.parse(
+              JSON.stringify(await honest.reduce(entries, signal))
+            ) as AcceptedInput
+            corrupt(input)
+            return input
+          }
+        },
+        { partition }
+      )
+    try {
+      await expect(store.commit('0', initial())).rejects.toMatchObject({
+        code: 'invalid',
+        message: expect.stringContaining('inconsistent knowledge snapshot')
+      })
+      expect(await storage.head()).toMatchObject({ received: '0', accepted: '0', entries: 0 })
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('distinguishes receipt revisions from accepted revisions in retained history', async () => {
+    const storage = new MemoryJournal('test'),
+      store = new KnowledgeStore(storage, reducer(), { partition })
+    try {
+      expect(await store.commit('0', initial())).toMatchObject({
+        status: 'committed',
+        revision: { received: '1', accepted: '1' }
+      })
+      // The store owns revision assignment even for a reducer that accepts empty receipts.
+      const receipt = knowledgeMutation({
+        kind: 'receive',
+        batch: {
+          provenance: {
+            partition,
+            generation: '0',
+            adapter: 'fixture',
+            scope: {
+              chain: context().view.chain,
+              provider: 'fixture',
+              service: 'records',
+              queryDigest: '03'.repeat(32),
+              rulesDigest: '04'.repeat(32),
+              access: 'public',
+              epoch: 'one'
+            },
+            authentication: 'configured-transport',
+            peer: 'fixture',
+            receivedAt: '1'
+          },
+          groups: [],
+          coverage: {
+            scope: {
+              chain: context().view.chain,
+              provider: 'fixture',
+              service: 'records',
+              queryDigest: '03'.repeat(32),
+              rulesDigest: '04'.repeat(32),
+              access: 'public',
+              epoch: 'one'
+            },
+            phase: 'finite',
+            status: 'complete'
+          }
+        }
+      })
+      expect(await store.commit('1', receipt)).toMatchObject({
+        status: 'committed',
+        revision: { received: '2', accepted: '1' }
+      })
+      expect(await store.commit('2', invalidation())).toMatchObject({
+        status: 'committed',
+        revision: { received: '3', accepted: '2' }
+      })
+      expect((await store.read('1')).revision).toEqual({ received: '2', accepted: '1' })
+      expect((await store.read()).revision).toEqual({ received: '3', accepted: '2' })
+      expect(await store.commit('0', receipt)).toMatchObject({
+        status: 'replayed',
+        revision: { received: '2', accepted: '1' }
+      })
+      expect(await storage.head()).toMatchObject({ received: '3', accepted: '2', entries: 3 })
+    } finally {
+      await store.close()
+    }
+  })
+
   it.each<[keyof KnowledgeStoreOptions, number]>([
     ['maximumEntries', 0],
     ['maximumEntries', 4097],
@@ -264,11 +482,21 @@ describe('knowledge store journal port', () => {
 
   it('watches every accepted revision and wakes across independent store instances', async () => {
     const storage = new MemoryJournal('test'),
-      first = new KnowledgeStore(storage, reducer(), { partition, pollMs: 5 }),
+      abort = new AbortController(),
+      first = new KnowledgeStore(
+        wrapper(storage, {
+          head: () => {
+            // Cancellation must prevent another journal read from starting.
+            expect(abort.signal.aborted).toBe(false)
+            return storage.head()
+          }
+        }),
+        reducer(),
+        { partition, pollMs: 5 }
+      ),
       second = new KnowledgeStore(storage, reducer(), { partition })
     await first.commit('0', initial())
-    const abort = new AbortController(),
-      iterator = first.watch('0', abort.signal)[Symbol.asyncIterator]()
+    const iterator = first.watch('0', abort.signal)[Symbol.asyncIterator]()
     expect((await iterator.next()).value?.revision.accepted).toBe('1')
     const waiting = iterator.next()
     await second.commit('1', invalidation())
@@ -439,6 +667,7 @@ it('cancels a watch that has entered its wait and releases its polling timer on 
 it('handles a signal cancelled during listener registration without waiting for the poll interval', async () => {
   jest.useFakeTimers()
   const abort = new AbortController()
+  const storage = new MemoryJournal('test')
   const add = abort.signal.addEventListener.bind(abort.signal)
   let registrations = 0
   // Model a caller-provided signal whose registration hook triggers cancellation
@@ -449,10 +678,16 @@ it('handles a signal cancelled during listener registration without waiting for 
       if (++registrations === 2) abort.abort()
       add(...args)
     })
-  const store = new KnowledgeStore(new MemoryJournal('test'), reducer(), {
-    partition,
-    pollMs: 1000
-  })
+  const store = new KnowledgeStore(
+    wrapper(storage, {
+      head: () => {
+        expect(abort.signal.aborted).toBe(false)
+        return storage.head()
+      }
+    }),
+    reducer(),
+    { partition, pollMs: 1000 }
+  )
   try {
     await store.commit('0', initial())
     await expect(

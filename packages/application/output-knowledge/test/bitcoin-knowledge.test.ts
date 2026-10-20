@@ -10,6 +10,7 @@ import { SQLiteJournal } from '../src/storage/SQLiteJournal.js'
 import { knowledgeMutation, type JournalStorage } from '../src/storage/Journal.js'
 import { SDKEvidenceVerifier } from '../src/SDKEvidenceVerifier.js'
 import { OutputKnowledge } from '../src/OutputKnowledge.js'
+import { runtimeLimits } from '../src/validation.js'
 import type { EvidenceVerifier, OutputObservation, OutputScope, SourceBatch } from '../src/ports.js'
 import { candidate, chain, context, corpus, partition, resolver } from './evidence-fixture.js'
 
@@ -90,6 +91,142 @@ async function receive(store: KnowledgeStore, value: SourceBatch) {
 const tx = (name: string) => corpus.transactions[name].txid
 
 describe('default Bitcoin knowledge journal and worker', () => {
+  it('owns the installed critical-extension vocabulary across later caller mutations', async () => {
+    const extension = 'urn:example:record-extension',
+      installed = [extension],
+      storage = new MemoryJournal('extensions'),
+      worker = new BitcoinKnowledge({
+        journalId: storage.namespace,
+        partition,
+        nonFinal: true,
+        verifier: new SDKEvidenceVerifier(resolver),
+        supportedExtensions: installed
+      }),
+      store = new KnowledgeStore(storage, worker, { partition })
+    stores.push(store)
+    installed.length = 0
+    await initialize(store)
+    const observation = {
+      ...output('Q'),
+      extensions: { [extension]: { version: 1 } },
+      critical: [extension]
+    }
+    expect((await receive(store, batch('extended', [observation]))).status).toBe('committed')
+    await worker.advance(store, signal())
+    expect((await store.read()).reconciled.memberships).toHaveLength(1)
+    const unsupported = {
+      ...output('A'),
+      extensions: { 'urn:example:uninstalled': {} },
+      critical: ['urn:example:uninstalled']
+    }
+    await expect(receive(store, batch('unsupported', [unsupported]))).rejects.toMatchObject({
+      code: 'unsupported'
+    })
+    expect((await store.read()).reconciled.memberships).toHaveLength(1)
+  })
+
+  it('refuses the same journal name in another account before reading or verifying it', async () => {
+    const first = open(),
+      otherStorage = new MemoryJournal(first.store.journalId),
+      other = new KnowledgeStore(otherStorage, first.worker, {
+        partition: { ...partition, account: 'other' }
+      })
+    stores.push(other)
+    await initialize(first.store)
+    await expect(first.worker.advance(other, signal())).rejects.toMatchObject({
+      code: 'unauthorized',
+      message: expect.stringContaining('another journal partition')
+    })
+    await expect(first.worker.pendingBytes(other, signal())).rejects.toMatchObject({
+      code: 'unauthorized'
+    })
+    expect(await otherStorage.head()).toMatchObject({ received: '0', entries: 0 })
+    expect(await first.store.revision()).toEqual({ received: '1', accepted: '1' })
+  })
+
+  it('rejects cancelled replay and enforces the inclusive replay deadline without changing retained history', async () => {
+    let now = 0,
+      samplingDeadline = false
+    const storage = new MemoryJournal('replay-deadline'),
+      worker = new BitcoinKnowledge({
+        journalId: storage.namespace,
+        partition,
+        nonFinal: true,
+        verifier: new SDKEvidenceVerifier(resolver),
+        limits: { deadlineMs: 100 },
+        now: () => {
+          const sampled = now
+          if (samplingDeadline) now += 100
+          return sampled
+        }
+      }),
+      store = new KnowledgeStore(storage, worker, { partition })
+    stores.push(store)
+    await initialize(store)
+    const retained = await store.inspect(),
+      abort = new AbortController()
+    abort.abort()
+    await expect(worker.reduce(retained.entries, abort.signal)).rejects.toMatchObject({
+      code: 'cancelled',
+      message: expect.stringContaining('work cancelled')
+    })
+    samplingDeadline = true
+    await expect(worker.reduce(retained.entries, signal())).rejects.toMatchObject({
+      code: 'limited',
+      retryable: true,
+      message: expect.stringContaining('journal replay deadline')
+    })
+    samplingDeadline = false
+    await expect(worker.reduce(retained.entries, signal())).resolves.toMatchObject({
+      revision: retained.revision
+    })
+    expect(await store.inspect()).toEqual(retained)
+  })
+
+  it('owns configured receipt limits and retains them when the caller changes its options', async () => {
+    const limits = runtimeLimits({ observations: 1 }),
+      storage = new MemoryJournal('owned-limits'),
+      worker = new BitcoinKnowledge({
+        journalId: storage.namespace,
+        partition,
+        nonFinal: true,
+        verifier: new SDKEvidenceVerifier(resolver),
+        limits
+      }),
+      store = new KnowledgeStore(storage, worker, { partition })
+    stores.push(store)
+    limits.observations = 2
+    await initialize(store)
+    await expect(
+      receive(store, batch('oversized', [output('Q'), output('A')]))
+    ).rejects.toMatchObject({
+      code: 'limited'
+    })
+    expect(await store.revision()).toEqual({ received: '1', accepted: '1' })
+    expect((await receive(store, batch('bounded', [output('Q')]))).status).toBe('committed')
+    await worker.advance(store, signal())
+    expect((await store.read()).reconciled.memberships).toHaveLength(1)
+  })
+
+  it('rejects an accepted transition before an initial context without appending it', async () => {
+    const origin = open()
+    await initialize(origin.store)
+    await receive(origin.store, batch('accepted', [output('Q')]))
+    await origin.worker.advance(origin.store, signal())
+    const transition = (await origin.store.inspect()).entries.find(
+      entry => entry.body.kind === 'accept' || entry.body.kind === 'reconcile'
+    )
+    expect(transition).toBeDefined()
+    const empty = open()
+    await expect(
+      empty.store.commit('0', knowledgeMutation(transition!.body))
+    ).rejects.toMatchObject({
+      code: 'revision-unavailable'
+    })
+    expect(await empty.store.revision()).toEqual({ received: '0', accepted: '0' })
+    expect((await empty.store.inspect()).entries).toEqual([])
+  })
+
   it('requires a retained spend policy and rejects reopening it with a different policy', async () => {
     const unsealed = new MemoryJournal('journal')
     await unsealed.append('0', knowledgeMutation({ kind: 'context', context: context() }))
