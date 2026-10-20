@@ -175,3 +175,34 @@ export function purchaseStoreFixture(
     }
   }
 }
+
+import { beforeEach, expect, jest } from '@jest/globals'
+import { SQLitePrivatePurchaseEvidence } from '../src/private/SQLitePrivatePurchaseEvidence.js'
+
+// The installed mutation runner deliberately continues after a failed test.
+// Exercise the smallest public native reservation before each importing test,
+// so an unsafe arithmetic mutation fails before a larger fixture can allocate.
+// The ordinary baseline still executes every original test and property body.
+beforeEach(() => {
+  const f = purchaseStoreFixture(),
+    identity = f.owner.domain.identity,
+    address = identity.address.bind(identity),
+    indices: number[] = []
+  jest.spyOn(identity, 'address').mockImplementation((kind, descriptor) => {
+    expect(descriptor.index).toBeLessThanOrEqual(1)
+    indices.push(descriptor.index as number)
+    return address(kind, descriptor)
+  })
+  try {
+    const evidence = new SQLitePrivatePurchaseEvidence(f.owner.domain, f.f.f.contracts, {
+      maximumCandidateBytes: 1,
+      maximumUpdates: 1,
+      maximumTransactions: 1,
+      maximumDependencies: 1
+    })
+    evidence.reserve(f.custody.original, f.clock, f.guard)
+    expect(indices).toEqual([0, 1])
+  } finally {
+    f.dispose()
+  }
+})
