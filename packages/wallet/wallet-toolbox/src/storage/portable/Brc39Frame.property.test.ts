@@ -1,3 +1,7 @@
+import {
+  canonicalTestReference,
+  collectExpectedCanonicalChunks
+} from '../../../test/utils/canonicalPortableChunkOracle'
 import fc from 'fast-check'
 import { createCipheriv } from 'node:crypto'
 import { Brc39StreamFrame } from './Brc39Frame'
@@ -136,9 +140,12 @@ test('generated canonical documents, fragmentation and tag corruption preserve i
               syncStates: []
             }
           }
-          const plaintext = Buffer.concat([
-            ...canonicalPortableChunks(document, { maximumValueBytes: 1048576, maximumChunkBytes: 128 })
-          ])
+          const plaintext = Buffer.concat(
+            collectExpectedCanonicalChunks(
+              canonicalPortableChunks(document, { maximumValueBytes: 1048576, maximumChunkBytes: 128 }),
+              canonicalTestReference(document)
+            )
+          )
           // Independent standard envelope/native cipher; historical import work
           // is encoded exactly, while the selected host backend is controlled.
           const prefix = Buffer.alloc(97)

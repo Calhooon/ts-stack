@@ -4,7 +4,13 @@ import { resolve } from 'node:path'
 // Additive #544 DATA/field coverage; existing identities and controls remain.
 const walletDataAdditions = {
   'wallet-portable-canonical-chunks': {
-    mutate: ['src/utility/promiseFromSync.ts', 'src/utility/utf16CodeUnitAt.ts'],
+    mutate: [
+      'src/utility/promiseFromSync.ts',
+      'src/utility/utf16CodeUnitAt.ts',
+      'src/storage/portable/CanonicalPortableBounds.ts',
+      'src/storage/portable/CanonicalPortableValue.ts',
+      'src/storage/portable/CanonicalPortableParts.ts'
+    ],
     additionalInputs: [
       'src/utility/promiseFromSync.test.ts',
       'src/utility/utf16CodeUnitAt.test.ts',

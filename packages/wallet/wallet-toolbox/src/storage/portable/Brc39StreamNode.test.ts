@@ -1,3 +1,7 @@
+import {
+  canonicalTestReference,
+  collectExpectedCanonicalChunks
+} from '../../../test/utils/canonicalPortableChunkOracle'
 import { createCipheriv } from 'node:crypto'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import {
@@ -114,7 +118,12 @@ afterEach(() => {
 })
 
 function plaintextSource(value = document(), width = 31): Brc39StreamPlaintext {
-  const bytes = Buffer.concat([...canonicalPortableChunks(value, { maximumValueBytes: 1048576 })])
+  const bytes = Buffer.concat(
+    collectExpectedCanonicalChunks(
+      canonicalPortableChunks(value, { maximumValueBytes: 1048576 }),
+      canonicalTestReference(value)
+    )
+  )
   return {
     chunks: chunks(bytes, width),
     validateCompleted: async () => {
@@ -126,7 +135,12 @@ function plaintextSource(value = document(), width = 31): Brc39StreamPlaintext {
 test('owned source closes after semantic validation and before the authentication tag is written', async () => {
   const source = plaintextSource()
   const output = stage()
-  const length = Buffer.concat([...canonicalPortableChunks(document(), { maximumValueBytes: 1048576 })]).length
+  const length = Buffer.concat(
+    collectExpectedCanonicalChunks(
+      canonicalPortableChunks(document(), { maximumValueBytes: 1048576 }),
+      canonicalTestReference(document())
+    )
+  ).length
   const validate = source.validateCompleted
   let validated = false
   source.validateCompleted = async () => {
@@ -221,7 +235,12 @@ test('each new encryption owns fresh secure salt/nonce and exact canonical param
     expect(header).toMatchObject(BRC39_STREAM_DEFAULT_KDF)
     expect(header.salt).toHaveLength(32)
     expect(header.nonce).toHaveLength(32)
-    const plaintext = Buffer.concat([...canonicalPortableChunks(document(), { maximumValueBytes: 1048576 })])
+    const plaintext = Buffer.concat(
+      collectExpectedCanonicalChunks(
+        canonicalPortableChunks(document(), { maximumValueBytes: 1048576 }),
+        canonicalTestReference(document())
+      )
+    )
     const independent = AESGCM(new Uint8Array(plaintext), header.nonce, key)
     const file = Buffer.concat(output.parts)
     expect(file.subarray(97, file.length - 16)).toEqual(Buffer.from(independent.result))
@@ -247,7 +266,12 @@ test.each([
   expect(output.discarded).toBe(1)
 })
 test('export file admission includes prefix and reserved tag and refuses oversized chunks', async () => {
-  const bytes = Buffer.concat([...canonicalPortableChunks(document(), { maximumValueBytes: 1048576 })])
+  const bytes = Buffer.concat(
+    collectExpectedCanonicalChunks(
+      canonicalPortableChunks(document(), { maximumValueBytes: 1048576 }),
+      canonicalTestReference(document())
+    )
+  )
   const variants = [
     { ...options, policy: { ...policy, maximumFileBytes: bytes.length + 112 } },
     { ...options, policy: { ...policy, maximumChunkBytes: 30 } }

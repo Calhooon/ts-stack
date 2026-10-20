@@ -1,3 +1,7 @@
+import {
+  canonicalTestReference,
+  collectExpectedCanonicalChunks
+} from '../../../test/utils/canonicalPortableChunkOracle'
 import 'fake-indexeddb/auto'
 import { randomUUID } from 'node:crypto'
 import { runInNewContext } from 'node:vm'
@@ -235,7 +239,10 @@ test('generated binary and structured histories retain exact bytes, falsy values
       })
       expect(row.rawTx).toBe(Buffer.from(rawTx).toString('base64'))
       expect(row.history).toEqual({ notes: [{ what: 'original', code, accepted }] })
-      const chunks = [...canonicalPortableChunks(row, { maximumValueBytes: 1048576, maximumChunkBytes: 64 })]
+      const chunks = collectExpectedCanonicalChunks(
+        canonicalPortableChunks(row, { maximumValueBytes: 1048576, maximumChunkBytes: 64 }),
+        canonicalTestReference(row)
+      )
       expect(chunks.every(chunk => chunk.length <= 64)).toBe(true)
       expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(row)
     }),

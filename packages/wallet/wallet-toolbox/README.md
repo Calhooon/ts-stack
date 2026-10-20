@@ -5460,6 +5460,17 @@ are still required, and the measured latency remains a performance baseline.
 
 ## Mutation test compiler configuration
 
+The canonical serializer keeps its original validation, detachment, encoding and
+buffering routines in small internal modules. Mutation execution assigns every
+complete module to exactly one partition, using the same full behavioral suites
+and property settings in each independent sandbox. The installed mutation engine
+checks that their union contains every canonical mutant exactly once; the final
+aggregate retains the original global score and zero uncovered, invalid or
+unexecuted mutant requirements. Each job retains its existing time and resource
+limits. Positive serializer fixtures compare each emitted chunk with an
+independent whole-value reference before retaining it, so a divergent mutant
+fails without unbounded output collection. Original final assertions remain.
+
 Wallet Jest mutation runs serialize the physical Worker asset and fixture
 lifecycle shared by a Stryker sandbox. The canonical portable-chunks campaign
 also restarts its test worker after twenty runs, bounding the observed retained

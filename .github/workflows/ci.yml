@@ -647,6 +647,11 @@ jobs:
         if: needs.prepare.outputs.partition-targets != '[]' && needs.prepare.outputs.partition-targets != ''
         run: pnpm install --frozen-lockfile --ignore-scripts
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-canonical-chunks')
+        with:
+          pattern: mutation-wallet-portable-canonical-chunks-*
+          path: .mutation-parts/wallet-portable-canonical-chunks
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'sdk-auth-http')
         with:
           pattern: mutation-sdk-auth-http-*

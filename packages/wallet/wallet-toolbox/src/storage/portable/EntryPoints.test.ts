@@ -1,3 +1,7 @@
+import {
+  canonicalTestReference,
+  collectExpectedCanonicalChunks
+} from '../../../test/utils/canonicalPortableChunkOracle'
 import { chmod, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -11,9 +15,12 @@ test('public entries preserve all thirteen tables through authenticated private 
   const maximumChunkBytes = 64
   const maximumFileBytes = 65536
   // Only this small, explicitly bounded synthetic oracle is materialized.
-  const expected = Buffer.concat([
-    ...portable.canonicalPortableChunks(data, { maximumValueBytes: maximumFileBytes, maximumChunkBytes })
-  ])
+  const expected = Buffer.concat(
+    collectExpectedCanonicalChunks(
+      portable.canonicalPortableChunks(data, { maximumValueBytes: maximumFileBytes, maximumChunkBytes }),
+      canonicalTestReference(data)
+    )
+  )
   expect(parseBRC38Json(expected.toString('utf8'))).toEqual(data)
   const events: string[] = []
   const visited: (keyof BRC38Tables)[] = []

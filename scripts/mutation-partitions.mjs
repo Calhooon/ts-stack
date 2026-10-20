@@ -3,6 +3,18 @@ import path from 'node:path'
 const partitionFile = specification => specification.replace(/:\d+(?:-\d+)?$/, '')
 const plans = new Map([
   [
+    'wallet-portable-canonical-chunks',
+    {
+      fallback: 'helpers',
+      files: new Map([
+        ['src/storage/portable/CanonicalPortableBounds.ts', 'bounds'],
+        ['src/storage/portable/CanonicalPortableValue.ts', 'value'],
+        ['src/storage/portable/CanonicalPortableParts.ts', 'parts'],
+        ['src/storage/portable/CanonicalPortableChunks.ts', 'writer']
+      ])
+    }
+  ],
+  [
     'sdk-auth-http',
     {
       fallback: 'core',

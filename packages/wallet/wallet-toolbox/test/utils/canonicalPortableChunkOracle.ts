@@ -2,14 +2,18 @@ export type CanonicalTestValue =
   string | number | boolean | CanonicalTestValue[] | { [key: string]: CanonicalTestValue }
 
 /** Independent whole-value oracle for positive JSON fixtures only. */
-export function canonicalTestReference(value: CanonicalTestValue): string {
-  if (typeof value !== 'object') return JSON.stringify(value)
+export function canonicalTestReference(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const encoded = JSON.stringify(value)
+    if (encoded === undefined) throw new TypeError('The canonical reference requires a JSON fixture')
+    return encoded
+  }
   if (Array.isArray(value)) return '[' + value.map(canonicalTestReference).join(',') + ']'
   return (
     '{' +
-    Object.keys(value)
-      .sort((first, second) => Number(first > second) - Number(first < second))
-      .map(key => JSON.stringify(key) + ':' + canonicalTestReference(value[key]))
+    Object.entries(value)
+      .sort(([first], [second]) => Number(first > second) - Number(first < second))
+      .map(([key, child]) => JSON.stringify(key) + ':' + canonicalTestReference(child))
       .join(',') +
     '}'
   )

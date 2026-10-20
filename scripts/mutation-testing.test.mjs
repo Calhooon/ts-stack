@@ -432,7 +432,15 @@ test('portable streaming keeps every complete source module and original behavio
         ? ['src/utility/promiseFromSync.ts', 'src/utility/utf16CodeUnitAt.ts']
         : []
     const helperTests = helpers.map(file => file.replace('.ts', '.test.ts'))
-    assert.deepEqual(target.mutate, [`src/storage/portable/${source}.ts`, ...helpers])
+    assert.deepEqual(target.mutate, [
+      `src/storage/portable/${source}.ts`,
+      ...helpers,
+      ...(id === 'wallet-portable-canonical-chunks'
+        ? ['CanonicalPortableBounds', 'CanonicalPortableValue', 'CanonicalPortableParts'].map(
+            name => `src/storage/portable/${name}.ts`
+          )
+        : [])
+    ])
     const selectedSuites = target.runnerOptions.jest.config.testMatch
     assert.deepEqual(selectedSuites.slice(0, originalSuites.length), originalSuites)
     assert.deepEqual(selectedSuites.slice(originalSuites.length), [

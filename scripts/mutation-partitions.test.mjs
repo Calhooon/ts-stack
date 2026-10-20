@@ -417,3 +417,35 @@ test('native platform routing follows the actual package, including every canoni
     )
   }
 })
+
+test('canonical serializer partitions keep every complete module and the full original test configuration', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)['wallet-portable-canonical-chunks']
+  const parts = partitionMutationTarget('wallet-portable-canonical-chunks', canonical)
+  assert.deepEqual(
+    parts.map(part => part.id),
+    ['writer', 'helpers', 'bounds', 'value', 'parts']
+  )
+  assert.deepEqual(parts.flatMap(part => part.target.mutate).sort(), [...canonical.mutate].sort())
+  const owners = new Set()
+  for (const part of parts) {
+    assert.deepEqual(part.target, { ...canonical, mutate: part.target.mutate })
+    assert.equal(part.target.runnerOptions, canonical.runnerOptions)
+    for (const file of part.target.mutate) {
+      assert.ok(!owners.has(file))
+      owners.add(file)
+    }
+  }
+  const helper = 'src/storage/portable/FutureCanonicalHelper.ts'
+  const future = partitionMutationTarget('wallet-portable-canonical-chunks', {
+    ...canonical,
+    mutate: [...canonical.mutate, helper]
+  })
+  assert.deepEqual(future.find(part => part.id === 'helpers').target.mutate, [
+    'src/utility/promiseFromSync.ts',
+    'src/utility/utf16CodeUnitAt.ts',
+    helper
+  ])
+  assert.equal(selectedMutationPartition('wallet-portable-canonical-chunks', canonical), canonical)
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  assert.ok(mutationExecutionMatrix(Object.keys(targets), targets).include.length <= 256)
+})

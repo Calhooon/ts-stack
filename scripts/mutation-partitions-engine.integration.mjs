@@ -75,3 +75,28 @@ test('primary sync execution retains every original file/range, full configurati
   const targets = buildMutationTargets(REPOSITORY_ROOT)
   assert.ok(mutationExecutionMatrix(Object.keys(targets), targets).include.length <= 256)
 })
+
+test('installed mutation engine retains the complete canonical serializer inventory exactly once', async () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)['wallet-portable-canonical-chunks']
+  const parts = partitionMutationTarget('wallet-portable-canonical-chunks', canonical)
+  const directory = join(REPOSITORY_ROOT, canonical.packageDirectory)
+  const tuple = mutant =>
+    JSON.stringify({
+      file: mutant.fileName,
+      name: mutant.mutatorName,
+      location: mutant.location,
+      replacement: mutant.replacement
+    })
+  const tuples = []
+  for (const part of parts) {
+    assert.deepEqual(part.target, { ...canonical, mutate: part.target.mutate })
+    assert.equal(part.target.runnerOptions, canonical.runnerOptions)
+  }
+  for await (const mutants of inventories(directory, parts)) tuples.push(...mutants.map(tuple))
+  const original = (
+    await canonicalInventory(directory, targetSources(REPOSITORY_ROOT, canonical), canonical.mutate)
+  ).map(tuple)
+  assert.ok(original.length > 0)
+  assert.equal(new Set(tuples).size, tuples.length)
+  assert.deepEqual(tuples.toSorted(lexicalCompare), original.toSorted(lexicalCompare))
+})
