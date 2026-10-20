@@ -28,6 +28,7 @@ const intrinsicDateParse = Date.parse
 const intrinsicNumberMaxSafeInteger = Number.MAX_SAFE_INTEGER
 const intrinsicNumberIsFinite = Number.isFinite
 const intrinsicNumberIsInteger = Number.isInteger
+const intrinsicMathMax = Math.max
 const intrinsicNumberIsSafeInteger = Number.isSafeInteger
 const intrinsicObjectPrototype = Object.prototype
 const intrinsicObjectHasOwnProperty = Object.prototype.hasOwnProperty
@@ -1887,6 +1888,92 @@ function bindCertificateToPartialRequest(
   }
 }
 
+function requestedCertifierSet(
+  call: string,
+  requestArgs: UnknownRecord | undefined
+): Set<string> | undefined {
+  if (call !== 'listCertificates' || !arrayIsArray(requestArgs?.certifiers)) return undefined
+  const certifiers = new IntrinsicSet<string>()
+  for (let index = 0; index < requestArgs.certifiers.length; index++) {
+    setAdd(certifiers, lower(stringValue(requestArgs.certifiers[index])))
+  }
+  return certifiers
+}
+
+function requestedTypeSet(
+  call: string,
+  requestArgs: UnknownRecord | undefined
+): Set<string> | undefined {
+  if (call !== 'listCertificates' || !arrayIsArray(requestArgs?.types)) return undefined
+  const types = new IntrinsicSet<string>()
+  for (let index = 0; index < requestArgs.types.length; index++) {
+    setAdd(types, stringValue(requestArgs.types[index]))
+  }
+  return types
+}
+
+/** Binds a listed certificate to its request and validates its optional keyring and verifier. */
+function validateListedCertificate(
+  certificate: UnknownRecord,
+  call: string,
+  field: string,
+  requestArgs: UnknownRecord | undefined,
+  requestedCertifiers: Set<string> | undefined,
+  requestedTypes: Set<string> | undefined
+): void {
+  if (
+    requestedCertifiers != null &&
+    setSize(requestedCertifiers) > 0 &&
+    !setHas(requestedCertifiers, lower(stringValue(certificate.certifier)))
+  ) {
+    invalid(call, `${field}.certifier`, 'one of the requested certifiers')
+  }
+  if (
+    requestedTypes != null &&
+    setSize(requestedTypes) > 0 &&
+    !setHas(requestedTypes, stringValue(certificate.type))
+  ) {
+    invalid(call, `${field}.type`, 'one of the requested types')
+  }
+  if (
+    call === 'discoverByIdentityKey' &&
+    requestArgs?.identityKey !== undefined &&
+    !sameString(certificate.subject, requestArgs.identityKey)
+  ) {
+    invalid(call, `${field}.subject`, 'the requested identity key')
+  }
+  if (certificate.keyring !== undefined) {
+    stringRecord(certificate.keyring, call, `${field}.keyring`, true)
+  }
+  if (certificate.verifier !== undefined) {
+    publicKey(certificate.verifier, call, `${field}.verifier`)
+  }
+}
+
+/** Validates the discovery-only members of a discovered certificate. */
+function validateDiscoveredCertificate(
+  certificate: UnknownRecord,
+  call: string,
+  field: string,
+  requestArgs: UnknownRecord | undefined
+): void {
+  const infoField = `${field}.certifierInfo`
+  const info = record(certificate.certifierInfo, call, infoField)
+  string(info.name, call, `${infoField}.name`, 1, 100)
+  httpUrl(info.iconUrl, call, `${infoField}.iconUrl`, 500)
+  string(info.description, call, `${infoField}.description`, 5, 50)
+  rangedInteger(info.trust, call, `${infoField}.trust`, 1, 10)
+  stringRecord(certificate.publiclyRevealedKeyring, call, `${field}.publiclyRevealedKeyring`, true)
+  const decryptedFields = stringRecord(
+    certificate.decryptedFields,
+    call,
+    `${field}.decryptedFields`
+  )
+  if (call === 'discoverByAttributes') {
+    bindDiscoveredAttributes(call, field, decryptedFields, requestArgs?.attributes)
+  }
+}
+
 /**
  * Validates a certificate list or discovery result. Returns the filtered
  * entries and total when a non-compliant legacy record was left out, for the
@@ -1905,20 +1992,9 @@ function validateCertificatesResult(
     request
   )
   const requestArgs = requestRecord(request)
-  let requestedCertifiers: Set<string> | undefined
-  if (call === 'listCertificates' && arrayIsArray(requestArgs?.certifiers)) {
-    requestedCertifiers = new IntrinsicSet<string>()
-    for (let index = 0; index < requestArgs.certifiers.length; index++) {
-      setAdd(requestedCertifiers, lower(stringValue(requestArgs.certifiers[index])))
-    }
-  }
-  let requestedTypes: Set<string> | undefined
-  if (call === 'listCertificates' && arrayIsArray(requestArgs?.types)) {
-    requestedTypes = new IntrinsicSet<string>()
-    for (let index = 0; index < requestArgs.types.length; index++) {
-      setAdd(requestedTypes, stringValue(requestArgs.types[index]))
-    }
-  }
+  const requestedCertifiers = requestedCertifierSet(call, requestArgs)
+  const requestedTypes = requestedTypeSet(call, requestArgs)
+  const discovery = call === 'discoverByIdentityKey' || call === 'discoverByAttributes'
   const kept: unknown[] = []
   let omitted = 0
   for (let index = 0; index < certificates.length; index++) {
@@ -1935,55 +2011,19 @@ function validateCertificatesResult(
       continue
     }
     kept.push(value)
-    if (requestedCertifiers != null && setSize(requestedCertifiers) > 0) {
-      if (!setHas(requestedCertifiers, lower(stringValue(certificate.certifier)))) {
-        invalid(call, `${field}.certifier`, 'one of the requested certifiers')
-      }
-    }
-    if (requestedTypes != null && setSize(requestedTypes) > 0) {
-      if (!setHas(requestedTypes, stringValue(certificate.type))) {
-        invalid(call, `${field}.type`, 'one of the requested types')
-      }
-    }
-    if (
-      call === 'discoverByIdentityKey' &&
-      requestArgs?.identityKey !== undefined &&
-      !sameString(certificate.subject, requestArgs.identityKey)
-    ) {
-      invalid(call, `${field}.subject`, 'the requested identity key')
-    }
-    if (certificate.keyring !== undefined) {
-      stringRecord(certificate.keyring, call, `${field}.keyring`, true)
-    }
-    if (certificate.verifier !== undefined) {
-      publicKey(certificate.verifier, call, `${field}.verifier`)
-    }
-    if (call === 'discoverByIdentityKey' || call === 'discoverByAttributes') {
-      const infoField = `${field}.certifierInfo`
-      const info = record(certificate.certifierInfo, call, infoField)
-      string(info.name, call, `${infoField}.name`, 1, 100)
-      httpUrl(info.iconUrl, call, `${infoField}.iconUrl`, 500)
-      string(info.description, call, `${infoField}.description`, 5, 50)
-      rangedInteger(info.trust, call, `${infoField}.trust`, 1, 10)
-      stringRecord(
-        certificate.publiclyRevealedKeyring,
-        call,
-        `${field}.publiclyRevealedKeyring`,
-        true
-      )
-      const decryptedFields = stringRecord(
-        certificate.decryptedFields,
-        call,
-        `${field}.decryptedFields`
-      )
-      if (call === 'discoverByAttributes') {
-        bindDiscoveredAttributes(call, field, decryptedFields, requestArgs?.attributes)
-      }
-    }
+    validateListedCertificate(
+      certificate,
+      call,
+      field,
+      requestArgs,
+      requestedCertifiers,
+      requestedTypes
+    )
+    if (discovery) validateDiscoveredCertificate(certificate, call, field, requestArgs)
   }
   if (omitted === 0) return undefined
   const total = (result.totalCertificates as number) - omitted
-  return { certificates: kept, totalCertificates: total < kept.length ? kept.length : total }
+  return { certificates: kept, totalCertificates: intrinsicMathMax(kept.length, total) }
 }
 
 function validateListResult(

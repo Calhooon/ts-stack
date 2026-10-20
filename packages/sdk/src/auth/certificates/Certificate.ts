@@ -491,20 +491,22 @@ export default class Certificate {
    * @returns {Promise<boolean>} - True when the signature matches the
    * historical serialization; it makes no revocation-status assertion.
    */
-  async verifyHistoricalSignature(): Promise<boolean> {
+  verifyHistoricalSignature(): Promise<boolean> {
+    let valid = false
     try {
       const verificationData = this.#serialize(false, true)
       const certifierKey = PublicKey.fromString(this.certifier).deriveChild(
         new BigNumber(1) as PrivateKey,
         `2-certificate signature-${this.type} ${this.serialNumber}`
       )
-      return certifierKey.verify(
+      valid = certifierKey.verify(
         verificationData,
         Signature.fromDER(UtilsToArray(this.signature ?? '', 'hex'))
       )
     } catch {
-      return false
+      valid = false
     }
+    return Promise.resolve(valid)
   }
 
   /**
