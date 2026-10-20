@@ -831,6 +831,8 @@ means only that invocation reached its end. An empty later scan removes that
 source's membership after its accepted boundary; it does not establish a spend.
 Wallet calls without cancellation support retain their occupied adapter capacity
 until they actually settle, even after the subscriber cancels or times out.
+An installed clock failure before wallet I/O releases the refresh slot; retry the
+same source after the clock recovers.
 
 `LookupOutputSource` wraps the existing `LookupResolver.query$` and its pre-union
 `onEvidence` receipts, with exactly one configured host per source. Use

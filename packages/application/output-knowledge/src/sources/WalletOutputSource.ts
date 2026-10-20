@@ -81,11 +81,11 @@ export class WalletOutputSource implements Source {
 
   async *open(input: SourceRequest, signal: AbortSignal): AsyncIterable<SourceBatch> {
     const request = this.session.begin(input, signal),
-      limit = Math.min(this.pageSize, request.limits.observations),
-      deadline = this.session.now() + request.limits.deadlineMs
+      limit = Math.min(this.pageSize, request.limits.observations)
     let offset = 0,
       bytes = 0
     try {
+      const deadline = this.session.now() + request.limits.deadlineMs
       for (let page = 0; page < this.maximumPages; page++) {
         this.session.check(signal)
         const remaining = Math.floor(deadline - this.session.now())

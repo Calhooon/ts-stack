@@ -118,6 +118,30 @@ describe('finite wallet output source', () => {
     expect(batches.at(-1)?.coverage.status).toBe('limited')
   })
 
+  it('releases the refresh slot after an installed clock failure before wallet I/O', async () => {
+    const clockFailure = new Error('Wallet source clock unavailable'),
+      call = jest.fn(async () => page('Q'))
+    let clockAvailable = false
+    const output = new WalletOutputSource({
+      id: 'wallet',
+      scope,
+      query,
+      wallet: { listOutputs: call },
+      now: () => {
+        if (!clockAvailable) throw clockFailure
+        return 1000
+      }
+    })
+    await expect(collect(output)).rejects.toBe(clockFailure)
+    expect(call).not.toHaveBeenCalled()
+    clockAvailable = true
+    const batches = await collect(output)
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(batches.map(batch => batch.coverage.status)).toEqual(['partial', 'complete'])
+    expect(batches[0].provenance.receivedAt).toBe('1')
+    expect(batches[0].provenance.scope).toEqual(scope)
+  })
+
   it('rejects a changed scope or replay cursor before wallet I/O', async () => {
     const call = jest.fn(async () => page('Q')),
       output = source(call)
