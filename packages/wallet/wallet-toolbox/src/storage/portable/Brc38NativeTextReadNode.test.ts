@@ -1,6 +1,7 @@
 import type { Knex } from 'knex'
 import { readBrc38NativeTextBytes, readBrc38NativeTextExtent } from './Brc38NativeTextReadNode'
 import { encodeBrc38NativeTextRead, encodeBrc38NativeBlobWrite } from './Brc38NativeBlobProtocol'
+import { readBrc38NativePackedTextPhysicalBytes } from './Brc38NativePackedTextFieldsNode'
 
 test.each([
   ['provenTxReqs', 'history', 2, 2],
@@ -69,6 +70,10 @@ test('copied transaction/config/schema flags never issue TEXT SQL or native read
       length: 2
     })
   ).rejects.toThrow('actual retained')
+  expect(raw).not.toHaveBeenCalled()
+  await expect(
+    readBrc38NativePackedTextPhysicalBytes(transaction, { table: 'provenTxReqs', field: 'history', rowId: 1 })
+  ).rejects.toThrow()
   expect(raw).not.toHaveBeenCalled()
 })
 test('aborted TEXT read retains the original cancellation and issues no SQL', async () => {

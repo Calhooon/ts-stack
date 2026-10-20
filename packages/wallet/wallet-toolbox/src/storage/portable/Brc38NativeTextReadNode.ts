@@ -8,7 +8,12 @@ import {
 } from './Brc38NativeBlobProtocol'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
 import { hasBrc38NativePackedTextSchema } from './Brc38NativePackedTextSchemaNode'
-import { readBrc38NativePackedTextDescriptor, readBrc38NativePackedTextExtent } from './Brc38NativePackedTextFieldsNode'
+import {
+  readBrc38NativePackedTextDescriptor,
+  readBrc38NativePackedTextExtent,
+  readBrc38NativePackedTextPhysicalBytes
+} from './Brc38NativePackedTextFieldsNode'
+import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 
 interface NativeTextReader {
   isOwnedNativeTransaction(value: unknown): boolean
@@ -45,7 +50,10 @@ export async function readBrc38NativeTextBytes(
   const coordinate = brc38NativeTextCoordinate(input.table, input.field),
     rowId = input.rowId
   if (!Number.isSafeInteger(rowId)) throw new TypeError('Invalid native TEXT metadata row')
-  if (await hasBrc38NativePackedTextSchema(trx)) {
+  if (ownedNativeRootIdentity(trx)?.slot === 3) {
+    const bytes = await readBrc38NativePackedTextPhysicalBytes(trx, input, signal)
+    if (bytes !== undefined) return bytes
+  } else if (await hasBrc38NativePackedTextSchema(trx)) {
     const key = await packedKey(trx, input),
       descriptor = await readBrc38NativePackedTextDescriptor(trx, { ...input, rowId: key })
     signal?.throwIfAborted()

@@ -1,5 +1,6 @@
 import { privateNativeTransactionIdentity } from './Brc38PrivateNativeOwnershipNode'
-import { nativePackedTextSources } from './Brc38NativePackedTextSources'
+import { nativePackedTextSource, nativePackedTextSources } from './Brc38NativePackedTextSources'
+import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import { retireExpiredBrc38NativePreparedFields } from './Brc38NativePreparedFieldsNode'
 import { hasBrc38NativePreparedFieldsSchema, nativePreparedFieldsTable } from './Brc38NativePreparedFieldSchemaNode'
 import type { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
@@ -105,6 +106,49 @@ export async function readBrc38NativePackedTextDescriptor(
   const selected = key(input)
   if (!(await hasBrc38NativePackedTextSchema(k))) invalid()
   return await readBrc38NativePackedTextDescriptorContent(k, input, selected)
+}
+/** One fresh physical-cell observation on an actual query-only native view.
+ * The native slot cannot change its main schema while resolving the wallet key,
+ * so the complete schema comparison need not be repeated inside this call.
+ * Undefined selects the original raw-cell transport; null is an absent field.
+ * No observation or admission result survives this operation. */
+export async function readBrc38NativePackedTextPhysicalBytes(
+  k: Knex.Transaction,
+  selected: Pick<Brc38NativeTextRead, 'table' | 'field' | 'rowId'>,
+  signal?: AbortSignal
+): Promise<number | null | undefined> {
+  const readonly = (): void => {
+    requireBrc38PackedRead(k)
+    if (ownedNativeRootIdentity(k)?.slot !== 3)
+      throw new Error('Packed TEXT physical metadata requires its actual native readonly transaction')
+  }
+  signal?.throwIfAborted()
+  readonly()
+  const input = { ...selected }
+  key(input)
+  if (!Number.isSafeInteger(input.rowId)) throw new TypeError('Invalid native TEXT metadata row')
+  const packed = await hasBrc38NativePackedTextSchema(k)
+  signal?.throwIfAborted()
+  readonly()
+  if (!packed) return undefined
+  const source = nativePackedTextSource(input.table),
+    physicalKey = async (): Promise<number> => {
+      readonly()
+      const row = (await k(source.sql).whereRaw('rowid=?', [input.rowId]).first(source.key)) as
+          Record<string, unknown> | undefined,
+        value = row?.[source.key]
+      if (typeof value !== 'number' || !Number.isSafeInteger(value))
+        throw new Error('Native TEXT physical row has no actual portable wallet key')
+      readonly()
+      return value
+    },
+    rowId = await physicalKey(),
+    logical = { ...input, rowId },
+    descriptor = await readBrc38NativePackedTextDescriptorContent(k, logical, key(logical))
+  signal?.throwIfAborted()
+  readonly()
+  if ((await physicalKey()) !== rowId) throw new Error('Native TEXT retained physical key changed')
+  return descriptor?.bytes ?? null
 }
 /** DATA only on an actual private query-only lease. The owning factory must
  * freshly admit schema/seal/binding before and after its operation. This does

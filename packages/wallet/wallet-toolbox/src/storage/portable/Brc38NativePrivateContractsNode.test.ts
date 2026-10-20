@@ -98,6 +98,7 @@ import { readSnapshotJournalSqliteGeneration } from '../snapshot/journal/Snapsho
 import { previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { readBrc38NativeLocalFieldBytes, withBrc38NativeLocalFieldExtent } from './Brc38NativeLocalFieldReadNode'
 import { readBrc38NativeTextBytes, readBrc38NativeTextExtent } from './Brc38NativeTextReadNode'
+import { readBrc38NativePackedTextPhysicalBytes } from './Brc38NativePackedTextFieldsNode'
 import {
   SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
   snapshotJournalSqliteObserverSql,
@@ -1904,6 +1905,92 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
     await fixture.close()
   }
 })
+
+test('native query-only TEXT metadata validates one fresh complete schema and retains physical keys', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const text = 'independent packed \u0000雪😀',
+      expected = Buffer.from(text, 'utf8')
+    let rowId = 0,
+      guardSql = ''
+    await fixture.withWriter(async trx => {
+      const when = new Date('2026-10-08T00:00:00.000Z'),
+        userId = await fixture.storage.insertUser(
+          {
+            userId: 0,
+            created_at: when,
+            updated_at: when,
+            identityKey: 'independent TEXT metadata',
+            activeStorage: ''
+          },
+          trx
+        ),
+        transactionId = await fixture.storage.insertTransaction(
+          {
+            transactionId: 0,
+            userId,
+            created_at: when,
+            updated_at: when,
+            status: 'nosend',
+            reference: 'aW5kZXBlbmRlbnQ=',
+            isOutgoing: false,
+            satoshis: 0,
+            description: ''
+          },
+          trx
+        )
+      await writeBrc38NativePackedTextBytes(
+        trx,
+        { table: 'transactions', field: 'description', rowId: transactionId },
+        expected
+      )
+      rowId = (await trx('transactions').where({ transactionId }).first(trx.raw('rowid AS physical'))).physical
+      const input = { table: 'transactions', field: 'description', rowId } as const
+      await expect(readBrc38NativePackedTextPhysicalBytes(trx, input)).rejects.toThrow('actual native readonly')
+      expect(await readBrc38NativeTextBytes(trx, input)).toBe(expected.length)
+      guardSql = (
+        await trx('main.sqlite_schema').where({ name: 'brc38_native_text_fields_delete_charge' }).first('sql')
+      ).sql
+    })
+    await fixture.withRead(async trx => {
+      const inventories: string[] = [],
+        observe = (query: { sql: string; bindings?: unknown[] }): void => {
+          if (query.sql.includes('substr(name,1,18)') && query.bindings?.includes('brc38_native_text_'))
+            inventories.push(query.sql)
+        }
+      trx.on('query', observe)
+      try {
+        const input = { table: 'transactions', field: 'description', rowId } as const
+        expect(await trx.raw('PRAGMA query_only')).toEqual([{ query_only: 1 }])
+        expect(await readBrc38NativeTextBytes(trx, input)).toBe(expected.length)
+        expect(inventories).toHaveLength(1)
+        expect(await readBrc38NativeTextBytes(trx, input)).toBe(expected.length)
+        expect(inventories).toHaveLength(2)
+        expect(
+          await readBrc38NativeTextBytes(trx, { ...input, field: 'noSendExpiryReclaimDerivationPrefix' })
+        ).toBeNull()
+        expect(inventories).toHaveLength(3)
+        await expect(trx.raw('DROP TRIGGER brc38_native_text_fields_delete_charge')).rejects.toThrow()
+      } finally {
+        trx.off('query', observe)
+      }
+    })
+    await fixture.withWriter(async trx => await trx.raw('DROP TRIGGER brc38_native_text_fields_delete_charge'))
+    try {
+      await expect(
+        fixture.withRead(
+          async trx => await readBrc38NativeTextBytes(trx, { table: 'transactions', field: 'description', rowId })
+        )
+      ).rejects.toThrow('source-owned schema differs')
+    } finally {
+      await fixture.withWriter(async trx => await trx.raw(guardSql))
+    }
+    expect(
+      await fixture.withRead(
+        async trx => await readBrc38NativeTextBytes(trx, { table: 'transactions', field: 'description', rowId })
+      )
+    ).toBe(expected.length)
+  })
+}, 30000)
 
 test('prepared content groups complete fresh schema validation without accepting damaged families', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
