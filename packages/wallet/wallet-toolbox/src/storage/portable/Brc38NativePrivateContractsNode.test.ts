@@ -19,7 +19,7 @@ import { brc38PrivateRequestPostimageMetadata } from './Brc38PrivateRequestInven
 import { brc38ImportRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { brc38NativeLocalPackedFamilyDefinitions } from './Brc38NativeLocalPackedLayout'
 import { insertBrc38PackedRestoreMetadata, updateBrc38PackedPrivateMetadata } from './Brc38PackedRestoreMetadataNode'
-import { writeBrc38NativePackedBytes } from './Brc38NativePackedFieldsNode'
+import { readBrc38NativePackedExtent, writeBrc38NativePackedBytes } from './Brc38NativePackedFieldsNode'
 import { writeBrc38NativePackedTextBytes } from './Brc38NativePackedTextFieldsNode'
 import { hasBrc38NativeLocalPackedLayout } from './Brc38NativeLocalPackedLayoutNode'
 import { snapshotJournalNativeDestinationExtras } from '../snapshot/journal/SnapshotJournalNativeDestinationSchema'
@@ -98,7 +98,10 @@ import { readSnapshotJournalSqliteGeneration } from '../snapshot/journal/Snapsho
 import { previewPrivateFixture, previewReceiptPolicy } from './Brc38ImportPreviewFixture'
 import { readBrc38NativeLocalFieldBytes, withBrc38NativeLocalFieldExtent } from './Brc38NativeLocalFieldReadNode'
 import { readBrc38NativeTextBytes, readBrc38NativeTextExtent } from './Brc38NativeTextReadNode'
-import { readBrc38NativePackedTextPhysicalBytes } from './Brc38NativePackedTextFieldsNode'
+import {
+  readBrc38NativePackedTextExtent,
+  readBrc38NativePackedTextPhysicalBytes
+} from './Brc38NativePackedTextFieldsNode'
 import {
   SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
   snapshotJournalSqliteObserverSql,
@@ -1909,8 +1912,10 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
 test('native query-only TEXT metadata validates one fresh complete schema and retains physical keys', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
     const text = 'independent packed \u0000雪😀',
-      expected = Buffer.from(text, 'utf8')
+      expected = Buffer.from(text, 'utf8'),
+      binaryExpected = Uint8Array.from([0, 128, 255, 7])
     let rowId = 0,
+      logicalRowId = 0,
       guardSql = ''
     await fixture.withWriter(async trx => {
       const when = new Date('2026-10-08T00:00:00.000Z'),
@@ -1943,19 +1948,53 @@ test('native query-only TEXT metadata validates one fresh complete schema and re
         { table: 'transactions', field: 'description', rowId: transactionId },
         expected
       )
+      await trx('transactions').where({ transactionId }).update({ rawTx: trx.raw('zeroblob(0)') })
+      await writeBrc38NativePackedBytes(
+        trx,
+        { table: 'transactions', field: 'rawTx', rowId: transactionId },
+        binaryExpected
+      )
+      logicalRowId = transactionId
       rowId = (await trx('transactions').where({ transactionId }).first(trx.raw('rowid AS physical'))).physical
       const input = { table: 'transactions', field: 'description', rowId } as const
       await expect(readBrc38NativePackedTextPhysicalBytes(trx, input)).rejects.toThrow('actual native readonly')
       expect(await readBrc38NativeTextBytes(trx, input)).toBe(expected.length)
+      const inventories: string[] = [],
+        observe = (query: { sql: string; bindings?: unknown[] }): void => {
+          if (query.sql.includes('substr(name,1,18)') && query.bindings?.includes('brc38_native_text_'))
+            inventories.push(query.sql)
+        }
+      trx.on('query', observe)
+      try {
+        const bytes = await readBrc38NativePackedTextExtent(trx, {
+          table: 'transactions',
+          field: 'description',
+          rowId: logicalRowId,
+          offset: 1,
+          length: 3,
+          totalBytes: expected.length
+        })
+        try {
+          expect(Buffer.from(bytes)).toEqual(expected.subarray(1, 4))
+        } finally {
+          bytes.fill(0)
+        }
+        expect(inventories).toHaveLength(2)
+      } finally {
+        trx.off('query', observe)
+      }
       guardSql = (
         await trx('main.sqlite_schema').where({ name: 'brc38_native_text_fields_delete_charge' }).first('sql')
       ).sql
     })
     await fixture.withRead(async trx => {
       const inventories: string[] = [],
+        binaryInventories: string[] = [],
         observe = (query: { sql: string; bindings?: unknown[] }): void => {
           if (query.sql.includes('substr(name,1,18)') && query.bindings?.includes('brc38_native_text_'))
             inventories.push(query.sql)
+          if (query.sql.includes('substr(name,1,20)') && query.bindings?.includes('brc38_native_binary_'))
+            binaryInventories.push(query.sql)
         }
       trx.on('query', observe)
       try {
@@ -1969,6 +2008,40 @@ test('native query-only TEXT metadata validates one fresh complete schema and re
           await readBrc38NativeTextBytes(trx, { ...input, field: 'noSendExpiryReclaimDerivationPrefix' })
         ).toBeNull()
         expect(inventories).toHaveLength(3)
+        const textBefore = inventories.length,
+          textInput = {
+            table: 'transactions',
+            field: 'description',
+            rowId: logicalRowId,
+            offset: 1,
+            length: 3,
+            totalBytes: expected.length
+          } as const,
+          textBytes = await readBrc38NativePackedTextExtent(trx, textInput)
+        try {
+          expect(Buffer.from(textBytes)).toEqual(expected.subarray(1, 4))
+        } finally {
+          textBytes.fill(0)
+        }
+        expect(inventories).toHaveLength(textBefore + 1)
+        const binaryBefore = binaryInventories.length,
+          binaryBytes = await readBrc38NativePackedExtent(trx, {
+            table: 'transactions',
+            field: 'rawTx',
+            rowId: logicalRowId,
+            offset: 1,
+            length: 2,
+            totalBytes: binaryExpected.length
+          })
+        try {
+          expect([...binaryBytes]).toEqual([128, 255])
+        } finally {
+          binaryBytes.fill(0)
+        }
+        expect(binaryInventories).toHaveLength(binaryBefore + 1)
+        await expect(
+          readBrc38NativePackedTextExtent(trx, { ...textInput, totalBytes: expected.length + 1 })
+        ).rejects.toThrow('current owned content')
         await expect(trx.raw('DROP TRIGGER brc38_native_text_fields_delete_charge')).rejects.toThrow()
       } finally {
         trx.off('query', observe)

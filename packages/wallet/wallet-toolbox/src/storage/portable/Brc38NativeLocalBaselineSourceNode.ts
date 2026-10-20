@@ -30,6 +30,7 @@ import {
   type SnapshotJournalReceiptPolicy
 } from '../snapshot/journal/SnapshotJournalReceipt'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
+import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 import {
   brc38DestinationSelection,
   withBrc38KnexImportReadDestination,
@@ -1753,7 +1754,15 @@ export class Brc38NativeLocalBaselineSource {
             const total = descriptor.bytes
             return reads.run(async () => {
               this.#assert()
-              if (!rowLive || (await this.#fieldBytes(selected, physical, field)) !== total) invalid()
+              if (
+                !rowLive ||
+                (ownedNativeRootIdentity(this.#trx)?.slot !== 3 &&
+                  (await this.#fieldBytes(selected, physical, field)) !== total)
+              )
+                invalid()
+              // The owning extent reader checks exact metadata before/after
+              // the bytes. Its actual native readonly main view is immutable;
+              // other transactions retain the additional source comparison.
               return await this.#withField(selected, physical, field, start, total, amount, consumer)
             })
           }
@@ -1925,7 +1934,11 @@ export class Brc38NativeLocalBaselineSource {
                 this.#policy.signal
               )
       this.#assert()
-      if (bytes.byteLength !== length || (await this.#fieldBytes(table, rowId, field)) !== totalBytes) invalid()
+      if (
+        bytes.byteLength !== length ||
+        (ownedNativeRootIdentity(this.#trx)?.slot !== 3 && (await this.#fieldBytes(table, rowId, field)) !== totalBytes)
+      )
+        invalid()
       const result = await work(bytes)
       this.#assert()
       return result

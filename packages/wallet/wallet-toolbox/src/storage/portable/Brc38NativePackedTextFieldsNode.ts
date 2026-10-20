@@ -398,14 +398,25 @@ async function readBrc38NativePackedTextExtentContent(
   requireBrc38PackedRead(k)
   validateBrc38NativePackedTextRead(input)
   const fixed = {
-      table: input.table,
-      field: input.field,
-      rowId: input.rowId,
-      offset: input.offset,
-      length: input.length,
-      totalBytes: input.totalBytes
-    } as Brc38NativePackedTextRead,
-    actual = await descriptor(k, fixed)
+    table: input.table,
+    field: input.field,
+    rowId: input.rowId,
+    offset: input.offset,
+    length: input.length,
+    totalBytes: input.totalBytes
+  } as Brc38NativePackedTextRead
+  let readDescriptor = descriptor
+  if (descriptor === readBrc38NativePackedTextDescriptor && ownedNativeRootIdentity(k)?.slot === 3) {
+    // Only this actual readonly extent owns the composition. Private DATA
+    // helpers and all writers retain their original independent contracts.
+    if (!(await hasBrc38NativePackedTextSchema(k))) invalid()
+    readDescriptor = async (actual, coordinate) => {
+      requireBrc38PackedRead(actual)
+      if (actual !== k || ownedNativeRootIdentity(actual)?.slot !== 3) invalid()
+      return await readBrc38NativePackedTextDescriptorContent(actual, coordinate, key(coordinate))
+    }
+  }
+  const actual = await readDescriptor(k, fixed)
   if (actual === undefined || actual.bytes !== fixed.totalBytes) invalid()
   const output = new Uint8Array(fixed.length)
   try {
@@ -435,7 +446,7 @@ async function readBrc38NativePackedTextExtentContent(
     }
     signal?.throwIfAborted()
     requireBrc38PackedRead(k)
-    const after = await descriptor(k, fixed)
+    const after = await readDescriptor(k, fixed)
     if (after?.bytes !== actual.bytes || after.sha256 !== actual.sha256) invalid()
     return output
   } catch (cause) {

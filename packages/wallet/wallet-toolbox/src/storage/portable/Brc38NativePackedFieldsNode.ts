@@ -23,6 +23,7 @@ import { isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
 import { hashBrc38NativePackedChunkWindows } from './Brc38NativePackedHashWindowNode'
+import { ownedNativeRootIdentity } from '../schema/ownedNativeSqliteConnectionsNode'
 
 const tables: Readonly<Record<number, string>> = Object.freeze({
   0: 'transactions',
@@ -92,6 +93,14 @@ export async function readBrc38NativePackedDescriptor(
   requireBrc38PackedRead(k)
   const selected = key(input)
   if (!(await hasBrc38NativePackedSchema(k))) invalid()
+  return await readBrc38NativePackedDescriptorContent(k, input, selected)
+}
+async function readBrc38NativePackedDescriptorContent(
+  k: Knex.Transaction,
+  input: Brc38NativePackedBinaryCoordinate,
+  selected: Key
+): Promise<Readonly<{ bytes: number; sha256: string }> | undefined> {
+  requireBrc38PackedRead(k)
   const physical = (await k(tables[selected.tableId])
     .whereRaw('rowid=?', [selected.rowId])
     .first(k.raw('typeof(??) AS kind,length(??) AS bytes', [input.field, input.field]))) as
@@ -169,14 +178,25 @@ export async function readBrc38NativePackedExtent(
   requireBrc38PackedRead(k)
   validateBrc38NativePackedBinaryRead(input)
   const fixed = {
-      table: input.table,
-      field: input.field,
-      rowId: input.rowId,
-      offset: input.offset,
-      length: input.length,
-      totalBytes: input.totalBytes
-    } as Brc38NativePackedBinaryRead,
-    actual = await readBrc38NativePackedDescriptor(k, fixed)
+    table: input.table,
+    field: input.field,
+    rowId: input.rowId,
+    offset: input.offset,
+    length: input.length,
+    totalBytes: input.totalBytes
+  } as Brc38NativePackedBinaryRead
+  let descriptor = readBrc38NativePackedDescriptor
+  if (ownedNativeRootIdentity(k)?.slot === 3) {
+    // The real native readonly view cannot change its main schema. Compare it
+    // once in this operation; still read the exact descriptor before and after.
+    if (!(await hasBrc38NativePackedSchema(k))) invalid()
+    descriptor = async (actual, coordinate) => {
+      requireBrc38PackedRead(actual)
+      if (actual !== k || ownedNativeRootIdentity(actual)?.slot !== 3) invalid()
+      return await readBrc38NativePackedDescriptorContent(actual, coordinate, key(coordinate))
+    }
+  }
+  const actual = await descriptor(k, fixed)
   if (actual === undefined || actual.bytes !== fixed.totalBytes) invalid()
   const output = new Uint8Array(fixed.length)
   try {
@@ -206,7 +226,7 @@ export async function readBrc38NativePackedExtent(
     }
     signal?.throwIfAborted()
     requireBrc38PackedRead(k)
-    const after = await readBrc38NativePackedDescriptor(k, fixed)
+    const after = await descriptor(k, fixed)
     if (after?.bytes !== actual.bytes || after.sha256 !== actual.sha256) invalid()
     return output
   } catch (cause) {
