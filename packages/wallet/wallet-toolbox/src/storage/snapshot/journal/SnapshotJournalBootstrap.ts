@@ -368,7 +368,8 @@ export interface SnapshotJournalBootstrapPage {
  */
 export async function copySnapshotJournalBootstrapPage(
   k: Knex,
-  rowLimit: number
+  rowLimit: number,
+  verifyCurrent?: (trx: Knex.Transaction) => Promise<void>
 ): Promise<SnapshotJournalBootstrapPage> {
   if (
     k.isTransaction ||
@@ -379,11 +380,15 @@ export async function copySnapshotJournalBootstrapPage(
   const local = sqlite(k),
     all = streams(local)
   return await k.transaction(async t => {
+    // MySQL must lock its clock before any verifier can pin a consistent read
+    // view. SQLite verifies the schema before the first metadata write; a WAL
+    // change during that read refuses the later writer upgrade atomically.
+    if (!local && !(await t('snapshot_journal_clock').where('id', 1).forUpdate().noWait().first('id'))) return invalid()
+    if (verifyCurrent !== undefined) await verifyCurrent(t)
     if (local)
       await t('snapshot_journal_bootstrap')
         .where('id', 1)
         .update({ stream: t.ref('stream') })
-    else if (!(await t('snapshot_journal_clock').where('id', 1).forUpdate().noWait().first('id'))) return invalid()
     const state = await readBootstrapState(t, all.length, rowLimit)
     const enabled = local
       ? (await t('snapshot_journal_clock').where('id', 1).first('enabled'))?.enabled === 1

@@ -106,11 +106,12 @@ export async function migrateSnapshotJournalSource(k: Knex): Promise<void> {
     : await installSnapshotJournalSqliteGeneration(k, config.ceiling, config.policy, k.client.config.migrations)
   if (!state.enabled) invalid()
   while (!state.complete) {
-    const current = remote
-      ? await readSnapshotJournalMysqlGeneration(k, config.ceiling, config.policy, k.client.config.migrations)
-      : await readSnapshotJournalSqliteGeneration(k, config.policy, k.client.config.migrations)
-    if (!current.enabled || current.epoch !== state.epoch || current.source !== state.source) invalid()
-    const page = await copySnapshotJournalBootstrapPage(k, config.bootstrapRows)
+    const page = await copySnapshotJournalBootstrapPage(k, config.bootstrapRows, async trx => {
+      const current = remote
+        ? await readSnapshotJournalMysqlGeneration(trx, config.ceiling, config.policy, k.client.config.migrations)
+        : await readSnapshotJournalSqliteGeneration(trx, config.policy, k.client.config.migrations)
+      if (!current.enabled || current.epoch !== state.epoch || current.source !== state.source) invalid()
+    })
     if (page.invalidated) invalid()
     if (page.complete)
       state = remote

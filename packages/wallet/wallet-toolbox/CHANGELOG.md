@@ -32,6 +32,11 @@ retain their independent source comparison; no validation result is cached
 between operations. Complete physical definitions, reserved inventories,
 source binding, progress and publication checks remain required.
 
+Registered journal bootstrap verifies each current generation inside its own
+original page transaction before metadata changes. MySQL still locks its clock
+before opening a consistent read view; SQLite rejects schema drift before its
+cursor advances. Each original bounded page, commit and row allowance remains.
+
 Knex source options, certificate finder ordering and fresh native context checks
 now have private helpers with unchanged statements. Source-bound mutation
 execution can schedule those helpers separately within the existing job limit;

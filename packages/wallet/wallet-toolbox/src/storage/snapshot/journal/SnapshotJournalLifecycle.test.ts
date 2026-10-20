@@ -11,7 +11,7 @@ import {
   completeSnapshotJournalSqliteGeneration,
   readSnapshotJournalSqliteGeneration
 } from './SnapshotJournalSqliteGeneration'
-import { copySnapshotJournalBootstrapPage } from './SnapshotJournalBootstrap'
+import * as Bootstrap from './SnapshotJournalBootstrap'
 import { closeSnapshotJournalSource } from './closeSnapshotJournalSource'
 import { SnapshotCancelledError } from '../SnapshotCancelledError'
 import { snapshotJournalRevision, MAX_SNAPSHOT_JOURNAL_REVISION } from './SnapshotJournalRevision'
@@ -20,7 +20,8 @@ import {
   SNAPSHOT_JOURNAL_DEFAULT_POLICY,
   SNAPSHOT_JOURNAL_DEFAULT_BOOTSTRAP_ROWS,
   readSnapshotJournalCaptureConfiguration,
-  readSnapshotJournalMaintenanceConfiguration
+  readSnapshotJournalMaintenanceConfiguration,
+  migrateSnapshotJournalSource
 } from './SnapshotJournalLifecycle'
 
 jest.setTimeout(30000)
@@ -42,6 +43,34 @@ beforeEach(async () => {
 afterEach(async () => {
   await storage.destroy()
   await rm(directory, { recursive: true, force: true })
+})
+
+test('source schema drift at bootstrap page entry cannot advance its durable cursor', async () => {
+  await migrateBeforeSnapshotJournal(storage, 'bootstrap admission', 'bootstrap-admission')
+  const copy = Bootstrap.copySnapshotJournalBootstrapPage
+  let changed = false
+  const interception = jest.spyOn(Bootstrap, 'copySnapshotJournalBootstrapPage').mockImplementation(async (...args) => {
+    if (!changed) {
+      changed = true
+      await storage.knex.raw('CREATE INDEX bootstrap_admission_drift ON tx_labels(userId)')
+    }
+    return await copy(...args)
+  })
+  try {
+    await expect(migrateSnapshotJournalSource(storage.knex)).rejects.toThrow('Rebuild source binding mismatch')
+    expect(await storage.knex('snapshot_journal_bootstrap').first('stream', 'cursor', 'rowLimit', 'rowsUsed')).toEqual({
+      stream: 0,
+      cursor: null,
+      rowLimit: null,
+      rowsUsed: 0
+    })
+  } finally {
+    interception.mockRestore()
+    await storage.knex.raw('DROP INDEX bootstrap_admission_drift')
+  }
+  await migrateSnapshotJournalSource(storage.knex)
+  expect(await storage.knex('snapshot_journal_bootstrap').first('stream')).toEqual({ stream: 17 })
+  expect(await storage.knex('snapshot_journal_generation').first('complete')).toEqual({ complete: 1 })
 })
 
 test('registered source installation completes all native bootstrap streams and freshly admits the current policy', async () => {
@@ -103,7 +132,7 @@ test('an explicit historical owned capture retains custom policy and advances th
   await installSnapshotJournalSqliteGeneration(storage.knex, ceiling, receiptPolicy)
   let complete = false
   for (let page = 0; page < 80 && !complete; page++)
-    complete = (await copySnapshotJournalBootstrapPage(storage.knex, 1000000)).complete
+    complete = (await Bootstrap.copySnapshotJournalBootstrapPage(storage.knex, 1000000)).complete
   expect(complete).toBe(true)
   const generation = await completeSnapshotJournalSqliteGeneration(storage.knex, receiptPolicy)
   await expect(storage.openCurrentSnapshotJournalSource(identity)).rejects.toThrow('owned supported backend')
