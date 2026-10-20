@@ -48,13 +48,13 @@ const requestedSeed = Number.parseInt(process.env.FAST_CHECK_SEED ?? '', 10)
 const replayPath = process.env.FAST_CHECK_PATH
 const options = {
   interruptAfterTimeLimit: 150000,
-  markInterruptedAsFailure: true,
+  markInterruptAsFailure: true,
   numRuns: Number.isSafeInteger(requestedRuns)
     ? Math.max(MIN_PROPERTY_RUNS, requestedRuns)
     : MIN_PROPERTY_RUNS,
   seed: Number.isSafeInteger(requestedSeed) ? requestedSeed : 3242026,
   ...(replayPath ? { path: replayPath } : {})
-}
+} satisfies fc.Parameters<unknown>
 fc.configureGlobal(options)
 it('generated receipt, bounded-work, restart and clock histories preserve whole-group intent without Bitcoin effects', async () => {
   await fc.assert(
