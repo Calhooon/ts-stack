@@ -1,11 +1,13 @@
 import Transaction from '../../../transaction/Transaction.js'
+import BigNumber from '../../../primitives/BigNumber.js'
+import LockingScript from '../../LockingScript.js'
 import PrivateKey from '../../../primitives/PrivateKey.js'
+import PublicKey from '../../../primitives/PublicKey.js'
 import TransactionSignature from '../../../primitives/TransactionSignature.js'
 import ProtoWallet from '../../../wallet/ProtoWallet.js'
 import UnlockingScript from '../../UnlockingScript.js'
-import { toArray } from '../../../primitives/utils.js'
+import { toArray, toHex } from '../../../primitives/utils.js'
 import { hash160, hash256, sha256 } from '../../../primitives/Hash.js'
-import { toHex } from '../../../primitives/utils.js'
 import { RevenueListingProfileSpend } from '../RevenueListingProfileSpend.js'
 import type { RevenueListingProfileDescriptor } from '../RevenueListingProfile.js'
 import type { RevenueListingProfileAction } from '../RevenueListingProfilePlan.js'
@@ -260,9 +262,6 @@ test.each(['activation', 'active'] as const)(
   }
 )
 
-import LockingScript from '../../LockingScript.js'
-import BigNumber from '../../../primitives/BigNumber.js'
-
 function fundedProfilePurchase() {
   return Transaction.fromAtomicBEEF(toArray(fixture.purchase, 'base64'))
 }
@@ -501,11 +500,16 @@ test('keeps canonical signature shape, protected child, low S and exact sighash 
     [],
     {},
     '',
+    '0'.repeat(16),
     '0'.repeat(17),
     '0'.repeat(145),
+    '0'.repeat(146),
     '0'.repeat(19),
     'gg'.repeat(9),
-    valid.toUpperCase()
+    valid.toUpperCase(),
+    'gg' + valid,
+    valid + 'gg',
+    valid + '\n\n'
   ]) {
     expect(() => prepared.complete({ seller })).toThrow('Expected canonical seller-child signature')
   }
@@ -599,4 +603,100 @@ test('bounds the completed witness independently of the already bounded funded t
   expect(transaction.toBinary()).toHaveLength(4194304 - 1024)
   const prepared = purchaseProfileBuilder().prepare(transaction)
   expect(() => prepared.complete({})).toThrow('Completed transaction exceeds local byte limit')
+})
+
+test.each(['locktime', 'listing-sequence', 'funding-sequence', 'missing-predecessor'] as const)(
+  'retains the ordinary construction refusal for %s',
+  field => {
+    const transaction = fundedProfilePurchase()
+    if (field === 'locktime') transaction.lockTime = 1
+    if (field === 'listing-sequence') transaction.inputs[0].sequence = 0
+    if (field === 'funding-sequence') transaction.inputs[1].sequence = 0
+    if (field === 'missing-predecessor') transaction.inputs[1].sourceTransaction = undefined
+    expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+      field === 'locktime'
+        ? 'Funded transaction locktime changed'
+        : field === 'missing-predecessor'
+          ? 'Funding predecessor evidence required'
+          : 'Funded input finality differs from the route'
+    )
+  }
+)
+
+test('binds the selected listing output index even when another real output has identical bytes', () => {
+  const previous = Transaction.fromHex(activation.toHex())
+  previous.addOutput({ ...previous.outputs[0] })
+  const transaction = fundedProfilePurchase(),
+    builder = new RevenueListingProfileSpend(
+      profile,
+      fixture.descriptor,
+      [{ rawTransaction: previous.toHex(), outputIndex: 0 }],
+      purchaseAction
+    )
+  transaction.inputs[0].sourceTransaction = previous
+  transaction.inputs[0].sourceTXID = previous.id('hex')
+  transaction.inputs[0].sourceOutputIndex = previous.outputs.length - 1
+  expect(previous.outputs.at(-1)!.lockingScript.toHex()).toBe(
+    previous.outputs[0].lockingScript.toHex()
+  )
+  expect(previous.outputs.at(-1)!.satoshis).toBe(previous.outputs[0].satoshis)
+  expect(() => builder.prepare(transaction)).toThrow('Listing input changed')
+})
+
+test('allows the one-output activation construction before independent funding Script verification', () => {
+  const transaction = Transaction.fromAtomicBEEF(toArray(fixture.activation, 'base64')),
+    builder = new RevenueListingProfileSpend(
+      profile,
+      fixture.descriptor,
+      [{ rawTransaction: genesis.toHex(), outputIndex: 0 }],
+      { operation: 'activate' }
+    )
+  transaction.outputs = transaction.outputs.slice(0, 1)
+  expect(builder.prepare(transaction).signingRequests()).toEqual([])
+  // The funding signature must be produced for this changed output set separately.
+  expect(transaction.outputs).toHaveLength(1)
+})
+
+test('accepts exactly four MiB of funded encoding before constructing a witness', () => {
+  const transaction = fundedProfilePurchase(),
+    bound = 4194304
+  transaction.inputs[1].unlockingScript = new UnlockingScript()
+  const base = transaction.toBinary().length
+  // The raw input gains four CompactSize bytes and a five-byte PUSHDATA4 prefix.
+  transaction.inputs[1].unlockingScript = new UnlockingScript().writeBin(
+    Array<number>(bound - base - 9).fill(0)
+  )
+  expect(transaction.toBinary()).toHaveLength(bound)
+  expect(purchaseProfileBuilder().prepare(transaction).signingRequests()).toEqual([])
+  // This is a construction byte-bound check, not funding Script validity.
+})
+
+test('rejects noncanonical signed DER even when its scalar signature verifies for the exact protected child', async () => {
+  for (let index = 0; index < 8; index++) {
+    const { completed, prepared } = await construct(purchase, {
+        operation: 'split',
+        firstAmount: String(301 + index)
+      }),
+      bytes = [...completed.inputs[0].unlockingScript!.chunks[11].data!]
+    if (bytes[3] !== 33 || bytes[4] !== 0) continue
+    // Removing the required positive R prefix preserves the mathematical scalar,
+    // but the wire DER no longer has its unique positive-integer representation.
+    bytes.splice(4, 1)
+    bytes[1]--
+    bytes[3]--
+    const encoded = toHex(bytes),
+      parsed = TransactionSignature.fromChecksigFormat(bytes),
+      request = prepared.signingRequests()[0]
+    expect(parsed.verify(sha256(request.preimage), PublicKey.fromString(request.publicKey))).toBe(
+      true
+    )
+    expect(parsed.hasLowS()).toBe(true)
+    expect(parsed.scope).toBe(0x41)
+    expect(toHex(parsed.toChecksigFormat())).not.toBe(encoded)
+    expect(() => prepared.complete({ seller: encoded })).toThrow(
+      'Seller signature must authorize this input with the protected child and ALL|FORKID'
+    )
+    return
+  }
+  throw new Error('Expected the deterministic signed fixture to exercise a positive R prefix')
 })
