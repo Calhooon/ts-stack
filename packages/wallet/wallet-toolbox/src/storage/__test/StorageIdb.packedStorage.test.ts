@@ -7,7 +7,7 @@ import { StorageIdb } from '../StorageIdb'
 import { StorageProvider } from '../StorageProvider'
 import type { TableTransaction, TableSyncState } from '../schema/tables'
 import type { PackedIdbSchema, PackedIdbTransaction } from '../idbPackedFields'
-import { packedIdbIsUint8Array } from '../idbPackedFields'
+import { packedIdbIsUint8Array, readPackedIdbMetadataRequests } from '../idbPackedFields'
 import type { PackedIdbStagedField } from '../idbPackedStaging'
 import { openBrc38IdbSource } from '../portable/Brc38IdbSource'
 import { createBrc38Stream, exportBRC38, parseBRC38Json } from '../portable'
@@ -19,6 +19,60 @@ import type { PackedIdbReadSnapshot } from '../idbPackedSnapshot'
 const identity = '02' + '11'.repeat(32),
   otherIdentity = '03' + '22'.repeat(32)
 const timestamps = { created_at: new Date('2026-01-01'), updated_at: new Date('2026-01-01') }
+
+test('bounded metadata requests queue together, drain every operation and preserve result order', async () => {
+  const started: number[] = [],
+    finish: Array<(value: number) => void> = []
+  const requests = [0, 1, 2, 3, 4].map(index => () => {
+    started.push(index)
+    return new Promise<number>(resolve => {
+      finish[index] = resolve
+    })
+  })
+  const pending = readPackedIdbMetadataRequests(...requests)
+  expect(started).toEqual([0, 1, 2, 3, 4])
+  for (const index of [4, 2, 0, 3, 1]) finish[index](index + 10)
+  await expect(pending).resolves.toEqual([10, 11, 12, 13, 14])
+  expect(started).toHaveLength(5)
+})
+
+test('metadata failure drains later requests and reports the original first error without retaining a verdict', async () => {
+  const first = new Error('original earlier metadata failure'),
+    later = new Error('later request failure')
+  let release!: () => void,
+    finished = false
+  const pending = readPackedIdbMetadataRequests(
+    () => {
+      throw first
+    },
+    () =>
+      new Promise<void>(resolve => {
+        release = resolve
+      }),
+    () => Promise.reject(later)
+  )
+  void pending.then(
+    () => {
+      finished = true
+    },
+    () => {
+      finished = true
+    }
+  )
+  await Promise.resolve()
+  expect(finished).toBe(false)
+  release()
+  await expect(pending).rejects.toBe(first)
+  await expect(readPackedIdbMetadataRequests(() => Promise.resolve('fresh result'))).resolves.toEqual(['fresh result'])
+})
+
+test('metadata request groups reject empty and oversized batches before dispatch', async () => {
+  const read = jest.fn(() => Promise.resolve(1))
+  await expect(readPackedIdbMetadataRequests()).rejects.toThrow()
+  await expect(readPackedIdbMetadataRequests(read, read, read, read, read, read)).rejects.toThrow()
+  expect(read).not.toHaveBeenCalled()
+})
+
 let storage: StorageIdb
 function row(id: number, changes: Partial<TableTransaction> = {}): TableTransaction {
   return {

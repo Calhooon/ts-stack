@@ -302,11 +302,11 @@ export async function hasBrc38NativeLocalBaselineGenerationSchema(k: Knex.Transa
     const conditions = batch
       .map(source => {
         bindings.push(source.name, source.type, source.sql)
-        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
+        return '(?,?,CAST(? AS BLOB))'
       })
-      .join(' OR ')
+      .join(',')
     const row = (await k('sqlite_schema')
-      .whereRaw('(' + conditions + ')', bindings)
+      .whereRaw('(name,type,CAST(sql AS BLOB)) IN (' + conditions + ')', bindings)
       .count({ count: '*' })
       .countDistinct({ names: 'name' })
       .first()) as { count: unknown; names: unknown } | undefined

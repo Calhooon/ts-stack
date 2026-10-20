@@ -78,14 +78,24 @@ export async function readBrc38SqliteDefinitionBatch(
   }
   const bindings: string[] = []
   const conditions = batch.definitions
+    .filter(source => source.sql !== null)
     .map(source => {
-      bindings.push(source.name, source.type)
-      if (source.sql === null) return '(name=? AND type=? AND sql IS NULL)'
-      bindings.push(source.sql)
-      return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
+      bindings.push(source.name, source.type, source.sql!)
+      return '(?,?,CAST(? AS BLOB))'
     })
-    .join(' OR ')
-  const query = k(catalog).whereRaw('(' + conditions + ')', bindings)
+    .join(',')
+  const nullDefinitions = batch.definitions.filter(source => source.sql === null),
+    nullConditions = nullDefinitions
+      .map(source => {
+        bindings.push(source.name, source.type)
+        return '(?,?)'
+      })
+      .join(','),
+    predicates = [
+      ...(conditions === '' ? [] : ['(name,type,CAST(sql AS BLOB)) IN (' + conditions + ')']),
+      ...(nullConditions === '' ? [] : ['(sql IS NULL AND (name,type) IN (' + nullConditions + '))'])
+    ]
+  const query = k(catalog).whereRaw('(' + predicates.join(' OR ') + ')', bindings)
   if (batch.tableNames !== undefined) query.whereIn('tbl_name', batch.tableNames)
   const row = (await query.count({ matches: '*' }).countDistinct({ names: 'name' }).first()) as
     { matches: unknown; names: unknown } | undefined

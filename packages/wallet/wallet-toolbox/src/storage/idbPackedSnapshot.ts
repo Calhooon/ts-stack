@@ -38,6 +38,7 @@ import {
   packedIdbRowAllocation,
   packedIdbStores,
   readPackedIdbClock,
+  readPackedIdbMetadataRequests,
   readPackedIdbExtent,
   retainPackedIdbFields,
   unpackPackedIdbMetadata,
@@ -360,8 +361,10 @@ export async function openPackedIdbSnapshot(
   })
   const fresh = async (tx: PackedIdbTransaction) => {
     current()
-    const clock = await readPackedIdbClock(tx),
-      lease = await tx.objectStore(packedIdbStores.leases).get(id)
+    const [clock, lease] = await readPackedIdbMetadataRequests(
+      () => readPackedIdbClock(tx),
+      () => tx.objectStore(packedIdbStores.leases).get(id)
+    )
     if (
       clock.epoch !== source.epoch ||
       clock.revision < source.revision ||
@@ -374,9 +377,11 @@ export async function openPackedIdbSnapshot(
       lease.storageIdentityKey !== source.settings.storageIdentityKey
     )
       packedIdbInvalid()
-    const rows = await tx.objectStore('settings').getAll(undefined, 2),
-      user = await tx.objectStore('users').get(source.userId),
-      head = await tx.objectStore(packedIdbStores.heads).get(['users', source.userId])
+    const [rows, user, head] = await readPackedIdbMetadataRequests(
+      () => tx.objectStore('settings').getAll(undefined, 2),
+      () => tx.objectStore('users').get(source.userId),
+      () => tx.objectStore(packedIdbStores.heads).get(['users', source.userId])
+    )
     if (
       rows.length !== 1 ||
       JSON.stringify(unmarked(rows[0])) !== JSON.stringify(source.settings) ||

@@ -180,3 +180,31 @@ test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8
     await db.destroy()
   }
 })
+
+test('fresh definition comparisons distinguish all-NULL implicit indexes from empty SQL and wrong identities', async () => {
+  const db = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  try {
+    for (const name of ['one', 'two', 'three']) await db.raw(`CREATE TABLE null_batch_${name}(id TEXT PRIMARY KEY)`)
+    const definitions = ['one', 'two', 'three'].map(name => ({
+      name: `sqlite_autoindex_null_batch_${name}_1`,
+      type: 'index',
+      sql: null
+    }))
+    await db.transaction(async trx => {
+      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({ matches: 3, names: 3 })
+      for (const replacement of [
+        { ...definitions[1], sql: '' },
+        { ...definitions[1], name: 'missing_implicit_index' },
+        { ...definitions[1], type: 'table' }
+      ])
+        expect(
+          await readBrc38SqliteDefinitionBatch(trx, {
+            definitions: [definitions[0], replacement, definitions[2]]
+          })
+        ).toEqual({ matches: 2, names: 2 })
+      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({ matches: 3, names: 3 })
+    })
+  } finally {
+    await db.destroy()
+  }
+})

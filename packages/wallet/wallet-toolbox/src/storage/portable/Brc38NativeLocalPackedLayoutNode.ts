@@ -33,22 +33,23 @@ function definition(sql: string): Readonly<{ name: string; type: string; sql: st
  * admit the original profile/source/row before operating. */
 export async function hasBrc38NativeLocalPackedLayout(k: Knex.Transaction): Promise<boolean> {
   requireBrc38PackedRead(k)
-  const count = (await k('sqlite_schema')
-    .whereRaw('substr(name,1,?)=?', [name.length, name])
-    .count({ count: '*' })
-    .first()) as { count: unknown } | undefined
-  if (count?.count === 0) return false
-  if (count?.count !== marker.length) invalid()
-  for (const sql of marker) {
-    requireBrc38PackedRead(k)
-    const selected = definition(sql),
-      actual = (await k('sqlite_schema')
-        .where({ name: selected.name, type: selected.type })
-        .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [sql])
-        .count({ count: '*' })
-        .first()) as { count: unknown } | undefined
-    if (actual?.count !== 1) invalid()
-  }
+  const expected = marker.map(definition),
+    bindings = expected.flatMap(value => [value.name, value.type, value.sql]),
+    current = (await k('sqlite_schema')
+      .whereRaw('substr(name,1,?)=?', [name.length, name])
+      .select(
+        k.raw(
+          'count(*) AS total,count(DISTINCT name) AS names,sum(CASE WHEN (name,type,CAST(sql AS BLOB)) IN (' +
+            expected.map(() => '(?,?,CAST(? AS BLOB))').join(',') +
+            ') THEN 1 ELSE 0 END) AS matches',
+          bindings
+        )
+      )
+      .first()) as { total: unknown; names: unknown; matches: unknown } | undefined
+  if (current?.total === 0) return false
+  if (current?.total !== marker.length || current.names !== marker.length || current.matches !== marker.length)
+    invalid()
+  requireBrc38PackedRead(k)
   const rows = (await k(name).select('slot', 'protocol').limit(2)) as Array<{ slot: unknown; protocol: unknown }>
   if (rows.length !== 1 || rows[0].slot !== 1 || rows[0].protocol !== 'brc38-native-local-packed/v2') invalid()
   requireBrc38PackedRead(k)

@@ -20,6 +20,7 @@ import {
   packedIdbMarker,
   requirePackedIdbWriter,
   readPackedIdbClock,
+  readPackedIdbMetadataRequests,
   readPackedIdbExtent,
   packedIdbKey,
   unpackPackedIdbMetadata,
@@ -512,9 +513,11 @@ export class IdbSnapshotSyncJournal {
   }
   async #header(raw: PackedIdbTransaction, identityKey: string): Promise<Header> {
     text(identityKey, 130)
-    const clock = await readPackedIdbClock(raw),
-      settingsRows = await raw.objectStore('settings').getAll(undefined, 2),
-      users = await raw.objectStore('users').index('identityKey').getAll(identityKey, 2)
+    const [clock, settingsRows, users] = await readPackedIdbMetadataRequests(
+      () => readPackedIdbClock(raw),
+      () => raw.objectStore('settings').getAll(undefined, 2),
+      () => raw.objectStore('users').index('identityKey').getAll(identityKey, 2)
+    )
     if (settingsRows.length !== 1 || users.length !== 1) invalid()
     // Header fields must be inline metadata. Native getAll is bounded to two
     // rows and avoids hydrating data which this same header would refuse.

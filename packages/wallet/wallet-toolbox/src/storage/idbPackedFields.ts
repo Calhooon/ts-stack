@@ -1,4 +1,5 @@
 import { utf16CodeUnitAt } from '../utility/utf16CodeUnitAt'
+import { promiseFromSync } from '../utility/promiseFromSync'
 import { unwrap, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import { SHA256 } from '@bsv/sdk/primitives/Hash'
 import { SnapshotResourceLimitError } from './snapshot/SnapshotResourceLimitError'
@@ -271,6 +272,22 @@ const packedSchemaDefinitions: Array<[string, string | string[] | null, Record<s
     { scope: ['userId', 'sourceStorageIdentityKey', 'sessionId'], expiresAt: 'expiresAt' }
   ]
 ]
+/** Queue only independent bounded metadata requests in the caller's one actual
+ * transaction. Drain every request, then preserve the original error order.
+ * Results are comparison DATA, never a retained schema or admission verdict. */
+export async function readPackedIdbMetadataRequests<const T extends readonly (() => Promise<unknown>)[]>(
+  ...reads: T
+): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
+  if (reads.length < 1 || reads.length > 5) packedIdbInvalid()
+  const results = await Promise.allSettled(reads.map(read => promiseFromSync(read))),
+    values: unknown[] = []
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason
+    values.push(result.value)
+  }
+  return values as { [K in keyof T]: Awaited<ReturnType<T[K]>> }
+}
+
 /** Fresh schema and budget on the actual transaction. The clock returned here
  * is data belonging to that view, not a cached schema/admission verdict. */
 export async function readPackedIdbClock(

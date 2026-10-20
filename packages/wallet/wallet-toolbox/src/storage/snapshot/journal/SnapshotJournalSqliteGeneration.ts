@@ -18,6 +18,7 @@ import { readGenerationIndexState } from '../../schema/snapshotSqliteIndexState'
 import { SNAPSHOT_JOURNAL_SQLITE_CLOCK_DDL } from './SnapshotJournalSqliteClock'
 import {
   snapshotJournalSqliteObserverSql,
+  snapshotJournalSqliteObserverVariants,
   SNAPSHOT_JOURNAL_SQLITE_METADATA_DDL,
   SNAPSHOT_JOURNAL_SQLITE_COMPACT_METADATA_DDL,
   SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
@@ -369,11 +370,14 @@ async function plan(k: Knex, config?: Knex.MigratorConfig, forceSigned = false):
     shared = layout === 'effects-shared' || layout === 'events-shared' || layout === 'sources-shared' || positional,
     events = layout === 'events-shared' || layout === 'sources-shared' || positional,
     projectedSources = layout === 'sources-shared' || positional,
-    historicalObservers = await snapshotJournalSqliteObserverSql(k, shared, events)
+    observerVariants = projectedSources
+      ? await snapshotJournalSqliteObserverVariants(k, shared, events)
+      : [await snapshotJournalSqliteObserverSql(k, shared, events)],
+    historicalObservers = observerVariants[0]
   let observers = historicalObservers
   if (projectedSources) {
     const nativeCells = await hasSnapshotSqliteCellComparison(k)
-    const cellObservers = await snapshotJournalSqliteObserverSql(k, shared, events, true)
+    const cellObservers = observerVariants[1]
     const probeName = 'snapshot_journal_physical_0_UPDATE'
     const expected = (definitions: string[]) =>
       (positional ? snapshotJournalPositionalEventSql(definitions) : definitions).find(sql =>

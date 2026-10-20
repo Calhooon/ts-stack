@@ -54,14 +54,10 @@ function invalid(): never {
  * retained. Each unique expected name still requires exact type, table and SQL. */
 async function verifyDefinitions(k: Knex, expected: readonly Definition[]): Promise<void> {
   const actual = (await k('sqlite_schema')
-    .where(query => {
-      for (const definition of expected)
-        void query.orWhere(match => {
-          void match
-            .where({ name: definition.name, type: 'trigger', tbl_name: definition.table })
-            .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
-        })
-    })
+    .whereRaw(
+      '(name,type,tbl_name,CAST(sql AS BLOB)) IN (' + expected.map(() => '(?,?,?,CAST(? AS BLOB))').join(',') + ')',
+      expected.flatMap(value => [value.name, 'trigger', value.table, value.sql])
+    )
     .count({ count: '*' })
     .first()) as { count: unknown } | undefined
   if (actual?.count !== expected.length) invalid()

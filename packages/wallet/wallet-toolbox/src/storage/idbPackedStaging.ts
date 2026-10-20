@@ -12,6 +12,7 @@ import {
   packedIdbMetadataCharge,
   packedIdbStores,
   readPackedIdbClock,
+  readPackedIdbMetadataRequests,
   type PackedIdbField,
   type PackedIdbRow,
   type PackedIdbTransaction
@@ -57,8 +58,10 @@ async function durableStage(
   identity: StageIdentity,
   sealed: boolean
 ): Promise<Record<string, unknown>> {
-  const clock = await readPackedIdbClock(tx),
-    actual = await tx.objectStore(packedIdbStores.contents).get(identity.field.content)
+  const [clock, actual] = await readPackedIdbMetadataRequests(
+    () => readPackedIdbClock(tx),
+    () => tx.objectStore(packedIdbStores.contents).get(identity.field.content)
+  )
   if (
     clock.epoch !== identity.epoch ||
     actual?.id !== identity.field.content ||

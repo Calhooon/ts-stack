@@ -248,11 +248,11 @@ export async function verifyBrc38NativePackedDefinitions(
     const conditions = batch
       .map(source => {
         bindings.push(source.name, source.type, source.sql)
-        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
+        return '(?,?,CAST(? AS BLOB))'
       })
-      .join(' OR ')
+      .join(',')
     const current = (await trx('sqlite_schema')
-      .whereRaw('(' + conditions + ')', bindings)
+      .whereRaw('(name,type,CAST(sql AS BLOB)) IN (' + conditions + ')', bindings)
       .count({ count: '*' })
       .first()) as { count: unknown } | undefined
     if (current?.count !== batch.length) throw new Error('Packed native source-owned schema differs')

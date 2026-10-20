@@ -2,9 +2,14 @@ import { knex, type Knex } from 'knex'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { WERR_INVALID_OPERATION } from '../../../sdk/WERR_errors'
 import { fixture } from '../../../../test/utils/snapshotSqliteFixtures'
-import { snapshotJournalSqliteObserverSql, snapshotJournalSqliteSources } from './SnapshotJournalSqliteObservers'
+import {
+  snapshotJournalSqliteObserverSql,
+  snapshotJournalSqliteObserverVariants,
+  snapshotJournalSqliteSources
+} from './SnapshotJournalSqliteObservers'
 
 // The retained sqlite3 branch executes the exact original sequential PRAGMA
 // implementation on the same known healthy physical fixture. It is a fresh
@@ -29,6 +34,35 @@ function queries(k: Knex): { values: string[]; stop: () => void } {
     }
   }
 }
+
+test.each([
+  [false, false, 'ebeb222ef46c7ff20502a3f9a1ccb79d01cee93c88e2e4ae43562329c82f8e50'],
+  [true, false, 'dea688ecb820de6acc29195242e469b0538034f1769f23dd000c094dc76d52c7'],
+  [true, true, '53f2833f85fda5649298e7906b0b8c1aef0f0310703f77a4a63d8bb427bd0ab1']
+] as const)(
+  'one fresh observer construction preserves both original SQL variants (%s, %s)',
+  async (shared, events, digest) => {
+    const k = await fixture('BINARY', false)
+    try {
+      const seen = queries(k)
+      const variants = await snapshotJournalSqliteObserverVariants(k, shared, events)
+      seen.stop()
+      // Captured from the two original independent constructions before factoring.
+      expect(variants.map(value => value.length)).toEqual([51, 51])
+      expect(createHash('sha256').update(JSON.stringify(variants)).digest('hex')).toBe(digest)
+      expect(seen.values).toHaveLength(1)
+      expect(seen.values[0]).toContain('pragma_table_info')
+      await k.raw('ALTER TABLE outputs ADD COLUMN variantFreshness TEXT')
+      const changed = await snapshotJournalSqliteObserverVariants(k, shared, events)
+      expect(changed[0]).not.toEqual(variants[0])
+      expect(changed[1]).not.toEqual(variants[1])
+      expect(changed[0]).toEqual(await snapshotJournalSqliteObserverSql(k, shared, events, false))
+      expect(changed[1]).toEqual(await snapshotJournalSqliteObserverSql(k, shared, events, true))
+    } finally {
+      await k.destroy()
+    }
+  }
+)
 
 test('one fresh bounded column statement preserves every original observer byte and source order', async () => {
   const k = await fixture('BINARY', false)

@@ -70,34 +70,45 @@ export function brc38PreparedFieldVersionGuard(family: Brc38NativePreparedFamily
  * preserves the original packed layout; partial/changed definitions refuse. */
 export async function hasBrc38NativePreparedFieldsSchema(k: Knex.Transaction): Promise<boolean> {
   requireBrc38PackedRead(k)
-  const total = (await k('sqlite_schema')
-    .whereRaw('substr(name,1,22)=?', ['brc38_native_prepared_'])
-    .count({ count: '*' })
-    .first()) as { count: unknown } | undefined
-  if (total?.count === 0) return false
-  const actualTable = (await k('sqlite_schema')
-      .where({ name: nativePreparedFieldsTable, type: 'table' })
-      .first('sql')) as { sql: unknown } | undefined,
-    compact = actualTable?.sql === compactDefinitions[0]
-  if (!compact && actualTable?.sql !== definitions[0]) invalid()
+  const prefix = 'brc38_native_prepared_',
+    primaryName = `sqlite_autoindex_${nativePreparedFieldsTable}_1`,
+    current = (await k('sqlite_schema')
+      .whereRaw("substr(name,1,22)=? OR (tbl_name=? AND type='index' AND sql IS NULL)", [
+        prefix,
+        nativePreparedFieldsTable
+      ])
+      .select(
+        k.raw(
+          `coalesce(sum(CASE WHEN substr(name,1,22)=? THEN 1 ELSE 0 END),0) AS total,
+        sum(CASE WHEN name=? AND type='table' AND CAST(sql AS BLOB)=CAST(? AS BLOB) THEN 1 ELSE 0 END) AS compact,
+        sum(CASE WHEN name=? AND type='table' AND CAST(sql AS BLOB)=CAST(? AS BLOB) THEN 1 ELSE 0 END) AS legacy,
+        sum(CASE WHEN tbl_name=? AND type='index' AND sql IS NULL THEN 1 ELSE 0 END) AS primaryCount,
+        sum(CASE WHEN tbl_name=? AND type='index' AND sql IS NULL AND name=? THEN 1 ELSE 0 END) AS primaryMatches`,
+          [
+            prefix,
+            nativePreparedFieldsTable,
+            compactDefinitions[0],
+            nativePreparedFieldsTable,
+            definitions[0],
+            nativePreparedFieldsTable,
+            nativePreparedFieldsTable,
+            primaryName
+          ]
+        )
+      )
+      .first()) as
+      { total: unknown; compact: unknown; legacy: unknown; primaryCount: unknown; primaryMatches: unknown } | undefined
+  if (current?.total === 0) return false
+  const compact = current?.compact === 1
+  if (!compact && current?.legacy !== 1) invalid()
   const expected = expectedDefinitions(compact)
-  if (total?.count !== expected.size) invalid()
+  if (current?.total !== expected.size) invalid()
   for (const batch of brc38SqliteDefinitionBatches(expected)) {
     requireBrc38PackedRead(k)
     const actual = await readBrc38SqliteDefinitionBatch(k, batch)
     if (actual.matches !== batch.definitions.length || actual.names !== batch.definitions.length) invalid()
   }
-  const primary = (await k('sqlite_schema')
-    .where({ tbl_name: nativePreparedFieldsTable, type: 'index' })
-    .whereNull('sql')
-    .select('name')
-    .limit(2)) as Array<{ name: string }>
-  if (
-    compact
-      ? primary.length !== 0
-      : primary.length !== 1 || primary[0].name !== `sqlite_autoindex_${nativePreparedFieldsTable}_1`
-  )
-    invalid()
+  if (compact ? current.primaryCount !== 0 : current.primaryCount !== 1 || current.primaryMatches !== 1) invalid()
   requireBrc38PackedRead(k)
   return true
 }

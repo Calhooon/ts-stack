@@ -487,6 +487,27 @@ export async function snapshotJournalSqliteObserverSql(
   sharedEvents = false,
   nativeCells = false
 ): Promise<string[]> {
+  return (await observerSql(k, sharedEffects, sharedEvents, [nativeCells]))[0]
+}
+
+/** Both fixed SQL variants from this construction's same fresh observations.
+ * The caller still validates the complete selected generation in its actual
+ * view. No observation or admission result survives this call. */
+export async function snapshotJournalSqliteObserverVariants(
+  k: Knex,
+  sharedEffects = false,
+  sharedEvents = false
+): Promise<readonly [string[], string[]]> {
+  const result = await observerSql(k, sharedEffects, sharedEvents, [false, true])
+  return [result[0], result[1]]
+}
+
+async function observerSql(
+  k: Knex,
+  sharedEffects: boolean,
+  sharedEvents: boolean,
+  cellModes: readonly boolean[]
+): Promise<string[][]> {
   if (!['sqlite3', 'better-sqlite3'].includes(k.client.config.client) && !isOwnedNativeSqlite(k))
     throw new WERR_INVALID_OPERATION('Snapshot journal observers require SQLite')
   const definitions: string[] = []
@@ -533,20 +554,23 @@ export async function snapshotJournalSqliteObserverSql(
           : `CREATE TRIGGER snapshot_journal_scope_${i}_${event} AFTER ${event} ON ${q(source.table)} BEGIN ${keyGuard(fields.slice(2), fields[1], false, sharedEffects)}${tick}${scopeUpsert('SELECT ' + selected + ' WHERE ' + writable, sharedEffects)} END`
       )
     }
-  const observed = await readObserverColumns(k)
+  const observed = await readObserverColumns(k),
+    variants = cellModes.map(() => definitions.slice())
   await runInSeries(snapshotJournalSqliteSources.entries(), async ([tableId, table]) => {
     const columns: Array<{ name: string }> = await observerColumns(k, observed, tableId, table)
     if (columns.length === 0) throw new WERR_INVALID_OPERATION('Missing snapshot journal source')
-    const changed = snapshotSqliteCellsChanged(
-      columns.map(({ name }) => name),
-      nativeCells
-    )
-    for (const event of ['INSERT', 'UPDATE', 'DELETE'])
-      definitions.push(
-        sharedEvents
-          ? sharedSourceTrigger(tableId, table, event, changed)
-          : physicalTrigger(tableId, table, event, changed, sharedEffects)
+    for (const [index, nativeCells] of cellModes.entries()) {
+      const changed = snapshotSqliteCellsChanged(
+        columns.map(({ name }) => name),
+        nativeCells
       )
+      for (const event of ['INSERT', 'UPDATE', 'DELETE'])
+        variants[index].push(
+          sharedEvents
+            ? sharedSourceTrigger(tableId, table, event, changed)
+            : physicalTrigger(tableId, table, event, changed, sharedEffects)
+        )
+    }
   })
   if (isOwnedNativeSqlite(k)) {
     // Root callers obtain a real finite read transaction for schema inspection;
@@ -554,11 +578,15 @@ export async function snapshotJournalSqliteObserverSql(
     const packed = k.isTransaction
       ? await hasBrc38NativePackedSchema(k as Knex.Transaction)
       : await k.transaction(async trx => await hasBrc38NativePackedSchema(trx))
-    if (packed) definitions.push(...snapshotJournalPackedPointerObserverSql(false, sharedEffects, sharedEvents))
+    if (packed)
+      for (const selected of variants)
+        selected.push(...snapshotJournalPackedPointerObserverSql(false, sharedEffects, sharedEvents))
     const text = k.isTransaction
       ? await hasBrc38NativePackedTextSchema(k as Knex.Transaction)
       : await k.transaction(async trx => await hasBrc38NativePackedTextSchema(trx))
-    if (text) definitions.push(...snapshotJournalPackedPointerObserverSql(true, sharedEffects, sharedEvents))
+    if (text)
+      for (const selected of variants)
+        selected.push(...snapshotJournalPackedPointerObserverSql(true, sharedEffects, sharedEvents))
   }
-  return definitions
+  return variants
 }

@@ -85,14 +85,10 @@ export async function verifyBrc38SqlStructuredPrefixGuards(k: Knex, family: Brc3
   // every match still compares its complete definition in this actual view.
   const expected = brc38SqlStructuredPrefixDefinitions(family),
     actual = (await k('sqlite_schema')
-      .where(query => {
-        for (const value of expected)
-          void query.orWhere(match => {
-            void match
-              .where({ name: value.name, type: 'trigger', tbl_name: value.table })
-              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [value.sql])
-          })
-      })
+      .whereRaw(
+        '(name,type,tbl_name,CAST(sql AS BLOB)) IN (' + expected.map(() => '(?,?,?,CAST(? AS BLOB))').join(',') + ')',
+        expected.flatMap(value => [value.name, 'trigger', value.table, value.sql])
+      )
       .count({ count: '*' })
       .first()) as { count: unknown } | undefined
   if (actual?.count !== expected.length) throw new Error('Private structured immutable prefix definitions differ')
