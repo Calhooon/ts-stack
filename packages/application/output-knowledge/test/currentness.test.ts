@@ -18,6 +18,7 @@ import {
   type OutputScope
 } from '../src/index.js'
 import { SQLiteJournal } from '../src/storage/SQLiteJournal.js'
+import { BitcoinKnowledgeState } from '../src/BitcoinKnowledgeState.js'
 import { chain, partition, context, candidate, corpus, resolver } from './evidence-fixture.js'
 
 const base = Math.floor(Date.now() / 1000) * 1000
@@ -107,6 +108,17 @@ function open(
 async function initialize(store: KnowledgeStore) {
   await store.commit('0', knowledgeMutation({ kind: 'context', context: context() }))
 }
+
+async function replayState(store: KnowledgeStore, rules: SourceCurrentnessRule[]) {
+  const state = new BitcoinKnowledgeState({
+    journalId: store.journalId,
+    partition,
+    nonFinal: true,
+    sourceCurrentness: rules
+  })
+  for (const entry of (await store.inspect()).entries) state.apply(entry)
+  return state
+}
 async function ingest(store: KnowledgeStore, worker: BitcoinKnowledge, value: SourceBatch) {
   await store.commit(
     (await store.revision()).received,
@@ -118,6 +130,98 @@ const reports = (assessments: Currentness[]) =>
   assessments.filter(row => row.origin.kind === 'source')
 
 describe('explicit source currentness and durable expiry', () => {
+  it('keeps an unverified group pending when its restored planner lacks the receipt index', async () => {
+    const rules = [rule()],
+      { store } = open(undefined, rules)
+    await initialize(store)
+    await store.commit(
+      (await store.revision()).received,
+      knowledgeMutation({ kind: 'receive', batch: batch('pending', [output()], base) })
+    )
+    const state = await replayState(store, rules),
+      pending = state.membership.groups().find(row => row.status === 'pending')!,
+      plan = state.plan()
+    expect(pending.group.id).toBe('pending')
+    expect([...plan.slots.values()].some(bundles => bundles.length > 0)).toBe(true)
+    // A partial restored plan must never invent a verified whole-group decision.
+    const planner = jest.spyOn(state, 'plan').mockReturnValue({ ...plan, slots: new Map() })
+    try {
+      expect(state.groupDecision(pending)).toBeUndefined()
+      expect(state.snapshot()).toMatchObject({ facts: [], reconciled: { memberships: [] } })
+    } finally {
+      planner.mockRestore()
+    }
+    expect(state.groupDecision(pending)).toBeUndefined()
+  })
+
+  it('withholds source freshness when a restored planner has no evidence-slot index', async () => {
+    const rules = [rule()],
+      { worker, store } = open(undefined, rules)
+    await initialize(store)
+    await ingest(store, worker, batch('a', [output()], base))
+    const state = await replayState(store, rules),
+      before = state.snapshot(),
+      plan = state.plan(),
+      missingIndex = new Map(plan.slots)
+    expect(reports(before.assessments)[0].state).toBe('reported-unspent')
+    missingIndex.clear()
+    // Inject only the missing index; retain the actual SDK proofs and accepted journal.
+    const planner = jest.spyOn(state, 'plan').mockReturnValue({ ...plan, slots: missingIndex })
+    try {
+      const result = state.snapshot()
+      expect(result.facts).toEqual(before.facts)
+      expect(reports(result.assessments)[0]).toMatchObject({ state: 'stale', evidenceIds: [] })
+    } finally {
+      planner.mockRestore()
+    }
+    expect(reports(state.snapshot().assessments)[0].state).toBe('reported-unspent')
+  })
+
+  it('does not lend another source Bitcoin proof to an orphan restored membership', async () => {
+    const rules = [rule('host-a'), rule('host-b')],
+      { worker, store } = open(undefined, rules)
+    await initialize(store)
+    await ingest(store, worker, batch('a', [output()], base))
+    await ingest(store, worker, batch('empty', [], base, 'host-b'))
+    const state = await replayState(store, rules),
+      before = state.snapshot(),
+      members = state.membership.memberships(),
+      original = members[0]
+    expect(original).toMatchObject({ present: true, scope: scope('host-a') })
+    expect(state.membership.isContinuous(scope('host-b'), '0')).toBe(true)
+    state.sourceCurrentness.receive(
+      batch('unlinked', [output('A', 'unlinked', 'host-b')], base, 'host-b', '0', '2'),
+      String(BigInt(before.revision.received) + 1n),
+      state.context.id
+    )
+    // Model a restored component mismatch without inventing a successful proof.
+    const membership = jest.spyOn(state.membership, 'memberships').mockReturnValue([
+      ...members,
+      {
+        ...original,
+        scope: scope('host-b'),
+        observationId: 'unlinked',
+        phase: 'live',
+        sequence: '2'
+      }
+    ])
+    try {
+      const result = state.snapshot(),
+        selected = reports(result.assessments)
+      expect(result.facts).toEqual(before.facts)
+      expect(
+        selected.find(row => row.origin.kind === 'source' && row.origin.scope.provider === 'host-a')
+          ?.state
+      ).toBe('reported-unspent')
+      expect(
+        selected.find(row => row.origin.kind === 'source' && row.origin.scope.provider === 'host-b')
+      ).toMatchObject({ state: 'stale', evidenceIds: [] })
+    } finally {
+      membership.mockRestore()
+    }
+    expect(state.snapshot()).toEqual(before)
+  })
+
   it('requires exact configured source rules and keeps each provider separate from local knowledge', async () => {
     const { worker, store } = open(undefined, [rule('host-a'), rule('host-b')])
     await initialize(store)

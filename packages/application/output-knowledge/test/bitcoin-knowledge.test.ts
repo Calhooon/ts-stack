@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from '@jest/globals'
+import { afterEach, describe, expect, it, jest } from '@jest/globals'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -91,6 +91,39 @@ async function receive(store: KnowledgeStore, value: SourceBatch) {
 const tx = (name: string) => corpus.transactions[name].txid
 
 describe('default Bitcoin knowledge journal and worker', () => {
+  it('retains dependency-limited evidence without verifying it and quarantines an invalid sibling atomically', async () => {
+    const storage = new MemoryJournal('evidence-capacity'),
+      verifier = new SDKEvidenceVerifier(resolver),
+      verify = jest.spyOn(verifier, 'verify'),
+      worker = new BitcoinKnowledge({
+        journalId: storage.namespace,
+        partition,
+        nonFinal: true,
+        verifier,
+        limits: { dependencies: 1 }
+      }),
+      store = new KnowledgeStore(storage, worker, { partition }),
+      malformed: OutputObservation = {
+        id: 'malformed',
+        scope,
+        kind: 'output',
+        payload: { evidence: { ...candidate('Q').evidence, beef: 'AA==' } }
+      }
+    stores.push(store)
+    await initialize(store)
+    expect(
+      (await receive(store, batch('bounded-group', [output('A', 'limited'), malformed]))).status
+    ).toBe('committed')
+    await worker.advance(store, signal())
+    const history = await store.inspect(),
+      acceptance = history.entries.find(entry => entry.body.kind === 'accept')!.body
+    expect(acceptance.kind).toBe('accept')
+    if (acceptance.kind !== 'accept') throw new Error('Missing quarantined group decision')
+    expect(acceptance.results.map(result => result.status)).toEqual(['limited', 'invalid'])
+    expect(verify).not.toHaveBeenCalled()
+    expect(await store.read()).toMatchObject({ facts: [], reconciled: { memberships: [] } })
+  })
+
   it('owns the installed critical-extension vocabulary across later caller mutations', async () => {
     const extension = 'urn:example:record-extension',
       installed = [extension],
