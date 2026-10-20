@@ -23,6 +23,18 @@ async function fixture(deadline?: (input: AcceptedInput) => string | undefined) 
 }
 
 describe('installed read publication window', () => {
+  it('permits publication at the Unix epoch before an installed future deadline', async () => {
+    const f = await fixture(() => '1')
+    try {
+      f.setClock(0)
+      expect((await f.store.read()).revision.accepted).toBe('1')
+      f.setClock(1000)
+      await expect(f.store.read()).rejects.toMatchObject({ code: 'expired', retryable: true })
+    } finally {
+      await f.store.close()
+    }
+  })
+
   it('withholds current, historical and watch delivery at exclusive expiry, while preserving retained history', async () => {
     const f = await fixture(() => '2')
     try {

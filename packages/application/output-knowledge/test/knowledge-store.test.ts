@@ -38,6 +38,291 @@ function wrapper(storage: JournalStorage, overrides: Partial<JournalStorage>): J
 }
 
 describe('knowledge store journal port', () => {
+  it.each(['committed', 'replayed'] as const)(
+    'wakes an installed watcher immediately after durable append reports %s',
+    async status => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] })
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      const store = new KnowledgeStore(
+          wrapper(storage, {
+            async append(expected, mutation, local) {
+              if (status === 'replayed') await storage.append(expected, mutation, local)
+              return storage.append(expected, mutation, local)
+            }
+          }),
+          reducer(),
+          { partition, pollMs: 1000 }
+        ),
+        controller = new AbortController(),
+        watcher = store.watch('1', controller.signal)[Symbol.asyncIterator]()
+      let delivered = false
+      const waiting = watcher.next().then(value => {
+        delivered = true
+        return value
+      })
+      void waiting.catch(() => undefined)
+      try {
+        await new Promise<void>(resolve => setImmediate(resolve))
+        expect(delivered).toBe(false)
+        expect((await store.commit('1', invalidation())).status).toBe(status)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        expect(delivered).toBe(true)
+        expect((await waiting).value?.revision).toEqual({ received: '2', accepted: '2' })
+      } finally {
+        controller.abort()
+        await jest.advanceTimersByTimeAsync(1000)
+        await waiting.catch(() => undefined)
+        await watcher.return?.()
+        await store.close()
+        jest.useRealTimers()
+      }
+    }
+  )
+
+  it('advances receipt and accepted frontiers independently for an unaccepted source batch', async () => {
+    const storage = new MemoryJournal('test'),
+      store = new KnowledgeStore(storage, reducer(), { partition })
+    try {
+      await store.commit('0', initial())
+      const scope = {
+        chain: context().view.chain,
+        provider: 'source',
+        service: 'records',
+        queryDigest: '11'.repeat(32),
+        rulesDigest: '22'.repeat(32),
+        access: 'public',
+        epoch: 'one'
+      }
+      const receipt = knowledgeMutation({
+        kind: 'receive',
+        batch: {
+          provenance: {
+            partition,
+            generation: '0',
+            adapter: 'test',
+            scope,
+            authentication: 'configured-transport',
+            peer: 'source',
+            receivedAt: '1'
+          },
+          groups: [],
+          coverage: { scope, phase: 'finite', status: 'complete' }
+        }
+      })
+      expect(await store.commit('1', receipt)).toMatchObject({
+        status: 'committed',
+        revision: { received: '2', accepted: '1' }
+      })
+      expect((await store.read()).revision).toEqual({ received: '2', accepted: '1' })
+      expect(await store.commit('2', invalidation())).toMatchObject({
+        status: 'committed',
+        revision: { received: '3', accepted: '2' }
+      })
+    } finally {
+      await store.close()
+    }
+  })
+
+  it.each(['digest', 'receipt gap', 'head bytes', 'empty page', 'future page'] as const)(
+    'rejects a journal %s fault before invoking the reducer',
+    async fault => {
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      await storage.append('1', invalidation())
+      const entries = await storage.read('0', 2),
+        head = await storage.head()
+      if (fault === 'digest' && entries[1].body.kind === 'invalidate') {
+        entries[1].body.reason = 'modified without a matching digest'
+        head.bytes = entries.reduce((bytes, entry) => bytes + journalEntryBytes(entry), 0)
+      }
+      if (fault === 'receipt gap') {
+        entries[1].revision.received = '3'
+        head.received = '3'
+      }
+      if (fault === 'head bytes') head.bytes++
+      const reduce = jest.fn(reducer().reduce),
+        read = jest.fn(async () =>
+          fault === 'empty page'
+            ? []
+            : fault === 'future page'
+              ? [{ ...entries[0], revision: { received: '3', accepted: '1' } }]
+              : entries
+        ),
+        store = new KnowledgeStore(
+          wrapper(storage, { head: async () => head, read }),
+          { reduce },
+          { partition }
+        )
+      try {
+        const reason =
+          fault === 'empty page'
+            ? 'history is incomplete'
+            : fault === 'future page'
+              ? 'no contiguous progress'
+              : fault === 'head bytes'
+                ? 'head does not match'
+                : 'integrity or revision continuity'
+        await expect(store.read()).rejects.toMatchObject({
+          code: 'reset-required',
+          message: expect.stringContaining(reason)
+        })
+        expect(reduce).not.toHaveBeenCalled()
+        expect(read).toHaveBeenCalledTimes(1)
+        expect(await storage.head()).toMatchObject({ received: '2', accepted: '2', entries: 2 })
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it.each(['read', 'revision'] as const)(
+    'rejects %s before its retained resume checkpoint',
+    async operation => {
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      const read = jest.fn(storage.read.bind(storage)),
+        store = new KnowledgeStore(wrapper(storage, { read }), reducer(), {
+          partition,
+          minimumReceived: '2'
+        })
+      try {
+        await expect(store[operation]()).rejects.toMatchObject({
+          code: 'reset-required',
+          message: expect.stringContaining('retained resume checkpoint')
+        })
+        expect(read).not.toHaveBeenCalled()
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it('rejects a noncanonical requested revision before storage I/O', async () => {
+    const storage = new MemoryJournal('test'),
+      head = jest.fn(storage.head.bind(storage)),
+      store = new KnowledgeStore(wrapper(storage, { head }), reducer(), { partition })
+    try {
+      await expect(store.read('01')).rejects.toMatchObject({ code: 'invalid' })
+      expect(head).not.toHaveBeenCalled()
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('holds operation capacity until cancelled storage work actually drains', async () => {
+    const storage = new MemoryJournal('test')
+    await storage.append('0', initial())
+    let release!: () => void, entered!: () => void
+    const blocked = new Promise<void>(resolve => {
+        release = resolve
+      }),
+      started = new Promise<void>(resolve => {
+        entered = resolve
+      }),
+      head = jest.fn(async () => {
+        entered()
+        await blocked
+        return storage.head()
+      }),
+      store = new KnowledgeStore(wrapper(storage, { head }), reducer(), {
+        partition,
+        maximumReaders: 1
+      }),
+      controller = new AbortController(),
+      first = store.read(undefined, controller.signal)
+    try {
+      await started
+      await expect(store.read()).rejects.toMatchObject({
+        code: 'limited',
+        message: expect.stringContaining('operation capacity')
+      })
+      controller.abort()
+      await expect(first).rejects.toMatchObject({
+        code: 'cancelled',
+        message: expect.stringContaining('operation interrupted')
+      })
+      await expect(store.read()).rejects.toMatchObject({ code: 'limited' })
+      expect(head).toHaveBeenCalledTimes(1)
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect((await store.read()).revision).toEqual({ received: '1', accepted: '1' })
+      expect(head).toHaveBeenCalledTimes(2)
+    } finally {
+      release()
+      await first.catch(() => undefined)
+      await store.close()
+    }
+  })
+
+  it.each(['entries', 'bytes'] as const)(
+    'rejects a retained %s overflow before requesting a journal page',
+    async bound => {
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      await storage.append('1', invalidation())
+      const head = await storage.head(),
+        read = jest.fn(storage.read.bind(storage)),
+        store = new KnowledgeStore(wrapper(storage, { read }), reducer(), {
+          partition,
+          ...(bound === 'entries' ? { maximumEntries: 1 } : { maximumBytes: head.bytes - 1 })
+        })
+      try {
+        await expect(store.read()).rejects.toMatchObject({
+          code: 'limited',
+          message: expect.stringContaining('replay retention bound')
+        })
+        expect(read).not.toHaveBeenCalled()
+        expect(await storage.head()).toEqual(head)
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it.each([1, 200])(
+    'bounds storage page requests with a retention limit of %i',
+    async maximumEntries => {
+      const storage = new MemoryJournal('test')
+      await storage.append('0', initial())
+      const read = jest.fn(storage.read.bind(storage)),
+        store = new KnowledgeStore(wrapper(storage, { read }), reducer(), {
+          partition,
+          maximumEntries
+        })
+      try {
+        expect((await store.read()).revision.accepted).toBe('1')
+        expect(read).toHaveBeenCalledWith('0', Math.min(128, maximumEntries))
+      } finally {
+        await store.close()
+      }
+    }
+  )
+
+  it('rejects a mismatched mutation digest and a stale CAS before durable append', async () => {
+    const storage = new MemoryJournal('test'),
+      append = jest.fn(storage.append.bind(storage)),
+      store = new KnowledgeStore(wrapper(storage, { append }), reducer(), { partition })
+    try {
+      await expect(store.commit('0', { ...initial(), key: 'ff'.repeat(32) })).rejects.toMatchObject(
+        {
+          code: 'invalid',
+          message: expect.stringContaining('digest mismatch')
+        }
+      )
+      expect(append).not.toHaveBeenCalled()
+      expect(await store.commit('1', initial())).toMatchObject({
+        status: 'conflict',
+        reason: expect.stringContaining('revision changed')
+      })
+      expect(append).not.toHaveBeenCalled()
+      expect((await store.commit('0', initial())).status).toBe('committed')
+      expect(append).toHaveBeenCalledTimes(1)
+    } finally {
+      await store.close()
+    }
+  })
+
   it.each([-1, 0, 1])(
     'enforces the cumulative retention byte boundary with %i bytes of headroom',
     async headroom => {

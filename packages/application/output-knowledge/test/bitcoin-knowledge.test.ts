@@ -120,8 +120,57 @@ describe('default Bitcoin knowledge journal and worker', () => {
     expect(acceptance.kind).toBe('accept')
     if (acceptance.kind !== 'accept') throw new Error('Missing quarantined group decision')
     expect(acceptance.results.map(result => result.status)).toEqual(['limited', 'invalid'])
+    expect(acceptance.results).toEqual([
+      expect.objectContaining({
+        contextId: context().id,
+        reason: 'Whole-group cryptographic evidence is incomplete',
+        dependencies: []
+      }),
+      expect.objectContaining({
+        contextId: context().id,
+        reason: 'Source evidence does not fulfill its asserted observation',
+        dependencies: []
+      })
+    ])
     expect(verify).not.toHaveBeenCalled()
     expect(await store.read()).toMatchObject({ facts: [], reconciled: { memberships: [] } })
+  })
+
+  it('accepts a genuine multi-input spend claim for any one consumed outpoint', async () => {
+    const { store, worker } = open(),
+      previous = { chain, txid: tx('P'), outputIndex: 1 }
+    await initialize(store)
+    await receive(
+      store,
+      batch('multi-input-spend', [
+        {
+          id: 'spend',
+          scope,
+          kind: 'spend',
+          payload: {
+            previous,
+            spendingTxid: tx('allFinal'),
+            beef: candidate('allFinal').evidence.beef
+          }
+        }
+      ])
+    )
+    await worker.advance(store, signal())
+    const result = await store.read(),
+      acceptance = (await store.inspect()).entries.find(entry => entry.body.kind === 'accept')!.body
+    expect(result.pendingGroups).toEqual([])
+    expect(result.facts.some(fact => fact.txid === tx('allFinal'))).toBe(true)
+    expect(
+      result.assessments.find(
+        row => row.outpoint.txid === previous.txid && row.outpoint.outputIndex === 1
+      )
+    ).toMatchObject({ state: 'spent', origin: { kind: 'local' } })
+    expect(acceptance.kind).toBe('accept')
+    if (acceptance.kind !== 'accept') throw new Error('Missing genuine spend acceptance')
+    expect(acceptance.results[0]).toMatchObject({
+      status: 'verified',
+      fact: { txid: tx('allFinal') }
+    })
   })
 
   it('owns the installed critical-extension vocabulary across later caller mutations', async () => {
