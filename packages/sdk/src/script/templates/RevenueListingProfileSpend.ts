@@ -404,7 +404,7 @@ export class RevenueListingProfileSpend {
     const common = [bytes, 288, 1, 32, 32, 33, 33, 33, 8, 20, 8, 72, 33, 72, 72]
     const proof = [33, 33, 72, 72, 33, 33, 33, 33, 33, 33, 33]
     const pushed = (length: number) =>
-      new UnlockingScript().writeBin(Array<number>(length).fill(0)).toBinary().length
+      new UnlockingScript().writeBin(Array.from({ length }, () => 0)).toBinary().length
     return (
       common.reduce((sum, length) => sum + pushed(length), 0) +
       (this.action.operation === 'activate'
