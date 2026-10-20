@@ -993,3 +993,138 @@ it('keeps the complete pending proof when a later same-target update supplies on
       .tx!.toHex()
   ).toBe(f.target.toHex())
 })
+
+// Faults are applied only to the result of the installed native proof owner.
+// None of these malformed port results establishes financial or chain authority.
+it.each([
+  ['acquisition', 'context-changed', 'Combined purchase proof differs from original transaction'],
+  ['transaction', 'context-changed', 'Combined purchase proof differs from original transaction'],
+  ['missing-retain', 'invalid', 'Purchase evidence retention must be synchronous'],
+  ['async-retain', 'invalid', 'Purchase evidence retention must be synchronous'],
+  ['missing-guard', 'invalid', 'Purchase evidence guard must be synchronous'],
+  ['async-guard', 'invalid', 'Purchase evidence guard must be synchronous'],
+  ['null-plan', 'context-changed', 'Purchase evidence operation must complete synchronously'],
+  ['primitive-plan', 'context-changed', 'Purchase evidence operation must complete synchronously'],
+  ['promised-plan', 'context-changed', 'Purchase evidence operation must complete synchronously']
+] as const)(
+  'refuses a native proposal with %s before financial pin or external effects',
+  async (fault, code, message) => {
+    const { e, f } = coordinatedEvidence(),
+      native = e.owner.propose.bind(e.owner)
+    e.owner.propose = (...args) => {
+      const plan = native(...args)
+      if (fault === 'null-plan') return null as never
+      if (fault === 'primitive-plan') return 'invalid native result' as never
+      if (fault === 'promised-plan')
+        return Promise.reject(new Error('Deferred native proposal')) as never
+      if (fault === 'acquisition') plan.candidate.acquisitionId = 'a7'.repeat(32)
+      if (fault === 'transaction') plan.candidate.txid = 'a8'.repeat(32)
+      if (fault === 'missing-retain') plan.retain = undefined as never
+      if (fault === 'async-retain') plan.retain = async () => {}
+      if (fault === 'missing-guard') plan.checkCurrent = undefined as never
+      if (fault === 'async-guard') plan.checkCurrent = async () => {}
+      return plan
+    }
+    const coordinator = new PrivatePurchaseCoordinator(f.owner)
+    try {
+      await coordinator.prepare(f.f.f.f.request, f.caller)
+      await expect(coordinator.submit(e.candidate, f.caller)).rejects.toMatchObject({
+        code,
+        message
+      })
+      expect(f.current()!.candidate).toBeNull()
+      expect(e.owner.read(e.original, f.f.clock, f.f.guard).candidate).toBeNull()
+      expect(f.counts.admission).toBe(0)
+      expect(f.counts.issue).toBe(0)
+    } finally {
+      await coordinator.stop()
+      await f.dispose()
+    }
+  }
+)
+
+it.each([
+  ['candidate', 'Validated combined purchase proof changed'],
+  ['retain', 'Purchase evidence retention changed'],
+  ['guard', 'Purchase evidence guard changed']
+] as const)(
+  'fences a native proposal %s replaced across independent verification',
+  async (fault, message) => {
+    const { e, f } = coordinatedEvidence(),
+      native = e.owner.propose.bind(e.owner),
+      verify = f.domain.verify
+    let plan: ReturnType<typeof e.owner.propose> | undefined
+    e.owner.propose = (...args) => (plan = native(...args))
+    f.domain.verify = async (...args) => {
+      const result = await verify(...args)
+      if (plan) {
+        if (fault === 'candidate') plan.candidate.beef = e.alternate.beef
+        if (fault === 'retain') plan.retain = () => undefined
+        if (fault === 'guard') plan.checkCurrent = () => undefined
+      }
+      return result
+    }
+    const coordinator = new PrivatePurchaseCoordinator(f.owner)
+    try {
+      await coordinator.prepare(f.f.f.f.request, f.caller)
+      await expect(coordinator.submit(e.candidate, f.caller)).rejects.toMatchObject({
+        code: 'context-changed',
+        message
+      })
+      expect(e.owner.read(e.original, f.f.clock, f.f.guard).candidate).toBeNull()
+      expect(f.counts.admission).toBe(0)
+      expect(f.counts.issue).toBe(0)
+    } finally {
+      await coordinator.stop()
+      await f.dispose()
+    }
+  }
+)
+
+it.each([
+  'null',
+  'primitive',
+  'promise',
+  'acquisition',
+  'transaction',
+  'missing-guard',
+  'async-guard'
+] as const)('refuses a %s retained native proof view during repeat preparation', async fault => {
+  const { e, f } = coordinatedEvidence(),
+    native = e.owner.read.bind(e.owner)
+  let corrupt = false
+  e.owner.read = (...args) => {
+    const view = native(...args)
+    if (!corrupt) return view
+    if (fault === 'null') return null as never
+    if (fault === 'primitive') return 1 as never
+    if (fault === 'promise') return Promise.reject(new Error('Deferred native read')) as never
+    if (fault === 'acquisition') view.candidate!.acquisitionId = 'a7'.repeat(32)
+    if (fault === 'transaction') view.candidate!.txid = 'a8'.repeat(32)
+    if (fault === 'missing-guard') view.checkCurrent = undefined as never
+    if (fault === 'async-guard') view.checkCurrent = async () => {}
+    return view
+  }
+  const coordinator = new PrivatePurchaseCoordinator(f.owner)
+  try {
+    await coordinator.prepare(f.f.f.f.request, f.caller)
+    await coordinator.submit(e.candidate, f.caller)
+    const before = f.current(),
+      counts = { ...f.counts }
+    corrupt = true
+    await expect(coordinator.prepare(f.f.f.f.request, f.caller)).rejects.toMatchObject({
+      code: fault.endsWith('guard') ? 'invalid' : 'context-changed',
+      message: fault.endsWith('guard')
+        ? 'Purchase evidence guard must be synchronous'
+        : fault === 'acquisition' || fault === 'transaction'
+          ? 'Retained purchase proof differs from original financial intent'
+          : 'Purchase evidence operation must complete synchronously'
+    })
+    expect(f.current()).toEqual(before)
+    expect(f.counts).toEqual(counts)
+    expect(native(e.original, f.f.clock, f.f.guard).candidate).toEqual(e.candidate)
+  } finally {
+    await coordinator.stop()
+    await f.dispose()
+  }
+})

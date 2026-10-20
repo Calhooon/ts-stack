@@ -113,3 +113,39 @@ it('releases consumed obligations without erasing retained records', () => {
   f.index.sequence = f.journal.revision
   expect(f.check).not.toThrow()
 })
+
+it('accepts the complete channel count and distinguishes malformed counts from inconsistent reservations', () => {
+  const exact = fixture()
+  exact.obligations.active = 2
+  exact.obligations.finalizing = 0
+  exact.journal.reserved = { entries: 0, bytes: 0 }
+  expect(exact.check).not.toThrow()
+  for (const field of ['active', 'finalizing'] as const) {
+    for (const count of [-1, 0.5, 3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const f = fixture()
+      f.obligations[field] = count
+      expect(f.check).toThrow(
+        expect.objectContaining({
+          code: 'unavailable',
+          message: 'Invalid retained proposal feed obligations'
+        })
+      )
+    }
+  }
+  const inconsistent = fixture()
+  inconsistent.journal.reserved!.bytes--
+  expect(inconsistent.check).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Proposal feed obligations differ from journal state'
+    })
+  )
+  const exhausted = fixture()
+  exhausted.config.capacity.versions--
+  expect(exhausted.check).toThrow(
+    expect.objectContaining({
+      code: 'limited',
+      message: 'Proposal feed cannot reserve its future lifecycle records'
+    })
+  )
+})

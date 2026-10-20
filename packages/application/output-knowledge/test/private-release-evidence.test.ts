@@ -1,5 +1,6 @@
 import { expect, it } from '@jest/globals'
 import {
+  Beef,
   canonicalOutputJSON,
   OUTPUT_PROCESSOR_ATTESTATION_POLICY,
   PrivateKey,
@@ -391,4 +392,18 @@ it('keeps a mined byte budget and configured chain distinct from a remote assert
       signal()
     )
   ).rejects.toThrow()
+})
+
+it('keeps a genuine transaction-ID-only mined envelope unresolved and retryable', async () => {
+  const f = await mined(),
+    incomplete = new Beef()
+  incomplete.mergeTxidOnly(f.evidence.txid)
+  f.evidence.blockEvidence!.beef = Utils.toBase64(incomplete.toBinary())
+  await expect(
+    new SDKPrivateReleaseEvidence(resolver).verify(f.evidence, f.expected, f.premises, signal())
+  ).rejects.toMatchObject({
+    code: 'unavailable',
+    message: 'Mined release verification unresolved',
+    retryable: true
+  })
 })

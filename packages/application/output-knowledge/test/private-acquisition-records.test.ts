@@ -77,6 +77,18 @@ it.each([
   if (field === 'context-capacity') record.maximumContextBytes = 4194305
   if (field === 'acceptance-capacity') record.maximumAcceptanceBytes = 131073
   expect(() => f.records.restore(record)).toThrow(expected)
+  if (expected !== undefined) {
+    const messages = {
+      format: ['unsupported', 'Unsupported acquisition original record'],
+      'policy-id': ['context-changed', 'Acquisition validation policy changed'],
+      'policy-digest': ['context-changed', 'Acquisition validation policy changed'],
+      'context-chain': ['context-changed', 'Acquisition original chain context differs'],
+      'evidence-txid': ['unavailable', 'Acquisition frozen evidence differs from listing'],
+      'evidence-index': ['unavailable', 'Acquisition frozen evidence differs from listing']
+    } as const
+    const [code, message] = messages[field as keyof typeof messages]
+    expect(() => f.records.restore(record)).toThrow(expect.objectContaining({ code, message }))
+  }
 })
 it('rejects too-small acceptance before allocating material or issuing a quote', () => {
   expect(() => f.records.prepare({ ...f.input, maximumAcceptanceBytes: 1 })).toThrow(
@@ -194,5 +206,87 @@ it('does not restore a modified signed manifest or changed semantic request', ()
   expect(() => f.records.restore(changed)).toThrow('differs from selected request')
   expect(outputPacketDigest('acquire-request', f.input.request)).toBe(
     f.input.challenge.requestDigest
+  )
+})
+
+it('bounds the complete installed extension representation before accepting each individual identifier', () => {
+  expect(
+    () =>
+      new PrivateAcquisitionRecords({
+        ...f.settings,
+        supportedExtensions: Array.from(
+          { length: 32 },
+          (_, index) => 'urn:test:' + index + ':' + 'x'.repeat(750)
+        )
+      })
+  ).toThrow('Output JSON byte limit')
+  expect(
+    () =>
+      new PrivateAcquisitionRecords({
+        ...f.settings,
+        supportedExtensions: Array.from({ length: 32 }, (_, index) => 'urn:test:extension:' + index)
+      })
+  ).not.toThrow()
+  expect(
+    () =>
+      new PrivateAcquisitionRecords({
+        ...f.settings,
+        supportedExtensions: {} as readonly string[]
+      })
+  ).toThrow(
+    expect.objectContaining({ code: 'invalid', message: 'Invalid acquisition record extensions' })
+  )
+  expect(
+    () =>
+      new PrivateAcquisitionRecords({
+        ...f.settings,
+        supportedExtensions: null as unknown as readonly string[]
+      })
+  ).not.toThrow()
+})
+
+it.each(['service', 'chain', 'listing-txid', 'listing-index', 'unavailable-output'] as const)(
+  'separately binds the self-consistent request %s to its actual installation and frozen evidence',
+  field => {
+    const record = f.records.prepare(f.input).record
+    if (field === 'service') record.request.service = 'another-installed-service'
+    if (field === 'chain') record.request.listing.chain.network = 'another-chain'
+    if (field === 'listing-txid') record.request.listing.txid = 'ef'.repeat(32)
+    if (field === 'listing-index') record.request.listing.outputIndex = 1
+    if (field === 'unavailable-output') {
+      record.request.listing.outputIndex = 0xffffffff
+      record.evidence.outputIndex = 0xffffffff
+    }
+    record.challenge.requestDigest = outputPacketDigest('acquire-request', record.request)
+    record.challenge.acquisitionId = outputPacketDigest('acquisition', {
+      chain: record.request.listing.chain,
+      seller: record.challenge.seller,
+      buyer: record.challenge.buyer,
+      service: record.request.service,
+      requestId: record.request.requestId
+    })
+    const installation = field === 'service' || field === 'chain'
+    expect(() => f.records.restore(record)).toThrow(
+      expect.objectContaining({
+        code: installation ? 'context-changed' : 'unavailable',
+        message: installation
+          ? 'Acquisition original installation differs'
+          : 'Acquisition frozen evidence differs from listing'
+      })
+    )
+    expect(f.records.prepare(f.input).record.request).toEqual(f.input.request)
+  }
+)
+
+it('accepts the exact installed recovery ceiling and refuses the next second', () => {
+  const challenge = { ...f.input.challenge, recoveryUntil: '172900' }
+  expect(f.records.prepare({ ...f.input, challenge }).record.challenge.recoveryUntil).toBe('172900')
+  expect(() =>
+    f.records.prepare({ ...f.input, challenge: { ...challenge, recoveryUntil: '172901' } })
+  ).toThrow(
+    expect.objectContaining({
+      code: 'context-changed',
+      message: 'Acquisition original recovery promise differs from installation'
+    })
   )
 })

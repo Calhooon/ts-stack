@@ -95,10 +95,21 @@ function fixture(
       journal[sqliteProposalBridge].initialize(create ? 'create' : 'open')
       index[sqliteLookupComposition].initialize(create)
       inventory.initialize(create)
-      const entries = journal[sqliteProposalBridge].read('0', 256),
+      const bridge = journal[sqliteProposalBridge],
+        head = bridge.head(),
         records = new Map()
-      for (const entry of entries)
-        records.set(proposalChannelKey(entry.transition.next.proposal.body), entry.transition.next)
+      let after = '0'
+      while (after !== head.revision) {
+        const entries = bridge.read(after, 256)
+        if (entries.length === 0) throw new Error('Incomplete native proposal fixture history')
+        for (const entry of entries) {
+          records.set(
+            proposalChannelKey(entry.transition.next.proposal.body),
+            entry.transition.next
+          )
+          after = entry.revision
+        }
+      }
       inventory.verify([...records.values()])
     })
     return { db, domain, journal, index, inventory, writer }
@@ -405,10 +416,12 @@ it('rejects invalid inventory bounds and duplicate initialization without replac
   const f = fixture()
   for (const limit of [0, -1, 1025, 1.5, Number.NaN])
     expect(() => new SQLiteProposalFeedInventory(f.domain, 'other', {}, limit)).toThrow(
-      /inventory bound/
+      expect.objectContaining({ code: 'invalid', message: 'Invalid proposal feed inventory bound' })
     )
   const original = f.domain.transaction(() => f.inventory.head())
-  expect(() => f.domain.transaction(() => f.inventory.initialize(true))).toThrow(/already exists/)
+  expect(() => f.domain.transaction(() => f.inventory.initialize(true))).toThrow(
+    expect.objectContaining({ code: 'conflict', message: 'Proposal feed namespace already exists' })
+  )
   expect(f.domain.transaction(() => f.inventory.head())).toEqual(original)
 })
 
@@ -419,6 +432,11 @@ it.each([
   const f = fixture()
   f.db.exec(sql as string)
   expect(() => f.domain.transaction(() => f.inventory.head())).toThrow(message as RegExp)
+  expect(() => f.domain.transaction(() => f.inventory.head())).toThrow(
+    expect.objectContaining({
+      code: String(sql).includes('configuration') ? 'context-changed' : 'unavailable'
+    })
+  )
 })
 
 it('keeps inventory commit positions and processed time monotonic within their bounds', () => {
@@ -431,10 +449,22 @@ it('keeps inventory commit positions and processed time monotonic within their b
     ['3', '5'],
     ['4', '4']
   ])
-    expect(() => f.domain.transaction(() => f.inventory.seal(journal, index))).toThrow(/backwards/)
-  expect(() => f.domain.transaction(() => f.inventory.processed('11'))).toThrow(/observed clock/)
+    expect(() => f.domain.transaction(() => f.inventory.seal(journal, index))).toThrow(
+      expect.objectContaining({
+        code: 'unavailable',
+        message: 'Proposal feed commit heads moved backwards'
+      })
+    )
+  expect(() => f.domain.transaction(() => f.inventory.processed('11'))).toThrow(
+    expect.objectContaining({
+      code: 'invalid',
+      message: 'Proposal timer boundary exceeds its observed clock'
+    })
+  )
   for (const count of [0, -1, 1025, 1.5, Number.NaN])
-    expect(() => f.domain.transaction(() => f.inventory.due('10', count))).toThrow(/work bound/)
+    expect(() => f.domain.transaction(() => f.inventory.due('10', count))).toThrow(
+      expect.objectContaining({ code: 'invalid', message: 'Invalid proposal timer work bound' })
+    )
   expect(f.domain.transaction(() => f.inventory.processed('10'))).toBe(true)
   expect(f.domain.transaction(() => f.inventory.processed('9'))).toBe(true)
   expect(f.domain.transaction(() => f.inventory.head())).toEqual({
@@ -449,12 +479,19 @@ it('bounds actual persisted inventory and rejects unknown lifecycle states', asy
   const f = fixture()
   await commit(f)
   f.db.exec("UPDATE proposal_feed_channels SET status='unknown'")
-  expect(() => f.domain.transaction(() => f.inventory.obligations())).toThrow(/status\/count/)
+  expect(() => f.domain.transaction(() => f.inventory.obligations())).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Invalid proposal feed inventory status/count'
+    })
+  )
   f.db.exec("UPDATE proposal_feed_channels SET status='active'")
   const insert = f.db.prepare('INSERT INTO proposal_feed_channels VALUES (?,?,?,?,?,?)')
   for (let i = 0; i < 10; i++)
     insert.run('current', 'extra-' + i, 'extra-' + i, '00'.repeat(32), 'withdrawn', null)
-  expect(() => f.domain.transaction(() => f.inventory.obligations())).toThrow(/inventory is full/)
+  expect(() => f.domain.transaction(() => f.inventory.obligations())).toThrow(
+    expect.objectContaining({ code: 'limited', message: 'Proposal feed channel inventory is full' })
+  )
 })
 
 it('rejects oversized, duplicate and unexpected startup channel inventories', async () => {
@@ -462,15 +499,103 @@ it('rejects oversized, duplicate and unexpected startup channel inventories', as
   await commit(f)
   expect(() =>
     f.domain.transaction(() => f.inventory.verify(Array(11).fill(f.first.next)))
-  ).toThrow(/exceeds capacity/)
+  ).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Proposal feed startup inventory exceeds capacity'
+    })
+  )
   expect(() =>
     f.domain.transaction(() => f.inventory.verify([f.first.next, f.first.next]))
-  ).toThrow(/incomplete/)
+  ).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Proposal feed startup inventory is incomplete'
+    })
+  )
   expect(() =>
     f.domain.transaction(() =>
       f.inventory.check(proposalChannelKey(f.first.next.proposal.body), undefined)
     )
-  ).toThrow(/differs/)
+  ).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Proposal feed inventory differs from journal state'
+    })
+  )
+})
+
+it('accepts the minimum native inventory size and the exact maximum timer page', () => {
+  const f = fixture()
+  expect(() => new SQLiteProposalFeedInventory(f.domain, 'one-channel', {}, 1)).not.toThrow()
+  expect(f.domain.transaction(() => f.inventory.due('0', 1024))).toEqual([])
+})
+
+it('accepts a complete independently retained inventory at its exact ten-channel capacity', async () => {
+  const f = fixture(),
+    records = [f.first.next]
+  await commit(f)
+  for (let index = 1; index < 10; index++) {
+    const transition = f.lifecycle.put(
+      undefined,
+      signed({ channel: index.toString(16).padStart(64, '0') }),
+      author,
+      '10'
+    )
+    await commit(f, transition)
+    records.push(transition.next)
+  }
+  expect(f.domain.transaction(() => f.inventory.obligations())).toEqual({
+    active: 10,
+    finalizing: 0
+  })
+  expect(() => f.domain.transaction(() => f.inventory.verify(records))).not.toThrow()
+  const firstPage = f.domain.transaction(() => f.journal[sqliteProposalBridge].read('0', 256))
+  expect(firstPage.length).toBeGreaterThan(0)
+  expect(firstPage.length).toBeLessThan(records.length)
+  const reopened = f.open(false)
+  expect(reopened.domain.transaction(() => reopened.inventory.obligations())).toEqual({
+    active: 10,
+    finalizing: 0
+  })
+})
+
+it.each([
+  ['index_key', 'foreign-index'],
+  ['proposal_id', 'aa'.repeat(32)],
+  ['status', 'withdrawn'],
+  ['expires_at', null]
+] as const)('detects an independently changed retained channel %s', async (field, value) => {
+  const f = fixture()
+  await commit(f)
+  const statements = {
+    index_key: 'UPDATE proposal_feed_channels SET index_key=? WHERE namespace=?',
+    proposal_id: 'UPDATE proposal_feed_channels SET proposal_id=? WHERE namespace=?',
+    status: 'UPDATE proposal_feed_channels SET status=? WHERE namespace=?',
+    expires_at: 'UPDATE proposal_feed_channels SET expires_at=? WHERE namespace=?'
+  }
+  f.db.prepare(statements[field]).run(value, 'current')
+  expect(() =>
+    f.domain.transaction(() =>
+      f.inventory.check(proposalChannelKey(f.first.next.proposal.body), f.first.next)
+    )
+  ).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Proposal feed inventory differs from journal state'
+    })
+  )
+})
+
+it('refuses a missing native metadata row without treating absence as a new empty feed', () => {
+  const f = fixture()
+  f.db.prepare('DELETE FROM proposal_feed_meta WHERE namespace=?').run('current')
+  expect(() => f.domain.transaction(() => f.inventory.head())).toThrow(
+    expect.objectContaining({
+      code: 'context-changed',
+      message: 'Proposal feed configuration is missing or changed'
+    })
+  )
 })
 
 it('rejects a participant that no longer returns its committed row before appending a replacement', async () => {

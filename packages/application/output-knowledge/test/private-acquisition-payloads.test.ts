@@ -175,25 +175,96 @@ it.each([
   else if (field === 'digest') rows[0].value.digest = 'ee'.repeat(32)
   else if (field === 'data') rows[0].value.data = null
   else rows[0].value.extra = true
-  expect(() => h.read(prepared.descriptor, rows)).toThrow()
+  const message =
+    field === 'missing'
+      ? 'Acquisition payload slots are incomplete'
+      : ['key', 'kind', 'capacity', 'updates'].includes(field)
+        ? 'Acquisition payload slot reservation differs'
+        : field === 'data'
+          ? 'Completed acquisition payload data is missing'
+          : 'Acquisition payload slot binding differs'
+  expect(() => h.read(prepared.descriptor, rows)).toThrow(
+    expect.objectContaining({
+      code: field === 'extra' ? 'invalid' : 'unavailable',
+      ...(field === 'extra' ? {} : { message })
+    })
+  )
 })
 it('fails closed for missing or already populated reserved slots', () => {
   const h = helper(),
     p = h.reserve(id, request, 'result', 4),
     rows = records(p.changes)
-  expect(() => h.seal(p.descriptor, [undefined], 'AQ==')).toThrow('slot reservation differs')
+  expect(() => h.seal(p.descriptor, [undefined], 'AQ==')).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Acquisition payload slot reservation differs'
+    })
+  )
   rows[0].value.data = 'AQ=='
-  expect(() => h.seal(p.descriptor, rows, 'AQ==')).toThrow('unbound data')
+  expect(() => h.seal(p.descriptor, rows, 'AQ==')).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Unfinished acquisition payload contains unbound data'
+    })
+  )
 })
 it('verifies actual retained bytes even on an identical completed retry', () => {
   const h = helper(),
     p = h.reserve(id, request, 'result', 4, 'AQ=='),
     rows = records(p.changes)
   rows[0].value.data = 'Ag=='
-  expect(() => h.read(p.descriptor, rows)).toThrow('integrity differs')
-  expect(() => h.seal(p.descriptor, rows, 'AQ==')).toThrow('integrity differs')
+  const integrity = expect.objectContaining({
+    code: 'unavailable',
+    message: 'Acquisition payload integrity differs'
+  })
+  expect(() => h.read(p.descriptor, rows)).toThrow(integrity)
+  expect(() => h.seal(p.descriptor, rows, 'AQ==')).toThrow(integrity)
   rows[0].value.data = 'AQI='
-  expect(() => h.read(p.descriptor, rows)).toThrow('chunk length differs')
+  expect(() => h.read(p.descriptor, rows)).toThrow(
+    expect.objectContaining({
+      code: 'unavailable',
+      message: 'Acquisition payload chunk length differs'
+    })
+  )
+})
+
+it('keeps immutable payload completion length separate from matching digest and retained bytes', () => {
+  const h = helper(),
+    prepared = h.reserve(id, request, 'result', 4, 'AQ=='),
+    rows = records(prepared.changes)
+  expect(() => h.seal({ ...prepared.descriptor, bytes: 2 }, rows, 'AQ==')).toThrow(
+    expect.objectContaining({
+      code: 'conflict',
+      message: 'Acquisition payload is already immutable'
+    })
+  )
+  expect(h.read(prepared.descriptor, rows)).toBe('AQ==')
+})
+
+it('retains exact descriptor format, purpose, allowance and completion diagnostics', () => {
+  const initial = helper().reserve(id, request, 'result', 4).descriptor
+  for (const [value, code, message] of [
+    [{ ...initial, format: 'future' }, 'unsupported', 'Unsupported acquisition payload'],
+    [{ ...initial, purpose: 'foreign' }, 'invalid', 'Unknown acquisition payload purpose'],
+    [{ ...initial, maximumBytes: 0 }, 'invalid', 'Invalid acquisition payload allowance'],
+    [{ ...initial, maximumBytes: '4' }, 'invalid', 'Invalid acquisition payload allowance'],
+    [{ ...initial, chunks: 2 }, 'invalid', 'Acquisition payload reservation is incomplete'],
+    [{ ...initial, bytes: 0 }, 'invalid', 'Acquisition payload completion fields differ'],
+    [
+      { ...initial, bytes: -1, digest: 'aa'.repeat(32) },
+      'invalid',
+      'Invalid acquisition payload length'
+    ],
+    [
+      { ...initial, bytes: '1', digest: 'aa'.repeat(32) },
+      'invalid',
+      'Invalid acquisition payload length'
+    ]
+  ] as const) {
+    expect(() => parsePrivateAcquisitionPayload(value)).toThrow(
+      expect.objectContaining({ code, message })
+    )
+  }
 })
 it.each(['AR==', '!!!', 'AQ', 'AQI='])(
   'rejects malformed, noncanonical or oversized supplied bytes: %s',

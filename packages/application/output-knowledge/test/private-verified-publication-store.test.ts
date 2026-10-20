@@ -41,6 +41,48 @@ function reserveAndAdmit(f: ReturnType<typeof verifiedFixture>, state: ReturnTyp
     allow
   )
 }
+
+it('preserves native state when binding is absent, stale, or has not reached admission', () => {
+  const f = verifiedFixture()
+  expect(() => f.store.bindVerified('aa'.repeat(32), '0', () => '20', allow)).toThrow(
+    expect.objectContaining({ code: 'not-found', message: 'Private publication is absent' })
+  )
+  const state = f.stage(),
+    before = f.store.loadVerified(state.publicationId, () => '20', allow)!
+  expect(() => f.store.bindVerified(state.publicationId, '0', () => '20', allow)).toThrow(
+    expect.objectContaining({ code: 'conflict', message: 'Private publication changed' })
+  )
+  expect(() =>
+    f.store.bindVerified(state.publicationId, before.record.revision, () => '20', allow)
+  ).toThrow(
+    expect.objectContaining({
+      code: 'conflict',
+      message: 'Publication is not awaiting native lookup binding'
+    })
+  )
+  expect(f.reopen().loadVerified(state.publicationId, () => '20', allow)).toEqual(before)
+})
+
+it('retains two native completion updates through readiness loss and real binding recovery', () => {
+  const f = verifiedFixture(),
+    state = f.stage()
+  reserveAndAdmit(f, state)
+  const admitted = f.store.loadVerified(state.publicationId, () => '22', allow)!
+  expect(admitted.record.reservedUpdates).toBe(3)
+  f.store.bindVerified(state.publicationId, admitted.record.revision, () => '23', allow)
+  const ready = f.reopen().loadVerified(state.publicationId, () => '23', allow)!
+  expect(ready.record.reservedUpdates).toBe(2)
+  f.store.markUnavailable(state.publicationId, ready.record.revision, () => '24', allow)
+  const unavailable = f.reopen().loadVerified(state.publicationId, () => '24', allow)!
+  expect(unavailable.fence.state.progress.phase).toBe('unavailable')
+  expect(unavailable.record.reservedUpdates).toBe(2)
+  f.store.bindVerified(state.publicationId, unavailable.record.revision, () => '25', allow)
+  const recovered = f.reopen().loadVerified(state.publicationId, () => '25', allow)!
+  expect(recovered.fence.state.progress.phase).toBe('ready')
+  expect(recovered.record.reservedUpdates).toBe(2)
+  expect(recovered.bindingRecord.reservedUpdates).toBe(0)
+})
+
 it('closes independently reopened transient readers after both successful and failed reads', () => {
   const f = verifiedFixture(),
     state = f.stage(),

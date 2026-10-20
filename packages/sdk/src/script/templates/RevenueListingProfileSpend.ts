@@ -100,7 +100,7 @@ function fundedSnapshot(
   transaction: Transaction,
   plan: RevenueListingProfilePlan,
   previous: Transaction,
-  preserveHeader = false
+  preserveHeader: boolean
 ): Transaction {
   outputAssert(
     transaction.inputs.length >= 2 &&
@@ -403,11 +403,8 @@ export class RevenueListingProfileSpend {
         : REVENUE_LISTING_ACTIVE_SCRIPT_BYTES) + 159
     const common = [bytes, 288, 1, 32, 32, 33, 33, 33, 8, 20, 8, 72, 33, 72, 72]
     const proof = [33, 33, 72, 72, 33, 33, 33, 33, 33, 33, 33]
-    const pushed = (length: number) => {
-      if (length < 76) return length + 1
-      if (length <= 255) return length + 2
-      return length + 3
-    }
+    const pushed = (length: number) =>
+      new UnlockingScript().writeBin(Array<number>(length).fill(0)).toBinary().length
     return (
       common.reduce((sum, length) => sum + pushed(length), 0) +
       (this.action.operation === 'activate'

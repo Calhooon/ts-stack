@@ -1,11 +1,13 @@
 import { beforeAll, describe, expect, it } from '@jest/globals'
+import { createHash } from 'node:crypto'
 import { canonicalOutputJSON, OutputProtocolError, type OutputPaidLookupPayment } from '@bsv/sdk'
 import {
   privateAcquisitionCandidateDigest,
   advancePrivateAcquisitionProgress as advance,
   createPrivateAcquisitionProgress as create,
   parsePrivateAcquisitionProgress as parse,
-  type PrivateAcquisitionEvent
+  type PrivateAcquisitionEvent,
+  type PrivateAcquisitionProgress
 } from '../src/private/PrivateAcquisitionProgress.js'
 import { acquisitionFixture } from './private-acquisition.fixture.js'
 
@@ -304,5 +306,321 @@ describe('durable acquisition lifecycle representation', () => {
     expect(() =>
       advance(state, { type: 'expire', extra: true } as PrivateAcquisitionEvent, '90000')
     ).toThrow(OutputProtocolError)
+  })
+})
+
+describe('retained acquisition boundary diagnostics', () => {
+  let f: Awaited<ReturnType<typeof acquisitionFixture>>
+  beforeAll(async () => {
+    f = await acquisitionFixture()
+  })
+  function changed(
+    original: PrivateAcquisitionProgress,
+    mutate: (value: PrivateAcquisitionProgress) => void
+  ) {
+    const value = structuredClone(original)
+    mutate(value)
+    return value
+  }
+  const prepared = () => advance(f.funded(), { type: 'prepare-delivery' }, '24')
+  const delivered = () => advance(prepared(), { type: 'delivered' }, '25')
+
+  it.each([null, true, 'quoted', [], 0])('refuses a non-record retained value %p', value => {
+    expect(() => parse(value)).toThrow(
+      expect.objectContaining({ code: 'invalid', message: 'Expected acquisition record object' })
+    )
+  })
+
+  it('binds the candidate digest to the documented domain and complete original payment', () => {
+    const payment = f.payment()
+    expect(privateAcquisitionCandidateDigest(payment)).toBe(
+      createHash('sha256')
+        .update('private-acquisition-candidate/1\0')
+        .update(canonicalOutputJSON(payment))
+        .digest('hex')
+    )
+    const first = f.pinned()
+    first.candidate!.receivedAt = first.createdAt
+    expect(parse(first)).toEqual(first)
+  })
+
+  it('keeps candidate, funding and delivery refusal identities distinct without changing the original', () => {
+    const cases: [unknown, string, string][] = [
+      [{ ...f.initial(), format: 'future' }, 'unsupported', 'Unsupported acquisition progress'],
+      [{ ...f.initial(), phase: 'future' }, 'invalid', 'Unknown acquisition phase'],
+      [
+        { ...f.initial(), recoveryUntil: '86499' },
+        'invalid',
+        'Acquisition clock or recovery promise differs'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.payment.derivationPrefix = 'foreign'
+        }),
+        'conflict',
+        'Acquisition candidate changed quote prefix'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.receivedAt = '86500'
+        }),
+        'expired',
+        'Acquisition candidate was not received before recovery expiry'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.digest = 'ff'.repeat(32)
+        }),
+        'unavailable',
+        'Acquisition candidate digest differs'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.verdict = 'invalid'
+        }),
+        'invalid',
+        'Acquisition candidate reason differs from verdict'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.reason = 'unexpected'
+        }),
+        'invalid',
+        'Acquisition candidate reason differs from verdict'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.receivedAt = '0'
+        }),
+        'invalid',
+        'Candidate receipt is outside acquisition history'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.candidate!.receivedAt = '21'
+        }),
+        'invalid',
+        'Candidate receipt is outside acquisition history'
+      ],
+      [
+        changed(f.reserved(), s => {
+          s.candidate = null
+        }),
+        'invalid',
+        'Funding has no accepted candidate'
+      ],
+      [
+        changed(f.reserved(), s => {
+          s.candidate!.verdict = 'pending'
+        }),
+        'invalid',
+        'Funding has no accepted candidate'
+      ],
+      [
+        changed(f.reserved(), s => {
+          s.funding!.operation.id = 'ff'.repeat(32)
+        }),
+        'unavailable',
+        'Acquisition funding operation changed'
+      ],
+      [
+        changed(f.reserved(), s => {
+          s.funding = null
+        }),
+        'invalid',
+        'Candidate acceptance and funding differ'
+      ],
+      [
+        { ...f.initial(), walletReceipt: f.receipt(f.reserved()) },
+        'invalid',
+        'Wallet receipt has no reserved funding'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.walletReceipt!.operationId = 'ff'.repeat(32)
+        }),
+        'unavailable',
+        'Wallet receipt changed acquisition funding'
+      ],
+      [
+        changed(prepared(), s => {
+          s.walletReceipt = null
+        }),
+        'invalid',
+        'Delivery has no prior funded history'
+      ],
+      [
+        changed(prepared(), s => {
+          s.delivery!.preparedAt = '0'
+        }),
+        'invalid',
+        'Delivery has no prior funded history'
+      ],
+      [
+        changed(prepared(), s => {
+          s.delivery!.preparedAt = '25'
+        }),
+        'invalid',
+        'Delivery has no prior funded history'
+      ],
+      [
+        changed(delivered(), s => {
+          s.delivery!.deliveredAt = '23'
+        }),
+        'invalid',
+        'Delivery time differs from prepared intent'
+      ],
+      [
+        changed(delivered(), s => {
+          s.delivery!.deliveredAt = '26'
+        }),
+        'invalid',
+        'Delivery time differs from prepared intent'
+      ],
+      [
+        changed(advance(f.funded(), { type: 'prepare-delivery' }, '90000'), s => {
+          s.recoveryUntil = '86500'
+        }),
+        'invalid',
+        'Delivery recovery is less than one day'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.phase = 'quoted'
+        }),
+        'invalid',
+        'Unfunded phase contains a funding outcome'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.phase = 'funding-pending'
+        }),
+        'invalid',
+        'Pending funding contains a wallet outcome'
+      ],
+      [
+        { ...f.initial(), phase: 'failed', reason: 'failure' },
+        'invalid',
+        'Failed acquisition has no retained funding or was already delivered'
+      ],
+      [
+        changed(delivered(), s => {
+          s.phase = 'failed'
+          s.reason = 'failure'
+        }),
+        'invalid',
+        'Failed acquisition has no retained funding or was already delivered'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.recoveryUntil = '99999'
+        }),
+        'invalid',
+        'Acquisition recovery changed without delivery intent'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.reason = 'unexpected'
+        }),
+        'invalid',
+        'Acquisition reason differs from phase'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.walletReceipt = null
+        }),
+        'invalid',
+        'Funded phase requires exact wallet receipt'
+      ],
+      [
+        changed(f.funded(), s => {
+          s.phase = 'delivery-pending'
+        }),
+        'invalid',
+        'Delivery phase differs from retained outcome'
+      ],
+      [
+        changed(prepared(), s => {
+          s.phase = 'delivered'
+        }),
+        'invalid',
+        'Delivery phase differs from retained outcome'
+      ],
+      [
+        changed(f.pinned(), s => {
+          s.phase = 'expired'
+          s.reason = 'expiry'
+          s.updatedAt = '90000'
+        }),
+        'invalid',
+        'Pinned or unexpired acquisition cannot expire'
+      ]
+    ]
+    for (const [value, code, message] of cases) {
+      const original = structuredClone(value)
+      expect(() => parse(value)).toThrow(expect.objectContaining({ code, message }))
+      expect(value).toEqual(original)
+    }
+    const unknown = f.pinned()
+    expect(() =>
+      parse({ ...unknown, candidate: { ...unknown.candidate, verdict: 'future' } })
+    ).toThrow(
+      expect.objectContaining({ code: 'invalid', message: 'Unknown acquisition candidate verdict' })
+    )
+  })
+
+  it('rejects out-of-order events with their exact durable obligation and no input mutation', () => {
+    const invalid = {
+        type: 'invalid',
+        candidateDigest: 'ff'.repeat(32),
+        reason: 'invalid-evidence'
+      } as const,
+      funding = {
+        type: 'reserve-funding',
+        candidateDigest: 'ff'.repeat(32),
+        sellerPaymentKey: f.sellerPaymentKey,
+        acceptance: f.reserved().funding!.acceptance
+      } as const,
+      wallet = { type: 'wallet-accepted', receipt: f.receipt(f.reserved()) } as const,
+      rejection = {
+        type: 'wallet-rejected',
+        operationId: 'ff'.repeat(32),
+        reason: 'rejected'
+      } as const
+    const cases: [PrivateAcquisitionProgress, PrivateAcquisitionEvent, string][] = [
+      [f.initial(), invalid, 'Invalidation does not match pending candidate'],
+      [f.pinned(), invalid, 'Invalidation does not match pending candidate'],
+      [f.reserved(), invalid, 'Invalidation does not match pending candidate'],
+      [f.initial(), funding, 'Funding does not match pinned candidate'],
+      [f.pinned(), funding, 'Funding does not match pinned candidate'],
+      [f.funded(), funding, 'Funding does not match pinned candidate'],
+      [f.initial(), wallet, 'Acquisition has no pending wallet operation'],
+      [f.funded(), wallet, 'Acquisition has no pending wallet operation'],
+      [f.initial(), rejection, 'Wallet rejection changed pending operation'],
+      [f.reserved(), rejection, 'Wallet rejection changed pending operation'],
+      [f.initial(), { type: 'prepare-delivery' }, 'Acquisition is not ready to prepare delivery'],
+      [f.reserved(), { type: 'prepare-delivery' }, 'Acquisition is not ready to prepare delivery'],
+      [f.initial(), { type: 'delivered' }, 'Acquisition has no retained delivery intent'],
+      [f.funded(), { type: 'delivered' }, 'Acquisition has no retained delivery intent'],
+      [
+        f.initial(),
+        { type: 'fail', reason: 'failed' },
+        'Only a funded undelivered obligation can report delivery failure'
+      ],
+      [f.initial(), { type: 'expire' }, 'Pinned, funded or unexpired acquisition cannot expire'],
+      [f.reserved(), { type: 'expire' }, 'Pinned, funded or unexpired acquisition cannot expire']
+    ]
+    for (const [state, event, message] of cases) {
+      const original = structuredClone(state)
+      expect(() => advance(state, event, '30')).toThrow(
+        expect.objectContaining({ code: 'conflict', message })
+      )
+      expect(state).toEqual(original)
+    }
+    expect(() =>
+      advance(f.initial(), { type: 'future' } as unknown as PrivateAcquisitionEvent, '30')
+    ).toThrow(
+      expect.objectContaining({ code: 'unsupported', message: 'Unknown acquisition event' })
+    )
   })
 })

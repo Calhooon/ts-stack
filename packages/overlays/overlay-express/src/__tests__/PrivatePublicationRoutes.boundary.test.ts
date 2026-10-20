@@ -1,4 +1,6 @@
 import { afterEach, expect, it, jest } from '@jest/globals'
+import { request } from 'node:http'
+import express, { type RequestHandler } from 'express'
 import { PrivateKey } from '@bsv/sdk'
 import { createPrivatePublicationRouter } from '../PrivatePublicationRoutes.js'
 import { privatePublicationHTTPFixture } from './PrivatePublicationRoutes.fixture.js'
@@ -173,3 +175,190 @@ it.each([
   expect([400, 404]).toContain(response.status)
   expect(f.native.rows()).toEqual([])
 })
+
+it('rejects duplicate wire header names before authentication or publication effects', async () => {
+  const f = await fixture(),
+    response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(
+        f.origin + '/api/overlay/v1/private/publish',
+        {
+          method: 'POST',
+          headers: [
+            'Host',
+            new URL(f.origin).host,
+            'Content-Length',
+            '2',
+            ...Object.entries(f.headers).flat(),
+            'CONTENT-TYPE',
+            'application/json'
+          ]
+        },
+        res => {
+          const chunks: Buffer[] = []
+          res.on('data', (chunk: Buffer) => chunks.push(chunk))
+          res.once('error', reject)
+          res.once('end', () =>
+            resolve({ status: res.statusCode!, body: Buffer.concat(chunks).toString('utf8') })
+          )
+        }
+      )
+      req.once('error', reject)
+      req.end('{}')
+    })
+  expect(response.status).toBe(400)
+  expect(JSON.parse(response.body).error.code).toBe('invalid')
+  expect(f.native.rows()).toEqual([])
+  expect(f.calls).toEqual([])
+})
+
+it('requires authentication and both native disclosure operations when constructing a route', async () => {
+  const f = await fixture(),
+    disclosure = {
+      prepare: f.disclosure.prepare.bind(f.disclosure),
+      enqueueControl: f.disclosure.enqueueControl.bind(f.disclosure)
+    }
+  for (const changed of [
+    { authenticate: undefined },
+    { disclosure: { ...disclosure, prepare: undefined } },
+    { disclosure: { ...disclosure, enqueueControl: undefined } }
+  ]) {
+    expect(() =>
+      createPrivatePublicationRouter({
+        ...f.options,
+        ...changed
+      } as unknown as Parameters<typeof createPrivatePublicationRouter>[0])
+    ).toThrow('Private publication routes require authentication and a native disclosure owner')
+  }
+  expect(f.native.rows()).toEqual([])
+})
+
+it('retains the request slot until a genuine authenticated status operation physically settles', async () => {
+  const f = await fixture({ maximumRequests: 1 })
+  expect((await f.fetch()).status).toBe(200)
+  let entered!: () => void, finish!: () => void
+  const started = new Promise<void>(resolve => {
+      entered = resolve
+    }),
+    blocked = new Promise<void>(resolve => {
+      finish = resolve
+    }),
+    original = f.coordinator.status.bind(f.coordinator),
+    changed = jest.spyOn(f.coordinator, 'status').mockImplementationOnce(async (...args) => {
+      const result = await original(...args)
+      entered()
+      await blocked
+      return result
+    }),
+    first = f.fetch('status')
+  try {
+    await started
+    const response = await fetch(f.origin + '/api/overlay/v1/private/status', {
+      method: 'POST',
+      headers: f.headers,
+      body: JSON.stringify(f.status)
+    })
+    expect(response.status).toBe(413)
+    expect((await response.json()).error).toEqual({
+      code: 'limited',
+      message: 'Private publication request limited',
+      retryable: true
+    })
+  } finally {
+    finish()
+    await first
+    changed.mockRestore()
+  }
+  expect((await f.fetch('status')).status).toBe(200)
+})
+
+it.each([false, true])(
+  'fails closed when installed authentication returns without handling the handshake (error=%p)',
+  async fail => {
+    const f = await fixture({
+      authenticate: (_req, _res, next) => next(fail ? new Error('private auth detail') : undefined)
+    })
+    const response = await fetch(f.origin + '/.well-known/auth', {
+      method: 'POST',
+      headers: f.headers,
+      body: '{}'
+    })
+    expect(response.status).toBe(fail ? 503 : 422)
+    expect((await response.json()).error).toEqual({
+      code: fail ? 'unavailable' : 'unsupported',
+      message: 'Private publication request ' + (fail ? 'unavailable' : 'unsupported'),
+      retryable: fail
+    })
+    expect(f.native.rows()).toEqual([])
+    expect(f.calls).toEqual([])
+  }
+)
+
+it('destroys the response when its HTTP adapter fails after native response guarding is installed', async () => {
+  let authenticate!: RequestHandler,
+    failed = false
+  const f = await fixture(
+    {
+      authenticate: (req, res, next) =>
+        authenticate(req, res, error => {
+          if (!error && req.path.endsWith('/publish')) {
+            jest.spyOn(res, 'status').mockImplementation(() => {
+              failed = true
+              throw new Error('private HTTP adapter detail')
+            })
+          }
+          next(error)
+        })
+    },
+    false,
+    (_app, installed) => {
+      authenticate = installed
+    }
+  )
+  await expect(f.fetch()).rejects.toThrow()
+  expect(failed).toBe(true)
+  expect(f.calls).toHaveLength(1)
+  await expect(f.coordinator.status(f.status, f.caller)).resolves.toMatchObject({
+    publicationId: f.status.publicationId,
+    status: 'ready'
+  })
+})
+
+it.each(['other-error', 'non-error', 'inherited-type'] as const)(
+  'normalizes a native raw-parser %s refusal before authentication',
+  async fault => {
+    const native = express.raw
+    const parser = jest.spyOn(express, 'raw').mockImplementation(options => {
+      const installed = native(options)
+      return (req, res, next) =>
+        installed(req, res, error => {
+          if (!error) return next()
+          if (fault === 'non-error') return next('Malformed parser error data')
+          const refused = new Error('Controlled raw-parser refusal')
+          if (fault === 'inherited-type')
+            Object.setPrototypeOf(
+              refused,
+              Object.assign(Object.create(Error.prototype), { type: 'entity.too.large' })
+            )
+          next(refused)
+        })
+    })
+    let f: Awaited<ReturnType<typeof fixture>>
+    try {
+      f = await fixture({ maximumRequestBytes: 1024 })
+    } finally {
+      parser.mockRestore()
+    }
+    const response = await fetch(f!.origin + '/api/overlay/v1/private/status', {
+      method: 'POST',
+      headers: f!.headers,
+      body: 'x'.repeat(1025)
+    })
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toMatchObject({
+      code: 'invalid',
+      message: 'Private publication request invalid'
+    })
+    expect(f!.native.rows()).toEqual([])
+    expect(f!.calls).toEqual([])
+  }
+)

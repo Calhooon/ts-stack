@@ -19,6 +19,25 @@ import {
   admission,
   binding
 } from './private-publication-fixture.js'
+
+it('refuses verified-only operations before any record access without an installed native service', () => {
+  const f = fixture(),
+    id = 'aa'.repeat(32),
+    expected = expect.objectContaining({
+      code: 'unsupported',
+      message: 'Verified private publication installation is required'
+    })
+  for (const operation of [
+    () => f.store.stageVerified(request(), selected(), '20', {}, clock, allow),
+    () => f.store.loadStatus(id, clock, allow),
+    () => f.store.loadVerified(id, clock, allow),
+    () => f.store.bindVerified(id, '0', clock, allow)
+  ]) {
+    expect(operation).toThrow(expected)
+    expect(f.rows()).toEqual([])
+  }
+})
+
 it('atomically retains one protected blob and one permanent request fence across independent open', () => {
   const f = fixture(),
     state = staged(f.store)

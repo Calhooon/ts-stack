@@ -485,3 +485,122 @@ test('refuses the otherwise valid retained capability of a different installed r
   expect(f.read).not.toHaveBeenCalled()
   expect(f.submit).not.toHaveBeenCalled()
 })
+
+test.each(['status', 'operation', 'transaction'] as const)(
+  'refuses altered rejection %s before read-only admission recovery',
+  async field => {
+    const f = fixture(),
+      rejection = {
+        status: 'rejected' as const,
+        operationId: f.job.operationId,
+        txid: f.job.candidate.txid,
+        reason: 'controlled rejection',
+        evidence: ''
+      }
+    if (field === 'status') rejection.status = 'admitted' as never
+    if (field === 'operation') rejection.operationId = 'ab'.repeat(32)
+    if (field === 'transaction') rejection.txid = 'ac'.repeat(32)
+    await expect(
+      f.bridge.assessRecovery(f.job, rejection, new AbortController().signal, {
+        ...f.context,
+        purchaseCommitment: 'a1'.repeat(32)
+      })
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'Admission recovery changes its retained exact rejection'
+    })
+    expect(f.read).not.toHaveBeenCalled()
+    expect(f.submit).not.toHaveBeenCalled()
+  }
+)
+
+test.each(['missing', 'async', 'false', 'promise'] as const)(
+  'refuses %s recovery authority before any retained-history read',
+  async fault => {
+    const f = fixture(),
+      rejection = {
+        status: 'rejected' as const,
+        operationId: f.job.operationId,
+        txid: f.job.candidate.txid,
+        reason: 'controlled rejection',
+        evidence: ''
+      },
+      context = { ...f.context, purchaseCommitment: 'a1'.repeat(32) }
+    if (fault === 'missing') context.checkCurrent = undefined as never
+    if (fault === 'async') context.checkCurrent = (async () => {}) as never
+    if (fault === 'false') context.checkCurrent = (() => false) as never
+    if (fault === 'promise')
+      context.checkCurrent = (() =>
+        Promise.reject(new Error('Deferred recovery authority'))) as never
+    const malformed = fault === 'missing' || fault === 'async'
+    await expect(
+      f.bridge.assessRecovery(f.job, rejection, new AbortController().signal, context)
+    ).rejects.toMatchObject({
+      code: malformed ? 'invalid' : 'context-changed',
+      message: malformed
+        ? 'Admission recovery requires a synchronous domain guard'
+        : 'Admission recovery context changed or cancelled'
+    })
+    expect(f.read).not.toHaveBeenCalled()
+    expect(f.submit).not.toHaveBeenCalled()
+    await new Promise<void>(resolve => setImmediate(resolve))
+  }
+)
+
+test.each(['guard', 'commitment', 'abort'] as const)(
+  'fences read-only recovery when %s changes during the real history await',
+  async fault => {
+    const f = fixture(),
+      controller = new AbortController(),
+      context = { ...f.context, purchaseCommitment: 'a1'.repeat(32) },
+      rejection = {
+        status: 'rejected' as const,
+        operationId: f.job.operationId,
+        txid: f.job.candidate.txid,
+        reason: 'controlled rejection',
+        evidence: ''
+      }
+    f.read.mockImplementation(async () => {
+      await Promise.resolve()
+      if (fault === 'guard') context.checkCurrent = jest.fn()
+      if (fault === 'commitment') context.purchaseCommitment = 'b2'.repeat(32)
+      if (fault === 'abort') controller.abort()
+      return { state: 'committed', admission: f.original() }
+    })
+    await expect(
+      f.bridge.assessRecovery(f.job, rejection, controller.signal, context)
+    ).rejects.toMatchObject({
+      code: fault === 'abort' ? 'cancelled' : 'context-changed',
+      message:
+        fault === 'abort'
+          ? 'Purchase admission cancelled'
+          : 'Admission recovery domain context changed'
+    })
+    expect(f.submit).not.toHaveBeenCalled()
+  }
+)
+
+test('binds recovery eligibility to the complete original admitted outcome and exact domain commitment', async () => {
+  const f = fixture(),
+    context = { ...f.context, purchaseCommitment: 'a1'.repeat(32) },
+    signal = new AbortController().signal,
+    rejection = {
+      status: 'rejected' as const,
+      operationId: f.job.operationId,
+      txid: f.job.candidate.txid,
+      reason: 'controlled rejection',
+      evidence: ''
+    }
+  f.read.mockResolvedValue({ state: 'committed', admission: f.original() })
+  const outcome = await f.run(),
+    eligible = await f.bridge.assessRecovery(f.job, rejection, signal, context)
+  expect(eligible).toMatchObject({
+    purchaseCommitment: context.purchaseCommitment,
+    eligibilityId: outputPacketDigest('purchase', {
+      purpose: 'purchase-admission-eligibility',
+      purchaseCommitment: context.purchaseCommitment,
+      outcome
+    })
+  })
+  expect(f.submit).not.toHaveBeenCalled()
+})

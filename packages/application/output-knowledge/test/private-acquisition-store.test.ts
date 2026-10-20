@@ -1,4 +1,4 @@
-import { expect, it } from '@jest/globals'
+import { expect, it, jest } from '@jest/globals'
 import {
   PrivateKey,
   ProtoWallet,
@@ -14,6 +14,55 @@ import {
 import { SQLitePrivateAcquisitionStore } from '../src/private/SQLitePrivateAcquisitionStore.js'
 import { acquisitionStoreFixture } from './private-acquisition-store.fixture.js'
 
+it.each([
+  'missing-state',
+  'missing-quote',
+  'state-kind',
+  'state-key',
+  'quote-kind',
+  'quote-key',
+  'state-capacity',
+  'quote-capacity'
+] as const)('refuses negative retained %s DATA after an actual native read', async field => {
+  const f = await acquisitionStoreFixture(),
+    quoted = f.quote(),
+    before = f.owner.store.load(f.id, f.buyer, f.clock, f.guard),
+    ledger = f.owner.domain.ledger,
+    actual = ledger.read.bind(ledger),
+    changed = jest.spyOn(ledger, 'read').mockImplementation((...args) => {
+      const result = actual(...args),
+        [state, quote] = result.records
+      if (field === 'state-kind') state!.kind = 'quote'
+      if (field === 'state-key') state!.key = 'ef'.repeat(32)
+      if (field === 'quote-kind') quote!.kind = 'acquisition'
+      if (field === 'quote-key') quote!.key = 'ef'.repeat(32)
+      if (field === 'state-capacity') state!.reservedBytes--
+      if (field === 'quote-capacity') quote!.reservedBytes--
+      return {
+        ...result,
+        records: [
+          field === 'missing-state' ? undefined : state,
+          field === 'missing-quote' ? undefined : quote
+        ]
+      }
+    })
+  try {
+    expect(() => f.owner.store.load(f.id, f.buyer, f.clock, f.guard)).toThrow(
+      expect.objectContaining({
+        code: 'unavailable',
+        message: field.startsWith('missing-')
+          ? 'Acquisition original or progress is unavailable'
+          : 'Acquisition native record binding differs'
+      })
+    )
+    expect(changed).toHaveBeenCalledTimes(1)
+  } finally {
+    changed.mockRestore()
+  }
+  expect(before!.state).toEqual(quoted.state)
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)).toEqual(before)
+})
+
 it('atomically reserves the original invoice, material, result space and permanent fences', async () => {
   const f = await acquisitionStoreFixture(),
     q = f.quote(),
@@ -28,6 +77,69 @@ it('atomically reserves the original invoice, material, result space and permane
   expect(
     reopened.domain.ledger.enumerate('delivery', null, 64, f.clock, f.guard).entries
   ).toHaveLength(3)
+})
+
+it('retains every native completion update through a full funded and replayable delivery lifecycle', async () => {
+  const f = await acquisitionStoreFixture()
+  let retained = f.quote()
+  expect(retained.row.reservedUpdates).toBe(6)
+  const advance = (
+    time: string,
+    event: Parameters<typeof f.owner.store.advance>[3],
+    remaining: number
+  ) => {
+    f.setNow(time)
+    retained = f.owner.store.advance(f.id, f.buyer, retained.row.revision, event, f.clock, f.guard)
+    expect(retained.row.reservedUpdates).toBe(remaining)
+    expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.row.reservedUpdates).toBe(
+      remaining
+    )
+  }
+  advance('30', { type: 'pin', payment: f.f.f.payment() }, 5)
+  advance(
+    '31',
+    {
+      type: 'reserve-funding',
+      candidateDigest: retained.state.progress.candidate!.digest,
+      sellerPaymentKey: f.f.f.sellerPaymentKey,
+      acceptance: {
+        chain: f.f.f.chain,
+        txid: f.f.f.transaction.id('hex'),
+        policy: { kind: 'local-admission' },
+        acceptedAt: '19'
+      }
+    },
+    4
+  )
+  advance('32', { type: 'wallet-accepted', receipt: f.f.f.receipt(retained.state.progress) }, 3)
+  advance('33', { type: 'prepare-delivery' }, 2)
+  advance('34', { type: 'prepare-delivery' }, 1)
+  f.setNow('35')
+  const completed = f.owner.store.complete(
+    f.id,
+    f.buyer,
+    retained.row.revision,
+    'BAUG',
+    f.clock,
+    f.guard
+  )
+  expect(completed.row.reservedUpdates).toBe(0)
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.state).toEqual(completed.state)
+})
+
+it('refuses a non-void authority verdict at the native quote commit and retains no partial state', async () => {
+  const f = await acquisitionStoreFixture()
+  let calls = 0
+  expect(() =>
+    f.owner.store.quote(f.original, 'AQID', f.clock, () => (++calls === 2 ? true : undefined))
+  ).toThrow(
+    expect.objectContaining({
+      code: 'invalid',
+      message: 'Acquisition native guard must be synchronous'
+    })
+  )
+  expect(calls).toBe(2)
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)).toBeUndefined()
 })
 it('retains the exact original invoice when a retry proposes new price, prefix or material', async () => {
   const f = await acquisitionStoreFixture(),
@@ -84,14 +196,14 @@ it('does not expose an existing acquisition or its material to another buyer', a
   expect(f.owner.store.load(f.id, other, f.clock, f.guard)).toBeUndefined()
   expect(f.owner.store.load('00'.repeat(32), other, f.clock, f.guard)).toBeUndefined()
   expect(() => f.owner.store.material(f.id, other, '1', f.clock, f.guard)).toThrow(
-    'Acquisition is absent'
+    expect.objectContaining({ code: 'not-found', message: 'Acquisition is absent' })
   )
   let calls = 0
   expect(() =>
     f.owner.store.disclose(q, other, f.clock, f.guard, () => {
       calls++
     })
-  ).toThrow('Acquisition is absent')
+  ).toThrow(expect.objectContaining({ code: 'not-found', message: 'Acquisition is absent' }))
   expect(calls).toBe(0)
 })
 it('recovers every paid phase and an immutable result through independent native connections', async () => {
@@ -364,7 +476,114 @@ it('rejects insufficient future progress capacity or another seller/chain instal
         { ...f.limits, maximumStateBytes: 524288 },
         f.f.settings
       )
-  ).toThrow('future reservation')
+  ).toThrow(
+    expect.objectContaining({
+      code: 'limited',
+      message: 'Acquisition progress cannot fit its future reservation'
+    })
+  )
+})
+
+it('replenishes the original unverified-candidate reservation after a definitive invalid verdict', async () => {
+  const f = await acquisitionStoreFixture(),
+    pinned = f.pin()
+  f.setNow('31')
+  const invalid = f.owner.store.advance(
+    f.id,
+    f.buyer,
+    pinned.row.revision,
+    {
+      type: 'invalid',
+      candidateDigest: pinned.state.progress.candidate!.digest,
+      reason: 'invalid-evidence'
+    },
+    f.clock,
+    f.guard
+  )
+  expect(invalid.row.reservedUpdates).toBe(6)
+  f.setNow('32')
+  const next = f.owner.store.advance(
+    f.id,
+    f.buyer,
+    invalid.row.revision,
+    {
+      type: 'pin',
+      payment: { ...f.f.f.payment(), derivationSuffix: 'another-unverified-candidate' }
+    },
+    f.clock,
+    f.guard
+  )
+  expect(next.row.reservedUpdates).toBe(5)
+  expect(next.state.progress.funding).toBeNull()
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.state).toEqual(next.state)
+})
+
+it.each(['material', 'result'] as const)(
+  'rejects a changed native %s read revision before release or completion',
+  async kind => {
+    const f = await acquisitionStoreFixture(),
+      retained = kind === 'material' ? f.quote() : f.prepare(),
+      ledger = f.owner.domain.ledger,
+      actual = ledger.read.bind(ledger)
+    let reads = 0
+    const changed = jest.spyOn(ledger, 'read').mockImplementation((...args) => {
+      const result = actual(...args)
+      return ++reads === 2 ? { ...result, revision: '0' } : result
+    })
+    try {
+      expect(() =>
+        kind === 'material'
+          ? f.owner.store.material(f.id, f.buyer, retained.row.revision, f.clock, f.guard)
+          : f.owner.store.complete(f.id, f.buyer, retained.row.revision, 'BAUG', f.clock, f.guard)
+      ).toThrow(
+        expect.objectContaining({
+          code: 'conflict',
+          message:
+            kind === 'material'
+              ? 'Acquisition changed before material read'
+              : 'Acquisition result reservation changed'
+        })
+      )
+      expect(reads).toBe(2)
+    } finally {
+      changed.mockRestore()
+    }
+    expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.state).toEqual(retained.state)
+  }
+)
+
+it('retains the genuine delivery intent if the native clock changes before result commit', async () => {
+  const f = await acquisitionStoreFixture(),
+    retained = f.prepare()
+  let now = 33
+  expect(() =>
+    f.owner.store.complete(
+      f.id,
+      f.buyer,
+      retained.row.revision,
+      'BAUG',
+      () => String(++now),
+      f.guard
+    )
+  ).toThrow(
+    expect.objectContaining({
+      code: 'conflict',
+      message: 'Acquisition delivery clock changed before commit'
+    })
+  )
+  f.setNow(String(now))
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.state).toEqual(retained.state)
+})
+
+it('refuses a non-void physical enqueue result inside its actual native disclosure gate', async () => {
+  const f = await acquisitionStoreFixture(),
+    quoted = f.quote(),
+    enqueue = jest.fn(() => true)
+  expect(() => f.owner.store.disclose(quoted, f.buyer, f.clock, f.guard, enqueue)).toThrow(
+    expect.objectContaining({ code: 'invalid', message: 'Acquisition enqueue must be synchronous' })
+  )
+  expect(enqueue).toHaveBeenCalledTimes(1)
+  expect(f.open().store.load(f.id, f.buyer, f.clock, f.guard)!.state).toEqual(quoted.state)
 })
 
 it('atomically refuses a funding outpoint already reserved through another derivation split', async () => {

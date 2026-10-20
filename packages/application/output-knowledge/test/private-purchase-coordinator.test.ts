@@ -2,6 +2,7 @@ import { test, expect } from '@jest/globals'
 import { PrivateKey, outputAssert, OutputProtocolError } from '@bsv/sdk'
 import { purchaseCoordinatorFixture as fixture } from './private-purchase-coordinator.fixture.js'
 import { PrivatePurchaseCoordinator } from '../src/private/PrivatePurchaseCoordinator.js'
+import { ownPrivatePurchaseAdmissionOutcome } from '../src/private/PrivatePurchasePorts.js'
 
 test('passes owned complete retained candidate bytes to issuance and preserves the native original', async () => {
   const f = fixture()
@@ -424,3 +425,119 @@ test('current validation is synchronous even for a function returning a Promise'
   )
   outputAssert(f.counts.admission === 0, 'No admission on invalid guard')
 })
+
+test.each([
+  'missing',
+  'null',
+  'missing-method',
+  'async-method',
+  'nonvoid',
+  'method-change'
+] as const)('refuses %s preparation validation before retaining financial intent', async fault => {
+  const f = fixture(),
+    prepare = f.domain.prepare
+  f.domain.prepare = async (...args) => {
+    const result = await prepare(...args)
+    if (fault === 'missing') result.validation = undefined as never
+    if (fault === 'null') result.validation = null as never
+    if (fault === 'missing-method') result.validation = {} as never
+    if (fault === 'async-method') result.validation = { checkCurrent: async () => {} }
+    if (fault === 'nonvoid') result.validation = { checkCurrent: (() => true) as never }
+    if (fault === 'method-change') {
+      const validation = {
+        checkCurrent: () => {
+          validation.checkCurrent = () => undefined
+        }
+      }
+      result.validation = validation
+    }
+    return result
+  }
+  const coordinator = new PrivatePurchaseCoordinator(f.owner)
+  try {
+    const malformed = ['missing', 'null', 'missing-method', 'async-method'].includes(fault)
+    await expect(coordinator.prepare(f.f.f.f.request, f.caller)).rejects.toMatchObject({
+      code: malformed ? 'invalid' : 'context-changed',
+      message: malformed
+        ? 'Purchase validation guard must be synchronous'
+        : fault === 'nonvoid'
+          ? 'Purchase validation guard must finish synchronously'
+          : 'Purchase validation guard changed'
+    })
+    expect(f.current()).toBeUndefined()
+    expect(f.counts.admission).toBe(0)
+    expect(f.counts.issue).toBe(0)
+  } finally {
+    await coordinator.stop()
+    await f.dispose()
+  }
+})
+
+test.each(['missing', 'async'] as const)(
+  'requires synchronous authentication instead of a %s callback',
+  async fault => {
+    const f = fixture(),
+      caller = {
+        ...f.caller,
+        current: fault === 'missing' ? (undefined as never) : ((async () => true) as never)
+      }
+    try {
+      expect(() => f.coordinator.prepare(f.f.f.f.request, caller)).toThrow(
+        expect.objectContaining({
+          code: 'invalid',
+          message: 'Current purchase authentication is required'
+        })
+      )
+      expect(f.current()).toBeUndefined()
+      expect(f.counts.prepare).toBe(0)
+    } finally {
+      await f.dispose()
+    }
+  }
+)
+
+test.each(['capability', 'profile'] as const)(
+  'binds preparation to the selected %s before private material is requested',
+  async field => {
+    const f = fixture(),
+      caller = {
+        ...f.caller,
+        [field]: field === 'capability' ? 'ab'.repeat(32) : 'urn:another-profile'
+      }
+    try {
+      await expect(f.coordinator.prepare(f.f.f.f.request, caller)).rejects.toMatchObject({
+        code: 'context-changed',
+        message: 'Original purchase selection differs'
+      })
+      expect(f.current()).toBeUndefined()
+      expect(f.counts.prepare).toBe(0)
+    } finally {
+      await f.dispose()
+    }
+  }
+)
+
+test.each(['unknown-status', 'array-evidence', 'missing-evidence'] as const)(
+  'refuses %s rejection data instead of converting it into an admission verdict',
+  fault => {
+    const input = {
+      status: 'rejected',
+      operationId: 'ab'.repeat(32),
+      txid: 'ac'.repeat(32),
+      reason: 'controlled rejection',
+      evidence: fault === 'array-evidence' ? [] : fault === 'missing-evidence' ? undefined : ''
+    }
+    if (fault === 'unknown-status') input.status = 'unknown'
+    expect(() => ownPrivatePurchaseAdmissionOutcome(input)).toThrow(
+      expect.objectContaining({
+        code: fault === 'unknown-status' ? 'unsupported' : 'invalid',
+        message:
+          fault === 'unknown-status'
+            ? 'Unsupported purchase admission outcome'
+            : fault === 'missing-evidence'
+              ? 'Expected a JSON value'
+              : 'Purchase rejection evidence must be encoded bytes'
+      })
+    )
+  }
+)

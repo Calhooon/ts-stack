@@ -1,11 +1,11 @@
-import { afterEach, beforeAll, describe, expect, it } from '@jest/globals'
+import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { createSecretKey } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fork, type ChildProcess } from 'node:child_process'
-import { canonicalOutputJSON, outputPacketDigest } from '@bsv/sdk'
+import { canonicalOutputJSON, outputPacketDigest, PrivateKey } from '@bsv/sdk'
 import {
   PrivateServiceDomain,
   type PrivateServiceDomainConfiguration
@@ -31,11 +31,15 @@ describe('native acquisition funding reservation index', () => {
     for (const close of cleanup) close()
     cleanup.clear()
   })
-  function location(maximumRecords = 128, maximumReservedBytes = 2 * 1048576) {
+  function location(
+    maximumRecords = 128,
+    maximumReservedBytes = 2 * 1048576,
+    identity: PrivateServiceDomainConfiguration['identity'] = { seller: f.seller, chain: f.chain }
+  ) {
     const directory = mkdtempSync(join(tmpdir(), 'acquisition-index-')),
       path = join(directory, 'private.db')
     const config: PrivateServiceDomainConfiguration = {
-      identity: { seller: f.seller, chain: f.chain },
+      identity,
       indexKeyId: 'index',
       capacity: {
         storeId: 'ab'.repeat(32),
@@ -328,5 +332,169 @@ describe('native acquisition funding reservation index', () => {
     expect(change.key).toMatch(/^[0-9a-f]{64}$/)
     expect(change.key).not.toBe(f.challenge.acquisitionId)
     expect(canonicalOutputJSON({ kind: change.kind, key: change.key })).not.toContain(f.buyer)
+  })
+
+  it.each(['seller', 'chain'] as const)(
+    'refuses a genuine native owner in another %s namespace',
+    field => {
+      const identity = {
+          seller: field === 'seller' ? new PrivateKey(49).toPublicKey().toString() : f.seller,
+          chain: field === 'chain' ? { ...f.chain, network: 'another-native-chain' } : f.chain
+        },
+        { owner } = location(128, 2 * 1048576, identity),
+        index = new PrivateAcquisitionFundingIndex(owner),
+        expected = expect.objectContaining({
+          code: 'context-changed',
+          message: 'Acquisition funding namespace differs'
+        })
+      expect(() => index.reserveQuote(f.initial())).toThrow(expected)
+      expect(() => index.assign(f.reserved(), '0', clock, allow)).toThrow(expected)
+      expect(owner.ledger.enumerate('funding-fence', null, 64, clock, allow).entries).toEqual([])
+    }
+  )
+
+  it.each([
+    ['format', 'Unknown retained funding fence cannot establish uniqueness'],
+    ['kind', 'Retained funding fence binding differs'],
+    ['key', 'Retained funding fence binding differs'],
+    ['capacity', 'Retained funding fence binding differs'],
+    ['completion', 'Funding slot completion capacity differs'],
+    ['missing', 'Reserved funding slot is unavailable'],
+    ['request', 'Acquisition funding slot changed request'],
+    ['duplicate', 'Acquisition funding slot changed request'],
+    ['assignment-chain', 'Retained funding assignment differs'],
+    ['assignment-operation', 'Retained funding assignment differs'],
+    ['assignment-completion', 'Funding slot completion capacity differs'],
+    ['different-assignment', 'Acquisition already reserved different funding']
+  ] as const)(
+    'refuses negative ledger read DATA for %s after an actual native read',
+    (field, message) => {
+      const { owner } = location(),
+        index = new PrivateAcquisitionFundingIndex(owner),
+        state = f.reserved(),
+        operation = state.funding!.operation
+      let current = reserve(owner, f.initial())
+      if (field.startsWith('assignment-') || field === 'different-assignment')
+        current = owner.ledger.commit(
+          current,
+          [index.assign(state, current, clock, allow)!],
+          clock,
+          allow
+        )
+      const ledger = owner.ledger,
+        addresses = ledger
+          .enumerate('funding-fence', null, 64, clock, allow)
+          .entries.map(({ kind, key }) => ({ kind, key })),
+        actual = ledger.read.bind(ledger),
+        original = actual(addresses, clock, allow),
+        changed = jest.spyOn(ledger, 'read').mockImplementation((...args) => {
+          const result = actual(...args),
+            row = result.records[0]!
+          if (field === 'format') row.value.format = 'future'
+          if (field === 'kind') row.kind = 'quote'
+          if (field === 'key') row.key = 'ef'.repeat(32)
+          if (field === 'capacity') row.reservedBytes--
+          if (field === 'completion') row.reservedUpdates = 0
+          if (field === 'request') row.value.requestDigest = 'ef'.repeat(32)
+          if (field === 'assignment-completion') row.reservedUpdates = 1
+          if (field === 'assignment-operation')
+            row.value.assignment = { operationId: 'ef'.repeat(32), funding: operation.funding }
+          if (field === 'assignment-chain' || field === 'different-assignment') {
+            const funding = {
+              ...operation.funding,
+              ...(field === 'assignment-chain'
+                ? { chain: { ...operation.funding.chain, network: 'foreign' } }
+                : { outputIndex: operation.funding.outputIndex + 1 })
+            }
+            row.value.assignment = {
+              operationId: outputPacketDigest('wallet-funding', {
+                seller: f.seller,
+                acquisitionId: state.challenge.acquisitionId,
+                funding
+              }),
+              funding
+            }
+          }
+          return {
+            ...result,
+            records:
+              field === 'missing'
+                ? [undefined]
+                : field === 'duplicate'
+                  ? [row, structuredClone(row)]
+                  : [row]
+          }
+        })
+      try {
+        expect(() => index.assign(state, current, clock, allow)).toThrow(
+          expect.objectContaining({
+            code: field === 'different-assignment' ? 'conflict' : 'unavailable',
+            message
+          })
+        )
+        expect(changed).toHaveBeenCalledTimes(1)
+      } finally {
+        changed.mockRestore()
+      }
+      expect(ledger.read(addresses, clock, allow)).toEqual(original)
+    }
+  )
+
+  it.each(['scan', 'read'] as const)(
+    'rejects a changed %s revision after its actual native operation',
+    phase => {
+      const { owner } = location(),
+        index = new PrivateAcquisitionFundingIndex(owner)
+      reserve(owner, f.initial())
+      const ledger = owner.ledger,
+        enumerate = ledger.enumerate.bind(ledger),
+        read = ledger.read.bind(ledger)
+      const changed =
+        phase === 'scan'
+          ? jest
+              .spyOn(ledger, 'enumerate')
+              .mockImplementation((...args) => ({ ...enumerate(...args), revision: '0' }))
+          : jest
+              .spyOn(ledger, 'read')
+              .mockImplementation((...args) => ({ ...read(...args), revision: '0' }))
+      try {
+        expect(() => index.assign(f.reserved(), '1', clock, allow)).toThrow(
+          expect.objectContaining({
+            code: 'conflict',
+            message: 'Funding namespace changed during ' + phase
+          })
+        )
+        expect(changed).toHaveBeenCalledTimes(1)
+      } finally {
+        changed.mockRestore()
+      }
+      expect(revision(owner)).toBe('1')
+    }
+  )
+
+  it('refuses an over-capacity enumerator DATA result without reading or modifying native records', () => {
+    const { owner } = location(),
+      index = new PrivateAcquisitionFundingIndex(owner)
+    reserve(owner, f.initial())
+    const ledger = owner.ledger,
+      actual = ledger.enumerate.bind(ledger),
+      changed = jest.spyOn(ledger, 'enumerate').mockImplementation((...args) => {
+        const page = actual(...args)
+        return { ...page, entries: Array.from({ length: 4097 }, () => page.entries[0]!) }
+      }),
+      read = jest.spyOn(ledger, 'read')
+    try {
+      expect(() => index.assign(f.reserved(), '1', clock, allow)).toThrow(
+        expect.objectContaining({
+          code: 'limited',
+          message: 'Funding namespace exceeds native domain capacity'
+        })
+      )
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      changed.mockRestore()
+      read.mockRestore()
+    }
+    expect(revision(owner)).toBe('1')
   })
 })

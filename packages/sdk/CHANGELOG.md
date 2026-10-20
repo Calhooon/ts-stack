@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec2.0.0.html).
 
+### Revenue profile spend construction
+
+Revenue listing profile witness estimates use the existing Script encoder for
+push prefixes and retain their exact conservative activation and active bounds
+(39,110 and 6,542 bytes). Internal funded snapshots receive an explicit header
+choice. Public construction defaults, signatures, transaction bytes and ABI
+remain compatible; no consumer migration is required.
+
 ### Fresh purchase and release ownership companions
 
 Add seven opt-in purchase response, commitment, POTATOES and release-evidence

@@ -259,3 +259,344 @@ test.each(['activation', 'active'] as const)(
     expect(() => builder.prepare(funded)).toThrow('Additional family listing')
   }
 )
+
+import LockingScript from '../../LockingScript.js'
+import BigNumber from '../../../primitives/BigNumber.js'
+
+function fundedProfilePurchase() {
+  return Transaction.fromAtomicBEEF(toArray(fixture.purchase, 'base64'))
+}
+function purchaseProfileBuilder() {
+  return new RevenueListingProfileSpend(
+    profile,
+    fixture.descriptor,
+    [{ rawTransaction: activation.toHex(), outputIndex: 0 }],
+    purchaseAction
+  )
+}
+
+test.each([
+  ['activation', genesis, { operation: 'activate' } as const, 39110],
+  ['active', activation, purchaseAction, 6542]
+] as const)(
+  'preserves the exact conservative %s witness bound',
+  (_stage, previous, action, bytes) => {
+    const builder = new RevenueListingProfileSpend(
+      profile,
+      fixture.descriptor,
+      [{ rawTransaction: previous.toHex(), outputIndex: 0 }],
+      action
+    )
+    expect(builder.estimateUnlockingLength()).toBe(bytes)
+  }
+)
+
+test.each(
+  (['version', 'lockTime', 'listing-sequence', 'funding-sequence'] as const).flatMap(field =>
+    [-1, 1.5, 0x100000000, Number.NaN, Number.POSITIVE_INFINITY].map(value => ({ field, value }))
+  )
+)('refuses invalid preserved $field=$value before encoding the transaction', ({ field, value }) => {
+  const transaction = fundedProfilePurchase()
+  if (field === 'version' || field === 'lockTime') transaction[field] = value
+  else transaction.inputs[field === 'listing-sequence' ? 0 : 1].sequence = value
+  expect(() => purchaseProfileBuilder().preparePreservingHeader(transaction)).toThrow(
+    'Invalid preserved transaction header'
+  )
+})
+
+test.each([0, 0xffffffff])(
+  'preserves every explicitly selected uint32 header endpoint %i',
+  value => {
+    const transaction = fundedProfilePurchase()
+    transaction.version = value
+    transaction.lockTime = value
+    transaction.inputs.forEach(input => {
+      input.sequence = value
+    })
+    const completed = purchaseProfileBuilder().preparePreservingHeader(transaction).complete({})
+    expect(completed.version).toBe(value)
+    expect(completed.lockTime).toBe(value)
+    expect(completed.inputs.map(input => input.sequence)).toEqual([value, value])
+  }
+)
+
+test.each([0, 1, 9])('bounds %i funded inputs before predecessor work', count => {
+  const transaction = fundedProfilePurchase(),
+    inputs = transaction.inputs
+  transaction.inputs = Array.from({ length: count }, (_, index) => ({
+    ...inputs[index % inputs.length]
+  }))
+  expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+    'Funded transaction layout exceeds profile'
+  )
+})
+test.each([0, 12])('bounds %i funded outputs before predecessor work', count => {
+  const transaction = fundedProfilePurchase(),
+    output = transaction.outputs[0]
+  transaction.outputs = Array.from({ length: count }, () => ({ ...output }))
+  expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+    'Funded transaction layout exceeds profile'
+  )
+})
+test('accepts layout ceilings before separately refusing duplicate inputs and excess route outputs', () => {
+  const inputs = fundedProfilePurchase()
+  inputs.inputs = [inputs.inputs[0], ...Array.from({ length: 7 }, () => ({ ...inputs.inputs[1] }))]
+  expect(() => purchaseProfileBuilder().prepare(inputs)).toThrow('Duplicate funded input')
+  const outputs = fundedProfilePurchase()
+  while (outputs.outputs.length < 11) outputs.outputs.push({ ...outputs.outputs.at(-1)! })
+  expect(() => purchaseProfileBuilder().prepare(outputs)).toThrow('Funded output count changed')
+})
+
+test.each([
+  'identity',
+  'missing-output',
+  'required-amount',
+  'required-script',
+  'change-script',
+  'value'
+] as const)('keeps the funded %s boundary independently bound', field => {
+  const transaction = fundedProfilePurchase()
+  if (field === 'identity') transaction.inputs[1].sourceTXID = 'ef'.repeat(32)
+  if (field === 'missing-output') transaction.inputs[1].sourceOutputIndex = 0xffffffff
+  if (field === 'required-amount') transaction.outputs[0].satoshis!++
+  if (field === 'required-script')
+    transaction.outputs[0].lockingScript = LockingScript.fromHex('51')
+  if (field === 'change-script')
+    transaction.outputs.at(-1)!.lockingScript = LockingScript.fromHex('51')
+  if (field === 'value') {
+    const inputTotal = transaction.inputs.reduce(
+        (total, input) =>
+          total + input.sourceTransaction!.outputs[input.sourceOutputIndex].satoshis!,
+        0
+      ),
+      required = transaction.outputs
+        .slice(0, -1)
+        .reduce((total, output) => total + output.satoshis!, 0)
+    transaction.outputs.at(-1)!.satoshis = inputTotal - required + 1
+  }
+  const errors = {
+    identity: 'Funding predecessor identity mismatch',
+    'missing-output': 'Funding predecessor output missing',
+    'required-amount': 'Required listing output changed',
+    'required-script': 'Required listing output changed',
+    'change-script': 'Only one final P2PKH change output is allowed',
+    value: 'Funded transaction does not conserve value'
+  }
+  expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(errors[field])
+})
+
+test.each(['activation', 'active'] as const)(
+  'keeps a foreign program with the exact %s script length distinct from the pinned family',
+  stage => {
+    const transaction = fundedProfilePurchase(),
+      funding = Transaction.fromHex(transaction.inputs[1].sourceTransaction!.toHex()),
+      output = funding.outputs[transaction.inputs[1].sourceOutputIndex],
+      size = (stage === 'activation' ? genesis : activation).outputs[0].lockingScript.toBinary()
+        .length
+    output.lockingScript = LockingScript.fromHex('61'.repeat(size))
+    transaction.inputs[1].sourceTransaction = funding
+    transaction.inputs[1].sourceTXID = funding.id('hex')
+    expect(purchaseProfileBuilder().prepare(transaction).signingRequests()).toEqual([])
+  }
+)
+
+test('bounds complete transaction and predecessor bytes before reading their financial fields', () => {
+  const transaction = fundedProfilePurchase()
+  transaction.outputs[0].lockingScript = new LockingScript()
+    .writeOpCode(0x6a)
+    .writeBin(Array<number>(4194304).fill(0))
+  expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+    'Transaction exceeds local byte limit'
+  )
+  const funded = fundedProfilePurchase(),
+    funding = Transaction.fromHex(funded.inputs[1].sourceTransaction!.toHex())
+  funding.outputs[funded.inputs[1].sourceOutputIndex].lockingScript = new LockingScript()
+    .writeOpCode(0x6a)
+    .writeBin(Array<number>(1048576).fill(0))
+  funded.inputs[1].sourceTransaction = funding
+  funded.inputs[1].sourceTXID = funding.id('hex')
+  expect(() => purchaseProfileBuilder().prepare(funded)).toThrow(
+    'Transaction exceeds local byte limit'
+  )
+})
+
+test('owns the complete funded transaction and source evidence before the caller changes either', () => {
+  const transaction = fundedProfilePurchase(),
+    original = transaction.toHex(),
+    prepared = purchaseProfileBuilder().prepare(transaction)
+  transaction.outputs[0].satoshis!++
+  transaction.inputs[1].sequence!--
+  transaction.inputs[1].sourceTransaction!.outputs[transaction.inputs[1].sourceOutputIndex]
+    .satoshis!++
+  const completed = prepared.complete({})
+  expect(completed.toHex()).toBe(original)
+  executeAll(completed)
+})
+
+test('owns protocol metadata across returned plans and protected signing requests', async () => {
+  const action = { operation: 'split', firstAmount: '301' } as const,
+    { completed } = await construct(purchase, action),
+    builder = new RevenueListingProfileSpend(
+      profile,
+      fixture.descriptor,
+      [{ rawTransaction: purchase.toHex(), outputIndex: 0 }],
+      action
+    ),
+    prepared = builder.prepare(completed),
+    plan = builder.plan()
+  Reflect.set(plan.sellerAuthorization!.protocolID, 0, 3)
+  expect(builder.plan().sellerAuthorization!.protocolID).toEqual([2, '3241645161d8'])
+  const requests = prepared.signingRequests()
+  Reflect.set(requests[0].protocolID, 1, 'foreign-child-domain')
+  requests[0].data[0] ^= 1
+  requests[0].preimage[0] ^= 1
+  requests[0].publicKey = '00'
+  const actual = prepared.signingRequests()[0],
+    input = completed.inputs[0],
+    source = input.sourceTransaction!.outputs[input.sourceOutputIndex],
+    preimage = TransactionSignature.format({
+      sourceTXID: input.sourceTXID!,
+      sourceOutputIndex: input.sourceOutputIndex,
+      sourceSatoshis: source.satoshis!,
+      transactionVersion: completed.version,
+      otherInputs: completed.inputs.slice(1),
+      outputs: completed.outputs,
+      inputIndex: 0,
+      subscript: source.lockingScript,
+      inputSequence: input.sequence!,
+      lockTime: completed.lockTime,
+      scope: 0x41
+    }),
+    wallet = new ProtoWallet(new PrivateKey(fixture.testActors.seller.scalar)),
+    child = await wallet.getPublicKey({
+      protocolID: [2, '3241645161d8'],
+      keyID: 'brc197 authority',
+      counterparty: 'anyone',
+      forSelf: true
+    })
+  expect(actual).toEqual({
+    inputIndex: 0,
+    identity: fixture.testActors.seller.identity,
+    publicKey: child.publicKey,
+    role: 'seller',
+    protocolID: [2, '3241645161d8'],
+    keyID: 'brc197 authority',
+    counterparty: 'anyone',
+    scope: 65,
+    data: sha256(preimage),
+    preimage
+  })
+})
+
+test('keeps canonical signature shape, protected child, low S and exact sighash independent', async () => {
+  const { completed, prepared } = await construct(purchase, {
+      operation: 'split',
+      firstAmount: '301'
+    }),
+    valid = toHex(completed.inputs[0].unlockingScript!.chunks[11].data!),
+    failure = 'Seller signature must authorize this input with the protected child and ALL|FORKID'
+  for (const seller of [
+    null,
+    1,
+    [],
+    {},
+    '',
+    '0'.repeat(17),
+    '0'.repeat(145),
+    '0'.repeat(19),
+    'gg'.repeat(9),
+    valid.toUpperCase()
+  ]) {
+    expect(() => prepared.complete({ seller })).toThrow('Expected canonical seller-child signature')
+  }
+  const minimum = '300602010102010141',
+    maximum = toHex(
+      new TransactionSignature(
+        new BigNumber('80' + '00'.repeat(31), 16),
+        new BigNumber('40' + '00'.repeat(31), 16),
+        0x41
+      ).toChecksigFormat()
+    )
+  expect(minimum).toHaveLength(18)
+  expect(maximum).toHaveLength(144)
+  for (const seller of [minimum, maximum])
+    expect(() => prepared.complete({ seller })).toThrow(failure)
+  const scope = TransactionSignature.fromChecksigFormat(toArray(valid, 'hex'))
+  scope.scope = 0x42
+  expect(() => prepared.complete({ seller: toHex(scope.toChecksigFormat()) })).toThrow(failure)
+  const high = TransactionSignature.fromChecksigFormat(toArray(valid, 'hex')),
+    order = new BigNumber('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 16)
+  high.s = order.sub(high.s)
+  expect(high.hasLowS()).toBe(false)
+  expect(() => prepared.complete({ seller: toHex(high.toChecksigFormat()) })).toThrow(failure)
+  expect(() => prepared.complete({})).toThrow('Exact seller-child signature presence required')
+  expect(() => prepared.complete({ seller: valid, extra: true })).toThrow()
+  expect(prepared.complete({ seller: valid }).inputs[0].unlockingScript!.toHex()).toBe(
+    completed.inputs[0].unlockingScript!.toHex()
+  )
+})
+
+test.each([0, 2100000000000001])(
+  'refuses an encoded output amount outside the monetary range: %i',
+  value => {
+    const transaction = fundedProfilePurchase()
+    transaction.outputs[0].satoshis = value
+    expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow('Invalid funded amount')
+  }
+)
+
+test.each([0, 2100000000000000, 2100000000000001])(
+  'keeps actual external funding amount %i separate from value conservation',
+  value => {
+    const transaction = fundedProfilePurchase(),
+      source = Transaction.fromHex(transaction.inputs[1].sourceTransaction!.toHex())
+    source.outputs[transaction.inputs[1].sourceOutputIndex].satoshis = value
+    transaction.inputs[1].sourceTransaction = source
+    transaction.inputs[1].sourceTXID = source.id('hex')
+    expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+      value > 2100000000000000
+        ? 'Invalid external funding amount'
+        : 'Funded transaction does not conserve value'
+    )
+  }
+)
+
+test('accepts the monetary ceiling before independently refusing a changed required output', () => {
+  const transaction = fundedProfilePurchase()
+  transaction.outputs[0].satoshis = 2100000000000000
+  expect(() => purchaseProfileBuilder().prepare(transaction)).toThrow(
+    'Required listing output changed'
+  )
+})
+
+test.each(['version', 'change-value', 'change-destination'] as const)(
+  'refuses a financially valid post-signing %s change at the authenticated layout boundary',
+  field => {
+    const transaction = fundedProfilePurchase(),
+      prepared = purchaseProfileBuilder().prepare(transaction)
+    if (field === 'version') transaction.version++
+    if (field === 'change-value') transaction.outputs.at(-1)!.satoshis!--
+    if (field === 'change-destination')
+      transaction.outputs.at(-1)!.lockingScript = LockingScript.fromHex(
+        '76a914' + '00'.repeat(20) + '88ac'
+      )
+    expect(() => prepared.assertFinalLayout(transaction)).toThrow(
+      'Wallet changed the authenticated transaction layout'
+    )
+  }
+)
+
+test('bounds the completed witness independently of the already bounded funded transaction', () => {
+  const transaction = fundedProfilePurchase()
+  transaction.inputs.forEach(input => {
+    input.unlockingScript = new UnlockingScript()
+  })
+  const empty = transaction.toBinary().length,
+    payload = 4194304 - 1024 - empty - 9
+  transaction.inputs[1].unlockingScript = new UnlockingScript().writeBin(
+    Array<number>(payload).fill(0)
+  )
+  expect(transaction.toBinary()).toHaveLength(4194304 - 1024)
+  const prepared = purchaseProfileBuilder().prepare(transaction)
+  expect(() => prepared.complete({})).toThrow('Completed transaction exceeds local byte limit')
+})

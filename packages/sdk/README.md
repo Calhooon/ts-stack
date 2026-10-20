@@ -886,6 +886,13 @@ boundaries together. Earlier six-route codec and native receipts remain historic
 compatibility evidence and do not qualify the current profile. See
 [specification alignment](../../specs/output-knowledge/SPEC-ALIGNMENT.md).
 
+Conservative witness sizing uses the installed Script push encoder and preserves
+the existing fixed-program bounds. Funded construction separately checks header
+ranges, source evidence, mandatory outputs, monetary conservation, protected-child
+signatures and the completed transaction byte limit. Boundary regressions retain
+the original positive Script executions and 300-history property controls; complete
+current-source qualification remains required.
+
 The unpublished SDK3.3 source candidate preserves the superseded `RevenueListing`,
 `RevenueListingPlan` and `RevenueListingSpend` interfaces for existing consumers. Their earlier single-program/revision/six-route behavior is historical
 and must not be used to construct or qualify the PR295 exemplar. A portable codec

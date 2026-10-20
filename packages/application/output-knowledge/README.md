@@ -1289,6 +1289,12 @@ Run `pnpm --filter @bsv/sdk build:ts`, then this package's `build`, `typecheck`,
 with one worker and a 1 GB idle-worker recycling limit. Jest combines every
 suite into the original global coverage thresholds; ordinary `test` remains
 serial, and mutation concurrency and its property settings are independent.
+Native workflow boundary regressions also check exact refusal identities, rejected
+synchronous-callback promises, cancellation, retained completion capacity and
+changed ledger data after an actual native read. The proposal feed fixture replays
+every byte-bounded journal page before validating a reopened inventory, including
+an inventory at its exact channel capacity. These cases retain the original
+property histories, seeds, deadlines and mutation acceptance gates.
 Journal contract tests exercise all three adapters,
 parallel compare-and-swap, equivocation, replay, retention, independent partitions
 and commit-before-reply recovery. The SQLite test exits an actual child process

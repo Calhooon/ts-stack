@@ -178,3 +178,15 @@ it('uses the same physical authority for initial fixed errors and does not repla
   expect(() => installed(candidate, f.enqueue, f.signal.signal)).toThrow('Current control denied')
   expect(f.enqueue).not.toHaveBeenCalled()
 })
+
+it('rejects a replacement attempt when no fixed control response has been prepared', () => {
+  const f = fixture()
+  guardPrivatePublicationResponse({} as Response, f.options)
+  expect(() => installed({ ...f.candidate, attempt: 1 }, f.enqueue, f.signal.signal)).toThrow(
+    expect.objectContaining({
+      code: 'invalid',
+      message: 'Private publication control is missing'
+    })
+  )
+  expect(f.enqueue).not.toHaveBeenCalled()
+})

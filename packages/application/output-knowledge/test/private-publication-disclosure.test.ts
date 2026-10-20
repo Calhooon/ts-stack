@@ -209,3 +209,79 @@ it('requires installed current control authority and accepts only fixed bounded 
   )
   expect(send).toHaveBeenCalledTimes(1)
 })
+
+it('consumes a rejected asynchronous currentness verdict without disclosing native records', async () => {
+  const f = fixture(),
+    error = new Error('private currentness diagnostic'),
+    verdict = Promise.reject(error),
+    caught = jest.spyOn(verdict, 'catch')
+  try {
+    expect(() =>
+      f.disclosure.prepare(f.status, {
+        ...f.caller,
+        current: (() => verdict) as unknown as () => boolean
+      })
+    ).toThrow('Private publication not found')
+    expect(caught).toHaveBeenCalledWith(expect.any(Function))
+    await expect(verdict).rejects.toBe(error)
+  } finally {
+    caught.mockRestore()
+  }
+})
+
+it('consumes a rejected physical enqueue promise and never retries the attempted response', async () => {
+  const f = fixture(),
+    response = f.disclosure.prepare(f.status, f.caller),
+    error = new Error('private enqueue diagnostic'),
+    verdict = Promise.reject(error),
+    caught = jest.spyOn(verdict, 'catch'),
+    send = jest.fn(() => verdict)
+  try {
+    expect(() => response.enqueue(send)).toThrow(
+      'Publication response enqueue must finish synchronously'
+    )
+    expect(caught).toHaveBeenCalledWith(expect.any(Function))
+    expect(() => response.enqueue(send)).toThrow('Publication disclosure was already attempted')
+    expect(send).toHaveBeenCalledTimes(1)
+    await expect(verdict).rejects.toBe(error)
+  } finally {
+    caught.mockRestore()
+  }
+})
+
+it('consumes a rejected control enqueue promise at the actual native disclosure boundary', async () => {
+  const f = fixture(),
+    disclosure = new PrivatePublicationDisclosure(
+      f.native.owner,
+      f.store,
+      f.contract.contracts,
+      f.access,
+      () => '20',
+      () => true
+    ),
+    error = new Error('private control enqueue diagnostic'),
+    verdict = Promise.reject(error),
+    caught = jest.spyOn(verdict, 'catch'),
+    send = jest.fn(() => verdict)
+  try {
+    expect(() =>
+      disclosure.enqueueControl(
+        {
+          version: 1,
+          error: {
+            code: 'not-found',
+            message: 'Private publication request not-found',
+            retryable: false
+          }
+        },
+        f.caller,
+        send
+      )
+    ).toThrow('Publication control enqueue must finish synchronously')
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(caught).toHaveBeenCalledWith(expect.any(Function))
+    await expect(verdict).rejects.toBe(error)
+  } finally {
+    caught.mockRestore()
+  }
+})
