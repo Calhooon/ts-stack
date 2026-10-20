@@ -127,3 +127,155 @@ it('rechecks cancellation at the native placement guard after a successful asses
     expect.objectContaining({ code: 'cancelled' })
   )
 })
+
+import { jest } from '@jest/globals'
+import { SDKEvidenceVerifier } from '../src/SDKEvidenceVerifier.js'
+import type { VerificationResult } from '../src/ports.js'
+
+it.each(['resolve', 'context', 'current', 'async-current'])(
+  'refuses the missing or asynchronous installed alias capability %s',
+  field => {
+    const f = aliasCurrentnessFixture(),
+      chains = { ...f.chains },
+      selection = { ...f.selection }
+    if (field === 'resolve') chains.resolve = undefined as never
+    if (field === 'context') selection.context = undefined as never
+    if (field === 'current') selection.current = undefined as never
+    if (field === 'async-current') selection.current = (async () => true) as never
+    const message =
+      field === 'resolve'
+        ? 'Selected alias ancestry is required'
+        : field === 'context'
+          ? 'Selected alias context is required'
+          : 'Selected alias authority must be synchronous'
+    expect(() => new SDKPrivatePurchaseAliasCurrentness(chains, selection)).toThrow(message)
+  }
+)
+
+it.each(['resolve', 'context', 'current'] as const)(
+  'rejects replacement of only the installed alias %s capability',
+  async field => {
+    const f = aliasCurrentnessFixture()
+    if (field === 'resolve') f.chains.resolve = f.chains.resolve.bind(f.chains)
+    if (field === 'context') f.selection.context = f.selection.context.bind(f.selection)
+    if (field === 'current') f.selection.current = f.selection.current.bind(f.selection)
+    await expect(f.adapter.assess(f.subject, f.submit(), signal())).rejects.toMatchObject({
+      code: 'context-changed',
+      message: 'Selected alias chain capability changed'
+    })
+    expect(f.counts().resolutions).toBe(0)
+  }
+)
+
+it.each(['resolve', 'context', 'current'] as const)(
+  'fences a capability changed by the synchronous selected-authority %s callback',
+  async field => {
+    const f = aliasCurrentnessFixture(),
+      current = f.selection.current
+    f.selection.current = snapshot => {
+      const result = current(snapshot)
+      if (field === 'resolve') f.chains.resolve = f.chains.resolve.bind(f.chains)
+      if (field === 'context') f.selection.context = f.selection.context.bind(f.selection)
+      if (field === 'current') f.selection.current = current
+      return result
+    }
+    const adapter = new SDKPrivatePurchaseAliasCurrentness(f.chains, f.selection)
+    await expect(adapter.assess(f.subject, f.submit(), signal())).rejects.toMatchObject({
+      code: 'context-changed',
+      message: 'Selected alias chain capability changed'
+    })
+    expect(f.counts().resolutions).toBe(0)
+  }
+)
+
+it('drains a promised selected-authority rejection without treating it as currentness', async () => {
+  const f = aliasCurrentnessFixture()
+  f.selection.current = (() => Promise.reject(new Error('deferred selected authority'))) as never
+  const adapter = new SDKPrivatePurchaseAliasCurrentness(f.chains, f.selection)
+  await expect(adapter.assess(f.subject, f.submit(), signal())).rejects.toMatchObject({
+    code: 'context-changed',
+    message: 'Selected alias ancestry changed'
+  })
+  expect(f.counts().resolutions).toBe(0)
+})
+
+it('rejects the exact selected-authority deadline before consulting ancestry', async () => {
+  const f = aliasCurrentnessFixture(),
+    snapshot = await f.selection.context()
+  f.selection.context = async () => snapshot
+  const adapter = new SDKPrivatePurchaseAliasCurrentness(f.chains, f.selection),
+    now = jest.spyOn(Date, 'now').mockReturnValue(Number(BigInt(snapshot.limits.deadline) * 1000n))
+  try {
+    await expect(adapter.assess(f.subject, f.submit(), signal())).rejects.toMatchObject({
+      code: 'limited',
+      message: 'Selected alias assessment deadline elapsed'
+    })
+    expect(f.counts().resolutions).toBe(0)
+  } finally {
+    now.mockRestore()
+  }
+})
+
+// Deliberate verifier-port fault injection, after a complete genuine SDK
+// verification. These tests assert adapter custody; they do not attest the
+// altered result as Script/SPV evidence or replace the real fixture qualification.
+it.each(['context', 'variant', 'transaction', 'chain', 'height'] as const)(
+  'refuses a verified response changed at its %s binding boundary',
+  async field => {
+    const f = aliasCurrentnessFixture(),
+      original = SDKEvidenceVerifier.prototype.verify,
+      verify = jest.spyOn(SDKEvidenceVerifier.prototype, 'verify')
+    verify.mockImplementationOnce(async function (this: SDKEvidenceVerifier, ...args) {
+      const result = await original.apply(this, args)
+      if (result.status !== 'verified') throw new Error('Genuine fixture did not verify')
+      const changed = structuredClone(result)
+      if (field === 'context') changed.contextId += '-foreign'
+      if (field === 'variant') changed.variantId = 'aa'.repeat(32)
+      if (field === 'transaction') changed.fact.txid = 'aa'.repeat(32)
+      if (field === 'chain') changed.fact.chain.network = 'foreign-chain'
+      if (field === 'height') {
+        if (!changed.placement) throw new Error('Genuine fixture placement missing')
+        changed.placement.height = (BigInt(args[1].view.tipHeight) + 1n).toString()
+      }
+      return changed
+    })
+    try {
+      await expect(f.adapter.assess(f.subject, f.submit(), signal())).rejects.toMatchObject({
+        code: field === 'height' ? 'invalid' : 'context-changed',
+        message:
+          field === 'height'
+            ? 'Selected alias inclusion is above the selected tip'
+            : 'Selected alias verification subject changed'
+      })
+    } finally {
+      verify.mockRestore()
+    }
+  }
+)
+
+it.each(['invalid', 'cancelled', 'context-changed', 'unresolved', 'limited'] as const)(
+  'preserves the verifier %s status without inventing currentness',
+  async status => {
+    const f = aliasCurrentnessFixture(),
+      verify = jest.spyOn(SDKEvidenceVerifier.prototype, 'verify')
+    verify.mockImplementationOnce(async (candidate, snapshot): Promise<VerificationResult> => ({
+      status,
+      contextId: snapshot.id,
+      variantId: candidate.variantId,
+      reason: 'Explicit verifier-port failure injection',
+      dependencies: []
+    }))
+    try {
+      const assessment = f.adapter.assess(f.subject, f.submit(), signal())
+      if (status === 'unresolved' || status === 'limited') expect(await assessment).toBeUndefined()
+      else
+        await expect(assessment).rejects.toMatchObject({
+          code: status,
+          message: 'Selected alias verification ' + status,
+          retryable: status !== 'invalid'
+        })
+    } finally {
+      verify.mockRestore()
+    }
+  }
+)

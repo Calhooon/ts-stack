@@ -185,3 +185,71 @@ it('requires the original buyer to be an actual valid identity before wallet wor
   expect(send).not.toHaveBeenCalled()
   expect(paidBuyer.toPublicKey().toString()).toBe(f.request.recipient)
 })
+
+it('reports the exact acquisition-profile refusal before invoking authentication', async () => {
+  const f = helper(selection => {
+      Object.assign(selection.profile, { id: 'another-profile' })
+    }),
+    send = jest.spyOn(AuthFetch.prototype, 'fetch')
+  await expect(
+    f.http.exchangeAcquisition(url, '{}', 4096, {
+      buyer: f.request.recipient,
+      allowChallenge: true
+    })
+  ).rejects.toMatchObject({
+    code: 'unsupported',
+    message: 'Paid lookup requires its explicit authenticated acquisition profile'
+  })
+  expect(send).not.toHaveBeenCalled()
+})
+
+it('reports the exact payment-header refusal before invoking authentication', async () => {
+  const f = helper(),
+    send = jest.spyOn(AuthFetch.prototype, 'fetch')
+  await expect(
+    f.http.exchangeAcquisition(url, '{}', 4096, {
+      buyer: f.request.recipient,
+      allowChallenge: false,
+      paymentHeader: ''
+    })
+  ).rejects.toMatchObject({ code: 'limited', message: 'Paid lookup payment header limit' })
+  expect(send).not.toHaveBeenCalled()
+})
+
+it('refuses a challenge whose complete policy differs from the retained acquisition selection', async () => {
+  const f = paidTransportFixture('quote'),
+    challenge = { ...f.challenge, acceptancePolicy: { kind: 'mined', confirmations: 1 } }
+  jest.spyOn(AuthFetch.prototype, 'fetch').mockImplementation(async () => f.response(challenge))
+  await expect(f.client.send()).rejects.toMatchObject({
+    code: 'context-changed',
+    message: 'Paid lookup challenge changed selected acceptance policy'
+  })
+})
+
+it('requires the selected recovery interval in addition to the protocol minimum', async () => {
+  const f = paidTransportFixture('quote', {}, manifest => {
+    manifest.services[0].profiles[0].parameters.recoverySeconds = '86500'
+  })
+  jest.spyOn(AuthFetch.prototype, 'fetch').mockImplementation(async () => f.response())
+  await expect(f.client.send()).rejects.toMatchObject({
+    code: 'context-changed',
+    message: 'Paid lookup challenge shortened selected recovery promise'
+  })
+})
+
+it('refuses a replaced identity capability before using its authenticated finite transport', async () => {
+  const f = helper(),
+    wallet = f.options.wallet,
+    send = jest.spyOn(AuthFetch.prototype, 'fetch')
+  wallet.getPublicKey = wallet.getPublicKey.bind(wallet)
+  await expect(
+    f.http.exchangeAcquisition(url, '{}', 4096, {
+      buyer: f.request.recipient,
+      allowChallenge: true
+    })
+  ).rejects.toMatchObject({
+    code: 'context-changed',
+    message: 'Paid lookup wallet capability changed'
+  })
+  expect(send).not.toHaveBeenCalled()
+})

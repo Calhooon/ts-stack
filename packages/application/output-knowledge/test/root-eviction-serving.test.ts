@@ -461,3 +461,29 @@ it('requires a qualified inventory for opaque extensions and pins the installed 
     await f.cleanup()
   }
 })
+
+it.each([
+  ['missing', undefined],
+  ['null', null],
+  ['asynchronous', async () => true]
+] as const)(
+  'refuses %s root lookup authority before creating a send binding',
+  async (_name, authorize) => {
+    const f = await eligible(),
+      unavailable = () => {
+        throw new Error('Disclosure must not be invoked during authority installation')
+      }
+    try {
+      expect(
+        () =>
+          new RootLookupServingDisclosure({
+            serving: f.serving,
+            disclosure: { bind: unavailable, control: unavailable },
+            authorize: authorize as never
+          })
+      ).toThrow('Root lookup authority must be synchronous')
+    } finally {
+      await f.cleanup()
+    }
+  }
+)

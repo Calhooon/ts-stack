@@ -431,3 +431,38 @@ test('explicit encoded-record release parsing keeps intrinsic arithmetic and fre
     'Duplicate'
   )
 })
+
+it.each([
+  ['inline strings', parseOutputReleaseEvidenceWithInlineStrings],
+  ['owned records', parseOutputReleaseEvidenceWithOwnedRecords]
+] as const)('repeats same-height and depth checks in the %s release parser', (_name, parse) => {
+  const input = mined()
+  input.policy.confirmations = 1
+  input.blockEvidence.tipHeight = input.blockEvidence.height
+  expect(() => parse(input)).toThrow('Same-height release headers differ')
+  input.blockEvidence.tipHash = input.blockEvidence.blockHash
+  expect(parse(input)).toEqual(input)
+  input.policy.confirmations = 2
+  expect(() => parse(input)).toThrow('Insufficient declared confirmation depth')
+  input.blockEvidence.tipHeight = '101'
+  input.blockEvidence.tipHash = '44'.repeat(32)
+  expect(parse(input)).toEqual(input)
+  input.blockEvidence.height = '102'
+  expect(() => parse(input)).toThrow('Insufficient declared confirmation depth')
+})
+
+it('rechecks the entire selected chain, transaction and policy in the inline release binder', () => {
+  const input = mined(),
+    binding = { chain, txid, policy: input.policy }
+  expect(bindOutputReleaseEvidenceWithInlineStrings(input, binding)).toEqual(input)
+  for (const changed of [
+    { ...binding, chain: { ...chain, network: 'other' } },
+    { ...binding, chain: { ...chain, genesisHash: '66'.repeat(32) } },
+    { ...binding, txid: '77'.repeat(32) },
+    { ...binding, policy: { kind: 'mined' as const, confirmations: 2 } },
+    { ...binding, policy: { kind: 'local-admission' as const } }
+  ])
+    expect(() => bindOutputReleaseEvidenceWithInlineStrings(input, changed)).toThrow(
+      'Release evidence binding mismatch'
+    )
+})

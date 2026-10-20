@@ -1304,3 +1304,190 @@ test('explicit encoded-record purchase parsers retain all packet checks and inde
       .chain.network
   ).toBe(chain.network)
 })
+
+it.each(['admission-rejected', 'delivery-failed'] as const)(
+  'checks a complete %s decision policy in the fresh purchase verifier',
+  status => {
+    const f = fixture(),
+      result = {
+        version: 1,
+        acquisitionId: f.body.acquisitionId,
+        recoveryUntil: f.body.recoveryUntil,
+        txid,
+        status,
+        ...(status === 'delivery-failed' ? { steak: f.envelope.result.steak } : {}),
+        decision: {
+          reason: 'fixture refusal',
+          policy: f.body.releasePolicy,
+          evidence: 'AA==',
+          decidedAt: '90',
+          globalOutcome: 'unknown'
+        }
+      }
+    expect(verifyOutputPurchaseEnvelopeWithInlineStrings({ result }, f.terms, txid)).toEqual({
+      result
+    })
+    const changed = {
+      result: {
+        ...result,
+        decision: { ...result.decision, policy: { kind: 'mined', confirmations: 1 } }
+      }
+    }
+    expect(() => verifyOutputPurchaseEnvelopeWithInlineStrings(changed, f.terms, txid)).toThrow(
+      'Purchase decision policy mismatch'
+    )
+  }
+)
+
+it('requires the full current-profile commitment in the fresh purchase verifier', () => {
+  const f = fixture(),
+    terms = signOutputPacket(
+      'purchase-terms',
+      { ...f.body, domainProfile: 'https://bsv.brc.dev/tokens/0197#listing-purchase-v1' },
+      sellerKey
+    ),
+    commitment = 'ab'.repeat(32),
+    pending = {
+      result: {
+        version: 1,
+        acquisitionId: f.body.acquisitionId,
+        recoveryUntil: f.body.recoveryUntil,
+        txid,
+        status: 'admission-pending'
+      }
+    }
+  expect(() => verifyOutputPurchaseEnvelopeWithInlineStrings(pending, terms, txid)).toThrow(
+    'Listing purchase commitment required'
+  )
+  const committed = { result: { ...pending.result, purchaseCommitment: commitment } }
+  expect(verifyOutputPurchaseEnvelopeWithInlineStrings(committed, terms, txid, commitment)).toEqual(
+    committed
+  )
+  expect(() =>
+    verifyOutputPurchaseEnvelopeWithInlineStrings(committed, terms, txid, 'cd'.repeat(32))
+  ).toThrow('Purchase commitment mismatch')
+  expect(() =>
+    verifyOutputPurchaseCommitmentEnvelopeWithInlineStrings(committed, terms, {
+      profile: 'full-purchase-commitment-v1',
+      domainProfile: f.body.domainProfile,
+      purchaseCommitment: commitment
+    })
+  ).toThrow('Purchase commitment binding changed domain')
+})
+
+it.each([
+  ['requestDigest', 'aa'.repeat(32)],
+  ['seller', recipient],
+  ['recipient', seller],
+  ['topic', 'tm_another'],
+  ['assetId', 'aa'.repeat(32)],
+  ['termsDigest', 'aa'.repeat(32)],
+  ['releasePolicy', { kind: 'mined', confirmations: 1 }]
+] as const)('rejects a freshly signed result with another original %s', (field, value) => {
+  const f = fixture(),
+    evidence =
+      field === 'releasePolicy'
+        ? {
+            ...f.evidence,
+            policy: value,
+            blockEvidence: {
+              blockHash: '33'.repeat(32),
+              height: '100',
+              tipHash: '44'.repeat(32),
+              tipHeight: '102',
+              beef: 'AA==',
+              contextId: 'fixture-current-view',
+              chainPolicyDigest: '55'.repeat(32)
+            }
+          }
+        : f.evidence,
+    body = {
+      ...f.potatoesBody,
+      [field]: value,
+      evidenceDigest: outputPacketDigest('release-evidence', evidence)
+    },
+    input = {
+      ...f.envelope,
+      result: { ...f.envelope.result, potatoes: signOutputPacket('potatoes', body, sellerKey) },
+      releaseEvidence: evidence
+    }
+  expect(() => verifyOutputPurchaseEnvelopeWithInlineStrings(input, f.terms, txid)).toThrow(
+    'Private result differs from original purchase terms'
+  )
+})
+
+it.each(['object', 'text', 'bytes'] as const)(
+  'refuses an unreserved alias in the %s encoded-record envelope',
+  representation => {
+    const f = fixture(),
+      input = {
+        result: {
+          version: 1,
+          acquisitionId: f.body.acquisitionId,
+          recoveryUntil: f.body.recoveryUntil,
+          status: 'prepared'
+        },
+        currentAlias: { txid, beef: 'AA==' }
+      },
+      text = canonicalOutputJSON(input),
+      supplied =
+        representation === 'object'
+          ? input
+          : representation === 'text'
+            ? text
+            : new TextEncoder().encode(text)
+    expect(() => encodedPurchase.parseOutputPurchaseEnvelopeWithOwnedRecords(supplied)).toThrow(
+      'A current alias requires a reserved purchase'
+    )
+  }
+)
+
+it.each(['acquisitionId', 'txid', 'purchaseCommitment', 'recoveryUntil'] as const)(
+  'rechecks the delivered %s in the owned-record envelope',
+  field => {
+    const f = fixture(),
+      body = {
+        ...f.potatoesBody,
+        [field]: field === 'recoveryUntil' ? '86501' : 'aa'.repeat(32)
+      },
+      input = {
+        ...f.envelope,
+        result: { ...f.envelope.result, potatoes: signOutputPacket('potatoes', body, sellerKey) }
+      }
+    expect(() => encodedPurchase.parseOutputPurchaseEnvelopeWithOwnedRecords(input)).toThrow(
+      'Private result and release evidence differ'
+    )
+  }
+)
+
+it('refuses a validly represented STEAK that omits the independently selected purchase topic', () => {
+  const f = fixture(),
+    input = {
+      ...f.envelope,
+      result: {
+        ...f.envelope.result,
+        steak: { tm_another: { outputsToAdmit: [0], coinsToRetain: [] } }
+      }
+    }
+  expect(() => verifyOutputPurchaseEnvelopeWithInlineStrings(input, f.terms, txid)).toThrow(
+    'Purchase STEAK lacks the selected topic'
+  )
+})
+
+it('accepts prepared custody without an alias and reserved custody with an explicitly supplied alias', () => {
+  const f = fixture(),
+    prepared = {
+      result: {
+        version: 1,
+        acquisitionId: f.body.acquisitionId,
+        recoveryUntil: f.body.recoveryUntil,
+        status: 'prepared'
+      }
+    },
+    reserved = {
+      result: { ...prepared.result, status: 'admission-pending', txid },
+      currentAlias: { txid, beef: 'AA==' }
+    }
+  expect(encodedPurchase.parseOutputPurchaseEnvelopeWithOwnedRecords(prepared)).toEqual(prepared)
+  expect(encodedPurchase.parseOutputPurchaseEnvelopeWithOwnedRecords(reserved)).toEqual(reserved)
+})

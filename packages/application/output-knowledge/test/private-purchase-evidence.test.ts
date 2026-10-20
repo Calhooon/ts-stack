@@ -872,3 +872,124 @@ it('requires callable evidence capabilities when installing the native owner', (
     else Reflect.deleteProperty(ledger, 'read')
   }
 })
+
+it('reserves exactly one data chunk for the smallest explicit proof-byte bound', () => {
+  const f = purchaseEvidenceFixture(),
+    identity = f.base.owner.domain.identity,
+    address = identity.address.bind(identity),
+    observed: number[] = []
+  // Bound this failure-injection observer too: an incorrect chunk count must
+  // fail before constructing an unbounded set of native addresses.
+  jest.spyOn(identity, 'address').mockImplementation((kind, descriptor) => {
+    const index = descriptor.index
+    expect(typeof index).toBe('number')
+    expect(index).toBeLessThanOrEqual(1)
+    observed.push(index as number)
+    return address(kind, descriptor)
+  })
+  const owner = new SQLitePrivatePurchaseEvidence(f.base.owner.domain, f.base.f.f.contracts, {
+    ...f.limits,
+    maximumCandidateBytes: 1
+  })
+  owner.reserve(f.original, f.base.clock, f.base.guard)
+  expect(observed).toEqual([0, 1])
+  expect(owner.read(f.original, f.base.clock, f.base.guard).candidate).toBeNull()
+})
+
+it('accepts only its exact physical domain and contract installation', () => {
+  const f = purchaseEvidenceFixture(),
+    domain = f.base.owner.domain,
+    contracts = f.base.f.f.contracts
+  expect(() => f.owner.installedOn(domain, contracts)).not.toThrow()
+  for (const [otherDomain, otherContracts] of [
+    [new Proxy(domain, {}), contracts],
+    [domain, new Proxy(contracts, {})],
+    [new Proxy(domain, {}), new Proxy(contracts, {})]
+  ] as const)
+    expect(() => f.owner.installedOn(otherDomain, otherContracts)).toThrow(
+      expect.objectContaining({
+        code: 'context-changed',
+        message: 'Pending candidate work differs from its physical owner'
+      })
+    )
+})
+
+it('rejects an unsupported pending-proof profile before reserving native custody', () => {
+  const f = purchaseEvidenceFixture(),
+    read = jest.spyOn(f.base.owner.domain.ledger, 'read')
+  expect(
+    () =>
+      new SQLitePrivatePurchaseEvidence(
+        f.base.owner.domain,
+        f.base.f.f.contracts,
+        f.limits,
+        'another-profile' as never
+      )
+  ).toThrow(
+    expect.objectContaining({
+      code: 'unsupported',
+      message: 'Unsupported pending candidate installation'
+    })
+  )
+  expect(read).not.toHaveBeenCalled()
+})
+
+it('derives proof owner identity from the explicit native scope, format and all limits', () => {
+  const f = purchaseEvidenceFixture(),
+    owner = f.owner
+  expect(owner.id).toBe(
+    outputPacketDigest('purchase', {
+      purpose: 'private-purchase-evidence/1',
+      scope: f.base.owner.domain.scope,
+      limits: f.limits
+    })
+  )
+  const pending = new SQLitePrivatePurchaseCandidateWork(
+    f.base.owner.domain,
+    f.base.f.f.contracts,
+    f.limits
+  )
+  expect(pending.id).toBe(
+    outputPacketDigest('purchase', {
+      purpose: 'private-purchase-pending-evidence/1',
+      scope: f.base.owner.domain.scope,
+      limits: f.limits
+    })
+  )
+  expect(pending.id).not.toBe(owner.id)
+})
+
+it('refuses a missing installed proof capability before reading native custody', () => {
+  const f = purchaseEvidenceFixture(),
+    contracts = { ...f.base.f.f.contracts, original: undefined }
+  expect(
+    () => new SQLitePrivatePurchaseEvidence(f.base.owner.domain, contracts as never, f.limits)
+  ).toThrow('Purchase evidence capability required')
+})
+
+it('keeps the complete pending proof when a later same-target update supplies only a txid', () => {
+  const f = purchaseEvidenceFixture(),
+    { clock, guard } = f.base,
+    work = new SQLitePrivatePurchaseCandidateWork(
+      f.base.owner.domain,
+      f.base.f.f.contracts,
+      f.limits
+    )
+  work.reserve(f.original, clock, guard)
+  work.propose(f.original, f.candidate, clock, guard).retain(clock, guard)
+  const partial = Beef.fromBinaryStrict(decodeOutputBytes(f.candidate.beef, 8192))
+  partial.makeTxidOnly(f.candidate.txid)
+  const incoming = {
+      ...f.candidate,
+      beef: Utils.toBase64(partial.toBinaryAtomic(f.candidate.txid))
+    },
+    plan = work.propose(f.original, incoming, clock, guard)
+  plan.retain(clock, guard)
+  const candidate = work.read(f.original, clock, guard).candidate!
+  expect(candidate.txid).toBe(f.candidate.txid)
+  expect(
+    Beef.fromBinaryStrict(decodeOutputBytes(candidate.beef, 8192))
+      .findTxid(candidate.txid)!
+      .tx!.toHex()
+  ).toBe(f.target.toHex())
+})
