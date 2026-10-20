@@ -6,13 +6,24 @@ import fc from 'fast-check'
 import { createCipheriv } from 'node:crypto'
 import { Brc39StreamFrame } from './Brc39Frame'
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
-import { decryptBrc39StreamToQuarantine } from './Brc39StreamNode'
-import { parseBRC38Json } from './index'
+
 import {
   registerArgon2idBackend,
   unregisterArgon2idBackend,
   type AsyncArgon2idBackend
 } from '../../utility/Argon2idBackend'
+
+let decryptBrc39StreamToQuarantine: typeof import('./Brc39StreamNode').decryptBrc39StreamToQuarantine
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./Brc39StreamNode')
+  decryptBrc39StreamToQuarantine = fixtureModule0.decryptBrc39StreamToQuarantine
+  const fixtureModule1 = await import('./index')
+  parseBRC38Json = fixtureModule1.parseBRC38Json
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { MongoClient, type Db, type Document, type MongoClientOptions } from 'mongodb'
 import { MongoMemoryReplSet } from 'mongodb-memory-server'
@@ -21,31 +22,76 @@ export interface MongoReplicaFixture {
   close: () => Promise<void>
 }
 
+// A failed member can reject the replica-set startup before its siblings finish
+// starting. Drain those real starts before stopping the owned set or retrying.
+class FixtureReplicaSet extends MongoMemoryReplSet {
+  private readonly memberStarts: Promise<void>[] = []
+
+  protected override _initServer(options: Parameters<MongoMemoryReplSet['_initServer']>[0]) {
+    const server = super._initServer(options)
+    const start = server.start.bind(server)
+    server.start = (...args: Parameters<typeof start>) => {
+      const pending = start(...args)
+      this.memberStarts.push(pending)
+      return pending
+    }
+    return server
+  }
+
+  async drainMemberStarts(): Promise<void> {
+    await Promise.allSettled(this.memberStarts)
+  }
+}
+
+async function startReplicaSet(): Promise<MongoMemoryReplSet> {
+  const launchDeadline = performance.now() + 60000
+  let previousFailure: Error | undefined
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const remaining = Math.ceil(launchDeadline - performance.now())
+    if (remaining <= 0)
+      throw previousFailure ?? new Error('Original replica fixture launch deadline elapsed')
+    const replicaSet = new FixtureReplicaSet({
+      binary: { version: '8.2.6' },
+      replSet: {
+        name: `s02-${randomUUID()}`,
+        count: 3,
+        storageEngine: 'wiredTiger',
+        ip: '127.0.0.1',
+        args: ['--setParameter', 'enableTestCommands=1', '--wiredTigerCacheSizeGB', '0.25'],
+        configSettings: { electionTimeoutMillis: 2000, heartbeatIntervalMillis: 500 }
+      },
+      instanceOpts: Array.from({ length: 3 }, () => ({ launchTimeout: Math.min(60000, remaining) }))
+    })
+    try {
+      await replicaSet.start()
+      return replicaSet
+    } catch (error) {
+      await replicaSet.drainMemberStarts()
+      try {
+        if (!(await replicaSet.stop())) throw new Error('Owned replica fixture did not stop')
+      } catch (cleanup) {
+        throw new AggregateError(
+          [error, cleanup],
+          'Replica fixture startup and owned cleanup failed'
+        )
+      }
+      // The free-port probe and mongod's bind cannot be atomic. Retry only that
+      // exact startup collision, with fresh members and the original deadline.
+      // Never stop the unrelated listener that won the port.
+      if (
+        !(error instanceof Error) ||
+        !/^Port "[1-9][0-9]{0,4}" already in use$/.test(error.message)
+      )
+        throw error
+      previousFailure = error
+    }
+  }
+  throw previousFailure ?? new Error('Original replica fixture launch deadline elapsed')
+}
+
 export async function createMongoReplicaFixture(): Promise<MongoReplicaFixture> {
   const appName = `overlay-s02-${randomUUID()}`
-  const replicaSet = new MongoMemoryReplSet({
-    binary: { version: '8.2.6' },
-    replSet: {
-      name: `s02-${randomUUID()}`,
-      count: 3,
-      storageEngine: 'wiredTiger',
-      ip: '127.0.0.1',
-      args: [
-        '--setParameter',
-        'enableTestCommands=1',
-        '--wiredTigerCacheSizeGB',
-        '0.25'
-      ],
-      configSettings: { electionTimeoutMillis: 2000, heartbeatIntervalMillis: 500 }
-    },
-    instanceOpts: [{ launchTimeout: 60000 }, { launchTimeout: 60000 }, { launchTimeout: 60000 }]
-  })
-  try {
-    await replicaSet.start()
-  } catch (error) {
-    await replicaSet.stop()
-    throw error
-  }
+  const replicaSet = await startReplicaSet()
   const uri = replicaSet.getUri()
   const clients: MongoClient[] = []
   const connect = async (options: MongoClientOptions = {}, connectionUri = uri) => {

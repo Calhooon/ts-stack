@@ -5,10 +5,27 @@ import {
 import { chmod, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import * as portable from './stream'
-import * as native from './node'
-import { decryptBRC39, parseBRC38Json, type BRC38Tables } from './index'
+
+import type * as nativeTypes from './node'
+import type { BRC38Tables } from './index'
 import { jsonStreamFixture } from './Brc38JsonStreamFixture'
+
+let portable: typeof import('./stream')
+let native: typeof import('./node')
+let decryptBRC39: typeof import('./index').decryptBRC39
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./stream')
+  portable = fixtureModule0
+  const fixtureModule1 = await import('./node')
+  native = fixtureModule1
+  const fixtureModule2 = await import('./index')
+  decryptBRC39 = fixtureModule2.decryptBRC39
+  parseBRC38Json = fixtureModule2.parseBRC38Json
+})
 
 test('public entries preserve all thirteen tables through authenticated private file staging', async () => {
   const data = jsonStreamFixture()
@@ -81,7 +98,7 @@ test('public entries preserve all thirteen tables through authenticated private 
   expect(await decryptBRC39(ciphertext, password.normalize('NFC'))).toEqual(data)
 
   const parent = await mkdtemp(join(tmpdir(), 'ts-stack-entry-points-'))
-  let stage: native.Brc39NodeFileQuarantine | undefined
+  let stage: nativeTypes.Brc39NodeFileQuarantine | undefined
   let validated = 0
   const staged: BRC38Tables = {
     provenTxs: [],

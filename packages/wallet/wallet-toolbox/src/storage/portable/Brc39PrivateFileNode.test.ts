@@ -3,14 +3,31 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { FileHandle } from 'node:fs/promises'
 import fc from 'fast-check'
-import { createBrc39NodeFileQuarantine, type Brc39NodeFileQuarantine } from './Brc39PrivateFileNode'
-import { decryptBrc39StreamToQuarantine } from './Brc39StreamNode'
-import { encryptBRC39, parseBRC38Json, type BRC38WalletData } from './index'
+import type { Brc39NodeFileQuarantine } from './Brc39PrivateFileNode'
+
+import type { BRC38WalletData } from './index'
 import {
   registerArgon2idBackend,
   unregisterArgon2idBackend,
   type AsyncArgon2idBackend
 } from '../../utility/Argon2idBackend'
+
+let createBrc39NodeFileQuarantine: typeof import('./Brc39PrivateFileNode').createBrc39NodeFileQuarantine
+let decryptBrc39StreamToQuarantine: typeof import('./Brc39StreamNode').decryptBrc39StreamToQuarantine
+let encryptBRC39: typeof import('./index').encryptBRC39
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./Brc39PrivateFileNode')
+  createBrc39NodeFileQuarantine = fixtureModule0.createBrc39NodeFileQuarantine
+  const fixtureModule1 = await import('./Brc39StreamNode')
+  decryptBrc39StreamToQuarantine = fixtureModule1.decryptBrc39StreamToQuarantine
+  const fixtureModule2 = await import('./index')
+  encryptBRC39 = fixtureModule2.encryptBRC39
+  parseBRC38Json = fixtureModule2.parseBRC38Json
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({

@@ -1,6 +1,18 @@
-import { readBrc38JsonStream, type Brc38JsonStagingSink, type Brc38JsonStreamOptions } from './Brc38JsonStream'
+import type { Brc38JsonStagingSink, Brc38JsonStreamOptions } from './Brc38JsonStream'
 import { jsonStreamFixture } from './Brc38JsonStreamFixture'
-import { parseBRC38Json, type BRC38Tables, type BRC38WalletData } from './index'
+import type { BRC38Tables, BRC38WalletData } from './index'
+
+let readBrc38JsonStream: typeof import('./Brc38JsonStream').readBrc38JsonStream
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./Brc38JsonStream')
+  readBrc38JsonStream = fixtureModule0.readBrc38JsonStream
+  const fixtureModule1 = await import('./index')
+  parseBRC38Json = fixtureModule1.parseBRC38Json
+})
 
 const policy: Brc38JsonStreamOptions = {
   maximumArchiveBytes: 1048576,

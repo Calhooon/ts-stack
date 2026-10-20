@@ -16,3 +16,12 @@ test('keeps paired surrogates and code-unit offsets distinct', () => {
   for (const index of [-1, 1, Infinity, -Infinity]) expect(utf16CodeUnitAt('A', index)).toBeNaN()
   expect(utf16CodeUnitAt('', 0)).toBeNaN()
 })
+
+test('native schema entries retain their checked observer names during import', async () => {
+  await expect(import('../storage/portable/Brc38NativePackedTextSchemaNode')).resolves.toEqual(
+    expect.objectContaining({ hasBrc38NativePackedTextSchema: expect.any(Function) })
+  )
+  await expect(import('../storage/portable/Brc38NativePreparedFieldSchemaNode')).resolves.toEqual(
+    expect.objectContaining({ hasBrc38NativePreparedFieldsSchema: expect.any(Function) })
+  )
+})

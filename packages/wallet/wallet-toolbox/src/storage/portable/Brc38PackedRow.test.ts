@@ -10,9 +10,21 @@ import { Utils } from '@bsv/sdk'
 import { projectBrc38PackedRow } from './Brc38PackedRow'
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
-import { StorageIdb } from '../StorageIdb'
-import { StorageProvider } from '../StorageProvider'
-import { exportBRC38 } from './index'
+
+let StorageIdb: typeof import('../StorageIdb').StorageIdb
+let StorageProvider: typeof import('../StorageProvider').StorageProvider
+let exportBRC38: typeof import('./index').exportBRC38
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('../StorageIdb')
+  StorageIdb = fixtureModule0.StorageIdb
+  const fixtureModule1 = await import('../StorageProvider')
+  StorageProvider = fixtureModule1.StorageProvider
+  const fixtureModule2 = await import('./index')
+  exportBRC38 = fixtureModule2.exportBRC38
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({

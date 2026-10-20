@@ -4,14 +4,9 @@ import {
 } from '../../../test/utils/canonicalPortableChunkOracle'
 import { createCipheriv } from 'node:crypto'
 import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
-import {
-  decryptBrc39StreamToQuarantine,
-  encryptBrc39StreamToQuarantine,
-  type Brc39StreamQuarantine,
-  type Brc39StreamPlaintext
-} from './Brc39StreamNode'
+import type { Brc39StreamQuarantine, Brc39StreamPlaintext } from './Brc39StreamNode'
 import { encodeBrc39StreamPrefix, BRC39_STREAM_DEFAULT_KDF, Brc39StreamFrame } from './Brc39Frame'
-import { encryptBRC39, decryptBRC39, parseBRC38Json, type BRC38WalletData } from './index'
+import type { BRC38WalletData } from './index'
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
 import fc from 'fast-check'
 import { AESGCM } from '@bsv/sdk/primitives/AESGCM'
@@ -21,6 +16,24 @@ import {
   type AsyncArgon2idBackend,
   type Argon2idOptions
 } from '../../utility/Argon2idBackend'
+
+let decryptBrc39StreamToQuarantine: typeof import('./Brc39StreamNode').decryptBrc39StreamToQuarantine
+let encryptBrc39StreamToQuarantine: typeof import('./Brc39StreamNode').encryptBrc39StreamToQuarantine
+let encryptBRC39: typeof import('./index').encryptBRC39
+let decryptBRC39: typeof import('./index').decryptBRC39
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./Brc39StreamNode')
+  decryptBrc39StreamToQuarantine = fixtureModule0.decryptBrc39StreamToQuarantine
+  encryptBrc39StreamToQuarantine = fixtureModule0.encryptBrc39StreamToQuarantine
+  const fixtureModule1 = await import('./index')
+  encryptBRC39 = fixtureModule1.encryptBRC39
+  decryptBRC39 = fixtureModule1.decryptBRC39
+  parseBRC38Json = fixtureModule1.parseBRC38Json
+})
 
 // Real worker cases consume the ordinary compiled package entry. A TS test
 // transpiler cannot execute a .ts worker as a production Node worker entry.

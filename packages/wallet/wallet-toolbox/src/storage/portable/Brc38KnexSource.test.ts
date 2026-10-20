@@ -3,14 +3,39 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { knex } from 'knex'
 import fc from 'fast-check'
-import { StorageKnex } from '../StorageKnex'
-import { migrateBeforeSqliteGeneration } from '../../../test/utils/snapshotHistoricalMigrations'
-import { StorageProvider } from '../StorageProvider'
+
 import { runInSeries } from '../../utility/runInSeries'
-import { openBrc38KnexSource, type Brc38KnexSourceOptions } from './Brc38KnexSource'
-import { createBrc38Stream } from './Brc38Stream'
-import { exportBRC38, parseBRC38Json, type BRC38WalletData } from './index'
+import type { Brc38KnexSourceOptions } from './Brc38KnexSource'
+
+import type { BRC38WalletData } from './index'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
+
+type StorageKnex = import('../StorageKnex').StorageKnex
+let StorageKnex: typeof import('../StorageKnex').StorageKnex
+let migrateBeforeSqliteGeneration: typeof import('../../../test/utils/snapshotHistoricalMigrations').migrateBeforeSqliteGeneration
+let StorageProvider: typeof import('../StorageProvider').StorageProvider
+let openBrc38KnexSource: typeof import('./Brc38KnexSource').openBrc38KnexSource
+let createBrc38Stream: typeof import('./Brc38Stream').createBrc38Stream
+let exportBRC38: typeof import('./index').exportBRC38
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('../StorageKnex')
+  StorageKnex = fixtureModule0.StorageKnex
+  const fixtureModule1 = await import('../../../test/utils/snapshotHistoricalMigrations')
+  migrateBeforeSqliteGeneration = fixtureModule1.migrateBeforeSqliteGeneration
+  const fixtureModule2 = await import('../StorageProvider')
+  StorageProvider = fixtureModule2.StorageProvider
+  const fixtureModule3 = await import('./Brc38KnexSource')
+  openBrc38KnexSource = fixtureModule3.openBrc38KnexSource
+  const fixtureModule4 = await import('./Brc38Stream')
+  createBrc38Stream = fixtureModule4.createBrc38Stream
+  const fixtureModule5 = await import('./index')
+  exportBRC38 = fixtureModule5.exportBRC38
+  parseBRC38Json = fixtureModule5.parseBRC38Json
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({

@@ -1,7 +1,19 @@
 import fc from 'fast-check'
-import { readBrc38JsonStream, type Brc38JsonStagingSink } from './Brc38JsonStream'
+import type { Brc38JsonStagingSink } from './Brc38JsonStream'
 import { jsonStreamFixture } from './Brc38JsonStreamFixture'
-import { parseBRC38Json, type BRC38Tables } from './index'
+import type { BRC38Tables } from './index'
+
+let readBrc38JsonStream: typeof import('./Brc38JsonStream').readBrc38JsonStream
+let parseBRC38Json: typeof import('./index').parseBRC38Json
+
+// Load real integration entries in awaited setup. Initialization guards must
+// fail within the tests rather than preventing their assertions from loading.
+beforeAll(async () => {
+  const fixtureModule0 = await import('./Brc38JsonStream')
+  readBrc38JsonStream = fixtureModule0.readBrc38JsonStream
+  const fixtureModule1 = await import('./index')
+  parseBRC38Json = fixtureModule1.parseBRC38Json
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({
