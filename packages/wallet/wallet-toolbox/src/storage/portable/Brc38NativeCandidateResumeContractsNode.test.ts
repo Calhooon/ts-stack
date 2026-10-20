@@ -6,6 +6,13 @@ import {
 import { Brc38PrivateLocalCandidate } from './Brc38PrivateLocalCandidateNode'
 import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
 import {
+  readBrc38NativeLocalBaselinePhysicalData,
+  readBrc38NativeLocalBaselineChangesData,
+  readBrc38NativeLocalBaselineTombstonesData
+} from './Brc38NativeLocalBaselineGenerationNode'
+import { brc38NativeLocalBaselineTableCount } from './Brc38NativeLocalBaselineTables'
+import { snapshotJournalRevision } from '../snapshot/journal/SnapshotJournalRevision'
+import {
   brc38PrivateLocalCandidateStateTable,
   brc38PrivateLocalCandidatePointTable,
   hasBrc38PrivateLocalCandidateJournal
@@ -388,9 +395,45 @@ test('native prior custody uses admitted batches and bounded fresh schema packet
           // Observe genuine native pipes while the actual private query-only
           // view is retained. Two operations need two fresh clock reads.
           expect(native.report().nativeSqlQueries).toBe(2)
+          const userId = fixture.source.manager.getActiveUser().userId
+          for (let read = 0; read < 2; read++) {
+            native.beginPhase()
+            expect(await Brc38NativeLocalBaselineSource.physical(source, 'users', userId)).toMatchObject({
+              table: 'users',
+              rowId: userId,
+              present: true
+            })
+            // Both original clock observations and the indexed point read
+            // remain fresh inside this same genuine immutable source view.
+            expect(native.report().nativeSqlQueries).toBe(3)
+          }
+          native.beginPhase()
+          const changes = await source.changes(snapshotJournalRevision('0'), undefined, 1)
+          expect(changes.length).toBeLessThanOrEqual(1)
+          expect(native.report().nativeSqlQueries).toBe(3)
+          native.beginPhase()
+          expect(await source.tombstones(before.generation.revision, undefined, 1)).toEqual([])
+          expect(native.report().nativeSqlQueries).toBe(brc38NativeLocalBaselineTableCount + 2)
         })
         if (escaped === undefined) throw new Error('Actual source read facade was not issued')
         await expect(Brc38NativeLocalBaselineSource.facts(escaped)).rejects.toThrow()
+        await expect(
+          Brc38NativeLocalBaselineSource.physical(escaped, 'users', fixture.source.manager.getActiveUser().userId)
+        ).rejects.toThrow()
+        await fixture.withWriter(async trx => {
+          const selected = {
+            epoch: '00000000-0000-4000-8000-000000000000',
+            afterRevision: snapshotJournalRevision('0'),
+            highWater: snapshotJournalRevision('0'),
+            maximumRows: 1
+          }
+          for (const read of [
+            () => readBrc38NativeLocalBaselinePhysicalData(trx, 'users', 1),
+            () => readBrc38NativeLocalBaselineChangesData(trx, selected),
+            () => readBrc38NativeLocalBaselineTombstonesData(trx, selected)
+          ])
+            await expect(read()).rejects.toThrow('Local baseline DATA requires its actual query-only source view')
+        })
         const options = { ...fixture.options, maximumStepRows: 16 }
         let complete = false
         await runInSeries(Array(256).keys(), async () => {

@@ -57,8 +57,11 @@ import {
   readBrc38NativeLocalBaselineGeneration,
   readBrc38NativeLocalBaselineGenerationData,
   readBrc38NativeLocalBaselineChanges,
+  readBrc38NativeLocalBaselineChangesData,
   readBrc38NativeLocalBaselineTombstones,
+  readBrc38NativeLocalBaselineTombstonesData,
   readBrc38NativeLocalBaselinePhysical,
+  readBrc38NativeLocalBaselinePhysicalData,
   type Brc38NativeLocalBaselineGeneration,
   type Brc38NativeLocalBaselineChange
 } from './Brc38NativeLocalBaselineGenerationNode'
@@ -704,7 +707,9 @@ export class Brc38NativeLocalBaselineSource {
       await this.#currentGeneration()
       const charge = this.#policy.workingAllocation.claim(4096 + 1024 * width)
       try {
-        return await readBrc38NativeLocalBaselineChanges(this.#trx, {
+        return await (
+          this.#retired === undefined ? readBrc38NativeLocalBaselineChangesData : readBrc38NativeLocalBaselineChanges
+        )(this.#trx, {
           epoch: this.#generation.epoch,
           afterRevision: low,
           highWater: this.#generation.revision,
@@ -758,7 +763,11 @@ export class Brc38NativeLocalBaselineSource {
       await this.#currentGeneration()
       const charge = this.#policy.workingAllocation.claim(4096 + 1024 * width)
       try {
-        return await readBrc38NativeLocalBaselineTombstones(this.#trx, {
+        return await (
+          this.#retired === undefined
+            ? readBrc38NativeLocalBaselineTombstonesData
+            : readBrc38NativeLocalBaselineTombstones
+        )(this.#trx, {
           epoch: this.#generation.epoch,
           afterRevision: low,
           highWater: this.#generation.revision,
@@ -967,7 +976,7 @@ export class Brc38NativeLocalBaselineSource {
           )
             invalid()
           const rowId = Number(matches[0].physicalRowId),
-            point = await readBrc38NativeLocalBaselinePhysical(k, parent, rowId)
+            point = await this.#physical(k, parent, rowId)
           if (point?.present !== true) invalid()
           if (!result.some(value => value.table === parent && value.rowId === rowId))
             result.push(Object.freeze({ table: parent, rowId }))
@@ -992,11 +1001,20 @@ export class Brc38NativeLocalBaselineSource {
       await source.#currentGeneration()
       const charge = source.#policy.workingAllocation.claim(4096)
       try {
-        return await readBrc38NativeLocalBaselinePhysical(source.#trx, selected, physical)
+        return await source.#physical(source.#trx, selected, physical)
       } finally {
         charge.close()
       }
     })
+  }
+  async #physical(k: Knex.Transaction, table: Brc38NativeLocalBaselineTable, rowId: number) {
+    this.#assert()
+    if (k !== this.#trx) invalid()
+    const value = await (
+      this.#retired === undefined ? readBrc38NativeLocalBaselinePhysicalData : readBrc38NativeLocalBaselinePhysical
+    )(k, table, rowId)
+    this.#assert()
+    return value
   }
   /** Complete bounded AUTOINCREMENT metadata from this SAME real view. Deleted
    * high IDs must not be silently reused after copying only present rows. */
@@ -1667,7 +1685,7 @@ export class Brc38NativeLocalBaselineSource {
         retained = false,
         metadata: Record<string, unknown> | undefined
       try {
-        const physicalState = await readBrc38NativeLocalBaselinePhysical(k, selected, physical)
+        const physicalState = await this.#physical(k, selected, physical)
         if (physicalState?.present !== true) invalid()
         const columns = (await k.raw(
           'SELECT CASE WHEN length(CAST(name AS BLOB))<=128 THEN name ELSE NULL END AS name FROM pragma_table_info(?) ORDER BY cid LIMIT 129',

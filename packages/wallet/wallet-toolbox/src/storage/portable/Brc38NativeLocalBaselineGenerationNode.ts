@@ -412,6 +412,19 @@ export async function readBrc38NativeLocalBaselineGenerationData(
     afterRowId: row.afterRowId === null ? null : Number(row.afterRowId)
   })
 }
+/** Internal DATA reader for the source facade's actual immutable view. The
+ * owning factory independently verifies the complete schema before lending
+ * that view. Mutable transactions cannot use this entry, and no observation
+ * grants source, schema, primary or publication admission. */
+async function readRetainedReadonlyGenerationData(
+  k: Knex.Transaction
+): Promise<Readonly<Brc38NativeLocalBaselineGeneration>> {
+  actual(k)
+  if (ownedNativeRootIdentity(k)?.slot !== 3)
+    throw new Error('Local baseline DATA requires its actual query-only source view')
+  return await readBrc38NativeLocalBaselineGenerationData(k)
+}
+type GenerationReader = (k: Knex.Transaction) => Promise<Readonly<Brc38NativeLocalBaselineGeneration>>
 /** Explicit source-owned installation only. Caller first authenticates its
  * profile/primary and admits the finite physical/logical metadata work. No
  * ordinary read silently installs observers or changes the public provider. */
@@ -548,12 +561,29 @@ export async function readBrc38NativeLocalBaselinePhysical(
   table: Brc38NativeLocalBaselineTable,
   rowId: number
 ): Promise<Readonly<Brc38NativeLocalBaselineChange> | undefined> {
+  return await readPhysicalRows(k, table, rowId, readBrc38NativeLocalBaselineGeneration)
+}
+/** @internal Fresh bounded row DATA only. The actual current source facade
+ * supplies an immutable slot3 view authenticated by its full factory. */
+export async function readBrc38NativeLocalBaselinePhysicalData(
+  k: Knex.Transaction,
+  table: Brc38NativeLocalBaselineTable,
+  rowId: number
+): Promise<Readonly<Brc38NativeLocalBaselineChange> | undefined> {
+  return await readPhysicalRows(k, table, rowId, readRetainedReadonlyGenerationData)
+}
+async function readPhysicalRows(
+  k: Knex.Transaction,
+  table: Brc38NativeLocalBaselineTable,
+  rowId: number,
+  readGeneration: GenerationReader
+): Promise<Readonly<Brc38NativeLocalBaselineChange> | undefined> {
   const selected = table,
     physical = rowId,
     tableId = brc38NativeLocalBaselineTables.indexOf(selected)
   actual(k)
   if (tableId < 0 || !Number.isSafeInteger(physical)) invalid()
-  const state = await readBrc38NativeLocalBaselineGeneration(k)
+  const state = await readGeneration(k)
   if (!state.complete || !state.enabled) invalid()
   const values = (await k(rows)
     .where({ tableId, rowId: physical })
@@ -595,6 +625,21 @@ export async function readBrc38NativeLocalBaselineChanges(
     presentOnly?: boolean
   }>
 ): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
+  return await readChangesRows(k, selected, readBrc38NativeLocalBaselineGeneration)
+}
+/** @internal Fresh bounded row DATA only. The actual current source facade
+ * supplies an immutable slot3 view authenticated by its full factory. */
+export async function readBrc38NativeLocalBaselineChangesData(
+  k: Knex.Transaction,
+  selected: Parameters<typeof readBrc38NativeLocalBaselineChanges>[1]
+): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
+  return await readChangesRows(k, selected, readRetainedReadonlyGenerationData)
+}
+async function readChangesRows(
+  k: Knex.Transaction,
+  selected: Parameters<typeof readBrc38NativeLocalBaselineChanges>[1],
+  readGeneration: GenerationReader
+): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
   const epoch = selected.epoch,
     low = snapshotJournalRevision(selected.afterRevision),
     high = snapshotJournalRevision(selected.highWater),
@@ -605,7 +650,7 @@ export async function readBrc38NativeLocalBaselineChanges(
         ? undefined
         : Object.freeze({ ...selected.after, revision: snapshotJournalRevision(selected.after.revision) })
   actual(k)
-  const state = await readBrc38NativeLocalBaselineGeneration(k)
+  const state = await readGeneration(k)
   if (
     !state.complete ||
     !state.enabled ||
@@ -707,6 +752,21 @@ export async function readBrc38NativeLocalBaselineTombstones(
     maximumRows: number
   }>
 ): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
+  return await readTombstoneRows(k, selected, readBrc38NativeLocalBaselineGeneration)
+}
+/** @internal Fresh bounded row DATA only. The actual current source facade
+ * supplies an immutable slot3 view authenticated by its full factory. */
+export async function readBrc38NativeLocalBaselineTombstonesData(
+  k: Knex.Transaction,
+  selected: Parameters<typeof readBrc38NativeLocalBaselineTombstones>[1]
+): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
+  return await readTombstoneRows(k, selected, readRetainedReadonlyGenerationData)
+}
+async function readTombstoneRows(
+  k: Knex.Transaction,
+  selected: Parameters<typeof readBrc38NativeLocalBaselineTombstones>[1],
+  readGeneration: GenerationReader
+): Promise<readonly Readonly<Brc38NativeLocalBaselineChange>[]> {
   const epoch = selected.epoch,
     low = snapshotJournalRevision(selected.afterRevision),
     high = snapshotJournalRevision(selected.highWater),
@@ -716,7 +776,7 @@ export async function readBrc38NativeLocalBaselineTombstones(
         ? undefined
         : Object.freeze({ ...selected.after, revision: snapshotJournalRevision(selected.after.revision) })
   actual(k)
-  const state = await readBrc38NativeLocalBaselineGeneration(k)
+  const state = await readGeneration(k)
   if (
     !state.complete ||
     !state.enabled ||
