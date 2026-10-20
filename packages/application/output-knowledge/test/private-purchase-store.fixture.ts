@@ -1,4 +1,4 @@
-import { afterEach } from '@jest/globals'
+import { afterEach, beforeEach, expect, jest } from '@jest/globals'
 import { createSecretKey } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -176,7 +176,6 @@ export function purchaseStoreFixture(
   }
 }
 
-import { beforeEach, expect, jest } from '@jest/globals'
 import { SQLitePrivatePurchaseEvidence } from '../src/private/SQLitePrivatePurchaseEvidence.js'
 
 // The installed mutation runner deliberately continues after a failed test.
