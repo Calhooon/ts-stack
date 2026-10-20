@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -144,7 +144,7 @@ describe('retained Bitcoin journal transition admission', () => {
     for (const entry of prefix) state.apply(structuredClone(entry))
     return state
   }
-  beforeAll(async () => {
+  beforeEach(async () => {
     // Obtain every baseline transition and proof through the real SDK-backed worker.
     const { store, worker } = open()
     await initialize(store)
