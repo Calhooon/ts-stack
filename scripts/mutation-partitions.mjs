@@ -13,6 +13,16 @@ const plans = new Map([
         ['src/auth/Peer.ts', 'peer'],
         ['src/auth/clients/AuthFetch.ts', 'client'],
         ['src/auth/transports/SimplifiedFetchTransport.ts', 'transport']
+      ]),
+      lines: new Map([
+        [
+          'src/auth/AuthMessageValidation.ts',
+          [
+            ['core', null],
+            ['core-snapshot', 'export function snapshotAuthMessage('],
+            ['core-policy', '  const isGeneral =']
+          ]
+        ]
       ])
     }
   ],

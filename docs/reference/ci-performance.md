@@ -290,12 +290,12 @@ defect yield or an optimal percentage threshold by itself.
 ### SDKAuth execution partitions
 
 The existing `sdk-auth-http` target remains one canonical policy/property
-registration. Its source specifications are grouped by file into core validation,
+registration. Its source specifications are grouped into core validation (cut at line markers into core, snapshot and policy parts),
 Peer, AuthFetch client, and SimplifiedFetchTransport. Every range of a file
 stays in one part; a new canonical helper defaults to core, and unsupported
 wildcard/unknown partition inputs fail. Each part retains the complete original
 Jest test selection, four workers and governed property inputs. The current pinned
-inventory replays to 73 + 22 + 137 + 91 = 323 mutants, exactly matching the
+inventory replays to 37 + 16 + 20 + 22 + 137 + 91 = 323 mutants, exactly matching the
 unpartitioned canonical inventory.
 
 A part's score is diagnostic. It still requires complete actual source/config/
