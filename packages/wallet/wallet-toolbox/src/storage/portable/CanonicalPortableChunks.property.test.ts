@@ -1,5 +1,10 @@
 import fc from 'fast-check'
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
+import {
+  canonicalTestReference as reference,
+  collectExpectedCanonicalChunks,
+  type CanonicalTestValue as Value
+} from '../../../test/utils/canonicalPortableChunkOracle'
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({
@@ -10,19 +15,6 @@ fc.configureGlobal({
   markInterruptAsFailure: true
 })
 
-type Value = string | number | boolean | Value[] | { [key: string]: Value }
-function reference(value: Value): string {
-  if (typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return '[' + value.map(reference).join(',') + ']'
-  return (
-    '{' +
-    Object.keys(value)
-      .sort((first, second) => Number(first > second) - Number(first < second))
-      .map(key => JSON.stringify(key) + ':' + reference(value[key]))
-      .join(',') +
-    '}'
-  )
-}
 const scalar = fc.oneof(
   fc.boolean(),
   fc.double({ noNaN: true, noDefaultInfinity: true }),
@@ -42,7 +34,10 @@ const values = fc.letrec<{ value: Value }>(tie => ({
 test('generated JSON values preserve exact canonical bytes and per-chunk bounds', () => {
   fc.assert(
     fc.property(values, fc.integer({ min: 64, max: 1024 }), (value, maximumChunkBytes) => {
-      const chunks = [...canonicalPortableChunks(value, { maximumValueBytes: 16777216, maximumChunkBytes })]
+      const chunks = collectExpectedCanonicalChunks(
+        canonicalPortableChunks(value, { maximumValueBytes: 16777216, maximumChunkBytes }),
+        reference(value)
+      )
       expect(chunks.every(chunk => chunk.byteLength > 0 && chunk.byteLength <= maximumChunkBytes)).toBe(true)
       expect(Buffer.concat(chunks).toString('utf8')).toBe(reference(value))
     }),
@@ -67,7 +62,10 @@ test('generated UTF16 strings agree with independent UTF8 roundtrip validity and
         if (Buffer.from(value, 'utf8').toString('utf8') !== value) {
           expect(encode).toThrow(TypeError)
         } else {
-          const chunks = encode()
+          const chunks = collectExpectedCanonicalChunks(
+            canonicalPortableChunks(value, { maximumValueBytes: 4096, maximumChunkBytes }),
+            JSON.stringify(value)
+          )
           expect(chunks.every(chunk => chunk.byteLength > 0 && chunk.byteLength <= maximumChunkBytes)).toBe(true)
           expect(Buffer.concat(chunks).toString('utf8')).toBe(JSON.stringify(value))
         }

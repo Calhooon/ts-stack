@@ -76,14 +76,16 @@ export async function readBrc38SqliteDefinitionBatch(
     // spelling and frame size, including its NULL implicit-index comparison.
     return Object.freeze({ matches: row?.count, names: row?.count })
   }
-  const query = k(catalog).where(parts => {
-    for (const source of batch.definitions)
-      void parts.orWhere(part => {
-        void part.where({ name: source.name, type: source.type })
-        if (source.sql === null) part.whereNull('sql')
-        else part.whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
-      })
-  })
+  const bindings: string[] = []
+  const conditions = batch.definitions
+    .map(source => {
+      bindings.push(source.name, source.type)
+      if (source.sql === null) return '(name=? AND type=? AND sql IS NULL)'
+      bindings.push(source.sql)
+      return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
+    })
+    .join(' OR ')
+  const query = k(catalog).whereRaw('(' + conditions + ')', bindings)
   if (batch.tableNames !== undefined) query.whereIn('tbl_name', batch.tableNames)
   const row = (await query.count({ matches: '*' }).countDistinct({ names: 'name' }).first()) as
     { matches: unknown; names: unknown } | undefined

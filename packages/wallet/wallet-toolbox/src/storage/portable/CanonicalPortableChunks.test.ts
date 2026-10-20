@@ -1,9 +1,17 @@
 import { canonicalPortableChunks } from './CanonicalPortableChunks'
 import { SnapshotResourceLimitError } from '../snapshot/SnapshotResourceLimitError'
+import {
+  canonicalTestReference,
+  collectExpectedCanonicalChunks,
+  type CanonicalTestValue
+} from '../../../test/utils/canonicalPortableChunkOracle'
 
 const options = { maximumValueBytes: 16777216, maximumChunkBytes: 64 }
 function encoded(value: unknown, chunkBytes = 64): string {
-  const chunks = [...canonicalPortableChunks(value, { ...options, maximumChunkBytes: chunkBytes })]
+  const chunks = collectExpectedCanonicalChunks(
+    canonicalPortableChunks(value, { ...options, maximumChunkBytes: chunkBytes }),
+    canonicalTestReference(value as CanonicalTestValue)
+  )
   expect(chunks.every(chunk => chunk.byteLength > 0 && chunk.byteLength <= chunkBytes)).toBe(true)
   return Buffer.concat(chunks).toString('utf8')
 }
@@ -81,13 +89,16 @@ test('detaches every value before yielding so caller mutations do not change lat
   expect(first.done).toBe(false)
   original.prefix = 'changed'
   original.suffix.values.splice(0, 3, 'after')
-  const chunks = [first.value as Uint8Array, ...iterator]
+  const chunks = [
+    first.value as Uint8Array,
+    ...collectExpectedCanonicalChunks(iterator, Buffer.from(expected).subarray(first.value!.byteLength))
+  ]
   expect(Buffer.concat(chunks).toString('utf8')).toBe(expected)
 })
 
 test('never reuses buffers already returned to the caller', () => {
   const text = 'abc'.repeat(2000)
-  const chunks = [...canonicalPortableChunks({ text }, options)]
+  const chunks = collectExpectedCanonicalChunks(canonicalPortableChunks({ text }, options), JSON.stringify({ text }))
   expect(new Set(chunks.map(chunk => chunk.buffer)).size).toBe(chunks.length)
   const before = Buffer.concat(chunks.slice(1))
   chunks[0].fill(0)
@@ -96,13 +107,34 @@ test('never reuses buffers already returned to the caller', () => {
 
 test('enforces allocation and nesting limits before yielding', () => {
   expect(() => canonicalPortableChunks('x', { maximumValueBytes: 65 }).next()).toThrow(SnapshotResourceLimitError)
-  expect([...canonicalPortableChunks('x', { maximumValueBytes: 66 })]).toHaveLength(1)
+  expect(collectExpectedCanonicalChunks(canonicalPortableChunks('x', { maximumValueBytes: 66 }), '"x"')).toHaveLength(1)
   expect(() => canonicalPortableChunks([true], { maximumValueBytes: 127 }).next()).toThrow(SnapshotResourceLimitError)
   expect(encoded([true])).toBe('[true]')
   let deep: unknown = true
   for (let index = 0; index < 65; index++) deep = [deep]
   expect(() => canonicalPortableChunks(deep, options).next()).toThrow(SnapshotResourceLimitError)
 })
+
+test.each(['divergent', 'extra', 'empty'] as const)(
+  'the independent chunk consumer rejects %s output promptly and drains its iterator',
+  kind => {
+    let pulls = 0,
+      closed = false
+    function* broken(): Generator<Uint8Array> {
+      try {
+        while (pulls < 3) {
+          pulls++
+          yield Buffer.from(kind === 'empty' ? '' : kind === 'extra' && pulls === 1 ? '"a"' : '{')
+        }
+      } finally {
+        closed = true
+      }
+    }
+    expect(() => collectExpectedCanonicalChunks(broken(), '"a"')).toThrow()
+    expect(pulls).toBe(kind === 'extra' ? 2 : 1)
+    expect(closed).toBe(true)
+  }
+)
 
 test('admits large structured sync maps using the allocation budget rather than a small fixed member limit', () => {
   const idMap: Record<string, number> = {}

@@ -6,14 +6,11 @@ import {
 } from './Brc38NativeLocalPackedLayout'
 import { hasBrc38NativeLocalPackedLayout } from './Brc38NativeLocalPackedLayoutNode'
 import { nativePackedTextSources } from './Brc38NativePackedTextSources'
-import {
-  hasBrc38NativePreparedFieldsSchema,
-  brc38PreparedFieldVersionGuard
-} from './Brc38NativePreparedFieldSchemaNode'
+import { brc38PreparedFieldVersionGuard } from './Brc38NativePreparedFieldSchemaNode'
 import type { Knex } from 'knex'
 import { isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
 import {
-  hasBrc38NativePackedSchema,
+  inspectBrc38NativePackedSchema,
   requireBrc38PackedRead,
   verifyBrc38NativePackedDefinitions
 } from './Brc38NativePackedSchemaNode'
@@ -193,7 +190,7 @@ export async function hasBrc38NativePackedTextSchema(trx: Knex.Transaction): Pro
   const local = await hasBrc38NativeLocalPackedLayout(trx),
     base = await brc38NativePackedTextSourceDefinitions(trx),
     expected = expectedDefinitions(local, base)
-  const binary = await hasBrc38NativePackedSchema(trx)
+  const binary = await inspectBrc38NativePackedSchema(trx)
   const total = (await trx('sqlite_schema')
     .whereRaw('substr(name,1,18)=?', ['brc38_native_text_'])
     .count({ count: '*' })
@@ -202,10 +199,12 @@ export async function hasBrc38NativePackedTextSchema(trx: Knex.Transaction): Pro
     if (local) throw new Error('Local packed mandatory family is absent')
     return false
   }
-  if (!binary) throw new Error('Packed text requires the actual original shared binary budget schema')
+  if (!binary.packed) throw new Error('Packed text requires the actual original shared binary budget schema')
   if (total?.count !== expected.size) throw new Error('Packed native source-owned schema differs')
-  const prepared = await hasBrc38NativePreparedFieldsSchema(trx)
-  if (prepared) {
+  // Binary inspection just validated every prepared definition in this actual
+  // retained transaction. Reuse only that fresh composed result; do not repeat
+  // the same complete prepared inventory within this operation.
+  if (binary.prepared) {
     const name = 'brc38_native_text_versions_update_guard',
       source = expected.get(name)!
     expected.set(name, { ...source, sql: brc38PreparedFieldVersionGuard('text', source.sql) })

@@ -1,4 +1,7 @@
 import { defineConfig } from 'tsdown'
+import { fileURLToPath } from 'node:url'
+
+const sdkPeerExports = fileURLToPath(new URL('./sdk-peer-exports.ts', import.meta.url))
 
 export default defineConfig({
   entry: '../src/index.mobile.ts',
@@ -32,6 +35,24 @@ export default defineConfig({
     mangle: { keepNames: true, reserved: ['exports', 'module'] },
     codegen: { removeWhitespace: false, legalComments: 'inline' }
   },
+  plugins: [
+    {
+      name: 'external-sdk-category-imports',
+      resolveId: {
+        order: 'pre',
+        handler(id, importer) {
+          if (importer === sdkPeerExports && (id === '@bsv/sdk' || id.startsWith('@bsv/sdk/'))) {
+            // The SDK marks its other modules side-effect-free. Keep the
+            // primitive barrel eager to retain its marked curve-entry setup.
+            return { id, external: true, moduleSideEffects: id === '@bsv/sdk/primitives' }
+          }
+          if (id === '@bsv/sdk' && importer !== sdkPeerExports && !/\.d\.[cm]?ts$/.test(importer ?? '')) {
+            return sdkPeerExports
+          }
+        }
+      }
+    }
+  ],
   clean: true,
   tsconfig: '../tsconfig.mobile.json',
   deps: {

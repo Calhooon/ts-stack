@@ -107,7 +107,10 @@ export async function materialization(k: Knex, source: Source) {
   }
   return {
     native,
-    packed: native && isBrc38NativePackedWalletTable(source.name) && (await hasBrc38NativePackedSchema(k)),
+    // The complete fresh TEXT check above also validates the complete binary
+    // family. Reuse that composition only within this actual operation; legacy
+    // layouts still perform their original independent binary check.
+    packed: native && isBrc38NativePackedWalletTable(source.name) && (text || (await hasBrc38NativePackedSchema(k))),
     text
   }
 }

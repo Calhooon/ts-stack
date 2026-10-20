@@ -298,15 +298,15 @@ export async function hasBrc38NativeLocalBaselineGenerationSchema(k: Knex.Transa
   const flush = async (): Promise<void> => {
     if (batch.length === 0) return
     actual(k)
-    const row = (await k('sqlite_schema')
-      .where(query => {
-        for (const source of batch)
-          query.orWhere(part => {
-            void part
-              .where({ type: source.type, name: source.name })
-              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
-          })
+    const bindings: string[] = []
+    const conditions = batch
+      .map(source => {
+        bindings.push(source.name, source.type, source.sql)
+        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
       })
+      .join(' OR ')
+    const row = (await k('sqlite_schema')
+      .whereRaw('(' + conditions + ')', bindings)
       .count({ count: '*' })
       .countDistinct({ names: 'name' })
       .first()) as { count: unknown; names: unknown } | undefined

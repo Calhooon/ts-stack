@@ -388,7 +388,7 @@ function main() {
     `TypeScript toolchain: ${report.governed} native compiler profiles, ` +
       `${report.codegen} isolated codegen API profile, ${report.configurations} governed ` +
       `tsconfig files across ${report.profiles} runtime profiles ` +
-      `(${report.standalone} self-contained service contexts), ${report.findings.length} findings.`
+      `(${report.standalone} self-contained runtime contexts), ${report.findings.length} findings.`
   )
   if (report.findings.length > 0) process.exitCode = 1
 }

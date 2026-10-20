@@ -5463,9 +5463,31 @@ are still required, and the measured latency remains a performance baseline.
 Wallet Jest mutation runs serialize the physical Worker asset and fixture
 lifecycle shared by a Stryker sandbox. The canonical portable-chunks campaign
 also restarts its test worker after twenty runs, bounding the observed retained
-Jest VM contexts. This changes neither mutant/test selection nor score, invalid,
+Jest VM contexts. Generated Worker ownership records and their three compiled
+siblings are not copied into a mutation sandbox: its lifecycle must create and
+verify its own physical assets. Authored TypeScript and lifecycle checks remain.
+This changes neither mutant/test selection nor score, invalid,
 NoCoverage or timeout rules. Earlier concurrent and unbounded-reuse crashes are
 failed diagnostic samples; complete final-source reports remain required.
+
+The recycled serial campaign also exposed serializer mutants that route a
+string through recursive object output. Eager test collection delayed the
+independent byte oracle until after that runaway output. Positive fixtures now
+compare every emitted chunk with the same complete independent expected bytes
+while consuming, close the iterator on divergence, and retain their original
+final-byte, buffer-identity, allocation, cancellation and invalid-input checks.
+The original cases, property seeds, run counts, mutants and timeout limits remain.
+The three reproduced string-branch mutants fail promptly through this oracle;
+that diagnostic does not replace a complete mutation report.
+
+Wallet Jest also binds Math, String, Number, Object, Array and Reflect
+locally to the same objects already present in its VM realm. This removes
+repeated global proxy lookup overhead without substituting constructors or
+skipping physical work. Actual installed-Jest checks retain literal-object and
+array prototype identity, Node Buffer identity and property spies. Clocks,
+fetch, WebAssembly and typed-array globals remain dynamic; fake timers and host
+capability replacement are checked too. Original fixture lifetimes, workload,
+resource limits, native implementation and qualification gates remain required.
 
 The canonical mutation configuration captures the original source checkout
 path to `tsconfig.jest.json` before Stryker copies Jest and its test root. It inherits the package's strict compiler settings and
@@ -6067,9 +6089,11 @@ still require actual qualification; the failed probe receipt is retained.
 
 ### Jest native fixture setup
 
-The wallet Jest configuration binds the standard `Math` global inside its test
-VM with `sandboxInjectedGlobals: ['Math']`. This avoids Jest global proxy overhead
-during complete native fixture construction. On the same Linux ARM64 inputs,
+The original wallet Jest optimization bound only `Math` inside its test VM
+with `sandboxInjectedGlobals: ['Math']`, avoiding global proxy overhead during
+complete native fixture construction. The readiness configuration now also binds
+String, Number, Object, Array and Reflect to their existing realm values,
+as verified above. On the same Linux ARM64 inputs, the earlier Math-only comparison found that
 the original native proof-pair case failed its existing fixture lifetime with
 the default binding; changing only this setting passed the complete case in
 207.349 seconds. That configuration-only comparison is diagnostic evidence;

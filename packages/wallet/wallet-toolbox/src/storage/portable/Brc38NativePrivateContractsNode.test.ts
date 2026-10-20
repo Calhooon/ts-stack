@@ -1,3 +1,4 @@
+import { materialization } from '../snapshot/journal/SnapshotJournalFieldSql'
 import { hasBrc38NativePreparedContentSchema } from './Brc38NativePreparedFieldSchemaNode'
 import { nativeTestExecutable } from './Brc38NativeTestPath'
 import { promises as fs } from 'node:fs'
@@ -1907,10 +1908,13 @@ test('native raw field metadata preserves integer coordinates and complete UTF8 
 test('prepared content groups complete fresh schema validation without accepting damaged families', async () => {
   await withBrc38NativePrivateContractFixture(async fixture => {
     await fixture.withWriter(async trx => {
-      const binaryInventories: string[] = []
+      const binaryInventories: string[] = [],
+        preparedInventories: string[] = []
       const observe = (query: { sql: string; bindings?: unknown[] }): void => {
         if (query.sql.includes('substr(name,1,20)') && query.bindings?.includes('brc38_native_binary_'))
           binaryInventories.push(query.sql)
+        if (query.sql.includes('substr(name,1,22)') && query.bindings?.includes('brc38_native_prepared_'))
+          preparedInventories.push(query.sql)
       }
       trx.on('query', observe)
       try {
@@ -1919,6 +1923,18 @@ test('prepared content groups complete fresh schema validation without accepting
         trx.removeListener('query', observe)
       }
       expect(binaryInventories).toHaveLength(1)
+      expect(preparedInventories).toHaveLength(1)
+      const source = { table: 'outputs', name: 'outputs', keys: ['outputId'] } as const
+      binaryInventories.length = 0
+      preparedInventories.length = 0
+      trx.on('query', observe)
+      try {
+        expect(await materialization(trx, source)).toEqual({ native: true, packed: true, text: true })
+      } finally {
+        trx.removeListener('query', observe)
+      }
+      expect(binaryInventories).toHaveLength(1)
+      expect(preparedInventories).toHaveLength(1)
       const names = [
         'brc38_native_prepared_fields_update_guard',
         'brc38_native_binary_versions_update_guard',
@@ -1933,11 +1949,13 @@ test('prepared content groups complete fresh schema validation without accepting
         try {
           await trx.raw('DROP TRIGGER ??', [definition.name])
           await expect(hasBrc38NativePreparedContentSchema(trx)).rejects.toThrow()
+          await expect(materialization(trx, source)).rejects.toThrow()
         } finally {
           await trx.raw('ROLLBACK TO independently_damaged_content_schema')
           await trx.raw('RELEASE independently_damaged_content_schema')
         }
         expect(await hasBrc38NativePreparedContentSchema(trx)).toBe(true)
+        expect(await materialization(trx, source)).toEqual({ native: true, packed: true, text: true })
       }
     })
   })

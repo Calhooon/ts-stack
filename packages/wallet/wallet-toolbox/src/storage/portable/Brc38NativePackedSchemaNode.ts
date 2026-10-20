@@ -244,15 +244,15 @@ export async function verifyBrc38NativePackedDefinitions(
   const flush = async (): Promise<void> => {
     if (batch.length === 0) return
     requireBrc38PackedRead(trx)
-    const current = (await trx('sqlite_schema')
-      .where(query => {
-        for (const source of batch)
-          query.orWhere(part => {
-            void part
-              .where({ name: source.name, type: source.type })
-              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [source.sql])
-          })
+    const bindings: string[] = []
+    const conditions = batch
+      .map(source => {
+        bindings.push(source.name, source.type, source.sql)
+        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
       })
+      .join(' OR ')
+    const current = (await trx('sqlite_schema')
+      .whereRaw('(' + conditions + ')', bindings)
       .count({ count: '*' })
       .first()) as { count: unknown } | undefined
     if (current?.count !== batch.length) throw new Error('Packed native source-owned schema differs')
@@ -272,7 +272,9 @@ export async function verifyBrc38NativePackedDefinitions(
 /** Actual exact schema on every call; an absent family selects the original
  * legacy layout, while a partial/changed family always refuses. No verdict is
  * cached and these helpers grant no current source/profile/primary admission. */
-export async function hasBrc38NativePackedSchema(trx: Knex.Transaction): Promise<boolean> {
+export async function inspectBrc38NativePackedSchema(
+  trx: Knex.Transaction
+): Promise<Readonly<{ packed: boolean; prepared: boolean }>> {
   requireBrc38PackedRead(trx)
   const local = await hasBrc38NativeLocalPackedLayout(trx),
     base = await brc38NativePackedBinarySourceDefinitions(trx),
@@ -283,7 +285,7 @@ export async function hasBrc38NativePackedSchema(trx: Knex.Transaction): Promise
     .first()) as { count: unknown } | undefined
   if (total?.count === 0) {
     if (local) throw new Error('Local packed mandatory family is absent')
-    return false
+    return Object.freeze({ packed: false, prepared: false })
   }
   if (total?.count !== expected.size) throw new Error('Packed native source-owned schema differs')
   const prepared = await hasBrc38NativePreparedFieldsSchema(trx)
@@ -310,7 +312,13 @@ export async function hasBrc38NativePackedSchema(trx: Knex.Transaction): Promise
   if (indexes.length !== primaryIndexes.length || indexes.some(row => !primaryIndexes.includes(row.name)))
     throw new Error('Packed native primary-key schema differs')
   requireBrc38PackedRead(trx)
-  return true
+  return Object.freeze({ packed: true, prepared })
+}
+/** Fresh binary-family admission. The composed TEXT validator inspects this
+ * same operation's prepared-family result directly; no saved or caller-supplied
+ * verdict can authorize either entry point. */
+export async function hasBrc38NativePackedSchema(trx: Knex.Transaction): Promise<boolean> {
+  return (await inspectBrc38NativePackedSchema(trx)).packed
 }
 /** Fresh private schema only. The fixed logical reservation is taken from the
  * actual authenticated source binding; the native VFS independently enforces

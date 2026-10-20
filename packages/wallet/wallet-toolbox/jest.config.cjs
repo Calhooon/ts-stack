@@ -21,8 +21,11 @@ const getJestConfig = async () => {
     testPathIgnorePatterns: ['/node_modules/', String.raw`<rootDir>/\.stryker-tmp/`],
     // Default is 'node'
     testEnvironment: 'node',
-    // Bind Math inside the Jest VM to avoid proxy overhead in native fixture setup.
-    sandboxInjectedGlobals: ['Math'],
+    // Bind these stable intrinsics to the same objects already in this Jest
+    // realm, avoiding repeated VM global lookup overhead.
+    // Keep replaceable clocks, fetch, WebAssembly and typed-array globals dynamic.
+    // Buffer remains a global lookup so CommonJS modules can declare its import.
+    sandboxInjectedGlobals: ['Math', 'String', 'Number', 'Object', 'Array', 'Reflect'],
     // default [ '**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[tj]s?(x)' ]
     testMatch: ['**/?(*.)+(test).[tj]s', '**/__test/**/*.test.ts', '**/*.test.cjs'],
     // default []

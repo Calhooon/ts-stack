@@ -443,7 +443,10 @@ test('portable streaming keeps every complete source module and original behavio
       'src/storage/portable/index.ts',
       'src/storage/portable/stream.ts',
       'src/storage/portable/node.ts',
-      ...helperTests
+      ...helperTests,
+      ...(id === 'wallet-portable-canonical-chunks'
+        ? ['test/utils/canonicalPortableChunkOracle.ts']
+        : [])
     ])
     assert.ok(
       selectAffectedMutationTargets(targets, [

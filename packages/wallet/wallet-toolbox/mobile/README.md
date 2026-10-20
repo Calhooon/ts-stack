@@ -43,8 +43,12 @@ properties, debugger statements, licenses and complete source maps. Internal
 JSON, IndexedDB and wallet modules have separate private chunks; the package's
 public entry points and conditional exports stay the same. The build includes
 only the used Noble Argon2id fallback and its dependencies, with the same pinned
-implementation and algorithm parameters. SDK and IndexedDB package identities
-remain external. Shared Promise/await forwarding reduces duplicated generated
+implementation and algorithm parameters. SDK imports select only used categories
+through the SDK's declared public exports. A private re-export module preserves
+the original SDK types, constructors and namespace objects; the marked primitive
+curve setup stays eager. Real ESM and CommonJS imports check every re-export
+against the peer SDK. SDK and IndexedDB implementations remain external. Shared
+Promise/await forwarding reduces duplicated generated
 state machines without changing immediate work, suspension order or rejection
 objects.
 
@@ -55,6 +59,12 @@ AES-GCM independently of the JavaScript fallback; its legacy KDF values do not
 change encryption defaults. Original Metro/Hermes ceilings and reproducibility,
 composition and source-map checks remain required. Measurements from earlier
 failed experiments do not qualify the final source.
+
+The strict Node 24.18 readiness gate measures Metro at **2,694,126 / 711,462 /
+546,585** bytes and Hermes at **5,947,886 / 2,551,787 / 1,971,944** bytes
+(raw / gzip / Brotli), within all six existing ceilings. Both independent Hermes
+builds produce identical bytes. This artifact result does not establish physical
+device qualification.
 
 ## Receiving already-broadcast payments
 

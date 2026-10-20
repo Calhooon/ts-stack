@@ -379,15 +379,15 @@ async function validateDefinitions(k: Knex, expected: string[]): Promise<void> {
       return
     }
     const selected = definitions.filter((definition): definition is InstalledDefinition => definition !== undefined)
-    const row = (await k('sqlite_master')
-      .where(query => {
-        for (const definition of selected)
-          void query.orWhere(part => {
-            void part
-              .where({ type: definition.type, name: definition.name })
-              .whereRaw('CAST(sql AS BLOB)=CAST(? AS BLOB)', [definition.sql])
-          })
+    const bindings: string[] = []
+    const conditions = selected
+      .map(definition => {
+        bindings.push(definition.name, definition.type, definition.sql)
+        return '(name=? AND type=? AND CAST(sql AS BLOB)=CAST(? AS BLOB))'
       })
+      .join(' OR ')
+    const row = (await k('sqlite_master')
+      .whereRaw('(' + conditions + ')', bindings)
       .count({ matches: '*' })
       .countDistinct({ names: 'name' })
       .first()) as { matches: unknown; names: unknown } | undefined

@@ -7,7 +7,8 @@ const walletDataAdditions = {
     mutate: ['src/utility/promiseFromSync.ts', 'src/utility/utf16CodeUnitAt.ts'],
     additionalInputs: [
       'src/utility/promiseFromSync.test.ts',
-      'src/utility/utf16CodeUnitAt.test.ts'
+      'src/utility/utf16CodeUnitAt.test.ts',
+      'test/utils/canonicalPortableChunkOracle.ts'
     ],
     tests: [
       '<rootDir>/src/utility/promiseFromSync.test.ts',
