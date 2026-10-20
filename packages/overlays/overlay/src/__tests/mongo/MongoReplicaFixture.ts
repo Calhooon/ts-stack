@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { MongoClient, type Db, type Document, type MongoClientOptions } from 'mongodb'
-import { MongoMemoryReplSet } from 'mongodb-memory-server'
+import { MongoInstance, MongoMemoryReplSet, MongoMemoryServer } from 'mongodb-memory-server'
 import type { StorageScope } from '../../storage/AdmissionStorage.js'
 
 /** Owns only randomly named databases, ports and temporary mongod files. */
@@ -22,13 +22,36 @@ export interface MongoReplicaFixture {
   close: () => Promise<void>
 }
 
+// memory-server 11.2 publishes instanceInfo only after start succeeds. A failed
+// lower instance can already own automatic shutdown before then. Retain the
+// actual fresh unauthenticated member first, so inherited stop awaits it too.
+class FixtureMemoryServer extends MongoMemoryServer {
+  override async _startUpInstance(forceSamePort?: boolean): Promise<void> {
+    if (this._instanceInfo !== undefined || this.authObjectEnable())
+      return await super._startUpInstance(forceSamePort)
+    const { mongodOptions, data } = await this.getStartOptions(
+        forceSamePort ?? !(this.opts.instance?.portGeneration ?? true)
+      ),
+      instance = new MongoInstance(mongodOptions)
+    if (typeof data.dbPath !== 'string' || data.dbPath.length === 0)
+      throw new Error('Mongo fixture startup did not retain its actual database path')
+    this._instanceInfo = { ...data, dbPath: data.dbPath, instance }
+    await instance.start()
+  }
+}
+
 // A failed member can reject the replica-set startup before its siblings finish
 // starting. Drain those real starts before stopping the owned set or retrying.
 class FixtureReplicaSet extends MongoMemoryReplSet {
   private readonly memberStarts: Promise<void>[] = []
 
   protected override _initServer(options: Parameters<MongoMemoryReplSet['_initServer']>[0]) {
-    const server = super._initServer(options)
+    const server = new FixtureMemoryServer({
+      binary: this.binaryOpts,
+      instance: options,
+      spawn: this.replSetOpts.spawn,
+      auth: typeof this.replSetOpts.auth === 'object' ? this.replSetOpts.auth : undefined
+    })
     const start = server.start.bind(server)
     server.start = (...args: Parameters<typeof start>) => {
       const pending = start(...args)

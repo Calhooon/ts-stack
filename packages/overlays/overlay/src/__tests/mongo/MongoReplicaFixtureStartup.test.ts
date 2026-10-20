@@ -1,6 +1,6 @@
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { createServer, type AddressInfo } from 'node:net'
-import { MongoMemoryReplSet, MongoMemoryServer } from 'mongodb-memory-server'
+import { MongoInstance, MongoMemoryReplSet, MongoMemoryServer } from 'mongodb-memory-server'
 import { createMongoReplicaFixture, type MongoReplicaFixture } from './MongoReplicaFixture.js'
 
 test('a real startup port collision recovers all three members without stopping the port owner', async () => {
@@ -99,5 +99,58 @@ test('pending member starts drain before inherited automatic replica cleanup', a
     initialize.mockRestore()
     starts.mockRestore()
     stops.mockRestore()
+  }
+})
+
+test('a rejected lower member start retains its automatic shutdown before replica cleanup', async () => {
+  let releaseStop!: () => void
+  let allStarted!: () => void
+  const stopped = new Promise<boolean>(resolve => {
+      releaseStop = () => resolve(true)
+    }),
+    scheduled = new Promise<void>(resolve => {
+      allStarted = resolve
+    }),
+    failure = new Error('Intentional lower member startup scheduling unit'),
+    failedInstances = new WeakSet<MongoInstance>()
+  let started = 0
+  const lowerStops = jest.spyOn(MongoInstance.prototype, 'stop').mockImplementation(function (
+      this: MongoInstance
+    ) {
+      return failedInstances.has(this) ? stopped : Promise.resolve(true)
+    }),
+    starts = jest.spyOn(MongoInstance.prototype, 'start').mockImplementation(async function (
+      this: MongoInstance
+    ) {
+      started++
+      if (started === 3) allStarted()
+      if (started === 1) {
+        failedInstances.add(this)
+        // Exercise the real constructor's automatic asynchronous stop listener.
+        EventEmitter.prototype.emit.call(this, 'instanceError', failure)
+        throw failure
+      }
+    }),
+    stop = jest.spyOn(MongoMemoryReplSet.prototype, 'stop'),
+    outcome = createMongoReplicaFixture().then(
+      () => ({ kind: 'unexpected success' }),
+      error => ({ kind: 'failure', error })
+    )
+  try {
+    await scheduled
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(starts).toHaveBeenCalledTimes(3)
+    expect(lowerStops).toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
+    releaseStop()
+    expect(await outcome).toEqual({ kind: 'failure', error: failure })
+    expect(stop).toHaveBeenCalled()
+  } finally {
+    releaseStop()
+    await outcome
+    await stopped
+    starts.mockRestore()
+    lowerStops.mockRestore()
+    stop.mockRestore()
   }
 })
