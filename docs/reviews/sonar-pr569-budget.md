@@ -100,7 +100,7 @@ unit test here establishes feature completion, green hosted CI or production
 readiness. Remove the policy after qualification; no automatic renewal exists.
 
 The separately reviewed PR569 analysis operations in
-[`governance/pr569-reviewed-analysis-exceptions.json`](../../governance/pr569-reviewed-analysis-exceptions.json)
+[`governance/pr569-reviewed-analysis-exceptions.json`](https://github.com/bsv-blockchain/ts-stack/blob/5c2baf3a8d9676beb1a41b818c296c048dc6f42e/governance/pr569-reviewed-analysis-exceptions.json)
 are the sole additional exception: CodeQL353 intentional private JSON evidence
 storage and two exact Sonar S2612 required public artifact permissions. Owner
 BraydenLangley reviewed the operator-delegated decision on October 19. Exact
