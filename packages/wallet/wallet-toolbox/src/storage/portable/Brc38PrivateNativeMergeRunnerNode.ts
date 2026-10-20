@@ -124,14 +124,7 @@ export function runBrc38PrivateNativeMerge(
             signal: options.signal
           },
           async actual =>
-            await Brc38PrivateNativeMergeNode.with(store, actual, options, async merge => {
-              const status = await merge.status()
-              // A changed fresh source needs the normal durable refold step;
-              // only an unchanged completed episode reaches full comparison.
-              if (status.phase === 'IMPORT' && !status.sourceChanged && status.receipt?.state === 'COMPLETE')
-                return Object.freeze({ inventory: await merge.inspectComposedRows() })
-              return Object.freeze({ progress: await merge.step() })
-            })
+            await Brc38PrivateNativeMergeNode.with(store, actual, options, async merge => await merge.advance())
         )
       } catch (cause) {
         // Keep a failed operation available when the original owner gate also

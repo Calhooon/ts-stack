@@ -8,6 +8,7 @@ import { knex, type Knex } from 'knex'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mysqlReadSnapshotFixture } from '../../../../test/utils/mysqlReadSnapshotFixture'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import { snapshotJournalReceiptBinding } from './SnapshotJournalReceipt'
 import {
@@ -140,6 +141,183 @@ async function write(reference: SnapshotJournalIdentityReference, localId: numbe
     await prepared.persist(new Map([['4:' + reference.incomingId, localId]]))
   })
 }
+
+test.each([0, 1, 3, null])('unsupported ledger version %s refuses before creating association DATA', async version => {
+  await expect(
+    db.transaction(
+      async trx =>
+        await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+          trx,
+          binding,
+          state,
+          [reference()],
+          { maximumMappings: 8, version }
+        ])
+    )
+  ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+  expect(await db('snapshot_reconciliation_identity_maps')).toEqual([])
+})
+
+test.each(['generation', 'naturalIdentity', 'required'] as const)(
+  'duplicate reference with conflicting %s cannot create an association',
+  async field => {
+    const first = reference(),
+      second = { ...first, [field]: field === 'generation' ? '3' : field === 'naturalIdentity' ? 'b'.repeat(64) : true }
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            state,
+            [first, second],
+            { maximumMappings: 8 }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+    expect(await db('snapshot_reconciliation_identity_maps')).toEqual([])
+  }
+)
+
+test('identical duplicate references consume exactly one mapping and one durable assignment', async () => {
+  await db.transaction(async trx => {
+    const first = reference(),
+      prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [first, { ...first }], {
+        maximumMappings: 1
+      })
+    await prepared.persist(new Map([['4:10', 701]]))
+  })
+  expect(await db('snapshot_reconciliation_identity_budgets').select('mappings')).toEqual([{ mappings: 1 }])
+  expect(await db('snapshot_reconciliation_identity_maps').select('localId')).toEqual([{ localId: 701 }])
+})
+
+test.each([false, true])(
+  'independent association validation result %s controls reuse of the actual stored DATA',
+  async valid => {
+    await write(reference(), 701)
+    await db.transaction(async trx => {
+      const validate = jest.fn(
+          async (actual: Knex, requested: SnapshotJournalIdentityReference, association: { localId: number }) => {
+            expect(actual).toBe(trx)
+            expect(requested).toEqual(reference())
+            expect(association.localId).toBe(701)
+            association.localId = 999
+            return valid
+          }
+        ),
+        prepared = await prepareSnapshotJournalIdentityLedger(
+          trx,
+          binding,
+          state,
+          [reference()],
+          { maximumMappings: 8 },
+          validate
+        )
+      expect(validate).toHaveBeenCalledTimes(1)
+      expect(prepared.associations.get('4:10')?.localId).toBe(valid ? 701 : undefined)
+      expect(prepared.previous.get('4:10')?.localId).toBe(valid ? undefined : 701)
+      await prepared.persist(new Map([['4:10', valid ? 701 : 702]]))
+    })
+    expect(await db('snapshot_reconciliation_identity_maps').select('localId')).toEqual([
+      { localId: valid ? 701 : 702 }
+    ])
+  }
+)
+
+test('bounded integer strings returned after actual SQLite reads retain the same durable association', async () => {
+  await write(reference(), 701)
+  const original = db.client.config.postProcessResponse
+  db.client.config.postProcessResponse = response =>
+    Array.isArray(response)
+      ? response.map(row => {
+          if (row === null || typeof row !== 'object') return row
+          const copy = { ...row }
+          for (const field of ['incomingId', 'localId', 'mappings', 'maximumMappings'])
+            if (typeof copy[field] === 'number') copy[field] = String(copy[field])
+          return copy
+        })
+      : response
+  try {
+    await db.transaction(async trx => {
+      const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], {
+        maximumMappings: 8
+      })
+      expect(prepared.associations.get('4:10')?.localId).toBe(701)
+      await prepared.persist(new Map([['4:10', 701]]))
+    })
+  } finally {
+    db.client.config.postProcessResponse = original
+  }
+  expect(await db('snapshot_reconciliation_identity_maps').select('localId')).toEqual([{ localId: 701 }])
+})
+
+test('ledger preflight requires a real supported transaction and backend', async () => {
+  await expect(prepareSnapshotJournalIdentityLedger(db, binding, state, [], { maximumMappings: 8 })).rejects.toThrow(
+    'Invalid, stale or exhausted journal identity ledger'
+  )
+  const original = db.client.config.client
+  db.client.config.client = 'pg'
+  try {
+    expect(() => snapshotJournalIdentityLedgerDdl(db)).toThrow('Invalid, stale or exhausted journal identity ledger')
+  } finally {
+    db.client.config.client = original
+  }
+})
+
+test.each(['mysql', 'mysql2'])(
+  'installed %s query builders retain bounded ledger projections and refuse malformed driver DATA',
+  async client => {
+    // This is synthetic-wire SQL construction/negative DATA evidence, never
+    // real MySQL, native ownership or a successful destination admission.
+    const specimen = await db('snapshot_reconciliation_windows').first(),
+      fixture = mysqlReadSnapshotFixture(undefined, [], sql => {
+        if (sql.startsWith('UPDATE')) return { affectedRows: 1 }
+        if (sql.includes('FROM `USERS`')) return [{ userId: 7, activeStorage: binding.activeStorage }]
+        if (sql.includes('FROM `SETTINGS`')) return [{ storageIdentityKey: 'destination', chain: 'mock' }]
+        if (sql.includes('FROM `SNAPSHOT_SYNC_PRIMARY_EPOCHS`')) return [{ epoch: '0' }]
+        if (sql.includes('UNIX_TIMESTAMP')) return [{ now: Date.now() }]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_WINDOWS`')) return [specimen]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_BUDGETS`'))
+          return [{ maximumMappings: '8', mappings: '1' }]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_MAPS`'))
+          return [
+            {
+              incomingId: '10',
+              localId: '701',
+              generation: '0',
+              naturalIdentity: 'a'.repeat(64),
+              sourceGeneration: 'b'.repeat(64),
+              seenSession: state.sessionId
+            }
+          ]
+        return []
+      })
+    fixture.db.client.config.client = client
+    try {
+      expect(snapshotJournalIdentityLedgerDdl(fixture.db).filter(sql => sql.startsWith('CREATE TABLE'))).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('ENGINE=InnoDB DEFAULT CHARACTER SET ascii COLLATE ascii_bin ROW_FORMAT=DYNAMIC')
+        ])
+      )
+      await expect(
+        fixture.db.transaction(
+          async trx =>
+            await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], { maximumMappings: 8 })
+        )
+      ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+      const budget = fixture.events.find(sql => sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_BUDGETS`')),
+        records = fixture.events.find(sql => sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_MAPS`'))
+      expect(budget).toContain('OCTET_LENGTH(CAST(`MAXIMUMMAPPINGS` AS CHAR)) BETWEEN 1 AND 16')
+      expect(records).toContain('OCTET_LENGTH(`NATURALIDENTITY`) BETWEEN ? AND ?')
+      expect(records).toContain('OCTET_LENGTH(CAST(`LOCALID` AS CHAR)) BETWEEN 1 AND 16')
+      expect(fixture.events.some(sql => /^(INSERT|UPDATE).*SNAPSHOT_RECONCILIATION_IDENTITY/.test(sql))).toBe(false)
+      expect(fixture.events.at(-1)).toBe('RELEASE')
+    } finally {
+      await fixture.db.destroy()
+    }
+  }
+)
 
 test('keeps renumbered destination IDs for unchanged required parents', async () => {
   await write(reference(), 701)
@@ -529,4 +707,342 @@ test('journal notification projection uses sealed current associations and refus
   } finally {
     db.off('query', observe)
   }
+})
+
+test('ledger refuses a supplied cursor that differs from the actual promoting checkpoint', async () => {
+  await expect(
+    db.transaction(
+      async trx =>
+        await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+          trx,
+          binding,
+          { ...state, after: { revision: '2', id1: 10, id2: 0 } },
+          [],
+          { maximumMappings: 8 }
+        ])
+    )
+  ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+})
+test('explicit V2 ledger capacity above the original V1 ceiling persists only bounded association DATA', async () => {
+  await db.transaction(async trx => {
+    const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [], {
+      maximumMappings: 5000,
+      version: 2
+    })
+    await prepared.persist(new Map())
+  })
+  expect(await db('snapshot_reconciliation_identity_budgets').select('maximumMappings', 'mappings')).toEqual([
+    { maximumMappings: 5000, mappings: 0 }
+  ])
+})
+
+test('association validation cannot rewrite the owned source identity that will be durably persisted', async () => {
+  await write(reference(), 701)
+  await db.transaction(async trx => {
+    const prepared = await prepareSnapshotJournalIdentityLedger(
+      trx,
+      binding,
+      state,
+      [reference()],
+      { maximumMappings: 8 },
+      async (_actual, requested, association) => {
+        expect(requested).toEqual(reference())
+        requested.naturalIdentity = 'b'.repeat(64)
+        association.localId = 999
+        return true
+      }
+    )
+    expect(prepared.associations.get('4:10')?.localId).toBe(701)
+    await prepared.persist(new Map([['4:10', 701]]))
+  })
+  expect(await db('snapshot_reconciliation_identity_maps').select('naturalIdentity', 'localId')).toEqual([
+    { naturalIdentity: 'a'.repeat(64), localId: 701 }
+  ])
+})
+
+test.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '1', null])(
+  'invalid incoming identity %s refuses before creating ledger DATA',
+  async incomingId => {
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            state,
+            [{ ...reference(), incomingId }],
+            { maximumMappings: 8 }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+    expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+  }
+)
+test.each([0, -1, 1.5, NaN, Infinity, 4097, '8', null])(
+  'invalid V1 mapping capacity %s refuses before ledger writes',
+  async maximumMappings => {
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            state,
+            [],
+            { maximumMappings }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+    expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+  }
+)
+test.each(['0', '1001'])(
+  'reference generation %s cannot cross the current pinned source interval',
+  async generation => {
+    await expect(
+      db.transaction(
+        async trx =>
+          await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference(10, generation)], {
+            maximumMappings: 8
+          })
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  }
+)
+test.each(['', 'a'.repeat(63), 'a'.repeat(65), 'x' + 'a'.repeat(64), 'a'.repeat(64) + 'x', 'A'.repeat(64), 1, null])(
+  'noncanonical natural identity %s refuses before creating an association',
+  async naturalIdentity => {
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            state,
+            [{ ...reference(), naturalIdentity }],
+            { maximumMappings: 8 }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  }
+)
+test.each([{ tableId: 7 }, { tableId: -1 }, { required: 'true' }])(
+  'unsupported reference DATA %j cannot enter the ledger',
+  async patch => {
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            state,
+            [{ ...reference(), ...patch }],
+            { maximumMappings: 8 }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  }
+)
+test.each([1, Number.MAX_SAFE_INTEGER])('exact safe identity boundary %s persists without rounding', async id => {
+  await write(reference(id, '1000'), id)
+  expect(await db('snapshot_reconciliation_identity_maps').select('incomingId', 'localId', 'generation')).toEqual([
+    { incomingId: id, localId: id, generation: '1000' }
+  ])
+})
+test.each([4096, 2147483647])(
+  'exact versioned capacity %s and zero associations remain usable after reopen',
+  async maximumMappings => {
+    const limits = maximumMappings === 4096 ? { maximumMappings } : { maximumMappings, version: 2 as const }
+    for (let attempt = 0; attempt < 2; attempt++)
+      await db.transaction(async trx => {
+        const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [], limits)
+        await prepared.persist(new Map())
+      })
+    expect(await db('snapshot_reconciliation_identity_budgets').select('maximumMappings', 'mappings')).toEqual([
+      { maximumMappings, mappings: 0 }
+    ])
+  }
+)
+test('exact256 references retain the original128-row lookup batches and reject257', async () => {
+  const references = Array.from({ length: 256 }, (_, index) => reference(index + 1)),
+    queries: string[] = [],
+    observe = (query: { sql: string }) => {
+      queries.push(query.sql)
+    }
+  db.on('query', observe)
+  try {
+    await db.transaction(async trx => {
+      const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, references, {
+        maximumMappings: 256
+      })
+      await prepared.persist(new Map(references.map(value => ['4:' + value.incomingId, 1000 + value.incomingId])))
+    })
+  } finally {
+    db.off('query', observe)
+  }
+  expect(queries.filter(sql => sql.startsWith('select') && sql.includes('`incomingId` in ('))).toHaveLength(2)
+  expect(await db('snapshot_reconciliation_identity_maps').count('* as count')).toEqual([{ count: 256 }])
+  await expect(
+    db.transaction(
+      async trx =>
+        await prepareSnapshotJournalIdentityLedger(trx, binding, state, [...references, reference(257)], {
+          maximumMappings: 257
+        })
+    )
+  ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+})
+test.each(['version', 'sessionId', 'binding', 'sequence', 'phase', 'streamIndex', 'tableIndex', 'promotionSequence'])(
+  'the actual window independently rejects a changed expected %s',
+  async field => {
+    const actual = Reflect.get(state, field),
+      changed = typeof actual === 'number' ? actual + 1 : field === 'phase' ? 'acknowledged' : 'b'.repeat(64)
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(prepareSnapshotJournalIdentityLedger, undefined, [
+            trx,
+            binding,
+            { ...state, [field]: changed },
+            [],
+            { maximumMappings: 8 }
+          ])
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+    expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+  }
+)
+test.each(['missing', 'intake'] as const)('an actual %s destination window grants no promoting ledger', async phase => {
+  await db('snapshot_reconciliation_windows').delete()
+  const expected = phase === 'intake' ? await begin() : state
+  await expect(
+    db.transaction(
+      async trx => await prepareSnapshotJournalIdentityLedger(trx, binding, expected, [], { maximumMappings: 8 })
+    )
+  ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+})
+test.each([
+  ['maximumMappings', null],
+  ['maximumMappings', 9],
+  ['maximumMappings', 8.5],
+  ['mappings', null],
+  ['mappings', -1],
+  ['mappings', 9],
+  ['mappings', 1.5],
+  ['mappings', '00']
+])('actual budget SQL followed by malformed %s DATA %s refuses reuse', async (field, value) => {
+  await write(reference(), 701)
+  const original = db.client.config.postProcessResponse
+  db.client.config.postProcessResponse = response =>
+    Array.isArray(response)
+      ? response.map(row =>
+          row !== null && typeof row === 'object' && Object.hasOwn(row, 'maximumMappings')
+            ? { ...row, [String(field)]: value }
+            : row
+        )
+      : response
+  try {
+    await expect(
+      db.transaction(
+        async trx =>
+          await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], { maximumMappings: 8 })
+      )
+    ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+  } finally {
+    db.client.config.postProcessResponse = original
+  }
+  expect(await db('snapshot_reconciliation_identity_budgets').select('maximumMappings', 'mappings')).toEqual([
+    { maximumMappings: 8, mappings: 1 }
+  ])
+})
+test.each(['budget-duplicate', 'record-duplicate', 'unrequested', 'zero-generation', 'future-generation'] as const)(
+  'actual ledger reads reject inconsistent returned DATA: %s',
+  async kind => {
+    await write(reference(), 701)
+    const original = db.client.config.postProcessResponse
+    db.client.config.postProcessResponse = response => {
+      if (!Array.isArray(response) || response.length === 0) return response
+      if (kind === 'budget-duplicate' && Object.hasOwn(response[0], 'maximumMappings'))
+        return [...response, { ...response[0] }]
+      if (!Object.hasOwn(response[0], 'localId')) return response
+      if (kind === 'record-duplicate') return [response[0], { ...response[0] }]
+      if (kind === 'unrequested') return response.map(row => ({ ...row, incomingId: 999 }))
+      if (kind === 'zero-generation' || kind === 'future-generation')
+        return response.map(row => ({ ...row, generation: kind === 'zero-generation' ? '0' : '3' }))
+      return response
+    }
+    try {
+      await expect(
+        db.transaction(
+          async trx =>
+            await prepareSnapshotJournalIdentityLedger(
+              trx,
+              binding,
+              state,
+              kind === 'record-duplicate' ? [reference(), reference(11)] : [reference()],
+              { maximumMappings: 8 }
+            )
+        )
+      ).rejects.toThrow('Invalid, stale or exhausted journal identity ledger')
+    } finally {
+      db.client.config.postProcessResponse = original
+    }
+  }
+)
+test.each(['empty', 'extra', 'wrong-key', 'different-reuse', 'lookalike'] as const)(
+  'invalid assignment map %s cannot rewrite the durable association',
+  async kind => {
+    await write(reference(), 701)
+    const assignments: unknown =
+      kind === 'empty'
+        ? new Map()
+        : kind === 'extra'
+          ? new Map([
+              ['4:10', 701],
+              ['4:11', 702]
+            ])
+          : kind === 'wrong-key'
+            ? new Map([['4:11', 701]])
+            : kind === 'different-reuse'
+              ? new Map([['4:10', 702]])
+              : { size: 1, entries: () => [['4:10', 701]] }
+    await expect(
+      db.transaction(async trx => {
+        const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], {
+          maximumMappings: 8
+        })
+        await Reflect.apply(prepared.persist, undefined, [assignments])
+      })
+    ).rejects.toThrow()
+    expect(await db('snapshot_reconciliation_identity_maps').select('localId')).toEqual([{ localId: 701 }])
+  }
+)
+test.each(['window', 'budget'] as const)(
+  'persistence rechecks actual %s SQL and rolls back both mapping and budget',
+  async kind => {
+    await expect(
+      db.transaction(async trx => {
+        const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], {
+          maximumMappings: 8
+        })
+        if (kind === 'window') await trx('snapshot_reconciliation_windows').increment('sequence', 1)
+        else await trx('snapshot_reconciliation_identity_budgets').update({ mappings: 1 })
+        await prepared.persist(new Map([['4:10', 701]]))
+      })
+    ).rejects.toThrow()
+    expect(await db('snapshot_reconciliation_identity_maps')).toEqual([])
+    expect(await db('snapshot_reconciliation_identity_budgets')).toEqual([])
+  }
+)
+test('a prepared persistence operation cannot be consumed twice', async () => {
+  await db.transaction(async trx => {
+    const prepared = await prepareSnapshotJournalIdentityLedger(trx, binding, state, [reference()], {
+      maximumMappings: 8
+    })
+    await prepared.persist(new Map([['4:10', 701]]))
+    await expect(prepared.persist(new Map([['4:10', 701]]))).rejects.toThrow(
+      'Invalid, stale or exhausted journal identity ledger'
+    )
+  })
+  expect(await db('snapshot_reconciliation_identity_budgets').select('mappings')).toEqual([{ mappings: 1 }])
 })

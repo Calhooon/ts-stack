@@ -33,7 +33,11 @@ import { Brc38PrivateNativeMergeNode } from './Brc38PrivateNativeMergeNode'
 import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
 import { Brc38RetiredNativeReadNode, type Brc38RetiredNativeReadPolicy } from './Brc38RetiredNativeReadNode'
 import { Brc38OwnedImportReads } from './Brc38OwnedImportReads'
-import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
+import {
+  Brc38StagingCleanupError,
+  closeBrc38UnpooledConnection,
+  drainBrc38FailedConnections
+} from './Brc38StagingCleanupError'
 import type { Brc38NativeRecoveryScratchNode, Brc38NativeRecoveryScratchPolicy } from './Brc38NativeRecoveryScratchNode'
 import {
   Brc38PublishedProfileNode,
@@ -157,7 +161,7 @@ function database(directory: string): Knex {
       min: 1,
       max: 1,
       afterCreate: (
-        connection: { exec: (sql: string) => unknown },
+        connection: { exec: (sql: string) => unknown; close: () => unknown },
         done: (error: Error | null, value?: unknown) => void
       ) => {
         try {
@@ -166,7 +170,7 @@ function database(directory: string): Knex {
           )
           done(null, connection)
         } catch (cause) {
-          done(cause instanceof Error ? cause : new Error('Profile inventory setup failed'), connection)
+          done(closeBrc38UnpooledConnection(connection, cause, 'Profile inventory setup failed'))
         }
       }
     }
@@ -1001,11 +1005,11 @@ export class Brc38ProfileInventoryNode {
       actualInventories.add(root)
       return root
     } catch (cause) {
-      try {
-        await db.destroy()
-      } catch (error_) {
-        throw new AggregateError([cause, error_], 'Inventory initialization retains cleanup')
-      }
+      await drainBrc38FailedConnections(
+        cause,
+        async () => await db.destroy(),
+        'Inventory initialization retains cleanup'
+      )
       // Incomplete initialization is retained for explicit recovery, never replaced.
       throw cause
     }
@@ -1034,11 +1038,7 @@ export class Brc38ProfileInventoryNode {
       actualInventories.add(root)
       return root
     } catch (cause) {
-      try {
-        await db.destroy()
-      } catch (error_) {
-        throw new AggregateError([cause, error_], 'Inventory reopen retains cleanup')
-      }
+      await drainBrc38FailedConnections(cause, async () => await db.destroy(), 'Inventory reopen retains cleanup')
       throw cause
     }
   }

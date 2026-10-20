@@ -67,7 +67,12 @@ import {
   verifyAllBrc38SqlCanonicalStructuredFields
 } from './Brc38SqlCanonicalStructuredStaging'
 import { detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
-import { Brc38CleanupScope, Brc38StagingCleanupError } from './Brc38StagingCleanupError'
+import {
+  Brc38CleanupScope,
+  Brc38StagingCleanupError,
+  closeBrc38UnpooledConnection,
+  drainBrc38FailedConnections
+} from './Brc38StagingCleanupError'
 export { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import createKnex, { type Knex } from 'knex'
 import type { Brc38WorkingAllocation } from './Brc38WorkingAllocation'
@@ -244,8 +249,13 @@ async function cleanupCreation(
 ): Promise<never> {
   let retired: string | undefined
   const cleanup = async () => {
-    if (cause instanceof Brc38StagingCleanupError) await cause.retryCleanup()
-    if (database !== undefined) await database.destroy()
+    await drainBrc38FailedConnections(
+      cause,
+      async () => {
+        if (database !== undefined) await database.destroy()
+      },
+      'Private BRC-38 connection teardown retains cleanup'
+    )
     if (owner !== undefined) {
       if (retired === undefined) {
         const selected = retirementDirectory ?? directory + '-discarded-' + randomUUID()
@@ -282,14 +292,14 @@ function openDatabase(filename: string, limits: KnexBrc38StagingLimits): Knex {
       min: 1,
       max: 1,
       afterCreate: (
-        connection: { exec: (sql: string) => unknown },
+        connection: { exec: (sql: string) => unknown; close: () => unknown },
         done: (error: Error | null, value?: unknown) => void
       ) => {
         try {
           connection.exec(connectionPragmas(limits))
           done(null, connection)
         } catch (cause) {
-          done(cause instanceof Error ? cause : new Error('Private BRC-38 connection setup failed'), connection)
+          done(closeBrc38UnpooledConnection(connection, cause, 'Private BRC-38 connection setup failed'))
         }
       }
     }

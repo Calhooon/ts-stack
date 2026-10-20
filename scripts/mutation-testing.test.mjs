@@ -1,7 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { matchesGlob, resolve } from 'node:path'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { walletJournalSuites } from './wallet-journal-ci.mjs'
+
+import {
+  composedNativeTestFile,
+  nativePairTestFile,
+  nativeMergeTestFile,
+  nativeAuthenticatedMergeTestFile,
+  nativeReadTestFile,
+  nativeUserTestFile
+} from './wallet-composed-native-ci.mjs'
+
 import {
   applyWalletComponentTests,
   buildMutationTargets
@@ -16,6 +28,15 @@ import {
   strykerEnvironment,
   targetsForUnresolvedMutationRange
 } from './mutation-testing.mjs'
+
+const nativeFunctionalFiles = [
+  composedNativeTestFile,
+  nativePairTestFile,
+  nativeMergeTestFile,
+  nativeAuthenticatedMergeTestFile,
+  nativeReadTestFile,
+  nativeUserTestFile
+].map(file => file.slice('packages/wallet/wallet-toolbox/'.length))
 
 const targets = {
   one: { packageDirectory: 'packages/one' },
@@ -507,23 +528,83 @@ test('Stryker runs cannot append per-mutant test reports to the job summary', ()
   assert.equal(environment.TS_STACK_MUTATION_TARGET, 'one')
 })
 
-test('full native functional files retain affected-target ownership outside mutation baselines', () => {
+test('wallet functional routing recognizes globs and preserves every other actual Jest selection', async () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT),
+    target = canonical['wallet-retained-snapshot'],
+    functional = [
+      'src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts',
+      'src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts'
+    ],
+    wallet = resolve(REPOSITORY_ROOT, target.packageDirectory)
+  for (const file of functional) assert.ok(target.requiredFunctionalTests?.includes(file))
+  const getConfig = (await import('../packages/wallet/wallet-toolbox/jest.config.cjs')).default,
+    base = await getConfig(),
+    routed = { ...base, ...target.runnerOptions.jest.config, rootDir: wallet }
+  for (const original of base.testPathIgnorePatterns)
+    assert.ok(routed.testPathIgnorePatterns.includes(original))
+  const list = config =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          resolve(wallet, 'node_modules/jest/bin/jest.js'),
+          '--listTests',
+          '--json',
+          '--runInBand',
+          '--config',
+          JSON.stringify(config)
+        ],
+        { cwd: wallet, encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }
+      )
+    ).sort()
+  const before = list({ ...routed, testPathIgnorePatterns: base.testPathIgnorePatterns }),
+    after = list(routed),
+    original = functional.map(file => resolve(wallet, file)).sort()
+  assert.ok(original.every(file => before.includes(file)))
+  assert.ok(original.every(file => !after.includes(file)))
+  assert.deepEqual(
+    before.filter(file => !after.includes(file)),
+    original
+  )
+  assert.deepEqual(
+    after.filter(file => !before.includes(file)),
+    []
+  )
+  assert.ok(
+    after.includes(resolve(wallet, target.propertyTest.slice(target.packageDirectory.length + 1)))
+  )
+  assert.ok(
+    selectAffectedMutationTargets(
+      canonical,
+      functional.map(file => target.packageDirectory + '/' + file)
+    ).includes('wallet-retained-snapshot')
+  )
+})
+
+test('full native and ordinary journal functional files retain affected-target ownership outside mutation baselines', () => {
   const canonical = buildMutationTargets(REPOSITORY_ROOT)
   const files = [
-    'src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts',
-    'src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts'
+    ...nativeFunctionalFiles,
+    walletJournalSuites[0].file.slice('packages/wallet/wallet-toolbox/'.length)
   ]
   const routed = Object.entries(canonical).filter(
     ([, target]) => target.requiredFunctionalTests?.length
   )
   assert.ok(routed.length >= 19)
+  for (const file of nativeFunctionalFiles)
+    assert.ok(routed.some(([, target]) => target.requiredFunctionalTests.includes(file)))
   for (const [id, target] of routed) {
     assert.equal(target.packageDirectory, 'packages/wallet/wallet-toolbox')
     const cases = target.runnerOptions.jest.config.testMatch
     assert.ok(cases.length > 0)
     assert.ok(cases.every(file => !files.some(original => file === '<rootDir>/' + original)))
     assert.ok(
-      cases.includes('<rootDir>/' + target.propertyTest.slice(target.packageDirectory.length + 1))
+      cases.some(pattern =>
+        matchesGlob(
+          '<rootDir>/' + target.propertyTest.slice(target.packageDirectory.length + 1),
+          pattern
+        )
+      )
     )
     for (const file of target.requiredFunctionalTests) {
       assert.ok(files.includes(file))
@@ -593,6 +674,26 @@ test('reviewed component routing preserves properties, broader input ownership a
       )
     }
   }
+})
+
+test('identity retirement mutation selects complete existing shared and compact SQLite source oracles', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)
+  const target = canonical['wallet-current-snapshot-journal-identity-retirements']
+  for (const path of [
+    'src/storage/snapshot/SnapshotSqliteSharedMembership.test.ts',
+    'src/storage/snapshot/SnapshotSqliteCompactMembership.test.ts'
+  ]) {
+    assert.ok(target.runnerOptions.jest.config.testMatch.includes('<rootDir>/' + path))
+    assert.ok(target.componentTestUniverse.includes(path))
+    assert.ok(
+      selectAffectedMutationTargets(canonical, [target.packageDirectory + '/' + path]).includes(
+        'wallet-current-snapshot-journal-identity-retirements'
+      )
+    )
+  }
+  assert.ok(target.additionalInputs.includes('test/utils/snapshotSqliteMaintenanceFixture.ts'))
+  assert.ok(target.additionalInputs.includes('test/utils/snapshotSqliteFixtures.ts'))
+  assert.ok(target.mutate.includes('src/storage/schema/snapshotSqliteIdentity.ts'))
 })
 
 test('wallet compiler configuration changes select every owning Jest mutation target', () => {

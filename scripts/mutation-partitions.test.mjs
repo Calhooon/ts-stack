@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import { parseArguments, REPOSITORY_ROOT } from './mutation-testing.mjs'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import {
   partitionMutationTarget,
+  canonicalMutationPartitions,
   selectedMutationPartition,
   mutationExecutionMatrix,
-  partitionedMutationTargets
+  partitionedMutationTargets,
+  refineMutationPartition
 } from './mutation-partitions.mjs'
 const target = {
   mutate: [
@@ -357,7 +360,7 @@ for (const [id, expected, fallback] of [
 ]) {
   test(`${id} preserves canonical whole-file ownership, configuration and future source coverage`, () => {
     const canonical = buildMutationTargets(REPOSITORY_ROOT)[id]
-    const parts = partitionMutationTarget(id, canonical)
+    const parts = canonicalMutationPartitions(id, canonical)
     assert.deepEqual(
       parts.map(part => part.id),
       expected
@@ -376,7 +379,7 @@ for (const [id, expected, fallback] of [
     }
     const helper = 'src/storage/snapshot/FutureHelper.ts'
     const extended = { ...canonical, mutate: [...canonical.mutate, helper, `${helper}:1-20`] }
-    const expanded = partitionMutationTarget(id, extended)
+    const expanded = canonicalMutationPartitions(id, extended)
     assert.deepEqual(
       expanded.flatMap(part => part.target.mutate).sort(),
       [...extended.mutate].sort()
@@ -448,4 +451,114 @@ test('canonical serializer partitions keep every complete module and the full or
   assert.equal(selectedMutationPartition('wallet-portable-canonical-chunks', canonical), canonical)
   const targets = buildMutationTargets(REPOSITORY_ROOT)
   assert.ok(mutationExecutionMatrix(Object.keys(targets), targets).include.length <= 256)
+})
+
+function refinementFixture() {
+  const source = Buffer.from('const one = 1\n\n// no mutant here\nconst two = 2\n'),
+    base = {
+      id: 'whole',
+      target: {
+        packageDirectory: 'package',
+        mutate: ['src/code.ts'],
+        runnerOptions: { jest: { config: { testMatch: ['all-original-tests'] } } }
+      }
+    },
+    unit = {
+      packageDirectory: 'package',
+      originalMutate: ['src/code.ts'],
+      sourceHashes: { 'src/code.ts': createHash('sha256').update(source).digest('hex') },
+      canonicalCount: 2,
+      parts: [
+        { id: 'range-001', count: 1, mutate: ['src/code.ts:1-1'] },
+        { id: 'range-002', count: 1, mutate: ['src/code.ts:4-4'] }
+      ]
+    }
+  return { source, base, unit }
+}
+test('source-bound refinements retain the identical full runner and own future helpers in full', () => {
+  const { source, base, unit } = refinementFixture()
+  const parts = refineMutationPartition(base, unit, () => source)
+  assert.deepEqual(
+    parts.map(part => part.id),
+    ['range-001', 'range-002']
+  )
+  for (const part of parts) {
+    assert.equal(part.target.runnerOptions, base.target.runnerOptions)
+    assert.deepEqual({ ...part.target, mutate: base.target.mutate }, base.target)
+  }
+  const future = refineMutationPartition(
+    { ...base, target: { ...base.target, mutate: [...base.target.mutate, 'src/FutureHelper.ts'] } },
+    unit,
+    () => source
+  )
+  assert.deepEqual(future[0].target.mutate, ['src/code.ts:1-1', 'src/FutureHelper.ts'])
+  assert.deepEqual(future[1].target.mutate, parts[1].target.mutate)
+})
+test('stale source, changed original specifications and malformed or overlapping ranges fail closed', () => {
+  const { source, base, unit } = refinementFixture()
+  assert.throws(
+    () =>
+      refineMutationPartition(base, unit, () => Buffer.concat([source, Buffer.from('// changed')])),
+    /source changed/
+  )
+  assert.throws(
+    () =>
+      refineMutationPartition(
+        { ...base, target: { ...base.target, mutate: ['src/code.ts:1-2'] } },
+        unit,
+        () => source
+      ),
+    /specifications changed/
+  )
+  for (const change of [
+    value => {
+      value.parts[1].mutate = ['src/code.ts:1-4']
+    },
+    value => {
+      value.parts[1].mutate = ['src/code.ts:4-99']
+    },
+    value => {
+      value.parts[1].mutate = ['../outside.ts:1-1']
+    },
+    value => {
+      value.parts[1].mutate = ['src/*.ts']
+    },
+    value => {
+      value.parts[1].mutate = ['src/code.ts:0-1']
+    },
+    value => {
+      value.parts[1].mutate = ['src/code.ts:4-3']
+    },
+    value => {
+      value.parts[1].id = value.parts[0].id
+    },
+    value => {
+      value.parts[1].id = 'whole'
+    },
+    value => {
+      value.parts[1].count = 0
+    },
+    value => {
+      value.parts[1].mutate = []
+    },
+    value => {
+      value.canonicalCount = 3
+    },
+    value => {
+      value.sourceHashes['src/extra.ts'] = value.sourceHashes['src/code.ts']
+    },
+    value => {
+      delete value.sourceHashes['src/code.ts']
+    },
+    value => {
+      value.sourceHashes['src/code.ts'] = 'x'.repeat(64)
+    },
+    value => {
+      value.packageDirectory = '../outside'
+    }
+  ]) {
+    const changed = structuredClone(unit)
+    change(changed)
+    assert.throws(() => refineMutationPartition(base, changed, () => source))
+  }
 })

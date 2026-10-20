@@ -2,7 +2,11 @@ import { knex } from 'knex'
 import { StorageKnex } from '../../src/storage/StorageKnex'
 import { StorageProvider } from '../../src/storage/StorageProvider'
 
-export function mysqlReadSnapshotFixture(failAt?: string, selectedRows: readonly unknown[] = []) {
+export function mysqlReadSnapshotFixture(
+  failAt?: string,
+  selectedRows: readonly unknown[] = [],
+  response?: (sql: string, bindings: unknown) => unknown[] | Record<string, unknown>
+) {
   const db = knex({ client: 'mysql2' })
   const storage = new StorageKnex({ ...StorageProvider.createStorageBaseOptions('test'), knex: db })
   const events: string[] = []
@@ -13,8 +17,8 @@ export function mysqlReadSnapshotFixture(failAt?: string, selectedRows: readonly
     },
     query(
       query: { sql: string },
-      _bindings: unknown,
-      callback: (error: Error | null, rows?: unknown[], fields?: unknown[]) => void
+      bindings: unknown,
+      callback: (error: Error | null, rows?: unknown[] | Record<string, unknown>, fields?: unknown[]) => void
     ) {
       const sql = query.sql.toUpperCase().replace(/;$/, '')
       events.push(sql)
@@ -23,7 +27,15 @@ export function mysqlReadSnapshotFixture(failAt?: string, selectedRows: readonly
       // comma-separated characteristic grammar. The combined options emitted
       // invalid syntax before this regression was found with real MySQL 8.4.
       if (sql.includes('REPEATABLE READ READ ONLY')) return callback(new Error('invalid MySQL syntax'))
-      callback(null, sql.startsWith('SELECT') ? structuredClone([...selectedRows]) : [], [])
+      callback(
+        null,
+        response === undefined
+          ? sql.startsWith('SELECT')
+            ? structuredClone([...selectedRows])
+            : []
+          : structuredClone(response(sql, bindings)),
+        []
+      )
     }
   }
   const acquire = jest.spyOn(db.client, 'acquireConnection').mockResolvedValue(connection)

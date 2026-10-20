@@ -65,7 +65,7 @@ class PrivateFile {
 
   private own<T>(action: () => Promise<T>): Promise<T> {
     if (this.busy) return Promise.reject(new Error('Private quarantine already owns an operation'))
-    if (this.state === 'failed' || this.state === 'discarding' || this.state === 'discarded')
+    if (this.state === 'failed' || this.state === 'discarding' || this.state === 'discarded' || this.writer?.fd === -1)
       return Promise.reject(new Error('Private quarantine is closed'))
     this.busy = true
     const result = action()
@@ -103,7 +103,7 @@ class PrivateFile {
     return this.own(async () => {
       this.check()
       const writer = this.writer
-      if (writer === undefined) throw new Error('Private quarantine writer is closed')
+      if (writer === undefined || writer.fd === -1) throw new Error('Private quarantine writer is closed')
       const write = (bytes: Uint8Array, offset: number) => writer.write(bytes, offset, bytes.length - offset, null)
       let offset = 0
       const check = () => this.check()
@@ -207,7 +207,7 @@ class PrivateFile {
     return this.own(async () => {
       this.check()
       const writer = this.writer
-      if (writer === undefined) throw new Error('Private quarantine writer is closed')
+      if (writer === undefined || writer.fd === -1) throw new Error('Private quarantine writer is closed')
       if (this.bytes === 0) throw new TypeError('Private quarantine is empty')
       if ((await requirePrivateDescriptor(writer)).size !== BigInt(this.bytes))
         throw new Error('Private quarantine size changed')

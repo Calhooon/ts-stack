@@ -1,5 +1,8 @@
 import fc from 'fast-check'
-import { Brc38PrivateChunkPipe } from './Brc38PrivateChunkPipe'
+let Brc38PrivateChunkPipe: typeof import('./Brc38PrivateChunkPipe').Brc38PrivateChunkPipe
+beforeAll(async () => {
+  Brc38PrivateChunkPipe = (await import('./Brc38PrivateChunkPipe')).Brc38PrivateChunkPipe
+})
 
 const MIN_PROPERTY_RUNS = 300
 fc.configureGlobal({

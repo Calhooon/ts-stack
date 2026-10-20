@@ -77,7 +77,11 @@ describe('physical bounded private import read ownership', () => {
     })
     await entered.wait
     held.open()
-    await expect(work).rejects.toMatchObject({ errors: [callback, io] })
+    await expect(work).rejects.toBeInstanceOf(AggregateError)
+    await expect(work).rejects.toMatchObject({
+      message: 'Private import callback and owned read both failed',
+      errors: [callback, io]
+    })
   })
   test('identical callback and read failure is preserved without replacing its cause', async () => {
     const scope = new Brc38OwnedImportReads(),

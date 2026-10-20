@@ -299,6 +299,30 @@ deadlines, the 300-case fixed-seed property campaign or the 90% detection and
 zero-uncovered/zero-invalid gates. A deadline cancellation is not a completed
 report or a passing score.
 
+The cancelled [PR569 campaign](https://github.com/bsv-blockchain/ts-stack/actions/runs/39466463041)
+also exhausted the unchanged job limits in twenty execution units after successful
+initial tests. A subsequent local identity-retirement run passed all 108 initial
+tests, then exhausted its unchanged 45-minute envelope without a final report.
+Its 797-mutant unit joins the same plan; this contended local failure is not a
+hosted timing measurement. The source-bound execution plan is generated with
+`node scripts/mutation-execution-partitions.mjs`; `--check` verifies deterministic
+regeneration. The pinned installed engine derives disjoint line spans, keeping
+mutants with overlapping parent spans together. The generated manifest binds
+each original source hash and mutate specification. Changed sources require
+regeneration; future canonical helpers remain fully owned by the first part.
+The current plan retains all 99 canonical targets and 22,952 mutants in those
+twenty-one units, with 246 execution rows below the existing 256-row ceiling.
+
+Every range part retains its canonical mutation runner, complete selected unit
+and property suites, and resource limits. Separately required functional files
+retain their full CI invocation. The installed-engine integration check independently compares
+the complete original and partitioned mutant tuples. Aggregation permits the
+same source file in different parts only with identical complete source and
+non-mutant report metadata, and rejects duplicate mutant ownership across parts.
+It evaluates the original canonical target union and unchanged score and status
+gates. Static inventory equality establishes coverage of the plan; actual
+runtime fit and successful final-source qualification still require execution.
+
 List and run targets locally:
 
 ```sh
@@ -319,23 +343,54 @@ run, perform its cleanup and attach evidence to the tracker or release record.
 No private credential, production wallet data, or secret output belongs in CI
 logs.
 
+The complete ordinary `WalletStorageManager.journal.test.ts` file also runs
+serially before the other tests in existing wallet shard 2. All ten original
+cases, real two-store activation and 30-second hooks/cases remain unchanged.
+Its exact file is removed only from the subsequent four ordinary invocations
+and repeated mutation baselines. Coverage aggregation requires its clean exact
+head/run/source identity, all ten passing original names, raw Jest report and
+matching LCOV bytes through `scripts/wallet-journal-ci.mjs`. Missing, duplicate,
+stale, failed or skipped evidence fails. Mutation metadata retains the full
+functional file as an affected input; every other selected test/property and
+all canonical mutants and acceptance gates remain required. The existing
+67-row native matrix and 64-case browser inventory are unchanged.
+
 ## Required native functional lanes and mutation admission
 
-The original composed recovery and native snapshot pair files now execute in
-mandatory wallet CI lanes. Each lane retains the complete original case-name
-inventory; the required aggregate gate checks actual Jest bytes, exact source
-identity and the complete cohort union. The composed file still includes all21
-original cases and six real-UTC expiry waits; the pair file still includes all18
-original independent-profile cases. These files are not mutation baselines:
-the expiry waits alone exceed a hosted job, before any mutant runs. Targets
+Six full native workflow files execute in mandatory wallet CI lanes: composed
+recovery (21 cases), independent-profile pairs (20), merge (6), authenticated
+merge (6), retained reads (6), and user header dates (3). All 62 original cases
+retain their producer plans inside the unchanged 67-row matrix. The required
+aggregate gate checks actual Jest bytes, exact source identity and complete
+cohort unions. Their complete workflows exceed the mutation initial-test limit
+and already have separate bounded functional admission. Mutation targets
 retain them as `requiredFunctionalTests` affected inputs alongside their genuine
 component test selection. A functional test change still selects its owning
-mutation targets. All canonical implementation ranges, registered property
+mutation targets. Routing checks final test globs as well as exact paths and
+uses exact-file Jest ignore patterns, preserving the package's existing ignore
+rules and every other selected test. A real Jest discovery regression verifies
+that the retained-snapshot glob removes only its two already governed
+functional files. Four of the six files were missing from the mutation metadata;
+correcting that omission removes their duplicate execution from six reviewed
+component selections while retaining every other test. All canonical implementation ranges, registered property
 suites, minimum300 runs, seeds, global score ratchets and zero uncovered,
 invalid or unexecuted mutant gates remain unchanged. No functional pass can
 replace mutation evidence, and no mutation pass qualifies the full system.
 Current routing is source implementation; full functional and mutation execution
 must independently pass at the same head before a completion claim.
+
+Schema-family component regressions use real private native writers and ordinary
+SQLite to distinguish clustered metadata from prior-import physical rows and
+refuse unowned or altered layouts. Integration modules load in awaited setup so
+an initializer failure belongs to the registered test inventory. Production
+schema definitions and all canonical mutants remain unchanged.
+
+Stream failure-path regressions retain the real cipher objects while injecting
+invalid output lengths or failures after actual destruction. They verify
+original causes, concrete cleanup retry order, key erasure and refusal of
+unvalidated output. Capability and missing-context fault tests are negative
+component evidence; the original real native GCM and canonical Argon2id cases
+remain mandatory and provide the positive backend evidence.
 
 Current wallet mutation targets use reviewed explicit component selections in
 `governance/mutation-testing/wallet-component-tests.json`. The original wider
@@ -390,3 +445,11 @@ original28/30-second failures remain evidence. All original data, assertions,
 crypto parameters, production expiries and memory/PID bounds remain unchanged.
 This is measured test admission; full browser, mutation and system qualification
 are still required, and the measured latency remains a performance baseline.
+
+The identity-retirement mutation target also selects the complete existing
+`SnapshotSqliteSharedMembership.test.ts` and `SnapshotSqliteCompactMembership.test.ts`
+files, whose ordinary SQLite source oracles directly execute its shared witness
+SQL. Original component and property files remain selected, including all
+300-run collation/conflict schedules. Their fixture and schema inputs participate
+in affected-target selection and source binding. This adds semantic coverage;
+the separately required owned-native and real MySQL qualification still apply.

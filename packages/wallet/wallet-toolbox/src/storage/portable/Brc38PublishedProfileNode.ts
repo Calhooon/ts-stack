@@ -8,7 +8,12 @@ import {
 } from './Brc38PrivateFilesystemNode'
 import { Brc39RecoveryIncomingComparisonNode } from './Brc39RecoveryIncomingComparisonNode'
 import { Brc38PendingComposedNativeTargetError } from './Brc38PendingComposedNativeTargetError'
-import { Brc38CleanupScope, Brc38StagingCleanupError } from './Brc38StagingCleanupError'
+import {
+  Brc38CleanupScope,
+  Brc38StagingCleanupError,
+  closeBrc38UnpooledConnection,
+  drainBrc38FailedConnections
+} from './Brc38StagingCleanupError'
 import { copyBrc38ComposedProfileReceipt, type Brc38ComposedProfileReceipt } from './Brc38ComposedProfileReceiptNode'
 import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
 import {
@@ -356,7 +361,7 @@ function database(directory: string, filename: string, maximumPages: number, rea
       min: 1,
       max: 1,
       afterCreate: (
-        connection: { exec: (sql: string) => unknown },
+        connection: { exec: (sql: string) => unknown; close: () => unknown },
         done: (error: Error | null, value?: unknown) => void
       ) => {
         try {
@@ -367,7 +372,7 @@ function database(directory: string, filename: string, maximumPages: number, rea
           )
           done(null, connection)
         } catch (cause) {
-          done(cause instanceof Error ? cause : new Error('Published profile connection failed'), connection)
+          done(closeBrc38UnpooledConnection(connection, cause, 'Published profile connection failed'))
         }
       }
     }
@@ -595,18 +600,19 @@ export class Brc38PublishedProfileNode {
       actualProfiles.add(profile)
       return profile
     } catch (cause) {
-      const errors: unknown[] = []
-      try {
-        if (profile !== undefined) await profile.close()
-        else {
-          const results = await Promise.allSettled([db?.destroy(), ownerDb?.destroy()])
-          errors.push(...results.flatMap(result => (result.status === 'rejected' ? [result.reason] : [])))
-        }
-      } catch (error_) {
-        errors.push(error_)
-      }
-      // No deletion while a native owner may still hold an open connection.
-      if (errors.length) throw new AggregateError([cause, ...errors], 'Publication retains physical cleanup')
+      await drainBrc38FailedConnections(
+        cause,
+        async () => {
+          if (profile !== undefined) await profile.close()
+          else {
+            const results = await Promise.allSettled([db?.destroy(), ownerDb?.destroy()])
+            const errors = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+            if (errors.length) throw new AggregateError(errors, 'Publication pool cleanup failed')
+          }
+        },
+        'Publication retains physical cleanup'
+      )
+      // No deletion while an actual raw or pooled connection remains open.
       await rm(directory, { recursive: true })
       await syncDirectory(join(directory, '..'))
       throw cause

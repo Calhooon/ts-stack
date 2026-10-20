@@ -257,6 +257,16 @@ lock and target union. The final verifier repeats static instrumentation with th
 pinned Stryker engine and checks complete mutant tuple multisets, source bytes,
 execution configuration and every existing score/no-coverage/invalid gate.
 Zero-mutant files may omit report entries; missing mutant-bearing files cannot.
+All six separately mandatory native functional files retain their original
+lanes when selected through a component test glob. Mutation routing recognizes
+those exact files in the final glob selection and preserves every other test;
+actual Jest discovery verifies the boundary. This repairs duplicate admission
+without increasing the original five-minute initial-test limit. The merge,
+authenticated merge, retained-read and three-date user files already had
+mandatory per-case lanes, but were missing from mutation metadata. Their
+duplicate full workflows are removed from six component selections; all
+remaining component/property tests and canonical mutants remain.
+
 Static replay checks inventory, not assertion quality or runtime freshness. Fresh
 report-directory removal, successful matrix jobs and same-attempt receipts supply
 execution provenance. `Ignored` is accepted only when the same source directive
@@ -394,3 +404,36 @@ including raw report hashes; missing, duplicate, skipped, failed or stale cases
 cannot satisfy it. This is complete scheduling with finite containment, not a
 measured speedup, production latency promise or permission to omit local checks.
 Whole-system and exact-head hosted qualification remain required.
+
+The identity-retirement mutation target also selects the complete existing
+`SnapshotSqliteSharedMembership.test.ts` and `SnapshotSqliteCompactMembership.test.ts`
+files, whose ordinary SQLite source oracles directly execute its shared witness
+SQL. Original component and property files remain selected, including all
+300-run collation/conflict schedules. Their fixture and schema inputs participate
+in affected-target selection and source binding. This adds semantic coverage;
+the separately required owned-native and real MySQL qualification still apply.
+
+The PR569 source-bound execution plan in
+`governance/mutation-testing/execution-partitions.json` refines twenty units that
+passed their initial tests and then reached their original job limits in
+[run39466463041](https://github.com/bsv-blockchain/ts-stack/actions/runs/39466463041).
+A subsequent contended local identity-retirement run passed its 108-case initial
+run but exhausted the unchanged 45-minute envelope without a final report. Its
+797-mutant unit joins the plan; local timing does not prove hosted runtime fit.
+The owning generator and installed-engine integration check preserve all 22,952
+canonical mutants from the twenty-one units, with 246 total execution rows below
+the unchanged 256-row ceiling. Each part repeats its complete canonical mutation
+test selection; separately required functional files retain their full CI run.
+Overlapping parent spans remain indivisible; packing counts do not establish
+runtime fit. Measure the resulting jobs under the existing limits before
+claiming a performance improvement or completed qualification.
+
+The workspace Vite declarations use the patched 8.3.3 line, including the LCH
+reference app, documentation, verifast development and wallet browser client.
+The generated lock retains the existing test/compiler versions and resolves
+Vite's compatible Rolldown bindings and type metadata. This addresses the
+[Windows editor advisory](https://github.com/advisories/GHSA-587h-7wmj-h5pm)
+without changing the artifact or runtime budgets. The separate
+[follow-redirects fix](https://github.com/bsv-blockchain/ts-stack/pull/1270) is
+retained exactly in the workspace and five standalone infrastructure locks.
+Frozen installs and the high-severity audit remain required.

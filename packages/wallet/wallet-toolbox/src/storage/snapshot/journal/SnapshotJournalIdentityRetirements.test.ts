@@ -2,6 +2,7 @@ import { knex, type Knex } from 'knex'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mysqlReadSnapshotFixture } from '../../../../test/utils/mysqlReadSnapshotFixture'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import { snapshotJournalReceiptBinding } from './SnapshotJournalReceipt'
 import {
@@ -143,6 +144,97 @@ async function replace(
       )
   )
 }
+
+test.each([0, 1, 3, null])(
+  'unsupported retirement version %s refuses without invoking semantic merge',
+  async version => {
+    const merge = jest.fn(async () => ({ assignments: new Map<string, number>(), result: undefined }))
+    await expect(
+      db.transaction(
+        async trx =>
+          await Reflect.apply(applySnapshotJournalIdentityTransition, undefined, [
+            trx,
+            binding,
+            state,
+            [],
+            { maximumMappings: 8, maximumPendingAssociations: 8, version },
+            merge
+          ])
+      )
+    ).rejects.toThrow('Invalid or exhausted journal identity retirement custody')
+    expect(merge).not.toHaveBeenCalled()
+    expect(await db('snapshot_reconciliation_identity_retirement_budgets')).toEqual([])
+  }
+)
+
+test.each(['mysql', 'mysql2'])(
+  'installed %s query builders bound retirement DATA and reject damaged prior custody before merge',
+  async client => {
+    // Only SQL construction and negative synthetic driver DATA are asserted.
+    // Real server, source/native ownership and final custody qualification stay separate.
+    const specimen = await db('snapshot_reconciliation_windows').first(),
+      merge = jest.fn(async () => ({ assignments: new Map<string, number>(), result: undefined })),
+      fixture = mysqlReadSnapshotFixture(undefined, [], sql => {
+        if (sql.startsWith('UPDATE')) return { affectedRows: 1 }
+        if (sql.includes('FROM `USERS`')) return [{ userId: 7, activeStorage: binding.activeStorage }]
+        if (sql.includes('FROM `SETTINGS`')) return [{ storageIdentityKey: 'destination', chain: 'mock' }]
+        if (sql.includes('FROM `SNAPSHOT_SYNC_PRIMARY_EPOCHS`')) return [{ epoch: '0' }]
+        if (sql.includes('UNIX_TIMESTAMP')) return [{ now: Date.now() }]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_WINDOWS`')) return [specimen]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_BUDGETS`'))
+          return [{ maximumMappings: '8', mappings: '1' }]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_MAPS`'))
+          return [
+            {
+              incomingId: '10',
+              localId: '701',
+              generation: '2',
+              naturalIdentity: 'b'.repeat(64),
+              sourceGeneration: 'b'.repeat(64),
+              seenSession: state.sessionId
+            }
+          ]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_RETIREMENT_BUDGETS`'))
+          return [{ maximumPendingAssociations: '8', pendingAssociations: '1' }]
+        if (sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_RETIREMENTS`'))
+          return [{ retiredBySession: 'damaged session', retiredAtSequence: '0' }]
+        return []
+      })
+    fixture.db.client.config.client = client
+    try {
+      expect(snapshotJournalIdentityRetirementsDdl(fixture.db).filter(sql => sql.startsWith('CREATE TABLE'))).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('ENGINE=InnoDB DEFAULT CHARACTER SET ascii COLLATE ascii_bin ROW_FORMAT=DYNAMIC')
+        ])
+      )
+      await expect(
+        fixture.db.transaction(
+          async trx =>
+            await applySnapshotJournalIdentityTransition(
+              trx,
+              binding,
+              state,
+              [reference()],
+              { maximumMappings: 8, maximumPendingAssociations: 8, version: 2 },
+              merge
+            )
+        )
+      ).rejects.toThrow('Invalid or exhausted journal identity retirement custody')
+      const budget = fixture.events.find(sql =>
+          sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_RETIREMENT_BUDGETS`')
+        ),
+        queue = fixture.events.find(sql => sql.includes('FROM `SNAPSHOT_RECONCILIATION_IDENTITY_RETIREMENTS`'))
+      expect(budget).toContain('OCTET_LENGTH(CAST(`PENDINGASSOCIATIONS` AS CHAR)) BETWEEN 1 AND 16')
+      expect(queue).toContain('OCTET_LENGTH(`RETIREDBYSESSION`)=64')
+      expect(queue).toContain('OCTET_LENGTH(CAST(`RETIREDATSEQUENCE` AS CHAR)) BETWEEN 1 AND 16')
+      expect(merge).not.toHaveBeenCalled()
+      expect(fixture.events.some(sql => /^(INSERT|UPDATE).*SNAPSHOT_RECONCILIATION_IDENTITY/.test(sql))).toBe(false)
+      expect(fixture.events.at(-1)).toBe('RELEASE')
+    } finally {
+      await fixture.db.destroy()
+    }
+  }
+)
 
 test('durably records the prior association before a committed replacement', async () => {
   await replace(reference(), 701)
@@ -357,3 +449,21 @@ test.each(['selection', 'away-and-back', 'epoch'] as const)(
     ])
   }
 )
+
+test('retirement refuses a supplied cursor outside the actual promoting checkpoint before merge', async () => {
+  const merge = jest.fn(async () => ({ assignments: new Map<string, number>(), result: undefined }))
+  await expect(
+    db.transaction(
+      async trx =>
+        await Reflect.apply(applySnapshotJournalIdentityTransition, undefined, [
+          trx,
+          binding,
+          { ...state, after: { revision: '2', id1: 10, id2: 0 } },
+          [],
+          { maximumMappings: 8, maximumPendingAssociations: 8 },
+          merge
+        ])
+    )
+  ).rejects.toThrow('Invalid or stale journal destination window')
+  expect(merge).not.toHaveBeenCalled()
+})

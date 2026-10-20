@@ -2,14 +2,28 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { KnexBrc38StagingStore } from './KnexBrc38StagingStore'
-import { readBrc38SqlBinaryDescriptors } from './Brc38SqlBinaryStaging'
 import { knex } from 'knex'
-import { brc38SqliteDefinitionBatches, readBrc38SqliteDefinitionBatch } from './Brc38SqlFieldSchemaBatch'
-import { readBrc38ImportSchemaFamily } from './Brc38ImportJournalSchemaBody'
+
+let KnexBrc38StagingStore: typeof import('./KnexBrc38StagingStore').KnexBrc38StagingStore
+let readBrc38SqlBinaryDescriptors: typeof import('./Brc38SqlBinaryStaging').readBrc38SqlBinaryDescriptors
+let brc38SqliteDefinitionBatches: typeof import('./Brc38SqlFieldSchemaBatch').brc38SqliteDefinitionBatches
+let readBrc38SqliteDefinitionBatch: typeof import('./Brc38SqlFieldSchemaBatch').readBrc38SqliteDefinitionBatch
+let readBrc38ImportSchemaFamily: typeof import('./Brc38ImportJournalSchemaBody').readBrc38ImportSchemaFamily
+
+beforeAll(async () => {
+  const storeModule = await import('./KnexBrc38StagingStore')
+  KnexBrc38StagingStore = storeModule.KnexBrc38StagingStore
+  const binaryModule = await import('./Brc38SqlBinaryStaging')
+  readBrc38SqlBinaryDescriptors = binaryModule.readBrc38SqlBinaryDescriptors
+  const batchModule = await import('./Brc38SqlFieldSchemaBatch')
+  brc38SqliteDefinitionBatches = batchModule.brc38SqliteDefinitionBatches
+  readBrc38SqliteDefinitionBatch = batchModule.readBrc38SqliteDefinitionBatch
+  const familyModule = await import('./Brc38ImportJournalSchemaBody')
+  readBrc38ImportSchemaFamily = familyModule.readBrc38ImportSchemaFamily
+})
 
 let directory = '',
-  store: KnexBrc38StagingStore | undefined
+  store: import('./KnexBrc38StagingStore').KnexBrc38StagingStore | undefined
 const data = new Uint8Array([1, 2, 3])
 const sha256 = createHash('sha256').update(data).digest('hex')
 beforeEach(async () => {
@@ -24,7 +38,12 @@ beforeEach(async () => {
   })
   await store.beginBinaryField('transactions', 0, 'rawTx', 'base64', 3)
   await store.appendBinaryField('transactions', 0, 'rawTx', 0, data)
-  await store.finishBinaryField('transactions', 0, { field: 'rawTx', encoding: 'base64', bytes: 3, sha256 })
+  await store.finishBinaryField('transactions', 0, {
+    field: 'rawTx',
+    encoding: 'base64',
+    bytes: 3,
+    sha256
+  })
 })
 afterEach(async () => {
   await store?.discard(new Error('finite schema comparison fixture cleanup'))
@@ -51,7 +70,9 @@ test('real descriptor reads retain exact bytes with bounded fresh catalog dispat
   }
   store!.knex.on('query', observe)
   try {
-    expect(await read()).toEqual({ rawTx: { field: 'rawTx', encoding: 'base64', bytes: 3, sha256 } })
+    expect(await read()).toEqual({
+      rawTx: { field: 'rawTx', encoding: 'base64', bytes: 3, sha256 }
+    })
   } finally {
     store!.knex.off('query', observe)
   }
@@ -96,7 +117,11 @@ test.each([
 })
 
 test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8 bounds and fresh rollback', async () => {
-  const db = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  const db = knex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    useNullAsDefault: true
+  })
   const expected = new Map<string, { type: string; sql: string | null }>()
   try {
     for (let index = 0; index < 53; index++) {
@@ -137,7 +162,10 @@ test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8
     await db.transaction(async trx => {
       for (const batch of batches) {
         const comparison = await readBrc38SqliteDefinitionBatch(trx, batch, 'main.sqlite_schema')
-        expect(comparison).toEqual({ matches: batch.definitions.length, names: batch.definitions.length })
+        expect(comparison).toEqual({
+          matches: batch.definitions.length,
+          names: batch.definitions.length
+        })
       }
       const scoped = await readBrc38SqliteDefinitionBatch(trx, {
         ...batches[0],
@@ -170,7 +198,9 @@ test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8
         'Bounded SQLite definition comparison DATA required'
       )
       await expect(
-        readBrc38SqliteDefinitionBatch(trx, { definitions: [...batches[0].definitions, batches[0].definitions[0]] })
+        readBrc38SqliteDefinitionBatch(trx, {
+          definitions: [...batches[0].definitions, batches[0].definitions[0]]
+        })
       ).rejects.toThrow('Bounded SQLite definition comparison DATA required')
       await expect(readBrc38SqliteDefinitionBatch(trx, batches[0], 'sqlite_master' as 'sqlite_schema')).rejects.toThrow(
         'Bounded SQLite definition comparison DATA required'
@@ -182,7 +212,11 @@ test('real SQLite family batches preserve complete exact SQL, NULL indexes, UTF8
 })
 
 test('fresh definition comparisons distinguish all-NULL implicit indexes from empty SQL and wrong identities', async () => {
-  const db = knex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+  const db = knex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    useNullAsDefault: true
+  })
   try {
     for (const name of ['one', 'two', 'three']) await db.raw(`CREATE TABLE null_batch_${name}(id TEXT PRIMARY KEY)`)
     const definitions = ['one', 'two', 'three'].map(name => ({
@@ -191,7 +225,10 @@ test('fresh definition comparisons distinguish all-NULL implicit indexes from em
       sql: null
     }))
     await db.transaction(async trx => {
-      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({ matches: 3, names: 3 })
+      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({
+        matches: 3,
+        names: 3
+      })
       for (const replacement of [
         { ...definitions[1], sql: '' },
         { ...definitions[1], name: 'missing_implicit_index' },
@@ -202,7 +239,10 @@ test('fresh definition comparisons distinguish all-NULL implicit indexes from em
             definitions: [definitions[0], replacement, definitions[2]]
           })
         ).toEqual({ matches: 2, names: 2 })
-      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({ matches: 3, names: 3 })
+      expect(await readBrc38SqliteDefinitionBatch(trx, { definitions })).toEqual({
+        matches: 3,
+        names: 3
+      })
     })
   } finally {
     await db.destroy()

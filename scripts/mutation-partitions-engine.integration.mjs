@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { join } from 'node:path'
+import fs from 'node:fs'
 import { REPOSITORY_ROOT } from './mutation-testing.mjs'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import { canonicalInventory, targetSources } from './mutation-final-qualification.mjs'
 import {
   partitionMutationTarget,
+  canonicalMutationPartitions,
   selectedMutationPartition,
   mutationExecutionMatrix
 } from './mutation-partitions.mjs'
@@ -99,4 +101,66 @@ test('installed mutation engine retains the complete canonical serializer invent
   assert.ok(original.length > 0)
   assert.equal(new Set(tuples).size, tuples.length)
   assert.deepEqual(tuples.toSorted(lexicalCompare), original.toSorted(lexicalCompare))
+})
+
+test('every generated refinement retains the actual full canonical inventory and identical complete runner exactly once', async () => {
+  const targets = buildMutationTargets(REPOSITORY_ROOT),
+    plan = JSON.parse(
+      fs.readFileSync(
+        join(REPOSITORY_ROOT, 'governance/mutation-testing/execution-partitions.json'),
+        'utf8'
+      )
+    ),
+    tuple = mutant =>
+      JSON.stringify({
+        file: mutant.fileName,
+        name: mutant.mutatorName,
+        location: mutant.location,
+        replacement: mutant.replacement
+      })
+  assert.equal(plan.schemaVersion, 1)
+  assert.equal(plan.engine, '9.6.1')
+  let count = 0
+  for (const unit of plan.units) {
+    const canonical = targets[unit.target],
+      base = canonicalMutationPartitions(unit.target, canonical).find(
+        part => part.id === unit.existingPartition
+      ),
+      ids = new Set(unit.parts.map(part => part.id)),
+      parts = partitionMutationTarget(unit.target, canonical).filter(part => ids.has(part.id)),
+      directory = join(REPOSITORY_ROOT, canonical.packageDirectory),
+      sources = targetSources(REPOSITORY_ROOT, base.target),
+      expected = (await canonicalInventory(directory, sources, base.target.mutate)).map(tuple),
+      actual = [],
+      files = new Set()
+    assert.equal(parts.length, unit.parts.length)
+    for (const part of parts) {
+      assert.equal(part.target.runnerOptions, canonical.runnerOptions)
+      assert.deepEqual(part.target, { ...canonical, mutate: part.target.mutate })
+      const partSources = targetSources(REPOSITORY_ROOT, part.target)
+      for (const [file, source] of partSources) {
+        assert.equal(
+          source,
+          sources.get(file),
+          'Complete source bytes changed inside an execution range'
+        )
+        files.add(file)
+      }
+      actual.push(
+        ...(await canonicalInventory(directory, partSources, part.target.mutate)).map(tuple)
+      )
+    }
+    assert.equal(new Set(actual).size, actual.length, 'Cross-part canonical mutant overlap')
+    assert.deepEqual(actual.toSorted(lexicalCompare), expected.toSorted(lexicalCompare))
+    assert.deepEqual([...files].sort(), [...sources.keys()].sort())
+    assert.equal(actual.length, unit.canonicalCount)
+    count += actual.length
+  }
+  assert.equal(
+    count,
+    plan.units.reduce((sum, unit) => sum + unit.canonicalCount, 0)
+  )
+  const matrix = mutationExecutionMatrix(Object.keys(targets), targets)
+  assert.equal(matrix.include.length, plan.executionRows)
+  assert.ok(matrix.include.length <= 256)
 })

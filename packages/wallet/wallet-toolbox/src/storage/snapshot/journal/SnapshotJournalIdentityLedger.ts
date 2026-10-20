@@ -274,7 +274,7 @@ export async function prepareSnapshotJournalIdentityLedger(
         if (
           currentGeneration &&
           same(association, reference) &&
-          (validateAssociation === undefined || (await validateAssociation(k, reference, { ...association })))
+          (validateAssociation === undefined || (await validateAssociation(k, { ...reference }, { ...association })))
         )
           associations.set(key(reference), { ...association })
         else previous.set(key(reference), { ...association })

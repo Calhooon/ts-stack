@@ -89,6 +89,9 @@ test.each(['2026-10-02', '2026-10-03', '2026-10-04'])(
             return { physicalRowId: row.rowId, metadata: metadata as Record<string, string | number | bigint | null> }
           })
         expect(expected).toHaveLength(2)
+        expect(fixture.initial.users.find(row => Number(row.metadata.userId) === selectedId)?.metadata.updated_at).toBe(
+          '2026-10-03T00:00:00.000Z'
+        )
         expect(expected.find(row => row.physicalRowId === 2)?.metadata.activeStorage).toBe('')
         await reserveBrc38NativeIncomingIds(
           fixture.source.storage,
@@ -224,6 +227,16 @@ test.each(['2026-10-02', '2026-10-03', '2026-10-04'])(
           await source.manager.runAsStorageProvider(async active => {
             expect(active).toBe(source.storage)
             await Brc38PublishedProfileNode.withNativeImmediateSourceWriter(source.storage, async writer => {
+              // Real activation selects the primary and stamps updated_at with
+              // current UTC. Author this test's independent three-date baseline
+              // afterwards, before the fixture captures its original inventory.
+              expect(
+                await source.storage.updateUser(
+                  source.manager.getActiveUser().userId,
+                  { updated_at: new Date('2026-10-03T00:00:00.000Z') },
+                  writer
+                )
+              ).toBe(1)
               expect(
                 await source.storage.insertUser(
                   {

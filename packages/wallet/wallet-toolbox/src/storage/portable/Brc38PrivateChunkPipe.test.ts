@@ -1,4 +1,11 @@
-import { Brc38PrivateChunkPipe, detachBrc38PrivateChunk } from './Brc38PrivateChunkPipe'
+let Brc38PrivateChunkPipe: typeof import('./Brc38PrivateChunkPipe').Brc38PrivateChunkPipe
+let detachBrc38PrivateChunk: typeof import('./Brc38PrivateChunkPipe').detachBrc38PrivateChunk
+beforeAll(async () => {
+  const actual = await import('./Brc38PrivateChunkPipe')
+  Brc38PrivateChunkPipe = actual.Brc38PrivateChunkPipe
+  detachBrc38PrivateChunk = actual.detachBrc38PrivateChunk
+})
+afterEach(() => jest.restoreAllMocks())
 
 test('one detached chunk owns its producer until the reader advances', async () => {
   const pipe = new Brc38PrivateChunkPipe(8),
@@ -73,3 +80,67 @@ test.each([new Uint16Array(1), new Uint8Array(new SharedArrayBuffer(1)), new Pro
     expect(() => detachBrc38PrivateChunk(value as Uint8Array, 8)).toThrow()
   }
 )
+
+test.each([new Uint16Array(1), new Proxy(new Uint8Array(1), {})])(
+  'non-byte native views retain the explicit private staging refusal',
+  value => {
+    expect(() => detachBrc38PrivateChunk(value as Uint8Array, 8)).toThrow(
+      'Private staging requires an ordinary native byte view'
+    )
+  }
+)
+
+test('the exact 64-KiB boundary retains owned backpressure and erasure', async () => {
+  const pipe = new Brc38PrivateChunkPipe(65536),
+    reader = pipe[Symbol.asyncIterator](),
+    input = new Uint8Array(65536).fill(7),
+    write = pipe.append(input)
+  const received = await reader.next()
+  expect(received.done).toBe(false)
+  expect(received.value).toEqual(input)
+  expect(received.value).not.toBe(input)
+  const ended = reader.next()
+  await write
+  expect(received.value).toEqual(new Uint8Array(65536))
+  expect(input[65535]).toBe(7)
+  pipe.end()
+  expect(await ended).toEqual({ value: undefined, done: true })
+})
+
+test('failure after reader acceptance still rejects the unsettled producer with the original cause', async () => {
+  const pipe = new Brc38PrivateChunkPipe(8),
+    reader = pipe[Symbol.asyncIterator](),
+    write = pipe.append(new Uint8Array([1])),
+    cause = new Error('revoked after acceptance')
+  await reader.next()
+  const next = reader.next()
+  pipe.fail(cause)
+  await expect(write).rejects.toBe(cause)
+  await expect(next).rejects.toBe(cause)
+})
+
+test('a real erasure failure cannot strand the private producer when its reader closes', async () => {
+  const pipe = new Brc38PrivateChunkPipe(8),
+    reader = pipe[Symbol.asyncIterator](),
+    input = new Uint8Array([3]),
+    write = pipe.append(input),
+    cause = new Error('physical erasure reported failure')
+  const received = await reader.next(),
+    fill = Uint8Array.prototype.fill
+  // Erase the actual owned bytes, then report a physical cleanup failure.
+  // The enclosing reader must still revoke and settle its actual producer.
+  jest.spyOn(Uint8Array.prototype, 'fill').mockImplementationOnce(function (this: Uint8Array, ...args) {
+    Reflect.apply(fill, this, args)
+    throw cause
+  })
+  const rejected = expect(write).rejects.toThrow('Private staging reader stopped before authentication')
+  try {
+    await expect(reader.return?.()).rejects.toBe(cause)
+    await rejected
+    expect(received.value).toEqual(new Uint8Array([0]))
+    expect(input).toEqual(new Uint8Array([3]))
+  } finally {
+    pipe.fail(new Error('Owned test cleanup'))
+    await write.catch(() => undefined)
+  }
+})

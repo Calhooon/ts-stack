@@ -691,6 +691,91 @@ jobs:
         with:
           pattern: mutation-wallet-snapshot-remote-reader-*
           path: .mutation-parts/wallet-snapshot-remote-reader
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-packed-row')
+        with:
+          pattern: mutation-wallet-portable-packed-row-*
+          path: .mutation-parts/wallet-portable-packed-row
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-source-stream')
+        with:
+          pattern: mutation-wallet-portable-source-stream-*
+          path: .mutation-parts/wallet-portable-source-stream
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-knex-source')
+        with:
+          pattern: mutation-wallet-portable-knex-source-*
+          path: .mutation-parts/wallet-portable-knex-source
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-json-stream')
+        with:
+          pattern: mutation-wallet-portable-json-stream-*
+          path: .mutation-parts/wallet-portable-json-stream
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-brc39-frame')
+        with:
+          pattern: mutation-wallet-portable-brc39-frame-*
+          path: .mutation-parts/wallet-portable-brc39-frame
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-existing-rows')
+        with:
+          pattern: mutation-wallet-current-brc38-import-existing-rows-*
+          path: .mutation-parts/wallet-current-brc38-import-existing-rows
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-history')
+        with:
+          pattern: mutation-wallet-current-brc38-import-history-*
+          path: .mutation-parts/wallet-current-brc38-import-history
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-merge-checkpoint-node')
+        with:
+          pattern: mutation-wallet-current-brc38-import-merge-checkpoint-node-*
+          path: .mutation-parts/wallet-current-brc38-import-merge-checkpoint-node
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-page')
+        with:
+          pattern: mutation-wallet-current-brc38-import-page-*
+          path: .mutation-parts/wallet-current-brc38-import-page
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-target-indexes')
+        with:
+          pattern: mutation-wallet-current-brc38-import-target-indexes-*
+          path: .mutation-parts/wallet-current-brc38-import-target-indexes
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-portable-rows')
+        with:
+          pattern: mutation-wallet-current-brc38-portable-rows-*
+          path: .mutation-parts/wallet-current-brc38-portable-rows
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-profile-physical-identity-node')
+        with:
+          pattern: mutation-wallet-current-brc38-profile-physical-identity-node-*
+          path: .mutation-parts/wallet-current-brc38-profile-physical-identity-node
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-knex-database-system')
+        with:
+          pattern: mutation-wallet-current-knex-database-system-*
+          path: .mutation-parts/wallet-current-knex-database-system
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-delta-frame')
+        with:
+          pattern: mutation-wallet-current-snapshot-journal-delta-frame-*
+          path: .mutation-parts/wallet-current-snapshot-journal-delta-frame
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-delta-page')
+        with:
+          pattern: mutation-wallet-current-snapshot-journal-delta-page-*
+          path: .mutation-parts/wallet-current-snapshot-journal-delta-page
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-destination-stage')
+        with:
+          pattern: mutation-wallet-current-snapshot-journal-destination-stage-*
+          path: .mutation-parts/wallet-current-snapshot-journal-destination-stage
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-identity-retirements')
+        with:
+          pattern: mutation-wallet-current-snapshot-journal-identity-retirements-*
+          path: .mutation-parts/wallet-current-snapshot-journal-identity-retirements
       - name: Require every selected canonical partition target gate
         if: needs.prepare.outputs.partition-targets != '[]' && needs.prepare.outputs.partition-targets != ''
         env:
@@ -1178,6 +1263,21 @@ jobs:
             .coverage-output/wallet-browser.lcov.info
           node scripts/wallet-browser-ci.mjs capture wallet-browser-result.json \
             .coverage-output/wallet-browser.lcov.info .coverage-output/wallet.wallet-browser.json
+      - name: Run every original journal case serially before ordinary shard-2
+        if: matrix.id == 'shard-2'
+        run: |
+          pnpm --filter @bsv/wallet-toolbox exec jest \
+            --coverage --coverageDirectory=coverage/journal --runInBand --watchman=false \
+            --runTestsByPath src/storage/__test/WalletStorageManager.journal.test.ts \
+            --json --outputFile="$GITHUB_WORKSPACE/wallet-journal-result.json"
+          node scripts/normalize-lcov-paths.mjs \
+            packages/wallet/wallet-toolbox/coverage/journal/lcov.info \
+            packages/wallet/wallet-toolbox
+          mkdir -p .coverage-output
+          cp packages/wallet/wallet-toolbox/coverage/journal/lcov.info \
+            .coverage-output/wallet-journal.lcov.info
+          node scripts/wallet-journal-ci.mjs capture wallet-journal-result.json \
+            .coverage-output/wallet-journal.lcov.info .coverage-output/wallet.wallet-journal.json
       - name: Generate wallet-toolbox coverage shard
         env:
           WALLET_SHARD: ${{ matrix.shard }}
@@ -1232,7 +1332,7 @@ jobs:
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs|src/storage/portable/Brc38NativeBrowserComponents.test.cjs|src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts|src/utility/BrowserArgon2idWorker.native.test.cjs')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs|src/storage/portable/Brc38NativeBrowserComponents.test.cjs|src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts|src/utility/BrowserArgon2idWorker.native.test.cjs|src/storage/__test/WalletStorageManager\.journal\.test\.ts$')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
@@ -1527,6 +1627,9 @@ jobs:
       - name: Verify all original browser cases and their coverage at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-browser-ci.mjs verify .coverage-artifacts
+      - name: Verify all original journal cases and their coverage at this exact head
+        if: needs.prepare.outputs.wallet == 'true'
+        run: node scripts/wallet-journal-ci.mjs verify .coverage-artifacts
       - name: Compose Codecov inputs
         id: cov
         run: |

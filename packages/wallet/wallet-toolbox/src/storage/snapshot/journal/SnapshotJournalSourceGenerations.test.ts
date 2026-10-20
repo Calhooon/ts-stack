@@ -5,8 +5,11 @@ import { join } from 'node:path'
 import { snapshotJournalRevision } from './SnapshotJournalRevision'
 import {
   readSnapshotJournalSourceGenerations,
+  snapshotJournalSourceIndexes,
+  type SnapshotJournalSourceIndexes,
   type SnapshotJournalSourceReference
 } from './SnapshotJournalSourceGenerations'
+import { mysqlReadSnapshotFixture } from '../../../../test/utils/mysqlReadSnapshotFixture'
 
 jest.setTimeout(30000)
 
@@ -48,6 +51,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await db.destroy()
   rmSync(directory, { recursive: true, force: true })
+  jest.restoreAllMocks()
 })
 async function live(
   k: Knex,
@@ -195,3 +199,138 @@ test('bounds references before SQL and refuses provenance/composite table IDs', 
     expect(queries).toBe(initial)
   })
 })
+
+test('detached index DATA accepts only complete installed states and retains no caller object', () => {
+  const input: SnapshotJournalSourceIndexes = { profile: 'v2', relation: true, certificate: 'v2', global: true }
+  const actual = snapshotJournalSourceIndexes(db, input)
+  expect(actual).toEqual(input)
+  expect(actual).not.toBe(input)
+  input.profile = false
+  expect(actual.profile).toBe('v2')
+  for (const field of ['profile', 'relation', 'certificate', 'global'])
+    for (const invalid of [false, undefined, null, '', 'v1', 1])
+      expect(() =>
+        snapshotJournalSourceIndexes(db, {
+          profile: 'v2',
+          relation: 'v2',
+          certificate: 'v2',
+          global: 'v2',
+          [field]: invalid
+        } as SnapshotJournalSourceIndexes)
+      ).toThrow('Missing or inconsistent pinned journal source generation')
+})
+
+test.each([0, -1, 1.5, NaN, Infinity, '1', Number.MAX_SAFE_INTEGER + 1])(
+  'invalid profile or incoming ID %s refuses before source SQL',
+  async value => {
+    await db.transaction(async trx => {
+      const observe = jest.fn()
+      db.on('query', observe)
+      try {
+        await expect(readSnapshotJournalSourceGenerations(trx, value as number, high, [])).rejects.toThrow(
+          'Missing or inconsistent pinned journal source generation'
+        )
+        await expect(
+          readSnapshotJournalSourceGenerations(trx, 1, high, [{ tableId: 4, incomingId: value as number }])
+        ).rejects.toThrow('Missing or inconsistent pinned journal source generation')
+        expect(observe).not.toHaveBeenCalled()
+      } finally {
+        db.off('query', observe)
+      }
+    })
+  }
+)
+
+test('root, unsupported backend, zero high-water and non-array references cannot issue source DATA', async () => {
+  const error = 'Missing or inconsistent pinned journal source generation'
+  await expect(readSnapshotJournalSourceGenerations(db, 1, high, [])).rejects.toThrow(error)
+  await db.transaction(async trx => {
+    const original = trx.client.config.client
+    try {
+      // This remains the real SQLite transaction. A changed/unknown backend
+      // label must refuse; it cannot manufacture native producer membership.
+      trx.client.config.client = 'unsupported-driver'
+      await expect(readSnapshotJournalSourceGenerations(trx, 1, high, [])).rejects.toThrow(error)
+    } finally {
+      trx.client.config.client = original
+    }
+    await expect(readSnapshotJournalSourceGenerations(trx, 1, snapshotJournalRevision('0'), [])).rejects.toThrow(error)
+    for (const references of [undefined, null, {}, { length: 1 }])
+      await expect(
+        readSnapshotJournalSourceGenerations(trx, 1, high, references as SnapshotJournalSourceReference[])
+      ).rejects.toThrow(error)
+  })
+})
+
+test('the exact reference ceiling remains admitted and duplicate coordinates share one source query', async () => {
+  await live(db, 4, 10)
+  const observe = jest.fn()
+  db.on('query', observe)
+  try {
+    await db.transaction(async trx => {
+      observe.mockClear()
+      const references = Array.from({ length: 256 }, () => ({ tableId: 4 as const, incomingId: 10 }))
+      expect([...(await readSnapshotJournalSourceGenerations(trx, 1, high, references))]).toEqual([
+        ['4:10', { generation: '2', revision: '9' }]
+      ])
+      expect(observe).toHaveBeenCalledTimes(1)
+    })
+  } finally {
+    db.off('query', observe)
+  }
+})
+
+test.each([
+  { journalGeneration: '0', journalRevision: '9' },
+  { journalGeneration: '10', journalRevision: '9' },
+  { journalGeneration: '2', journalRevision: '11' }
+])('inconsistent returned identity DATA %j cannot cross the pinned high-water fence', async patch => {
+  await live(db, 4, 10)
+  const original = db.client.config.postProcessResponse
+  db.client.config.postProcessResponse = response =>
+    Array.isArray(response) && response[0]?.journalGeneration !== undefined
+      ? response.map(row => ({ ...row, ...patch }))
+      : response
+  try {
+    await expect(read([{ tableId: 4, incomingId: 10 }], 1, snapshotJournalRevision('10'))).rejects.toThrow(
+      'Missing or inconsistent pinned journal source generation'
+    )
+  } finally {
+    db.client.config.postProcessResponse = original
+  }
+})
+
+test.each(['mysql2', 'mysql'])(
+  'installed MySQL query construction retains exact bounded revision projections for %s',
+  async client => {
+    // Reuse the installed Knex transaction/query builders and bounded synthetic
+    // wire fixture. This is SQL construction/driver DATA evidence; the separate
+    // real MySQL container contract remains the server qualification.
+    const fixture = mysqlReadSnapshotFixture(undefined, [
+      { journalGeneration: '2', journalRevision: '9', journalPresent: true }
+    ])
+    fixture.db.client.config.client = client
+    try {
+      expect(snapshotJournalSourceIndexes(fixture.db)).toEqual({
+        profile: true,
+        relation: true,
+        certificate: true,
+        global: true
+      })
+      const actual = await fixture.db.transaction(
+        async trx => await readSnapshotJournalSourceGenerations(trx, 1, high, [{ tableId: 4, incomingId: 10 }])
+      )
+      expect([...actual]).toEqual([['4:10', { generation: '2', revision: '9' }]])
+      const selects = fixture.events.filter(sql => sql.startsWith('SELECT'))
+      expect(selects).toHaveLength(1)
+      for (const field of ['GENERATION', 'REVISION']) {
+        expect(selects[0]).toContain(`OCTET_LENGTH(CAST(\`${field}\` AS CHAR)) BETWEEN 1 AND 19`)
+        expect(selects[0]).toContain(`\`${field}\` BETWEEN 1 AND CAST(? AS SIGNED)`)
+      }
+      expect(selects[0]).toContain('CASE WHEN `PRESENT` IN (0,1) THEN `PRESENT` ELSE NULL END AS `JOURNALPRESENT`')
+      expect(fixture.events.at(-1)).toBe('RELEASE')
+    } finally {
+      await fixture.db.destroy()
+    }
+  }
+)

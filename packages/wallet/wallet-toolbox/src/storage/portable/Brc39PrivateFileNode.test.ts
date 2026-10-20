@@ -6,6 +6,7 @@ import fc from 'fast-check'
 import type { Brc39NodeFileQuarantine } from './Brc39PrivateFileNode'
 
 import type { BRC38WalletData } from './index'
+import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
 import {
   registerArgon2idBackend,
   unregisterArgon2idBackend,
@@ -75,13 +76,14 @@ async function append(stage: Brc39NodeFileQuarantine, bytes: Uint8Array, width =
   for await (const result of writes()) expect(result).toBeUndefined()
 }
 
-function observeHandles(): FileHandle[] {
+function observeHandles(inspect?: (handle: FileHandle, index: number) => void): FileHandle[] {
   const fs = jest.requireActual<typeof import('node:fs/promises')>('node:fs/promises')
   const actual = fs.open
   const handles: FileHandle[] = []
   jest.spyOn(fs, 'open').mockImplementation(async (...args) => {
     const handle = await actual(...args)
     handles.push(handle)
+    inspect?.(handle, handles.length - 1)
     return handle
   })
   return handles
@@ -179,7 +181,11 @@ test('semantic and reader cleanup failures are retained together and cleanup ret
     failure = error
   }
   expect(failure).toBeInstanceOf(AggregateError)
-  expect(failure).toMatchObject({ cause: original, errors: [original, cleanup] })
+  expect(failure).toMatchObject({
+    message: 'Private quarantine operation and cleanup failed',
+    cause: original,
+    errors: [original, cleanup]
+  })
   await stage.discard()
   expect(await readdir(parent)).toEqual([])
 })
@@ -201,11 +207,21 @@ test('factory file creation and removal failures both remain visible', async () 
   const cleanup = new Error('synthetic factory removal failure')
   jest.spyOn(fs, 'open').mockRejectedValueOnce(original)
   jest.spyOn(fs, 'rm').mockRejectedValueOnce(cleanup)
-  await expect(createBrc39NodeFileQuarantine(parent, async () => {}, policy)).rejects.toMatchObject({
+  let failure: unknown
+  try {
+    await createBrc39NodeFileQuarantine(parent, async () => {}, policy)
+  } catch (cause) {
+    failure = cause
+  }
+  expect(failure).toBeInstanceOf(Brc38StagingCleanupError)
+  expect(failure).toMatchObject({
+    message: 'Private quarantine creation retains cleanup',
     cause: original,
     errors: [original, cleanup]
   })
   expect(await readdir(parent)).toHaveLength(1)
+  await (failure as Brc38StagingCleanupError).retryCleanup()
+  expect(await readdir(parent)).toEqual([])
 })
 
 test('private file modes and detached writes precede authenticated bounded readback', async () => {
@@ -632,3 +648,434 @@ test('generated bounded file chunks retain exact independent bytes and cleanup',
     }
   )
 }, 180000)
+
+test.each([0, -1, 65, NaN, 1.5])('actual read with invalid reported progress %s refuses', async bytesRead => {
+  const handles = observeHandles(),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        const reader = handles[1],
+          original = reader.read
+        jest.spyOn(reader, 'read').mockImplementation(async (...args) => {
+          const actual = await Reflect.apply(original, reader, args)
+          return { ...actual, bytesRead }
+        })
+        await collect(chunks)
+      },
+      policy
+    )
+  try {
+    await stage.appendUntrusted(new Uint8Array([1, 2, 3]))
+    await expect(stage.validateAuthenticated()).rejects.toThrow('Private quarantine read made invalid progress')
+  } finally {
+    await stage.discard()
+  }
+  expect(handles.every(handle => handle.fd === -1)).toBe(true)
+})
+
+test('actual short reads expose only their consumed bytes and preserve the complete digest', async () => {
+  const handles = observeHandles(),
+    expected = Buffer.from([3, 5, 7]),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        const reader = handles[1],
+          original = reader.read
+        const reads = jest.spyOn(reader, 'read').mockImplementation(async (...args) => {
+          const selected = [...args]
+          selected[2] = 1
+          return await Reflect.apply(original, reader, selected)
+        })
+        expect(await collect(chunks)).toEqual(expected)
+        expect(reads).toHaveBeenCalledTimes(expected.length)
+      },
+      policy
+    )
+  try {
+    await stage.appendUntrusted(expected)
+    await stage.validateAuthenticated()
+    expect(await stage.withAuthenticatedChunks(collect)).toEqual(expected)
+  } finally {
+    await stage.discard()
+  }
+})
+
+test('empty quarantine refuses before invoking the semantic validator', async () => {
+  const validator = jest.fn(async (chunks: AsyncIterable<Uint8Array>) => {
+      await collect(chunks)
+    }),
+    stage = await createBrc39NodeFileQuarantine(parent, validator, policy)
+  try {
+    await expect(stage.validateAuthenticated()).rejects.toThrow('Private quarantine is empty')
+    expect(validator).not.toHaveBeenCalled()
+  } finally {
+    await stage.discard()
+  }
+})
+
+test('append rejects a non-byte value without retaining it or closing valid admission', async () => {
+  const stage = await createBrc39NodeFileQuarantine(
+    parent,
+    async chunks => {
+      expect(await collect(chunks)).toEqual(Buffer.from([9]))
+    },
+    policy
+  )
+  try {
+    await expect(Reflect.apply(stage.appendUntrusted, stage, [[1, 2, 3]])).rejects.toThrow(
+      'Private quarantine requires bytes'
+    )
+    await stage.appendUntrusted(new Uint8Array([9]))
+    await stage.validateAuthenticated()
+  } finally {
+    await stage.discard()
+  }
+})
+
+test.each(['empty append', 'validate'] as const)(
+  'physically closed original writer refuses %s immediately',
+  async mode => {
+    const handles = observeHandles(),
+      stage = await createBrc39NodeFileQuarantine(
+        parent,
+        async chunks => {
+          await collect(chunks)
+        },
+        policy
+      )
+    try {
+      if (mode === 'validate') await stage.appendUntrusted(new Uint8Array([1]))
+      await handles[0].close()
+      await expect(
+        mode === 'validate' ? stage.validateAuthenticated() : stage.appendUntrusted(new Uint8Array())
+      ).rejects.toThrow('Private quarantine is closed')
+    } finally {
+      await stage.discard()
+    }
+  }
+)
+
+test.each(['empty append', 'validate'] as const)(
+  'loss of the actual writer during the cancellation checkpoint refuses %s',
+  async mode => {
+    const handles = observeHandles(),
+      controller = new AbortController(),
+      closing: Array<Promise<void>> = [],
+      stage = await createBrc39NodeFileQuarantine(
+        parent,
+        async chunks => {
+          await collect(chunks)
+        },
+        {
+          ...policy,
+          signal: controller.signal
+        }
+      )
+    let checkpoint: jest.SpyInstance | undefined
+    try {
+      if (mode === 'validate') await stage.appendUntrusted(new Uint8Array([1]))
+      const original = controller.signal.throwIfAborted
+      checkpoint = jest.spyOn(controller.signal, 'throwIfAborted').mockImplementation(() => {
+        original.call(controller.signal)
+        closing.push(handles[0].close())
+      })
+      await expect(
+        mode === 'validate' ? stage.validateAuthenticated() : stage.appendUntrusted(new Uint8Array())
+      ).rejects.toThrow('Private quarantine writer is closed')
+      expect(handles[0].fd).toBe(-1)
+    } finally {
+      checkpoint?.mockRestore()
+      await Promise.all(closing)
+      await stage.discard()
+    }
+  }
+)
+
+test.each(['entry', 'completion'] as const)(
+  'reader independently verifies actual descriptor size at %s',
+  async phase => {
+    const handles = observeHandles((reader, index) => {
+        if (index !== 1) return
+        const stat = reader.stat
+        let reads = 0
+        jest.spyOn(reader, 'stat').mockImplementation(async (...args) => {
+          const actual = await Reflect.apply(stat, reader, args)
+          if (++reads === (phase === 'entry' ? 1 : 2)) Reflect.set(actual, 'size', actual.size + 1n)
+          return actual
+        })
+      }),
+      stage = await createBrc39NodeFileQuarantine(
+        parent,
+        async chunks => {
+          await collect(chunks)
+        },
+        policy
+      )
+    try {
+      await stage.appendUntrusted(new Uint8Array([1, 2, 3]))
+      await expect(stage.validateAuthenticated()).rejects.toThrow('Private quarantine size changed')
+    } finally {
+      await stage.discard()
+    }
+    expect(handles.every(handle => handle.fd === -1)).toBe(true)
+  }
+)
+
+test('discard retains a failed actual descriptor close and retries without deleting its live file', async () => {
+  const handles = observeHandles(),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        await collect(chunks)
+      },
+      policy
+    ),
+    reason = new Error('Actual quarantine descriptor close failed')
+  try {
+    await stage.appendUntrusted(new Uint8Array([1, 2, 3]))
+    const close = jest.spyOn(handles[0], 'close').mockRejectedValueOnce(reason),
+      first = stage.discard()
+    expect(stage.discard()).toBe(first)
+    await expect(first).rejects.toMatchObject({ message: 'Private quarantine cleanup failed', errors: [reason] })
+    expect(handles[0].fd).toBeGreaterThanOrEqual(0)
+    expect(await readdir(parent)).toHaveLength(1)
+    await stage.discard()
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(handles[0].fd).toBe(-1)
+    expect(await readdir(parent)).toEqual([])
+  } finally {
+    await stage.discard()
+  }
+})
+
+test.each([1, 65536])('exact chunk boundary %s remains usable with real file backing', async maximumChunkBytes => {
+  const expected = Buffer.from([7]),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        expect(await collect(chunks)).toEqual(expected)
+      },
+      { maximumFileBytes: 1, maximumChunkBytes }
+    )
+  try {
+    await stage.appendUntrusted(expected)
+    await stage.validateAuthenticated()
+    expect(await stage.withAuthenticatedChunks(collect)).toEqual(expected)
+  } finally {
+    await stage.discard()
+  }
+})
+
+test('concurrent validation refuses while its actual writer metadata operation remains owned', async () => {
+  const handles = observeHandles(),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        await collect(chunks)
+      },
+      policy
+    ),
+    stat = handles[0].stat
+  let resume!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => {
+      resume = resolve
+    }),
+    started = new Promise<void>(resolve => {
+      entered = resolve
+    })
+  await stage.appendUntrusted(new Uint8Array([1, 2, 3]))
+  const metadata = jest.spyOn(handles[0], 'stat').mockImplementation(async (...args) => {
+      const actual = await Reflect.apply(stat, handles[0], args)
+      entered()
+      await gate
+      return actual
+    }),
+    first = stage.validateAuthenticated()
+  try {
+    await started
+    await expect(stage.validateAuthenticated()).rejects.toThrow('Private quarantine already owns an operation')
+    await expect(stage.appendUntrusted(new Uint8Array([4]))).rejects.toThrow(
+      'Private quarantine already owns an operation'
+    )
+  } finally {
+    resume()
+    await first
+    metadata.mockRestore()
+    await stage.discard()
+  }
+})
+test('an escaped manual read iterator is closed when its authenticated consumer returns', async () => {
+  let escaped: AsyncIterator<Uint8Array> | undefined
+  const expected = new Uint8Array(130).fill(17),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        expect(await collect(chunks)).toEqual(Buffer.from(expected))
+      },
+      policy
+    )
+  try {
+    await append(stage, expected)
+    await stage.validateAuthenticated()
+    await stage.withAuthenticatedChunks(async chunks => {
+      escaped = chunks[Symbol.asyncIterator]()
+      expect((await escaped.next()).value).toEqual(expected.slice(0, 64))
+    })
+    expect(await escaped?.next()).toEqual({ done: true, value: undefined })
+    expect(await stage.withAuthenticatedChunks(collect)).toEqual(Buffer.from(expected))
+  } finally {
+    await escaped?.return?.()
+    await stage.discard()
+  }
+})
+test('successful semantic validation followed by reader close failure preserves that exact cleanup cause', async () => {
+  const handles = observeHandles(),
+    reason = new Error('Actual authenticated reader close failed')
+  let close: jest.SpyInstance | undefined
+  const stage = await createBrc39NodeFileQuarantine(
+    parent,
+    async chunks => {
+      await collect(chunks)
+      close = jest.spyOn(handles[1], 'close').mockRejectedValueOnce(reason)
+    },
+    policy
+  )
+  try {
+    await stage.appendUntrusted(new Uint8Array([1, 2, 3]))
+    await expect(stage.validateAuthenticated()).rejects.toBe(reason)
+    expect(handles[1].fd).toBeGreaterThanOrEqual(0)
+    await stage.discard()
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(handles.every(handle => handle.fd === -1)).toBe(true)
+  } finally {
+    close?.mockRestore()
+    await stage.discard()
+  }
+})
+test('later short-write progress is bounded by the actual remaining bytes', async () => {
+  const handles = observeHandles(),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        await collect(chunks)
+      },
+      policy
+    ),
+    write = handles[0].write
+  let calls = 0
+  jest.spyOn(handles[0], 'write').mockImplementation(async (...args) => {
+    const selected = [...args]
+    if (++calls === 1) selected[2] = 1
+    const actual = await Reflect.apply(write, handles[0], selected)
+    return calls === 1 ? actual : { ...actual, bytesWritten: 3 }
+  })
+  try {
+    await expect(stage.appendUntrusted(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+      'Private quarantine write made invalid progress'
+    )
+  } finally {
+    await stage.discard()
+  }
+})
+test('discard still drains original handles after its validated path is independently removed', async () => {
+  const handles = observeHandles(),
+    stage = await createBrc39NodeFileQuarantine(
+      parent,
+      async chunks => {
+        await collect(chunks)
+      },
+      policy
+    )
+  try {
+    await stage.appendUntrusted(new Uint8Array([1]))
+    await stage.validateAuthenticated()
+    await rm((await stagedPath()).directory, { recursive: true })
+    await stage.discard()
+    expect(handles.every(handle => handle.fd === -1)).toBe(true)
+    expect(await readdir(parent)).toEqual([])
+  } finally {
+    await stage.discard()
+  }
+})
+test('real cancellation immediately after writer creation physically closes the provisional owner', async () => {
+  const handles = observeHandles(),
+    controller = new AbortController(),
+    reason = new Error('Actual cancellation after quarantine writer creation'),
+    original = controller.signal.throwIfAborted
+  let checks = 0
+  const checkpoint = jest.spyOn(controller.signal, 'throwIfAborted').mockImplementation(() => {
+    if (++checks === 3) controller.abort(reason)
+    original.call(controller.signal)
+  })
+  try {
+    await expect(
+      createBrc39NodeFileQuarantine(
+        parent,
+        async chunks => {
+          await collect(chunks)
+        },
+        {
+          ...policy,
+          signal: controller.signal
+        }
+      )
+    ).rejects.toBe(reason)
+    expect(handles).toHaveLength(1)
+    expect(handles[0].fd).toBe(-1)
+    expect(await readdir(parent)).toEqual([])
+  } finally {
+    checkpoint.mockRestore()
+    await Promise.all(
+      handles.map(async handle => {
+        if (handle.fd !== -1) await handle.close()
+      })
+    )
+  }
+})
+
+test('factory cleanup retry remains idempotent after an independent removal', async () => {
+  const fs = jest.requireActual<typeof import('node:fs/promises')>('node:fs/promises'),
+    primary = new Error('Quarantine file creation refused'),
+    cleanup = new Error('First directory cleanup refused')
+  jest.spyOn(fs, 'open').mockRejectedValueOnce(primary)
+  jest.spyOn(fs, 'rm').mockRejectedValueOnce(cleanup)
+  let failure: unknown
+  try {
+    await createBrc39NodeFileQuarantine(parent, async () => {}, policy)
+  } catch (cause) {
+    failure = cause
+  }
+  expect(failure).toBeInstanceOf(Brc38StagingCleanupError)
+  expect(failure).toMatchObject({ cause: primary, errors: [primary, cleanup] })
+  const directory = (await stagedPath()).directory
+  await rm(directory, { recursive: true })
+  await (failure as Brc38StagingCleanupError).retryCleanup()
+  expect(await readdir(parent)).toEqual([])
+})
+
+test('each actual reader allocation stays within the remaining committed file', async () => {
+  const expected = new Uint8Array(130).fill(31),
+    requests: number[] = []
+  observeHandles((handle, index) => {
+    if (index !== 1) return
+    const read = handle.read
+    jest.spyOn(handle, 'read').mockImplementation(async (...args) => {
+      requests.push((args[0] as Uint8Array).byteLength)
+      return await Reflect.apply(read, handle, args)
+    })
+  })
+  const stage = await createBrc39NodeFileQuarantine(
+    parent,
+    async chunks => {
+      expect(await collect(chunks)).toEqual(Buffer.from(expected))
+    },
+    policy
+  )
+  try {
+    await append(stage, expected)
+    await stage.validateAuthenticated()
+    expect(requests).toEqual([64, 64, 2])
+  } finally {
+    await stage.discard()
+  }
+})

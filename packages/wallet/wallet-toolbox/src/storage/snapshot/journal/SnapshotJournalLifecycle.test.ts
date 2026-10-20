@@ -19,7 +19,8 @@ import {
   SNAPSHOT_JOURNAL_SOURCE_MIGRATION,
   SNAPSHOT_JOURNAL_DEFAULT_POLICY,
   SNAPSHOT_JOURNAL_DEFAULT_BOOTSTRAP_ROWS,
-  readSnapshotJournalCaptureConfiguration
+  readSnapshotJournalCaptureConfiguration,
+  readSnapshotJournalMaintenanceConfiguration
 } from './SnapshotJournalLifecycle'
 
 jest.setTimeout(30000)
@@ -57,9 +58,23 @@ test('registered source installation completes all native bootstrap streams and 
   })
   const config = await readSnapshotJournalCaptureConfiguration(storage.knex)
   expect(config).toEqual({ ceiling: MAX_SNAPSHOT_JOURNAL_REVISION, receiptPolicy: SNAPSHOT_JOURNAL_DEFAULT_POLICY })
+  let generationReads = 0
+  const observe = (query: { sql: string }): void => {
+    if (query.sql.startsWith('select * from `snapshot_journal_generation`')) generationReads++
+  }
+  storage.knex.on('query', observe)
+  let maintenance: Awaited<ReturnType<typeof readSnapshotJournalMaintenanceConfiguration>>
+  try {
+    maintenance = await readSnapshotJournalMaintenanceConfiguration(storage.knex)
+    expect(generationReads).toBe(1)
+    expect(maintenance).toEqual({ ...config, epoch: expect.any(String) })
+  } finally {
+    storage.knex.removeListener('query', observe)
+  }
   const source = await storage.openCurrentSnapshotJournalSource(identity)
   try {
     expect(source.sourceSchema).toBe(await KnexMigrations.latestMigration())
+    expect(source.receiptBinding.epoch).toBe(maintenance.epoch)
     await source.validateClosure()
   } finally {
     await closeSnapshotJournalSource(source)
@@ -67,6 +82,7 @@ test('registered source installation completes all native bootstrap streams and 
   // An actual migration stamp loss must refuse fresh ordinary negotiation;
   // previously successful source admission is not reused.
   await storage.knex('knex_migrations').where('name', SNAPSHOT_JOURNAL_SOURCE_MIGRATION).delete()
+  await expect(readSnapshotJournalMaintenanceConfiguration(storage.knex)).rejects.toThrow('lifecycle')
   await expect(storage.openCurrentSnapshotJournalSource(identity)).rejects.toThrow('owned supported backend')
 })
 

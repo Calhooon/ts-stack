@@ -148,103 +148,121 @@ export class Brc38PrivateNativeMergeNode {
     return this.#io.run(async () => {
       this.#check()
       this.#store.assertMutableImport()
+      return await this.#step(await this.#status())
+    })
+  }
+  /** One actual runner operation: read fresh status once, then perform its
+   * original bounded step or complete comparison under this owned I/O scope.
+   * No caller supplies status, and no observation survives this operation. */
+  advance(): Promise<
+    | Readonly<{ progress: Readonly<Brc38PrivateNativeMergeProgress> }>
+    | Readonly<{ inventory: Awaited<ReturnType<Brc38PrivateNativeMergeNode['inspectComposedRows']>> }>
+  > {
+    return this.#io.run(async () => {
+      this.#check()
       const before = await this.#status()
-      if (before.phase === 'IMPORT') {
-        if (before.sourceChanged) {
-          const rebuilt = await this.#candidate(async candidate => await candidate.beginCompositionRebuild())
-          return Object.freeze({ phase: 'REFOLD', episode: rebuilt.episode })
-        }
-        const admission = before.admission,
-          receipt = before.receipt
-        if (admission === undefined || receipt === undefined) invalid()
-        if (receipt.state === 'COMPLETE')
-          return Object.freeze({
-            phase: 'INVENTORY_REQUIRED',
-            episode: before.episode,
-            nextRow: receipt.nextRow,
-            totalRows: admission.totalRows
-          })
-        await this.#available()
-        const current = await commitBrc38PrivateStructuredMergePage(this.#store, this.#storage, {
-          admission,
-          receiptPolicy: this.#options.receiptPolicy,
-          fromRow: receipt.nextRow,
-          sourcePolicy: {
-            ...this.#options.structuredResources.sourcePolicy,
-            expiresAt: this.#store.operationExpiresAt,
-            maximumCombinedTemporaryBytes: this.#options.structuredResources.maximumCombinedTemporaryBytes
-          },
-          projectionPolicy: this.#requestProjection,
-          maximumPreparedRows: this.#options.maximumStepRows,
-          incrementalCheckpoint: true,
-          signal: this.#options.signal
-        })
-        this.#check()
+      if (before.phase === 'IMPORT' && !before.sourceChanged && before.receipt?.state === 'COMPLETE')
+        return Object.freeze({ inventory: await this.#inspectComposedRows(false) })
+      this.#store.assertMutableImport()
+      return Object.freeze({ progress: await this.#step(before) })
+    })
+  }
+  async #step(before: Readonly<Brc38PrivateCompositionStatus>): Promise<Readonly<Brc38PrivateNativeMergeProgress>> {
+    if (before.phase === 'IMPORT') {
+      if (before.sourceChanged) {
+        const rebuilt = await this.#candidate(async candidate => await candidate.beginCompositionRebuild())
+        return Object.freeze({ phase: 'REFOLD', episode: rebuilt.episode })
+      }
+      const admission = before.admission,
+        receipt = before.receipt
+      if (admission === undefined || receipt === undefined) invalid()
+      if (receipt.state === 'COMPLETE')
         return Object.freeze({
-          phase: current.state === 'COMPLETE' ? 'INVENTORY_REQUIRED' : 'IMPORT',
+          phase: 'INVENTORY_REQUIRED',
           episode: before.episode,
-          nextRow: current.nextRow,
+          nextRow: receipt.nextRow,
           totalRows: admission.totalRows
         })
-      }
-      const baseline = await this.#candidate(async candidate => {
-        const progress = await candidate.step()
-        if (!progress.recoveryRequired || !progress.garbageComplete)
-          return { ready: false, prior: false, episode: progress.rebuilds }
-        const prior = await candidate.copyPriorImportStep()
-        if (!prior.complete) return { ready: false, prior: true, episode: progress.rebuilds }
-        // Full data comparison precedes incoming effects. These inspections are
-        // read-only and create no reusable verdict or activation authority.
-        await candidate.inspectBaseline()
-        await candidate.inspectPriorImports()
-        await candidate.copySequences()
-        await candidate.prepareIncomingIds()
-        const prepared = await candidate.prepareCompositionRecovery()
-        return { ready: true, prior: false, episode: prepared.episode }
-      })
-      if (!baseline.ready)
-        return Object.freeze({ phase: baseline.prior ? 'PRIOR_IMPORTS' : 'BASELINE', episode: baseline.episode })
-      // Candidate.with has drained its store scope before preview/journal I/O.
-      // The preview can be replaced safely until the atomic journal/episode
-      // bind commits; afterwards resume uses that exact actual active admission.
       await this.#available()
-      const preview = await previewBrc38PrivateImport(this.#store, this.#storage, 'merge', this.#options.receiptPolicy)
-      let rows = 0
-      await this.#store.withAuthenticatedPrivateStructuredDestination((header, metadata) => {
-        return promiseFromSync(() => {
-          this.#check()
-          if (header.user.identityKey !== preview.target.identityKey || preview.target.userId === null) invalid()
-          rows = metadata.rows
-        })
-      })
-      const binding = this.#store.binding!,
-        admission: Readonly<Brc38ImportJournalAdmission> = Object.freeze({
-          scope: Object.freeze({
-            importId: randomUUID(),
-            bindingSha256: binding.digest,
-            archiveSha256: binding.binding.archiveSha256,
-            userId: preview.target.userId!
-          }),
-          previewId: preview.previewId,
-          originalLimitsJson: binding.limitsJson,
-          expiresAt: this.#store.limits.expiresAt,
-          initialDestinationSha256: brc38ImportDestinationDigest(preview.target),
-          totalRows: rows + 1,
-          maximumStepRows: this.#options.maximumStepRows,
-          maximumStepBytes: this.#options.maximumStepBytes,
-          maximumMappedIds: this.#options.maximumMappedIds,
-          maximumJournalLogicalBytes: this.#options.maximumJournalLogicalBytes
-        })
-      await prepareBrc38PrivateImportJournal(this.#store, this.#storage, {
+      const current = await commitBrc38PrivateStructuredMergePage(this.#store, this.#storage, {
         admission,
         receiptPolicy: this.#options.receiptPolicy,
-        streamed: true,
-        structured: true
+        fromRow: receipt.nextRow,
+        sourcePolicy: {
+          ...this.#options.structuredResources.sourcePolicy,
+          expiresAt: this.#store.operationExpiresAt,
+          maximumCombinedTemporaryBytes: this.#options.structuredResources.maximumCombinedTemporaryBytes
+        },
+        projectionPolicy: this.#requestProjection,
+        maximumPreparedRows: this.#options.maximumStepRows,
+        incrementalCheckpoint: true,
+        signal: this.#options.signal
       })
-      await this.#candidate(async candidate => await candidate.bindCompositionImport(admission))
       this.#check()
-      return Object.freeze({ phase: 'PREPARED', episode: baseline.episode, nextRow: 0, totalRows: admission.totalRows })
+      return Object.freeze({
+        phase: current.state === 'COMPLETE' ? 'INVENTORY_REQUIRED' : 'IMPORT',
+        episode: before.episode,
+        nextRow: current.nextRow,
+        totalRows: admission.totalRows
+      })
+    }
+    const baseline = await this.#candidate(async candidate => {
+      const progress = await candidate.step()
+      if (!progress.recoveryRequired || !progress.garbageComplete)
+        return { ready: false, prior: false, episode: progress.rebuilds }
+      const prior = await candidate.copyPriorImportStep()
+      if (!prior.complete) return { ready: false, prior: true, episode: progress.rebuilds }
+      // Full data comparison precedes incoming effects. These inspections are
+      // read-only and create no reusable verdict or activation authority.
+      await candidate.inspectBaseline()
+      await candidate.inspectPriorImports()
+      await candidate.copySequences()
+      await candidate.prepareIncomingIds()
+      const prepared = await candidate.prepareCompositionRecovery()
+      return { ready: true, prior: false, episode: prepared.episode }
     })
+    if (!baseline.ready)
+      return Object.freeze({ phase: baseline.prior ? 'PRIOR_IMPORTS' : 'BASELINE', episode: baseline.episode })
+    // Candidate.with has drained its store scope before preview/journal I/O.
+    // The preview can be replaced safely until the atomic journal/episode
+    // bind commits; afterwards resume uses that exact actual active admission.
+    await this.#available()
+    const preview = await previewBrc38PrivateImport(this.#store, this.#storage, 'merge', this.#options.receiptPolicy)
+    let rows = 0
+    await this.#store.withAuthenticatedPrivateStructuredDestination((header, metadata) => {
+      return promiseFromSync(() => {
+        this.#check()
+        if (header.user.identityKey !== preview.target.identityKey || preview.target.userId === null) invalid()
+        rows = metadata.rows
+      })
+    })
+    const binding = this.#store.binding!,
+      admission: Readonly<Brc38ImportJournalAdmission> = Object.freeze({
+        scope: Object.freeze({
+          importId: randomUUID(),
+          bindingSha256: binding.digest,
+          archiveSha256: binding.binding.archiveSha256,
+          userId: preview.target.userId!
+        }),
+        previewId: preview.previewId,
+        originalLimitsJson: binding.limitsJson,
+        expiresAt: this.#store.limits.expiresAt,
+        initialDestinationSha256: brc38ImportDestinationDigest(preview.target),
+        totalRows: rows + 1,
+        maximumStepRows: this.#options.maximumStepRows,
+        maximumStepBytes: this.#options.maximumStepBytes,
+        maximumMappedIds: this.#options.maximumMappedIds,
+        maximumJournalLogicalBytes: this.#options.maximumJournalLogicalBytes
+      })
+    await prepareBrc38PrivateImportJournal(this.#store, this.#storage, {
+      admission,
+      receiptPolicy: this.#options.receiptPolicy,
+      streamed: true,
+      structured: true
+    })
+    await this.#candidate(async candidate => await candidate.bindCompositionImport(admission))
+    this.#check()
+    return Object.freeze({ phase: 'PREPARED', episode: baseline.episode, nextRow: 0, totalRows: admission.totalRows })
   }
   /** Re-read the active receipt and original aggregate quota against the actual
    * current private destination. This is a necessary checkpoint, not the full

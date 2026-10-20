@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { matchesGlob, resolve } from 'node:path'
 
 // Additive #544 DATA/field coverage; existing identities and controls remain.
 const walletDataAdditions = {
@@ -321,15 +321,22 @@ function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker
   return `${filePath}:${startIndex + 1}-${endIndex}`
 }
 
-// The original full native functional cases have mandatory exact-head CI
+// The original full native and ordinary journal cases have mandatory exact-head CI
 // lanes and receipt-union gates. Six real expiry waits alone take at least6h;
 // repeating these complete files in a mutation baseline cannot fit a hosted
-// job. Component tests must still cover every canonical mutant, with the same
+// job. The ordinary ten-case journal file also runs serially with report/LCOV
+// admission in the existing shard-2 job. Component tests must still cover every
+// canonical mutant, with the same
 // global score and zero uncovered/invalid/unexecuted gates. Retain the full
 // functional files as affected inputs, so this routing cannot hide changes.
-const requiredNativeFunctionalTests = new Set([
+const requiredFunctionalTests = new Set([
   '<rootDir>/src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts',
-  '<rootDir>/src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts'
+  '<rootDir>/src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts',
+  '<rootDir>/src/storage/portable/Brc38NativeMergeContractsNode.test.ts',
+  '<rootDir>/src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts',
+  '<rootDir>/src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts',
+  '<rootDir>/src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts',
+  '<rootDir>/src/storage/__test/WalletStorageManager.journal.test.ts'
 ])
 
 function jestTarget(
@@ -337,8 +344,8 @@ function jestTarget(
   testMatch,
   { esm = false, config = {}, findRelated = false, buildCommand, maxTestRunnerReuse } = {}
 ) {
-  const functionalTests = testMatch?.filter(file => requiredNativeFunctionalTests.has(file)) ?? []
-  const componentTests = testMatch?.filter(file => !requiredNativeFunctionalTests.has(file))
+  const functionalTests = testMatch?.filter(file => requiredFunctionalTests.has(file)) ?? []
+  const componentTests = testMatch?.filter(file => !requiredFunctionalTests.has(file))
   if (functionalTests.length !== 0 && componentTests.length === 0)
     throw new Error(
       'Mutation target requires genuine component tests in addition to functional lanes'
@@ -468,7 +475,7 @@ export function applyWalletComponentTests(targets, selections) {
           typeof file !== 'string' ||
           !allowed.has(file) ||
           file.split('/').some(part => part === '.' || part === '..') ||
-          requiredNativeFunctionalTests.has('<rootDir>/' + file)
+          requiredFunctionalTests.has('<rootDir>/' + file)
       )
     )
       throw new Error(`Invalid or undeclared component test selection for ${id}`)
@@ -4837,6 +4844,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/snapshot/archive/KnexSnapshotArchiveStore.ts'
       ],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
         'src/storage/StorageActiveWrite.ts',
         'src/storage/PrimaryHandoffControl.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
@@ -5792,6 +5800,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/snapshot/journal/SnapshotJournalWindowCleanup.ts'
       ],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -5941,6 +5950,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalIdentityLedger.property.test.ts',
       mutate: ['src/storage/snapshot/journal/SnapshotJournalIdentityLedger.ts'],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -5990,6 +6000,11 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/storage/schema/snapshotSqliteIdentityObservations.ts'
       ],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
+        'test/utils/snapshotSqliteFixtures.ts',
+        'test/utils/snapshotSqliteMaintenanceFixture.ts',
+        'src/storage/schema/snapshotSqliteMembership.ts',
+        'src/storage/schema/snapshotSqliteIndexGeneration.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -6015,6 +6030,8 @@ function currentWalletMutationTargets(repositoryRoot) {
         [
           '<rootDir>/src/storage/schema/snapshotSqliteIdentityObservations.test.ts',
           '<rootDir>/src/storage/snapshot/SnapshotSqliteIdentity.test.ts',
+          '<rootDir>/src/storage/snapshot/SnapshotSqliteSharedMembership.test.ts',
+          '<rootDir>/src/storage/snapshot/SnapshotSqliteCompactMembership.test.ts',
           '<rootDir>/src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.property.test.ts',
           '<rootDir>/src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.test.ts'
         ],
@@ -6035,6 +6052,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'packages/wallet/wallet-toolbox/src/storage/snapshot/journal/SnapshotJournalSourceGenerations.property.test.ts',
       mutate: ['src/storage/snapshot/journal/SnapshotJournalSourceGenerations.ts'],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -6174,6 +6192,7 @@ function currentWalletMutationTargets(repositoryRoot) {
         'src/utility/hashWasm.ts'
       ],
       additionalInputs: [
+        'test/utils/mysqlReadSnapshotFixture.ts',
         'src/storage/portable/Brc38AuthenticatedPrivateStageFixture.ts',
         'src/storage/portable/Brc38ComposedAuxiliaryFixture.ts',
         'src/storage/portable/Brc38ComposedNativeFixture.ts',
@@ -8296,8 +8315,43 @@ export function buildMutationTargets(repositoryRoot) {
       // prepares physical Worker siblings and deletes a fixed fixture directory;
       // concurrent invocations would violate those exclusive ownership contracts.
       target.runnerOptions.concurrency = 1
+      const config = target.runnerOptions.jest.config
+      const functional = [...requiredFunctionalTests].filter(
+        file =>
+          target.requiredFunctionalTests?.includes(file.replace(/^<rootDir>\//, '')) ||
+          config.testMatch?.some(pattern => matchesGlob(file, pattern))
+      )
+      if (functional.length !== 0) {
+        target.requiredFunctionalTests = functional.map(file => file.replace(/^<rootDir>\//, ''))
+        if (
+          functional.includes('<rootDir>/src/storage/__test/WalletStorageManager.journal.test.ts')
+        )
+          target.configurationInputs = [
+            ...new Set([
+              ...(target.configurationInputs ?? []),
+              'scripts/wallet-journal-ci.mjs',
+              '.github/workflows/ci.yml'
+            ])
+          ]
+        // Jest replaces this array when merging its configuration. Preserve the
+        // package's generated-directory boundaries, then exclude only the seven
+        // already governed functional files, including matches through globs.
+        config.testPathIgnorePatterns = [
+          ...new Set([
+            '/node_modules/',
+            String.raw`<rootDir>/\.stryker-tmp/`,
+            ...(config.testPathIgnorePatterns ?? []),
+            ...functional.map(
+              file =>
+                '<rootDir>/' +
+                file.replace(/^<rootDir>\//, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+                '$'
+            )
+          ])
+        ]
+      }
       target.runnerOptions.jest.config = {
-        ...target.runnerOptions.jest.config,
+        ...config,
         transform: {
           '^.+\\.ts$': [
             'ts-jest',

@@ -30,8 +30,9 @@ interface ActualController {
   assertOtherUserNullRefused(): Promise<void>
   check(): void
 }
-function requireCase(value: unknown): asserts value {
-  if (!value) throw new Error('Independent complete user inventory case differs')
+function requireCase(value: unknown, detail?: string): asserts value {
+  if (!value)
+    throw new Error('Independent complete user inventory case differs' + (detail === undefined ? '' : ': ' + detail))
 }
 function normalize(rows: readonly IndependentUserInventoryRow[]): string {
   return JSON.stringify(
@@ -72,12 +73,10 @@ export async function verifyBrc38PrivateUserInventory(
           )
       )
   const result = await inspect()
-  requireCase(
-    result.rows === expectedRows.length &&
-      result.updated === expectedUpdated &&
-      normalize(await controller.readUsers()) === expected &&
-      controller.options.workingAllocation.used === working
-  )
+  requireCase(result.rows === expectedRows.length, 'physical row count')
+  requireCase(result.updated === expectedUpdated, 'newer header decision')
+  requireCase(normalize(await controller.readUsers()) === expected, 'physical user cells')
+  requireCase(controller.options.workingAllocation.used === working, 'working allocation release')
   for (const variant of [
     'created-date',
     'older-header',

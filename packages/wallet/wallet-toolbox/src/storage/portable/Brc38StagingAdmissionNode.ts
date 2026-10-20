@@ -6,7 +6,11 @@ import {
   createPrivateFile,
   closePrivateDescriptor
 } from './Brc38PrivateFilesystemNode'
-import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
+import {
+  Brc38StagingCleanupError,
+  closeBrc38UnpooledConnection,
+  drainBrc38FailedConnections
+} from './Brc38StagingCleanupError'
 import createKnex, { type Knex } from 'knex'
 import { lstat, opendir, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -85,7 +89,7 @@ function database(directory: string): Knex {
       min: 1,
       max: 1,
       afterCreate: (
-        connection: { exec: (sql: string) => unknown },
+        connection: { exec: (sql: string) => unknown; close: () => unknown },
         done: (error: Error | null, value?: unknown) => void
       ) => {
         try {
@@ -94,7 +98,7 @@ function database(directory: string): Knex {
           )
           done(null, connection)
         } catch (cause) {
-          done(cause instanceof Error ? cause : new Error('Private staging catalog setup failed'), connection)
+          done(closeBrc38UnpooledConnection(connection, cause, 'Private staging catalog setup failed'))
         }
       }
     }
@@ -205,15 +209,11 @@ export class Brc38StagingAdmissionNode {
       await root.usage()
       return root
     } catch (cause) {
-      try {
-        await db.destroy()
-      } catch (error_) {
-        throw new Brc38StagingCleanupError(
-          [cause, error_],
-          'Private staging catalog initialization and close failed',
-          async () => await db.destroy()
-        )
-      }
+      await drainBrc38FailedConnections(
+        cause,
+        async () => await db.destroy(),
+        'Private staging catalog initialization and close failed'
+      )
       // Retain incomplete catalog for explicit operator recovery; never replace
       // an existing root or infer that an initialization failure erased it.
       throw cause
@@ -230,15 +230,11 @@ export class Brc38StagingAdmissionNode {
       await root.usage()
       return root
     } catch (cause) {
-      try {
-        await db.destroy()
-      } catch (error_) {
-        throw new Brc38StagingCleanupError(
-          [cause, error_],
-          'Private staging catalog reopen and close failed',
-          async () => await db.destroy()
-        )
-      }
+      await drainBrc38FailedConnections(
+        cause,
+        async () => await db.destroy(),
+        'Private staging catalog reopen and close failed'
+      )
       throw cause
     }
   }

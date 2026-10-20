@@ -12,6 +12,10 @@ npm install @bsv/verifast @bsv/sdk
 The package includes its validated WASM assets. No native compiler or
 post-install build is required for consumers.
 
+Repository development uses Vite 8.3.3 or later in its existing major line to
+include the patched development-server editor and file-access checks. The
+published verifier runtime and WASM ABI retain their existing contracts.
+
 ## Transaction verification
 
 The validated WASM module is bundled and loaded lazily. Keep one verifier for a

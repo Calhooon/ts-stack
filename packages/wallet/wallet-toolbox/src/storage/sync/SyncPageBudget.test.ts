@@ -42,6 +42,30 @@ test('separate metadata counts preserve cost fitting without fabricating wallet 
   expect(budget.apply({ ...args, maxRoughSize: 250000 }).maxItems).toBe(16)
 })
 
+test.each([NaN, Infinity, -Infinity, -1, 0.5, 1001, Number.MAX_SAFE_INTEGER + 1])(
+  'invalid separate metadata count %s cannot change an established workload',
+  records => {
+    const budget = new SyncPageBudget()
+    budget.committedSnapshot('outputs', 64, 100, 50, 64 * 500000)
+    const before = budget.apply(args)
+    budget.committedSnapshot('provenTxs', records, 100, 50, 64)
+    expect(budget.apply(args)).toEqual(before)
+    budget.committedSnapshot('provenTxs', 0, 100, 50, 64)
+    expect(budget.apply(args)).toEqual(before)
+  }
+)
+
+test.each([
+  ['provenTxs', 128],
+  ['outputs', 1000]
+] as const)('exact maximum metadata counts retain the %s workload ceiling', (table, ceiling) => {
+  const budget = new SyncPageBudget(),
+    wide = { ...args, maxItems: 5000 }
+  for (let index = 0; index < 8; index++) budget.committedSnapshot(table, 1000, 0)
+  expect(budget.apply(wide)).toEqual({ ...wide, maxItems: ceiling })
+  expect(budget.apply({ ...wide, maxItems: 3 }).maxItems).toBe(3)
+})
+
 test('limits proof-heavy pages by work and shrinks after slow committed pages', () => {
   const budget = new SyncPageBudget()
   budget.committed(chunk(64, true), 100)

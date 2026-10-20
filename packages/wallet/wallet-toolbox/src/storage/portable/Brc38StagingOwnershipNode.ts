@@ -1,4 +1,4 @@
-import { Brc38StagingCleanupError } from './Brc38StagingCleanupError'
+import { closeBrc38UnpooledConnection, drainBrc38FailedConnections } from './Brc38StagingCleanupError'
 import createKnex, { type Knex } from 'knex'
 import { requirePrivatePath, createPrivateFile, closePrivateDescriptor } from './Brc38PrivateFilesystemNode'
 import { join } from 'node:path'
@@ -45,7 +45,7 @@ function database(directory: string): Knex {
       min: 1,
       max: 1,
       afterCreate: (
-        connection: { exec: (sql: string) => unknown },
+        connection: { exec: (sql: string) => unknown; close: () => unknown },
         done: (error: Error | null, value?: unknown) => void
       ) => {
         try {
@@ -54,7 +54,7 @@ function database(directory: string): Knex {
           )
           done(null, connection)
         } catch (cause) {
-          done(cause instanceof Error ? cause : new Error('Private import owner connection setup failed'), connection)
+          done(closeBrc38UnpooledConnection(connection, cause, 'Private import owner connection setup failed'))
         }
       }
     }
@@ -69,15 +69,7 @@ async function cleanupFailure(db: Knex, connection: object | undefined, cause: u
     }
     await db.destroy()
   }
-  try {
-    await cleanup()
-  } catch (error_) {
-    throw new Brc38StagingCleanupError(
-      [cause, error_],
-      'Private import ownership claim and physical cleanup both failed',
-      cleanup
-    )
-  }
+  await drainBrc38FailedConnections(cause, cleanup, 'Private import ownership claim and physical cleanup both failed')
   // Never unlink another possible claimant's file.
   throw cause
 }

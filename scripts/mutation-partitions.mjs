@@ -1,4 +1,11 @@
 import path from 'node:path'
+import fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const executionPlanPath = 'governance/mutation-testing/execution-partitions.json'
 
 const partitionFile = specification => specification.replace(/:\d+(?:-\d+)?$/, '')
 const plans = new Map([
@@ -150,7 +157,7 @@ const plans = new Map([
 
 // Keep each file's complete original range union in exactly one execution part.
 // New canonical files join the target's fallback; a future helper cannot disappear.
-export function partitionMutationTarget(targetId, target) {
+export function canonicalMutationPartitions(targetId, target) {
   const plan = plans.get(targetId)
   if (!plan) return [{ id: 'whole', target }]
   const groups = new Map()
@@ -165,6 +172,144 @@ export function partitionMutationTarget(targetId, target) {
   }
   if (groups.size === 0) throw new Error('Empty canonical mutation source union')
   return [...groups].map(([id, mutate]) => ({ id, target: { ...target, mutate } }))
+}
+
+function sourceSpecification(specification) {
+  if (typeof specification !== 'string') throw new Error('Invalid execution source specification')
+  const match = /^(.*?)(?::([1-9]\d*)(?:-([1-9]\d*))?)?$/.exec(specification)
+  const file = match?.[1]
+  if (
+    !file ||
+    file.includes('\\') ||
+    /[!*?{}[\]:]/.test(file) ||
+    path.posix.isAbsolute(file) ||
+    file.split('/').includes('..')
+  )
+    throw new Error('Execution refinements require explicit canonical source paths')
+  const start = match[2] === undefined ? 1 : Number(match[2])
+  const end = match[2] === undefined ? Infinity : Number(match[3] ?? match[2])
+  if (
+    !Number.isSafeInteger(start) ||
+    start < 1 ||
+    (end !== Infinity && !Number.isSafeInteger(end)) ||
+    end < start
+  )
+    throw new Error('Invalid execution source range')
+  return { file, start, end }
+}
+
+// Configuration validation only. The installed-engine replay and unchanged
+// complete canonical aggregate prove mutant ownership, not these line numbers.
+export function refineMutationPartition(base, unit, readSource) {
+  if (
+    unit.packageDirectory !== base.target.packageDirectory ||
+    !Array.isArray(unit.originalMutate) ||
+    !unit.sourceHashes ||
+    typeof unit.sourceHashes !== 'object' ||
+    Array.isArray(unit.sourceHashes) ||
+    !Array.isArray(unit.parts) ||
+    unit.parts.length === 0 ||
+    !Number.isSafeInteger(unit.canonicalCount) ||
+    unit.canonicalCount < 1
+  )
+    throw new Error('Invalid source-bound execution refinement')
+  const known = new Set(
+    unit.originalMutate.map(specification => sourceSpecification(specification).file)
+  )
+  if (!isDeepStrictEqual([...known].sort(), Object.keys(unit.sourceHashes).sort()))
+    throw new Error('Execution source hash inventory differs from original specifications')
+  const actual = base.target.mutate.map(specification => ({
+    specification,
+    ...sourceSpecification(specification)
+  }))
+  if (
+    !isDeepStrictEqual(
+      actual.filter(value => known.has(value.file)).map(value => value.specification),
+      unit.originalMutate
+    )
+  )
+    throw new Error(
+      'Canonical execution specifications changed; regenerate the reviewed execution plan'
+    )
+  const lines = new Map()
+  for (const file of known) {
+    const bytes = readSource(file),
+      expected = unit.sourceHashes[file]
+    if (
+      typeof expected !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(expected) ||
+      createHash('sha256').update(bytes).digest('hex') !== expected
+    )
+      throw new Error(`Execution source changed: ${file}; regenerate the reviewed execution plan`)
+    lines.set(file, bytes.toString('utf8').split('\n').length)
+  }
+  const owners = new Map(),
+    ids = new Set(),
+    covered = new Set()
+  let count = 0
+  const parts = unit.parts.map(part => {
+    if (
+      typeof part.id !== 'string' ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(part.id) ||
+      part.id === 'whole' ||
+      ids.has(part.id) ||
+      !Array.isArray(part.mutate) ||
+      part.mutate.length === 0 ||
+      !Number.isSafeInteger(part.count) ||
+      part.count < 1
+    )
+      throw new Error('Missing or duplicate execution refinement identity')
+    ids.add(part.id)
+    count += part.count
+    for (const specification of part.mutate) {
+      const { file, start, end } = sourceSpecification(specification)
+      if (
+        !known.has(file) ||
+        start > lines.get(file) ||
+        (end !== Infinity && end > lines.get(file))
+      )
+        throw new Error('Execution range lies outside its complete canonical source')
+      const previous = owners.get(file) ?? []
+      if (previous.some(value => value.id !== part.id && start <= value.end && value.start <= end))
+        throw new Error('Execution source ranges overlap across partitions')
+      previous.push({ start, end, id: part.id })
+      owners.set(file, previous)
+      covered.add(file)
+    }
+    return { id: part.id, target: { ...base.target, mutate: [...part.mutate] } }
+  })
+  if (count !== unit.canonicalCount || covered.size !== known.size)
+    throw new Error('Execution refinement omits canonical source or mutant inventory')
+  // Future canonical helpers remain owned in full; they cannot silently vanish.
+  parts[0].target.mutate.push(
+    ...actual.filter(value => !known.has(value.file)).map(value => value.specification)
+  )
+  return parts
+}
+
+export function partitionMutationTarget(targetId, target) {
+  const base = canonicalMutationPartitions(targetId, target)
+  const plan = JSON.parse(fs.readFileSync(path.join(ROOT, executionPlanPath), 'utf8'))
+  if (plan.schemaVersion !== 1 || plan.engine !== '9.6.1' || !Array.isArray(plan.units))
+    throw new Error('Missing reviewed execution refinement manifest')
+  const units = plan.units.filter(unit => unit.target === targetId)
+  const identities = new Set(units.map(unit => unit.existingPartition))
+  if (
+    identities.size !== units.length ||
+    units.some(unit => !base.some(part => part.id === unit.existingPartition))
+  )
+    throw new Error('Unknown or duplicate original execution partition')
+  const parts = base.flatMap(part => {
+    const unit = units.find(value => value.existingPartition === part.id)
+    return unit === undefined
+      ? [part]
+      : refineMutationPartition(part, unit, file =>
+          fs.readFileSync(path.join(ROOT, target.packageDirectory, file))
+        )
+  })
+  if (new Set(parts.map(part => part.id)).size !== parts.length)
+    throw new Error('Execution refinement identities collide')
+  return parts
 }
 
 export function partitionedMutationTargets(selected, targets) {

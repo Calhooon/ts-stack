@@ -22,6 +22,7 @@ let encryptBrc39StreamToQuarantine: typeof import('./Brc39StreamNode').encryptBr
 let encryptBRC39: typeof import('./index').encryptBRC39
 let decryptBRC39: typeof import('./index').decryptBRC39
 let parseBRC38Json: typeof import('./index').parseBRC38Json
+const nodeCrypto = require('node:crypto') as typeof import('node:crypto')
 
 // Load real integration entries in awaited setup. Initialization guards must
 // fail within the tests rather than preventing their assertions from loading.
@@ -690,3 +691,327 @@ test('combined KDF and quarantine cleanup failure retains concrete original retr
   await (caught as Brc38StagingCleanupError).retryCleanup()
   expect(order).toEqual(['key', 'stage', 'discard'])
 })
+
+// These negative tests keep the actual cipher objects and their real cleanup.
+// Deliberately broken return values model a backend contract failure; they do
+// not replace the real native GCM/Argon2id positive cases above.
+test.each([false, true])('encryption source retry preserves concrete cleanup owners: retryable=%s', async retryable => {
+  const order: string[] = []
+  const primary = retryable
+    ? new Brc38StagingCleanupError([new Error('source remains owned')], 'source failure', async () => {
+        order.push('original owner')
+      })
+    : new Error('source failure')
+  const cleanup = retryable
+    ? new Brc38StagingCleanupError([new Error('close remains owned')], 'close failure', async () => {
+        order.push('close owner')
+      })
+    : new Error('close failure')
+  const source = plaintextSource(),
+    output = stage()
+  let refuseClose = true
+  source.chunks = (async function* () {
+    yield new Uint8Array([1])
+    throw primary
+  })()
+  source.close = jest.fn(async () => {
+    if (refuseClose) throw cleanup
+    order.push('source closed')
+  })
+  const operation = encryptBrc39StreamToQuarantine(source, 'password', output, options)
+  const failure: unknown = await operation.then(
+    () => undefined,
+    cause => cause
+  )
+  expect(failure).toBeInstanceOf(Brc38StagingCleanupError)
+  if (!(failure instanceof Brc38StagingCleanupError)) throw new Error('Source cleanup owner was lost')
+  expect(failure.message).toBe('BRC-39 encryption and source cleanup failed')
+  expect(failure.cause).toBe(primary)
+  expect(failure.errors).toEqual([primary, cleanup])
+  expect(output.discarded).toBe(1)
+  expect(output.parts).toEqual([])
+  refuseClose = false
+  await failure.retryCleanup()
+  expect(order).toEqual(retryable ? ['original owner', 'close owner', 'source closed'] : ['source closed'])
+  expect(source.close).toHaveBeenCalledTimes(2)
+})
+
+test('malformed plaintext chunks refuse and discard before semantic validation', async () => {
+  const source = plaintextSource(),
+    output = stage()
+  source.chunks = (async function* () {
+    yield 'invalid bytes' as unknown as Uint8Array
+  })()
+  source.validateCompleted = jest.fn(source.validateCompleted)
+  await expect(encryptBrc39StreamToQuarantine(source, 'password', output, options)).rejects.toThrow(
+    'BRC-39 plaintext stream requires byte chunks'
+  )
+  expect(source.validateCompleted).not.toHaveBeenCalled()
+  expect(output.discarded).toBe(1)
+  expect(output.parts).toEqual([])
+})
+
+test('unavailable native GCM capability refuses before deriving a password key', async () => {
+  const packet = encrypted(),
+    quarantine = stage(),
+    derive = jest.spyOn(backend!, 'deriveKey')
+  jest.spyOn(nodeCrypto, 'getCipherInfo').mockReturnValue(undefined)
+  await expect(decryptBrc39StreamToQuarantine(chunks(packet), 'password', quarantine, options)).rejects.toThrow(
+    'Selected Node AES-GCM backend cannot process this BRC-39 nonce length'
+  )
+  expect(derive).not.toHaveBeenCalled()
+  expect(quarantine.validated).toBe(0)
+  expect(quarantine.discarded).toBe(1)
+})
+
+test.each(['encrypt', 'decrypt'] as const)(
+  'missing %s context refuses and erases its owned derived key',
+  async mode => {
+    const packet = encrypted(),
+      output = stage()
+    let issued: Uint8Array | undefined, consumed: Uint8Array | undefined
+    backend!.deriveKey = async () => (issued = key.slice())
+    const captureKey = (actualKey: unknown): void => {
+      if (!(actualKey instanceof Uint8Array)) throw new Error('Actual stream key was not owned bytes')
+      consumed = actualKey
+    }
+    if (mode === 'encrypt')
+      jest.spyOn(nodeCrypto, 'createCipheriv').mockImplementation((...args) => {
+        captureKey(args[1])
+        return undefined as unknown as ReturnType<typeof nodeCrypto.createCipheriv>
+      })
+    else
+      jest.spyOn(nodeCrypto, 'createDecipheriv').mockImplementation((...args) => {
+        captureKey(args[1])
+        return undefined as unknown as ReturnType<typeof nodeCrypto.createDecipheriv>
+      })
+    const operation =
+      mode === 'encrypt'
+        ? encryptBrc39StreamToQuarantine(plaintextSource(), 'password', output, options)
+        : decryptBrc39StreamToQuarantine(chunks(packet), 'password', output, options)
+    await expect(operation).rejects.toThrow(
+      mode === 'encrypt' ? 'BRC-39 encryption context is closed' : 'BRC-39 ciphertext arrived before a complete header'
+    )
+    expect(issued).toBeDefined()
+    expect([...issued!]).toEqual(Array.from({ length: 32 }, () => 0))
+    expect(consumed).toBeDefined()
+    expect([...consumed!]).toEqual(Array.from({ length: 32 }, () => 0))
+    expect(output.discarded).toBe(1)
+    expect(output.validated).toBe(0)
+  }
+)
+
+test('a parser that loses its header cannot finish a ciphertext stream without a decryptor', async () => {
+  const packet = encrypted(),
+    quarantine = stage(),
+    accept = Brc39StreamFrame.prototype.accept
+  const derive = jest.spyOn(backend!, 'deriveKey')
+  jest.spyOn(Brc39StreamFrame.prototype, 'accept').mockImplementation(function (this: Brc39StreamFrame, bytes) {
+    // Retain the actual frame accounting and complete packet validation while
+    // injecting loss of its delivered chunks/header at the parser boundary.
+    Reflect.apply(accept, this, [bytes])
+    return []
+  })
+  jest.spyOn(Brc39StreamFrame.prototype, 'header').mockReturnValue(undefined)
+  await expect(decryptBrc39StreamToQuarantine(chunks(packet), 'password', quarantine, options)).rejects.toThrow(
+    'BRC-39 stream has no decryptor'
+  )
+  expect(derive).not.toHaveBeenCalled()
+  expect(quarantine.discarded).toBe(1)
+  expect(quarantine.validated).toBe(0)
+})
+
+test.each(['encrypt', 'decrypt'] as const)('actual %s cipher buffering refuses unvalidated output', async mode => {
+  const packet = encrypted(),
+    output = stage()
+  if (mode === 'encrypt') {
+    const create = nodeCrypto.createCipheriv
+    jest.spyOn(nodeCrypto, 'createCipheriv').mockImplementation((...args) => {
+      const actual = Reflect.apply(create, nodeCrypto, args) as ReturnType<typeof create>
+      const update = actual.update
+      jest.spyOn(actual, 'update').mockImplementationOnce((...input) => {
+        Reflect.apply(update, actual, input)
+        return Buffer.alloc(0) as unknown as ReturnType<typeof actual.update>
+      })
+      return actual
+    })
+  } else {
+    const create = nodeCrypto.createDecipheriv
+    jest.spyOn(nodeCrypto, 'createDecipheriv').mockImplementation((...args) => {
+      const actual = Reflect.apply(create, nodeCrypto, args) as ReturnType<typeof create>
+      const update = actual.update
+      jest.spyOn(actual, 'update').mockImplementationOnce((...input) => {
+        Reflect.apply(update, actual, input)
+        return Buffer.alloc(0) as unknown as ReturnType<typeof actual.update>
+      })
+      return actual
+    })
+  }
+  const operation =
+    mode === 'encrypt'
+      ? encryptBrc39StreamToQuarantine(plaintextSource(), 'password', output, options)
+      : decryptBrc39StreamToQuarantine(chunks(packet), 'password', output, options)
+  await expect(operation).rejects.toThrow(
+    mode === 'encrypt'
+      ? 'Selected GCM backend buffered ciphertext'
+      : 'Selected GCM backend buffered provisional plaintext'
+  )
+  expect(output.discarded).toBe(1)
+  expect(output.parts).toEqual([])
+  expect(output.validated).toBe(0)
+})
+
+test.each(['encrypt', 'decrypt'] as const)('actual %s final buffering refuses completion', async mode => {
+  const packet = encrypted(),
+    output = stage()
+  if (mode === 'encrypt') {
+    const create = nodeCrypto.createCipheriv
+    jest.spyOn(nodeCrypto, 'createCipheriv').mockImplementation((...args) => {
+      const actual = Reflect.apply(create, nodeCrypto, args) as ReturnType<typeof create>
+      const finish = actual.final
+      jest.spyOn(actual, 'final').mockImplementationOnce((...input) => {
+        Reflect.apply(finish, actual, input)
+        return Buffer.from([1]) as unknown as ReturnType<typeof actual.final>
+      })
+      return actual
+    })
+  } else {
+    const create = nodeCrypto.createDecipheriv
+    jest.spyOn(nodeCrypto, 'createDecipheriv').mockImplementation((...args) => {
+      const actual = Reflect.apply(create, nodeCrypto, args) as ReturnType<typeof create>
+      const finish = actual.final
+      jest.spyOn(actual, 'final').mockImplementationOnce((...input) => {
+        Reflect.apply(finish, actual, input)
+        return Buffer.from([1]) as unknown as ReturnType<typeof actual.final>
+      })
+      return actual
+    })
+  }
+  const operation =
+    mode === 'encrypt'
+      ? encryptBrc39StreamToQuarantine(plaintextSource(), 'password', output, options)
+      : decryptBrc39StreamToQuarantine(chunks(packet), 'password', output, options)
+  await expect(operation).rejects.toThrow(
+    mode === 'encrypt'
+      ? 'Selected GCM backend buffered final ciphertext'
+      : 'Selected GCM backend did not preserve the complete plaintext length'
+  )
+  expect(output.discarded).toBe(1)
+  expect(output.parts).toEqual([])
+  expect(output.validated).toBe(0)
+})
+
+test.each(['encrypt', 'decrypt'] as const)(
+  'actual %s crypto close failure preserves both causes and erases its key',
+  async mode => {
+    const packet = encrypted(),
+      output = stage(),
+      source = plaintextSource()
+    const primary = new Error('original physical stream failure'),
+      cleanup = new Error('actual cipher destroy failure')
+    let issued: Uint8Array | undefined, consumed: Uint8Array | undefined
+    backend!.deriveKey = async () => (issued = key.slice())
+    const captureKey = (actualKey: unknown): void => {
+      if (!(actualKey instanceof Uint8Array)) throw new Error('Actual stream key was not owned bytes')
+      consumed = actualKey
+    }
+    const failDestroy = (
+      cipher: ReturnType<typeof nodeCrypto.createCipheriv> | ReturnType<typeof nodeCrypto.createDecipheriv>
+    ) => {
+      const destroy = cipher.destroy.bind(cipher)
+      jest.spyOn(cipher, 'destroy').mockImplementationOnce(() => {
+        destroy()
+        throw cleanup
+      })
+      return cipher
+    }
+    if (mode === 'encrypt') {
+      const create = nodeCrypto.createCipheriv
+      jest.spyOn(nodeCrypto, 'createCipheriv').mockImplementation((...args) => {
+        captureKey(args[1])
+        return failDestroy(Reflect.apply(create, nodeCrypto, args)) as ReturnType<typeof create>
+      })
+      source.chunks = (async function* () {
+        yield new Uint8Array([1])
+        throw primary
+      })()
+    } else {
+      const create = nodeCrypto.createDecipheriv
+      jest.spyOn(nodeCrypto, 'createDecipheriv').mockImplementation((...args) => {
+        captureKey(args[1])
+        return failDestroy(Reflect.apply(create, nodeCrypto, args)) as ReturnType<typeof create>
+      })
+      output.appendUntrusted = async () => {
+        throw primary
+      }
+    }
+    const operation =
+      mode === 'encrypt'
+        ? encryptBrc39StreamToQuarantine(source, 'password', output, options)
+        : decryptBrc39StreamToQuarantine(chunks(packet), 'password', output, options)
+    const failure: unknown = await operation.then(
+      () => undefined,
+      cause => cause
+    )
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect((failure as AggregateError).message).toBe(
+      mode === 'encrypt' ? 'BRC-39 encryption and crypto cleanup failed' : 'BRC-39 processing and crypto cleanup failed'
+    )
+    expect((failure as AggregateError).cause).toBe(primary)
+    expect((failure as AggregateError).errors).toEqual([primary, cleanup])
+    expect(issued).toBeDefined()
+    expect([...issued!]).toEqual(Array.from({ length: 32 }, () => 0))
+    expect(consumed).toBeDefined()
+    expect([...consumed!]).toEqual(Array.from({ length: 32 }, () => 0))
+    expect(output.discarded).toBe(1)
+    expect(output.parts).toEqual([])
+    expect(output.validated).toBe(0)
+  }
+)
+
+test.each(
+  [0, -1, 1.5, NaN, Infinity, 65537].flatMap(maximumPasswordBytes =>
+    (['encrypt', 'decrypt'] as const).map(mode => ({ maximumPasswordBytes, mode }))
+  )
+)(
+  'invalid password policy $maximumPasswordBytes refuses $mode before KDF and cipher ownership',
+  async ({ maximumPasswordBytes, mode }) => {
+    const packet = encrypted(),
+      output = stage(),
+      derive = jest.spyOn(backend!, 'deriveKey'),
+      cipher = jest.spyOn(nodeCrypto, 'createCipheriv'),
+      decipher = jest.spyOn(nodeCrypto, 'createDecipheriv'),
+      selected = { ...options, maximumPasswordBytes }
+    const operation =
+      mode === 'encrypt'
+        ? encryptBrc39StreamToQuarantine(plaintextSource(), 'x', output, selected)
+        : decryptBrc39StreamToQuarantine(chunks(packet), 'x', output, selected)
+    await expect(operation).rejects.toBeInstanceOf(RangeError)
+    await expect(operation).rejects.toThrow('maximumPasswordBytes must be an integer from 1 to 65536')
+    expect(derive).not.toHaveBeenCalled()
+    expect(cipher).not.toHaveBeenCalled()
+    expect(decipher).not.toHaveBeenCalled()
+    expect(output.discarded).toBe(1)
+    expect(output.parts).toEqual([])
+  }
+)
+
+test.each([1, 65536])(
+  'exact password policy limit %s retains real GCM encryption and decryption',
+  async maximumPasswordBytes => {
+    const output = stage(),
+      quarantine = stage(),
+      selected = { ...options, maximumPasswordBytes }
+    const encryptedReceipt = await encryptBrc39StreamToQuarantine(plaintextSource(), 'x', output, selected)
+    const decryptedReceipt = await decryptBrc39StreamToQuarantine(
+      chunks(Buffer.concat(output.parts)),
+      'x',
+      quarantine,
+      selected
+    )
+    expect(decryptedReceipt).toEqual(encryptedReceipt)
+    expect(quarantine.validated).toBe(1)
+    expect(quarantine.discarded).toBe(0)
+    expect(output.discarded).toBe(0)
+  }
+)

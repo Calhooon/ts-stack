@@ -1,3 +1,4 @@
+import { withBrc38NativePrivateContractFixture } from '../portable/Brc38NativePrivateContractFixture'
 import { WERR_NOT_IMPLEMENTED } from '../../sdk/WERR_errors'
 import { migrateBeforeSqliteGeneration } from '../../../test/utils/snapshotHistoricalMigrations'
 import {
@@ -705,4 +706,49 @@ test('a Knex provider that disables packed snapshots refuses before opening or q
   } finally {
     await source.destroy()
   }
+})
+
+test('native proof lookups preserve filters and packed bytes on their actual scoped readonly transaction', async () => {
+  await withBrc38NativePrivateContractFixture(async fixture => {
+    const when = new Date('2026-10-08T00:00:00.000Z'),
+      first = {
+        provenTxId: 0,
+        created_at: when,
+        updated_at: when,
+        txid: 'a'.repeat(64),
+        height: 7,
+        index: 2,
+        blockHash: 'b'.repeat(64),
+        merkleRoot: 'c'.repeat(64),
+        rawTx: [0, 128, 255, 7],
+        merklePath: [4, 5, 6]
+      },
+      second = {
+        ...first,
+        provenTxId: 0,
+        txid: 'd'.repeat(64),
+        height: 8,
+        index: 3,
+        rawTx: [1, 129, 254, 8],
+        merklePath: [7, 8, 9]
+      }
+    await fixture.withWriter(async trx => {
+      expect(await fixture.storage.insertProvenTx(first, trx)).toBeGreaterThan(0)
+      expect(await fixture.storage.insertProvenTx(second, trx)).toBeGreaterThan(first.provenTxId)
+    })
+    await fixture.store.withPrivateNativeDatabase(true, async database => {
+      expect(database.isTransaction).not.toBe(true)
+      const reader = new StorageKnex({
+        ...StorageProvider.createStorageBaseOptions(fixture.storage.chain),
+        knex: database,
+        snapshotSync: false
+      })
+      await reader.makeAvailable()
+      expect(await reader.findProvenTxs({ partial: { txid: first.txid } })).toEqual([first])
+      expect(await reader.findProvenTxs({ partial: { provenTxId: second.provenTxId } })).toEqual([second])
+      expect(await reader.findProvenTxs({ partial: {}, txids: [second.txid] })).toEqual([second])
+      expect(await reader.findProvenTxs({ partial: { txid: 'f'.repeat(64) } })).toEqual([])
+    })
+    fixture.check()
+  })
 })

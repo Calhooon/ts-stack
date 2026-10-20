@@ -20,6 +20,10 @@ Native prepared-field, import-journal family and snapshot-destination schema ver
 
 Independent packed IndexedDB metadata reads now queue together in the same actual transaction, with at most five requests per group. Every request drains before results are validated, and failures retain their original request order. Snapshot observer construction builds its two fixed SQL variants from one fresh column and native-family inventory; local packed-layout and prepared-field checks combine their original exact comparisons into fresh scalar queries. No observations or admission results persist across calls. Actual query-only native TEXT readers resolve the physical wallet key and descriptor contents within one fresh complete schema validation; writable transactions retain their existing independent checks. Native BLOB/TEXT extents retain exact descriptor comparisons before and after their bytes under one fresh schema comparison in the actual read-only main view. The baseline source uses those owning extent checks instead of duplicating their length queries; original cancellation, resource accounting, hashes and zeroing remain enforced. Candidate progress and observer planning use the complete binary inspection already performed by required TEXT validation in that same call; binary-only observer layouts keep a fresh complete fallback. Native journal generations compare every owned definition inside SQLite using the same bounded exact batches; source JSON retains its original full-catalog count and binding while avoiding a second transfer of independently checked journal SQL. Longer definitions keep the original bounded-transfer fallback. Current native source point, change and tombstone reads keep both fresh clock observations inside the actual immutable source view without rebuilding its already verified schema. Every new source factory, full public reader, mutable transaction and retired view retains complete schema verification; internal DATA readers refuse writer connections. Native field commits recheck original source expiry after the final checkpoint/content writes, before the transaction commits; expiry rolls back effects, mappings and checkpoint together. Persisted schemas, generated observer SQL, public interfaces and original test/resource limits are unchanged; no migration is required.
 
+All five private SQLite pool factories close their actual raw connection if setup fails before Knex pool ownership. Failed raw or pool teardown retains the original setup and cleanup causes and concrete retry owners; each independent cleanup still runs before any directory deletion. Private quarantine append and validation also refuse a physically closed writer, including an empty append. Valid data, API, schema, deadline and resource limits are unchanged.
+
+Journal identity validation receives detached reference and association DATA, so callback edits cannot rewrite the original validated source identity during persistence. No API or schema migration is required.
+
 Candidate-journal admission also preserves the exact optional prior-import point guard. Installation and verification share its existing SQL bytes, type, name and attached table; same-name replacements and unrelated objects still refuse. Genuine native composition, rollback and altered-guard regressions cover the integration correction. Base definitions, three bounded catalog queries, native pins, resource limits and durable checkpoints remain unchanged.
 
 Current-source facade operations read and validate the generation clock on every call within their original retained query-only snapshot. The issuer-only factory verifies the complete schema before issuing that private, non-escaping view. Each new view, mutable transaction and retired-source read retains full schema verification; no global verdict cache or copyable authority flag is introduced. Native regressions cover actual repeated-read query counts, escaped facades after closure, changed later schemas and restoration. Private candidate-journal admission also counts every object attached to its two tables while preserving its exact definitions, implicit index and three bounded catalog queries. All original lifetimes, physical/working/IPC limits, source/primary fences, checkpoints and negative controls remain.
@@ -6431,3 +6435,24 @@ Promise and await implementations to reduce generated mobile state machines,
 while preserving immediate work, fresh promises and original rejection objects.
 No API, wire, persisted-schema or consumer migration is required. Qualification
 must cover the final complete source; earlier partial runs do not establish it.
+
+The private native merge runner composes its fresh status read and one bounded
+step inside the same actual merge I/O owner. The step retains every original
+candidate, journal, source, quota and cleanup check; it no longer opens a separate
+complete candidate scope merely to repeat the immediately preceding status read.
+A completed episode still takes a fresh source scope before its complete composed
+inventory, and every operation drains before yielding. Status DATA cannot be
+supplied by a caller or reused across operations. Original test lifetimes, case
+inventories, operation guards, read/allocation limits and native pins remain.
+
+Journal maintenance configuration obtains policy and epoch from one complete,
+fresh generation validation in that call. It retains no schema verdict between
+calls, and each subsequent maintenance writer independently verifies its actual
+generation and physical ownership. Missing migration stamps still refuse fresh
+configuration reads.
+
+The independent native user inventory tests author and verify their original
+October 3 timestamp through the admitted source writer after real activation.
+Activation stamps a changed primary with current UTC; setting the test baseline
+afterwards preserves the intended older, equal and newer header comparisons.
+All three dates and their original corruption, refold and resource checks remain.

@@ -20,7 +20,11 @@ const INPUTS = [
   'scripts/mutation-testing.mjs',
   'scripts/mutation-final-qualification.mjs',
   'scripts/mutation-partitions.mjs',
+  'scripts/mutation-execution-partitions.mjs',
+  'governance/mutation-testing/execution-partitions.json',
   'scripts/mutation-partition-evidence.mjs',
+  'scripts/wallet-journal-ci.mjs',
+  '.github/workflows/ci.yml',
   '.github/workflows/mutation-tests.yml',
   'package.json',
   'pnpm-lock.yaml',
@@ -243,7 +247,7 @@ function requireConfiguration(actual, expected, key = 'config') {
   }
 }
 
-function mutantTuple(file, mutant) {
+export function mutantTuple(file, mutant) {
   return JSON.stringify([
     file,
     mutant.location.start.line,

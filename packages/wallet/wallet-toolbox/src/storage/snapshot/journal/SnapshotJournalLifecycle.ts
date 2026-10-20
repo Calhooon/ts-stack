@@ -168,12 +168,9 @@ export async function readSnapshotJournalMaintenanceConfiguration(k: Knex): Prom
   receiptPolicy: SnapshotJournalReceiptPolicy
   epoch: string
 }> {
-  const current = await readSnapshotJournalCaptureConfiguration(k)
-  const actual = mysql(k)
-    ? await readSnapshotJournalMysqlGeneration(k, current.ceiling, current.receiptPolicy, k.client.config.migrations)
-    : await readSnapshotJournalSqliteGeneration(k, current.receiptPolicy, k.client.config.migrations)
+  const { config, actual } = await currentJournalConfiguration(k)
   if (!actual.complete || !actual.enabled) invalid()
-  return { ...current, epoch: actual.epoch }
+  return { ceiling: config.ceiling, receiptPolicy: { ...config.policy }, epoch: actual.epoch }
 }
 
 /** Explicit data erasure after the provider drains every retained source. This
