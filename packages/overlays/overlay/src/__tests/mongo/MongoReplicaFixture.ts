@@ -41,6 +41,16 @@ class FixtureReplicaSet extends MongoMemoryReplSet {
   async drainMemberStarts(): Promise<void> {
     await Promise.allSettled(this.memberStarts)
   }
+  protected override async initAllServers(): Promise<void> {
+    try {
+      await super.initAllServers()
+    } catch (error) {
+      // The inherited start() auto-stops before its rejection reaches our
+      // caller. Drain here so that cleanup cannot race a sibling's startup.
+      await this.drainMemberStarts()
+      throw error
+    }
+  }
 }
 
 async function startReplicaSet(): Promise<MongoMemoryReplSet> {
