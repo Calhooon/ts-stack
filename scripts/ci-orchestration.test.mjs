@@ -33,7 +33,7 @@ test('repository health installs real locked wallet compiler dependencies before
   const job = workflowJobBlocks(workflow).find(value => value.name === 'repository-health').source
   const setup = job.indexOf('uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413')
   const install = job.indexOf(
-    'run: pnpm install --frozen-lockfile --ignore-scripts --filter @bsv/ts-stack --filter @bsv/wallet-toolbox'
+    'run: pnpm install --frozen-lockfile --ignore-scripts --filter @bsv/ts-stack --filter @bsv/wallet-toolbox --filter @bsv/wallet-toolbox-mobile\n'
   )
   const rebuild = job.indexOf('run: pnpm rebuild esbuild')
   const testControls = job.indexOf('run: node --test scripts/*.test.mjs')

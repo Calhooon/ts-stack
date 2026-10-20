@@ -40,8 +40,8 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: Install locked repository and wallet control dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts --filter @bsv/ts-stack --filter @bsv/wallet-toolbox
+      - name: Install locked repository, wallet and mobile control dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @bsv/ts-stack --filter @bsv/wallet-toolbox --filter @bsv/wallet-toolbox-mobile
 
       - name: Rebuild the audited control compiler
         run: pnpm rebuild esbuild
