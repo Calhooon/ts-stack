@@ -575,15 +575,16 @@ async function observerSql(
   if (isOwnedNativeSqlite(k)) {
     // Root callers obtain a real finite read transaction for schema inspection;
     // an existing actual transaction retains its original view. No cached flag.
-    const packed = k.isTransaction
-      ? await hasBrc38NativePackedSchema(k as Knex.Transaction)
-      : await k.transaction(async trx => await hasBrc38NativePackedSchema(trx))
+    const inspect = async (trx: Knex.Transaction) => {
+      // A present TEXT family freshly checks every binary definition too.
+      // Binary-only historical layouts retain their complete fresh fallback.
+      const text = await hasBrc38NativePackedTextSchema(trx)
+      return { text, packed: text || (await hasBrc38NativePackedSchema(trx)) }
+    }
+    const { packed, text } = k.isTransaction ? await inspect(k as Knex.Transaction) : await k.transaction(inspect)
     if (packed)
       for (const selected of variants)
         selected.push(...snapshotJournalPackedPointerObserverSql(false, sharedEffects, sharedEvents))
-    const text = k.isTransaction
-      ? await hasBrc38NativePackedTextSchema(k as Knex.Transaction)
-      : await k.transaction(async trx => await hasBrc38NativePackedTextSchema(trx))
     if (text)
       for (const selected of variants)
         selected.push(...snapshotJournalPackedPointerObserverSql(true, sharedEffects, sharedEvents))

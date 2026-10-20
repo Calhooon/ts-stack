@@ -45,7 +45,6 @@ import {
 } from './Brc38PrivateLocalCandidateJournalNode'
 import { verifyBrc38AuthenticatedSourceSeal } from './Brc38AuthenticatedSourceSealNode'
 import { hasBrc38NativeLocalPackedLayout } from './Brc38NativeLocalPackedLayoutNode'
-import { hasBrc38NativePackedSchema } from './Brc38NativePackedSchemaNode'
 import { hasBrc38NativePackedTextSchema } from './Brc38NativePackedTextSchemaNode'
 import { inspectBrc38PrivateLocalBaseline, inspectBrc38PrivateLocalRecovery } from './Brc38PrivateLocalInventoryNode'
 import { brc38PrivateLocalUniqueConflict } from './Brc38PrivateLocalUniqueNode'
@@ -179,12 +178,9 @@ export class Brc38PrivateLocalCandidate {
     const foreign = (await k.raw('PRAGMA foreign_keys')) as Array<{ foreign_keys: number }>
     if (foreign.length !== 1 || foreign[0].foreign_keys !== 1) invalid()
     await verifyBrc38AuthenticatedSourceSeal(k)
-    if (
-      !(await hasBrc38NativeLocalPackedLayout(k)) ||
-      !(await hasBrc38NativePackedSchema(k)) ||
-      !(await hasBrc38NativePackedTextSchema(k))
-    )
-      invalid()
+    // Required TEXT validation includes the complete fresh binary family in
+    // this same operation. Keep the mandatory local-layout check separately.
+    if (!(await hasBrc38NativeLocalPackedLayout(k)) || !(await hasBrc38NativePackedTextSchema(k))) invalid()
     const value = await readBrc38PrivateLocalCandidateJournal(k)
     if (
       value.bindingSha256 !== this.#store.binding?.digest ||

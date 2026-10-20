@@ -105,6 +105,7 @@ import {
 import {
   SNAPSHOT_JOURNAL_SQLITE_SHARED_EFFECT_DDL,
   snapshotJournalSqliteObserverSql,
+  snapshotJournalSqliteObserverVariants,
   snapshotJournalSharedClockObserverSql
 } from '../snapshot/journal/SnapshotJournalSqliteObservers'
 
@@ -1948,7 +1949,9 @@ test('native query-only TEXT metadata validates one fresh complete schema and re
         { table: 'transactions', field: 'description', rowId: transactionId },
         expected
       )
-      await trx('transactions').where({ transactionId }).update({ rawTx: trx.raw('zeroblob(0)') })
+      await trx('transactions')
+        .where({ transactionId })
+        .update({ rawTx: trx.raw('zeroblob(0)') })
       await writeBrc38NativePackedBytes(
         trx,
         { table: 'transactions', field: 'rawTx', rowId: transactionId },
@@ -2095,6 +2098,19 @@ test('prepared content groups complete fresh schema validation without accepting
       }
       expect(binaryInventories).toHaveLength(1)
       expect(preparedInventories).toHaveLength(1)
+      binaryInventories.length = 0
+      preparedInventories.length = 0
+      trx.on('query', observe)
+      let variants: readonly string[][]
+      try {
+        variants = await snapshotJournalSqliteObserverVariants(trx)
+      } finally {
+        trx.removeListener('query', observe)
+      }
+      expect(binaryInventories).toHaveLength(1)
+      expect(preparedInventories).toHaveLength(1)
+      expect(variants[0]).toEqual(await snapshotJournalSqliteObserverSql(trx))
+      expect(variants[1]).toEqual(await snapshotJournalSqliteObserverSql(trx, false, false, true))
       const names = [
         'brc38_native_prepared_fields_update_guard',
         'brc38_native_binary_versions_update_guard',
@@ -2110,12 +2126,14 @@ test('prepared content groups complete fresh schema validation without accepting
           await trx.raw('DROP TRIGGER ??', [definition.name])
           await expect(hasBrc38NativePreparedContentSchema(trx)).rejects.toThrow()
           await expect(materialization(trx, source)).rejects.toThrow()
+          await expect(snapshotJournalSqliteObserverVariants(trx)).rejects.toThrow()
         } finally {
           await trx.raw('ROLLBACK TO independently_damaged_content_schema')
           await trx.raw('RELEASE independently_damaged_content_schema')
         }
         expect(await hasBrc38NativePreparedContentSchema(trx)).toBe(true)
         expect(await materialization(trx, source)).toEqual({ native: true, packed: true, text: true })
+        expect(await snapshotJournalSqliteObserverVariants(trx)).toEqual(variants)
       }
     })
   })
