@@ -94,7 +94,8 @@ export const walletBrowserSuites = Object.freeze(
 )
 const caseCount = 64
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
-const ordered = values => [...values].sort()
+const ordered = values =>
+  [...values].sort((left, right) => Number(left > right) - Number(left < right))
 
 export function validateWalletBrowserReport(report) {
   if (
