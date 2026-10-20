@@ -152,7 +152,7 @@ test('every generated refinement retains the actual full canonical inventory and
     }
     assert.equal(new Set(actual).size, actual.length, 'Cross-part canonical mutant overlap')
     assert.deepEqual(actual.toSorted(lexicalCompare), expected.toSorted(lexicalCompare))
-    assert.deepEqual([...files].sort(), [...sources.keys()].sort())
+    assert.deepEqual([...files].sort(lexicalCompare), [...sources.keys()].sort(lexicalCompare))
     assert.equal(actual.length, unit.canonicalCount)
     count += actual.length
   }

@@ -216,7 +216,12 @@ export function refineMutationPartition(base, unit, readSource) {
   const known = new Set(
     unit.originalMutate.map(specification => sourceSpecification(specification).file)
   )
-  if (!isDeepStrictEqual([...known].sort(), Object.keys(unit.sourceHashes).sort()))
+  if (
+    !isDeepStrictEqual(
+      [...known].sort((left, right) => left.localeCompare(right)),
+      Object.keys(unit.sourceHashes).sort((left, right) => left.localeCompare(right))
+    )
+  )
     throw new Error('Execution source hash inventory differs from original specifications')
   const actual = base.target.mutate.map(specification => ({
     specification,

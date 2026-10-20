@@ -15,9 +15,10 @@ export function closeBrc38UnpooledConnection(
     return new Brc38StagingCleanupError(
       [primary, cleanupCause],
       'Private SQLite connection setup and physical cleanup both failed',
-      async () => {
-        connection.close()
-      }
+      () =>
+        promiseFromSync(() => {
+          connection.close()
+        })
     )
   }
 }

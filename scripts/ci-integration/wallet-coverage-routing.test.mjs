@@ -205,7 +205,16 @@ test('the complete browser inventory runs serially inside original shard-4 with 
     .split('|')
     .filter(value => !files.includes(value))
     .join('|')
-  assert.equal(hash(original), 'a71ebd28bbfcc834c30e24049159cac87118ca5e63aed225caaabfc1825bf0f8')
+  const journalPattern = 'src/storage/__test/WalletStorageManager\\.journal\\.test\\.ts$'
+  assert.equal(original.split('|').filter(value => value === journalPattern).length, 1)
+  const beforeJournalScheduling = original
+    .split('|')
+    .filter(value => value !== journalPattern)
+    .join('|')
+  assert.equal(
+    hash(beforeJournalScheduling),
+    'a71ebd28bbfcc834c30e24049159cac87118ca5e63aed225caaabfc1825bf0f8'
+  )
   const discover = ignored => {
     const result = spawnSync(
       process.execPath,
