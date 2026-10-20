@@ -1017,7 +1017,7 @@ describe('Bitcoin worker retained proof scheduling', () => {
           )
         ).size
       ).toBe(calls)
-      expect(verify.mock.results.length).toBe(calls)
+      expect(verify.mock.results).toHaveLength(calls)
       if (name === 'badSignature')
         expect(snapshot.reconciled.transactions.find(row => row.txid === tx(name))?.status).toBe(
           'invalid'
