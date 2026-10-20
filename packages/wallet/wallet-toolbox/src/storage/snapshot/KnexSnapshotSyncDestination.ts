@@ -707,6 +707,7 @@ export class KnexSnapshotSyncDestination {
         throw new WERR_INVALID_OPERATION('Native field checkpoint did not update its exact current session')
       if (completeContent !== undefined) await completeContent(row)
       check()
+      requireLiveSource(row.expiresAt, 'destination commit completion')
       return { checkpoint: checkpoint(row), inserts: result.inserts, updates: result.updates + userUpdates }
     })
   }

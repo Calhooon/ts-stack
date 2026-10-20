@@ -323,13 +323,58 @@ test(
 test(
   'actual native scalar session preserves original occupied basket policy and one-use durable ACK',
   async () => {
-    await withPair('outputBaskets', async ({ target, source, checkpoint }) => {
+    await withPair('outputBaskets', async ({ target, source, destination, checkpoint }) => {
       const expectedBaskets = await target.storage.findOutputBaskets({
         partial: { userId: target.manager.getActiveUser().userId }
       })
       expect(expectedBaskets).toHaveLength(1)
       expect(expectedBaskets[0].numberOfDesiredUTXOs).toBe(32)
       expect(expectedBaskets[0].minimumDesiredUTXOValue).toBe(1000)
+      if (source.fieldReader === undefined) throw new Error('Actual source field reader is unavailable')
+      const page = await source.fieldReader.readMetadataPage('outputBaskets', checkpoint.cursor, {
+          maxRows: 2,
+          maxBytes: 32768
+        }),
+        now = Date.now.bind(Date),
+        marker = 'independent-native-expired-page'
+      let expired = false
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => (expired ? source.expiresAt : now())),
+        expireAfterCheckpoint = (_response: unknown, query: { sql: string }): void => {
+          if (query.sql.startsWith('update `snapshot_sync_sessions` set ')) expired = true
+        }
+      target.storage.knex.on('query-response', expireAfterCheckpoint)
+      try {
+        await expect(
+          destination.commitNativeFieldPage(checkpoint, page, undefined, async writer => {
+            expect(
+              await target.storage.insertOutputBasket(
+                {
+                  userId: writer.user.userId,
+                  name: marker,
+                  created_at: new Date(0),
+                  updated_at: new Date(0),
+                  numberOfDesiredUTXOs: 0,
+                  minimumDesiredUTXOValue: 0,
+                  isDeleted: false
+                },
+                writer.transaction
+              )
+            ).toBeGreaterThan(0)
+            return { inserts: 1, updates: 0 }
+          })
+        ).rejects.toThrow('Snapshot source expired before destination commit completion')
+      } finally {
+        target.storage.knex.removeListener('query-response', expireAfterCheckpoint)
+        clock.mockRestore()
+      }
+      expect(expired).toBe(true)
+      expect(await destination.checkpoint(checkpoint.identityKey, checkpoint.sourceStorageIdentityKey)).toEqual(
+        checkpoint
+      )
+      expect(await target.storage.findOutputBaskets({ partial: { name: marker } })).toHaveLength(0)
+      expect(
+        await target.storage.findOutputBaskets({ partial: { userId: target.manager.getActiveUser().userId } })
+      ).toEqual(expectedBaskets)
       await verifyNativeScalarFieldSession({ storage: target.storage, source, checkpoint, expectedBaskets })
     })
   },
