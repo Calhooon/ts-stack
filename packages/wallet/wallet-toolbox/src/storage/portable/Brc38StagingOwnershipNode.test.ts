@@ -1,7 +1,7 @@
 import createKnex from 'knex'
 import Database from 'better-sqlite3'
 import { fork, type ChildProcess } from 'node:child_process'
-import { appendFile, chmod, lstat, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, open, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -442,10 +442,15 @@ test.each([0, 1])(
       owner = await Brc38StagingOwnershipNode.create(directory, digest, expiry)
     owners.push(owner)
     await owner.release()
-    const filename = join(directory, 'brc38-owner.sqlite'),
-      before = await lstat(filename)
-    expect(before.size).toBeLessThanOrEqual(16384)
-    await appendFile(filename, Buffer.alloc(16384 + excess - before.size))
+    // Inspect and resize the same opened file, preserving the exact physical
+    // boundary without reopening a path after checking its state.
+    const file = await open(join(directory, 'brc38-owner.sqlite'), 'r+')
+    try {
+      expect((await file.stat()).size).toBeLessThanOrEqual(16384)
+      await file.truncate(16384 + excess)
+    } finally {
+      await file.close()
+    }
     if (excess === 0) {
       const next = await claim()
       expect(next.expiresAt).toBe(expiry)
