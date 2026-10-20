@@ -376,3 +376,25 @@ Current pinned inventories:
 Each extra part repeats the target's dry run and job setup, so total compute
 rises while the campaign tail falls. The matrix grows from 41 to 56 jobs under
 the unchanged 20-job limit.
+
+### Stop-on-kill Jest environment
+
+StrykerJS treats a mutant as killed by its first failing test and bails for its
+other runners; the Vitest runner sets `bail: 1`. The Jest runner instead forces
+`bail: false`, because Jest's own bail exits the process, so every later test
+covering an already-killed mutant still ran. In the 2026-10-19 `brc52-envelope`
+release report, 330 of 358 mutants were killed, yet each mutant ran 139.6 tests
+on average.
+
+`governance/mutation-testing/stop-on-kill-environment.cjs` extends the package's
+Node environment. While Stryker has an active mutant and one of its tests has
+failed, it marks each remaining test as skipped at `test_start`, which
+jest-circus dispatches before reading the skip mode. It does nothing without an
+active mutant, so the initial coverage run and plain `jest` runs execute every
+test, and a surviving mutant still runs every covering test. Every governed Jest
+target uses it.
+
+Verdicts cannot change: a mutant with a failing test is Killed regardless of
+later tests. A local same-machine run of `brc52-envelope/envelope-2` produced
+identical verdicts for all 64 mutants (61 Killed, 3 Survived) while tests run
+per mutant fell from 138.8 to 19.2 and wall time from 117 to 50 seconds.
