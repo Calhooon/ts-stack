@@ -1614,8 +1614,12 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       args.paged?.offset ?? 0,
       args.paged?.limit,
       r => {
-        if (args.certifiers != null && args.certifiers.length > 0 && !args.certifiers.includes(r.certifier)) return false
+        if (args.certifiers != null && args.certifiers.length > 0 && !args.certifiers.includes(r.certifier))
+          return false
         if (args.types != null && args.types.length > 0 && !args.types.includes(r.type)) return false
+        // A BRC-52 type is 32 bytes, 44 base64 characters; see FindCertificatesArgs.legacyTypes.
+        if (args.legacyTypes === 'exclude' && r.type.length !== 44) return false
+        if (args.legacyTypes === 'only' && r.type.length === 44) return false
         return matchesCertificatePartial(r, args.partial)
       },
       filtered

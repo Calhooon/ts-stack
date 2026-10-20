@@ -3,10 +3,10 @@ id: bsv-sdk
 title: '@bsv/sdk'
 kind: package
 domain: sdk
-version: '3.2.2'
+version: '3.3.0'
 npm: '@bsv/sdk'
-last_updated: '2026-10-15'
-last_verified: '2026-10-15'
+last_updated: '2026-10-20'
+last_verified: '2026-10-20'
 review_cadence_days: 30
 status: stable
 tags: ['sdk', 'crypto', 'transactions']
@@ -42,15 +42,16 @@ position above `INT32_MAX`. Operands of eight bytes or fewer are unchanged and
 no API, wire or wallet-data migration is required. This candidate is not
 publication.
 
-The 3.2.2 source candidate restores the use of certificates issued before
-2.8.0 whose `type` decodes to fewer than 32 bytes
-([#1085](https://github.com/bsv-blockchain/ts-stack/issues/1085)). Wallet
-list, prove and relinquish calls, list and discovery result validation and
-`Certificate.verify()` accept a 1–32-byte type again, while acquisition, new
-issuance, signing, binary serialization and the binary wallet wire keep the
-exact 32-byte requirement. See
-[legacy certificate types](#legacy-certificate-types-since-322) for the
-migration recipe. This candidate is not publication.
+The 3.3.0 source candidate adds the migration path for certificates issued
+before 2.8.0 under a non-BRC-52 `type`
+([#1085](https://github.com/bsv-blockchain/ts-stack/issues/1085)). Every
+wallet certificate argument, BRC-103 requested set, `Certificate.verify()`,
+`sign()`, `toBinary()` and `fromBinary()` keep the 32-byte requirement;
+`listCertificates` and discovery results now leave such a record out instead
+of failing as a whole, and the recovery-only
+`Certificate.verifyHistoricalSignature()` authenticates one before it is
+reissued. See [legacy certificate types](#legacy-certificate-types-since-330).
+This candidate is not publication.
 
 For `RegistryClient` and optional ProtoMap, BasketMap and CertMap descriptions,
 see [registry metadata](../../guides/registry-metadata.md). It covers exact
@@ -548,29 +549,40 @@ response validation and origin checks are unchanged. No API or wire migration
 is needed. Applications affected by the timeout defect can update their bundled
 SDK; a wallet release alone cannot replace code served by a web application.
 
-### Legacy certificate types since 3.2.2
+### Legacy certificate types since 3.3.0
 
-A canonical certificate `type` decodes to exactly 32 bytes. The binary
+A BRC-52 certificate `type` decodes to exactly 32 bytes; the binary
 certificate format (`Certificate.toBinary()`/`fromBinary()`) and the binary
-wallet wire write the type with no length prefix, so they depend on that
-length. Before 2.8.0 the JSON wallet substrates and `wallet-toolbox` accepted
-shorter types, and 2.8.0 began rejecting them on every certificate call without
-a documented migration. Since 3.2.2 the methods that operate on certificates a
-wallet already holds accept a 1–32-byte canonical-base64 type again:
-`listCertificates` filters, `proveCertificate`, `relinquishCertificate`, result
-validation for list and discovery results, and `Certificate.verify()`, which
-rebuilds the historical unpadded serialization. New certificates must use
-32-byte types: `acquireCertificate`,
-`MasterCertificate.issueCertificateForSubject`, `Certificate.sign()`,
-`toBinary()` and `fromBinary()` keep the exact requirement.
+wallet wire write it with no length prefix and depend on that length. Before
+2.8.0 nothing enforced it, and `@bsv/simple` before 0.6 derived the type from
+a schema identifier, so wallets may still hold certificates issued under
+non-compliant types; 2.8.0 began rejecting them everywhere without a
+documented migration. The normal APIs stay strict: `acquireCertificate`,
+`listCertificates` filters, `proveCertificate`, `relinquishCertificate`,
+BRC-103 `requestedCertificates`, `Certificate.verify()`, `sign()`,
+`toBinary()` and `fromBinary()` all require 32 bytes, and a non-compliant
+certificate cannot be used, proven or exchanged.
 
-To migrate, detect a legacy certificate by its decoded type length
-(`Utils.toArray(certificate.type, 'base64').length !== 32`) in a
-`listCertificates` result, acquire a replacement under a new 32-byte type, then
-`relinquishCertificate` the legacy one. Do this over a JSON substrate: the
-binary wallet wire rejects a legacy type in a request or result with an
-explicit error rather than carrying it. Legacy acceptance is a deprecation
-window and will only be removed in a major release.
+What 3.3.0 changes is the handling of records a wallet already holds.
+`listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` result
+validation leaves a certificate out when its `type` is canonical base64 that
+does not decode to 32 bytes (up to 128 bytes), lowering `totalCertificates`,
+so one such record no longer fails the whole listing; the binary wallet wire
+serializes the same validated result, and `@bsv/wallet-toolbox` 2.15.0 omits
+those records at the storage query as well. `Certificate.verifyHistoricalSignature()`
+is the recovery-only check that rebuilds the pre-2.8.0 serialization and
+verifies the certifier signature of such a record.
+
+To migrate, the wallet holder lists the records with
+`Wallet.listLegacyCertificates()` from `@bsv/wallet-toolbox` (available on
+the `Wallet` instance only, not through BRC-100 proxies), the issuer reissues
+a compliant certificate under a new 32-byte type, and the holder retires the
+old record with `Wallet.relinquishLegacyCertificate()`. Issue new types as a
+SHA-256 hash or random 32 bytes and keep any human-readable name or schema in
+separate metadata (BRC-184), for example
+`Utils.toBase64(Hash.sha256('example.org/skill-endorsement/v1', 'utf8'))`.
+A signed certificate cannot be fixed by padding or hashing its stored type;
+that changes what was signed.
 
 ## Faucet output authorization
 

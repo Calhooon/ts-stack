@@ -5,8 +5,8 @@ kind: package
 domain: wallet
 npm: '@bsv/wallet-toolbox'
 version: '2.15.0'
-last_updated: '2026-10-13'
-last_verified: '2026-10-13'
+last_updated: '2026-10-20'
+last_verified: '2026-10-20'
 review_cadence_days: 30
 status: stable
 tags: ['wallet', 'brc100']
@@ -86,6 +86,27 @@ BRC-177 anchors cover both the delivery and an economic reclaim. When the
 reclaim floor is larger, the protected action pays the bounded surplus as
 miner fee while retaining no wallet change. Upgrade the active storage
 implementation to receive this funding fix; no wire or database migration is required.
+
+### Legacy certificate recovery
+
+A BRC-52 certificate `type` is exactly 32 bytes. Storage created before
+`@bsv/sdk` 2.8.0 may hold certificates issued under other lengths: nothing
+bounded the type then, and `@bsv/simple` before 0.6 derived it from a schema
+identifier. Since 2.15.0 `listCertificates` leaves those records out at the
+storage query (`FindCertificatesArgs.legacyTypes: 'exclude'`), so one of
+them no longer fails every listing, and `@bsv/sdk` 3.3.0 result validation
+does the same for a wallet that has not been upgraded. Two recovery methods
+exist outside BRC-100, on the `Wallet` instance only (`WalletPermissionsManager`
+and other BRC-100 proxies do not forward them):
+`listLegacyCertificates({ limit?, offset? })` returns the non-compliant
+records with their fields and master keyring in the `listCertificates` shape,
+and `relinquishLegacyCertificate({ type, serialNumber, certifier })` marks one
+deleted once a compliant replacement has been issued under a 32-byte type.
+`Certificate.verifyHistoricalSignature()` from the SDK authenticates such a
+record first. The BRC-100 `relinquishCertificate` keeps rejecting a
+non-32-byte type. Upgrade a remote storage server together with the wallet:
+an older server does not accept the legacy reference and returns every record
+to `listLegacyCertificates`, which filters again locally.
 
 ## Current capabilities
 

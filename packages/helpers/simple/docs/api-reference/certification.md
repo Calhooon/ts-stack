@@ -69,11 +69,14 @@ canonical issuance type from its decoded bytes; it never issues a new short
 type.
 
 The current SDK deliberately rejects short certificate types in
-`WalletInterface` list, acquire, prove, and relinquish operations. The legacy
-values returned here are for an explicit offline storage migration, not wallet
-filter arrays or remote metadata. Export affected records through the storage
-version that created them, authenticate them with the matching local issuer or
-schema, then reissue/import them under `canonical`.
+`WalletInterface` list, acquire, prove, and relinquish operations, and
+`@bsv/sdk` 3.3.0 listings leave such stored records out rather than failing.
+The legacy values returned here are for an explicit migration, not wallet
+filter arrays or remote metadata. Find affected records with
+`@bsv/wallet-toolbox` `Wallet.listLegacyCertificates()` (or export them
+through the storage version that created them), authenticate them with the
+matching local issuer or schema, reissue/import them under `canonical`, then
+retire the old records with `relinquishLegacyCertificate()`.
 
 ### certifier.certify()
 

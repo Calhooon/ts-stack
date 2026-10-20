@@ -15,6 +15,7 @@ import {
   validateOriginator,
   validateProveCertificateArgs,
   validateRelinquishCertificateArgs,
+  validateInteger,
   validateRelinquishOutputArgs,
   validateSignActionArgs
 } from '@bsv/sdk/wallet/validationHelpers'
@@ -48,6 +49,8 @@ import {
   ListActionsResult,
   ListCertificatesArgs,
   ListCertificatesResult,
+  PositiveIntegerDefault10Max10000,
+  PositiveIntegerOrZero,
   ListOutputsArgs,
   ListOutputsResult,
   OriginatorDomainNameStringUnder250Bytes,
@@ -96,6 +99,7 @@ import {
 import type { SpendVerifierInterface } from '@bsv/sdk'
 import { fromBase58, toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { acquireDirectCertificate } from './signer/methods/acquireDirectCertificate'
+import { isCanonicalCertificateType, validateLegacyCertificateReference } from './storage/methods/legacyCertificates'
 import { proveCertificate } from './signer/methods/proveCertificate'
 import { createAction, CreateActionResultX } from './signer/methods/createAction'
 import { signAction, SignActionResultX } from './signer/methods/signAction'
@@ -846,6 +850,64 @@ export class Wallet implements WalletInterface, ProtoWallet {
     this.validateAuthAndArgs(args, validateRelinquishCertificateArgs)
     const updated = await this.storage.relinquishCertificate(args)
     assertStorageMutationSucceeded(updated, 'certificate relinquishment')
+    return { relinquished: true }
+  }
+
+  /**
+   * Recovery API, outside BRC-100: lists the certificates this wallet holds
+   * whose `type` is not the BRC-52 32 bytes. Such records were issued before
+   * `@bsv/sdk` 2.8.0, when nothing bounded the type; `listCertificates` leaves
+   * them out. Use this to find them, reissue a compliant replacement under a
+   * 32-byte type, then {@link relinquishLegacyCertificate} the old record.
+   * Fields and the master keyring are returned as `listCertificates` would,
+   * and `Certificate.verifyHistoricalSignature()` authenticates a record.
+   *
+   * Only the `Wallet` instance exposes this; BRC-100 proxies such as
+   * `WalletPermissionsManager` do not forward it.
+   */
+  async listLegacyCertificates(
+    args: { limit?: PositiveIntegerDefault10Max10000; offset?: PositiveIntegerOrZero } = {}
+  ): Promise<ListCertificatesResult> {
+    const limit = validateInteger(args.limit, 'limit', 10, 1, 10000)
+    const offset = validateInteger(args.offset, 'offset', 0, 0)
+    const rows = (
+      await this.storage.findCertificates({
+        partial: { isDeleted: false },
+        legacyTypes: 'only',
+        includeFields: true
+      })
+    )
+      // A storage server that predates `legacyTypes` ignores it and returns
+      // every record, so the filter is applied here as well.
+      .filter(row => !isCanonicalCertificateType(row.type))
+    const page = rows.slice(offset, offset + limit)
+    return {
+      totalCertificates: rows.length,
+      certificates: page.map(row => ({
+        type: row.type,
+        subject: row.subject,
+        serialNumber: row.serialNumber,
+        certifier: row.certifier,
+        revocationOutpoint: row.revocationOutpoint,
+        signature: row.signature,
+        fields: Object.fromEntries((row.fields ?? []).map(f => [f.fieldName, f.fieldValue])),
+        verifier: row.verifier,
+        keyring: Object.fromEntries((row.fields ?? []).map(f => [f.fieldName, f.masterKey]))
+      }))
+    }
+  }
+
+  /**
+   * Recovery API, outside BRC-100: relinquishes a certificate this wallet
+   * holds under a non-BRC-52 type (1–128 canonical-base64 bytes), which
+   * {@link relinquishCertificate} rejects. Reissue a compliant replacement
+   * first; the record is marked deleted, not rewritten. A remote storage
+   * server must be upgraded to accept the legacy reference.
+   */
+  async relinquishLegacyCertificate(args: RelinquishCertificateArgs): Promise<RelinquishCertificateResult> {
+    const vargs = validateLegacyCertificateReference(args)
+    const updated = await this.storage.relinquishLegacyCertificate(vargs)
+    assertStorageMutationSucceeded(updated, 'legacy certificate relinquishment')
     return { relinquished: true }
   }
 

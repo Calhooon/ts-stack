@@ -1476,32 +1476,62 @@ function stringRecord(
 
 /**
  * Decoded byte count of a canonical-base64 certificate field whose length lies
- * within `minimumLength`–32 bytes. Throws otherwise; `validateCertificate`
- * turns that into its single "canonical signed wallet certificate" rejection.
+ * within `minimumLength`–`maximumLength` bytes. Throws otherwise;
+ * `validateCertificate` turns that into its single "canonical signed wallet
+ * certificate" rejection.
  */
 function canonicalEncodedByteLength(
   certificate: UnknownRecord,
   name: 'type' | 'serialNumber',
   minimumLength: number,
+  maximumLength: number,
   call: string,
   field: string
 ): number {
   const encoded = base64(certificate[name], call, `${field}.${name}`)
   const decoded = base64ToBytes(encoded)
-  if (decoded.length < minimumLength || decoded.length > 32 || bytesToBase64(decoded) !== encoded) {
-    throw new Error(`${field}.${name} must be canonical base64 of ${minimumLength}-32 bytes`)
+  if (
+    decoded.length < minimumLength ||
+    decoded.length > maximumLength ||
+    bytesToBase64(decoded) !== encoded
+  ) {
+    throw new Error(
+      `${field}.${name} must be canonical base64 of ${minimumLength}-${maximumLength} bytes`
+    )
   }
   return decoded.length
 }
 
-function validateCertificate(value: unknown, call: string, field: string): UnknownRecord {
+/**
+ * A BRC-52 certificate type decodes to exactly 32 bytes. A wallet may still
+ * hold a certificate issued before SDK 2.8.0 under another length (up to the
+ * 128 bytes `@bsv/simple` tolerates for its legacy records); list validation
+ * recognises such a record so it can be left out instead of failing the
+ * whole result. No other result accepts it.
+ */
+const MAX_LEGACY_CERTIFICATE_TYPE_BYTES = 128
+
+function hasCanonicalCertificateType(certificate: UnknownRecord): boolean {
+  return base64ToBytes(certificate.type as string).length === 32
+}
+
+function validateCertificate(
+  value: unknown,
+  call: string,
+  field: string,
+  tolerateLegacyType: boolean = false
+): UnknownRecord {
   const certificate = record(value, call, field)
   try {
-    // A canonical type is 32 bytes, but certificates issued before SDK 2.8.0
-    // may hold a shorter one; a wallet must still be able to return those so
-    // the application can migrate them. Serial numbers were always 32 bytes.
-    let encodedLength = canonicalEncodedByteLength(certificate, 'type', 1, call, field)
-    encodedLength += canonicalEncodedByteLength(certificate, 'serialNumber', 32, call, field)
+    let encodedLength = canonicalEncodedByteLength(
+      certificate,
+      'type',
+      tolerateLegacyType ? 1 : 32,
+      tolerateLegacyType ? MAX_LEGACY_CERTIFICATE_TYPE_BYTES : 32,
+      call,
+      field
+    )
+    encodedLength += canonicalEncodedByteLength(certificate, 'serialNumber', 32, 32, call, field)
     const publicKeyFieldNames = ['subject', 'certifier'] as const
     for (let index = 0; index < publicKeyFieldNames.length; index++) {
       const name = publicKeyFieldNames[index]
@@ -1857,7 +1887,16 @@ function bindCertificateToPartialRequest(
   }
 }
 
-function validateCertificatesResult(result: UnknownRecord, call: string, request?: unknown): void {
+/**
+ * Validates a certificate list or discovery result. Returns the filtered
+ * entries and total when a non-compliant legacy record was left out, for the
+ * caller to apply to the owned result; `result` itself is an own-data view.
+ */
+function validateCertificatesResult(
+  result: UnknownRecord,
+  call: string,
+  request?: unknown
+): { certificates: unknown[]; totalCertificates: number } | undefined {
   const certificates = validateListResult(
     result,
     call,
@@ -1880,10 +1919,22 @@ function validateCertificatesResult(result: UnknownRecord, call: string, request
       setAdd(requestedTypes, stringValue(requestArgs.types[index]))
     }
   }
+  const kept: unknown[] = []
+  let omitted = 0
   for (let index = 0; index < certificates.length; index++) {
     const value = certificates[index]
     const field = `certificates[${index}]`
-    const certificate = validateCertificate(value, call, field)
+    // A wallet may still hold a certificate issued before SDK 2.8.0 under a
+    // non-BRC-52 type. One that is valid in every other respect is left out
+    // of the listing instead of failing the whole result, so applications
+    // that never used such types are unaffected and the wallet's recovery
+    // path can retire it. Anything else still rejects the result.
+    const certificate = validateCertificate(value, call, field, true)
+    if (!hasCanonicalCertificateType(certificate)) {
+      omitted++
+      continue
+    }
+    kept.push(value)
     if (requestedCertifiers != null && setSize(requestedCertifiers) > 0) {
       if (!setHas(requestedCertifiers, lower(stringValue(certificate.certifier)))) {
         invalid(call, `${field}.certifier`, 'one of the requested certifiers')
@@ -1930,6 +1981,9 @@ function validateCertificatesResult(result: UnknownRecord, call: string, request
       }
     }
   }
+  if (omitted === 0) return undefined
+  const total = (result.totalCertificates as number) - omitted
+  return { certificates: kept, totalCertificates: total < kept.length ? kept.length : total }
 }
 
 function validateListResult(
@@ -2303,9 +2357,15 @@ export function validateWalletResult<T>(call: CallType, value: T, request?: unkn
       break
     case 'listCertificates':
     case 'discoverByIdentityKey':
-    case 'discoverByAttributes':
-      validateCertificatesResult(result, call, request)
+    case 'discoverByAttributes': {
+      const filtered = validateCertificatesResult(result, call, request)
+      if (filtered !== undefined) {
+        const owned = ownedValue as UnknownRecord
+        owned.certificates = filtered.certificates
+        owned.totalCertificates = filtered.totalCertificates
+      }
       break
+    }
     case 'getHeight':
       rangedInteger(result.height, call, 'height', 1, 0xffffffff)
       break

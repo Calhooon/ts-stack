@@ -81,7 +81,7 @@ export interface WalletStorage {
 
   getAuth: () => Promise<AuthId>
 
-  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser, isNew: boolean }>
+  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser; isNew: boolean }>
 
   abortAction: (args: AbortActionArgs) => Promise<AbortActionResult>
   createAction: (args: Validation.ValidCreateActionArgs) => Promise<StorageCreateActionResult>
@@ -158,7 +158,7 @@ export interface WalletStorageSync extends WalletStorageWriter {
     auth: AuthId,
     storageIdentityKey: string,
     storageName: string
-  ) => Promise<{ syncState: TableSyncState, isNew: boolean }>
+  ) => Promise<{ syncState: TableSyncState; isNew: boolean }>
 
   /**
    * Updagte the `activeStorage` property of the authenticated user by their `userId`.
@@ -189,7 +189,7 @@ export interface WalletStorageWriter extends WalletStorageReader {
   migrate: (storageName: string, storageIdentityKey: string) => Promise<string>
   destroy: () => Promise<void>
 
-  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser, isNew: boolean }>
+  findOrInsertUser: (identityKey: string) => Promise<{ user: TableUser; isNew: boolean }>
 
   abortAction: (auth: AuthId, args: AbortActionArgs) => Promise<AbortActionResult>
   createAction: (auth: AuthId, args: Validation.ValidCreateActionArgs) => Promise<StorageCreateActionResult>
@@ -212,10 +212,7 @@ export interface WalletStorageWriter extends WalletStorageReader {
   putActionBatchBlob: (auth: AuthId, args: PutActionBatchBlobArgs) => Promise<void>
   putActionBatchPack?: (auth: AuthId, args: PutActionBatchPackArgs) => Promise<void>
   commitActionBatch: (auth: AuthId, manifest: ActionBatchManifest) => Promise<CommitActionBatchResult>
-  commitActionBatchByDigest?: (
-    auth: AuthId,
-    args: CommitActionBatchByDigestArgs
-  ) => Promise<CommitActionBatchResult>
+  commitActionBatchByDigest?: (auth: AuthId, args: CommitActionBatchByDigestArgs) => Promise<CommitActionBatchResult>
   abortActionBatch: (auth: AuthId, batchId: string) => Promise<AbortActionBatchResult>
   internalizeAction: (auth: AuthId, args: InternalizeActionArgs) => Promise<StorageInternalizeActionResult>
 
@@ -271,6 +268,13 @@ export interface FindCertificatesArgs extends FindSincePagedArgs {
   certifiers?: string[]
   types?: string[]
   includeFields?: boolean
+  /**
+   * A BRC-52 certificate type encodes to 44 base64 characters (32 bytes).
+   * Storage created before @bsv/sdk 2.8.0 may hold records whose type does
+   * not. `'exclude'` returns only compliant records (BRC-100 listings);
+   * `'only'` returns the non-compliant ones (recovery). Omitted: no filter.
+   */
+  legacyTypes?: 'exclude' | 'only'
 }
 
 export interface FindOutputBasketsArgs extends FindSincePagedArgs {
@@ -595,7 +599,7 @@ export type SyncProtocolVersion = '0.1.0'
 export interface SyncCheckpoint {
   syncStateId: number
   since?: Date
-  offsets: Array<{ name: string, offset: number }>
+  offsets: Array<{ name: string; offset: number }>
 }
 
 export interface RequestSyncChunkArgs {
@@ -661,7 +665,7 @@ export interface RequestSyncChunkArgs {
    * 10 Certificates
    * 11 CertificateFields
    */
-  offsets: Array<{ name: string, offset: number }>
+  offsets: Array<{ name: string; offset: number }>
 }
 
 export interface SyncChunkTotals {
@@ -740,7 +744,7 @@ export interface ReproveHeaderResult {
   /**
    * List of proven_txs records that were updated with new proof data.
    */
-  updated: Array<{ was: TableProvenTx, update: Partial<TableProvenTx>, logUpdate: string }>
+  updated: Array<{ was: TableProvenTx; update: Partial<TableProvenTx>; logUpdate: string }>
   /**
    * List of proven_txs records that were checked but currently available proof is unchanged.
    */
@@ -762,7 +766,7 @@ export interface ReproveProvenResult {
   /**
    * Valid if proof data for proven_txs record is available and has changed.
    */
-  updated?: { update: Partial<TableProvenTx>, logUpdate: string }
+  updated?: { update: Partial<TableProvenTx>; logUpdate: string }
   /**
    * True if proof data for proven_txs record was found to be unchanged.
    */

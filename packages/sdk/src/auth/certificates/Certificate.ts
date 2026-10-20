@@ -43,10 +43,13 @@ function assertCanonicalBase64Length(
 }
 
 /**
- * Certificates issued before SDK 2.8.0 may carry a type shorter than 32 bytes.
- * Their signatures cover the historical serialization, which wrote the decoded
- * type bytes as-is, so signature verification accepts 1–32 bytes.
+ * Type bounds for {@link Certificate.verifyHistoricalSignature}: a
+ * certificate issued before SDK 2.8.0 may carry a type of any length, and
+ * 128 bytes matches the legacy tolerance `@bsv/simple` applies to its own
+ * records. Nothing else in the SDK accepts a non-32-byte type.
  */
+const MAX_HISTORICAL_CERTIFICATE_TYPE_BYTES = 128
+
 function assertHistoricalCertificateType(value: string): number[] {
   let decoded: number[]
   try {
@@ -54,9 +57,9 @@ function assertHistoricalCertificateType(value: string): number[] {
   } catch {
     throw new Error('Invalid certificate type: expected canonical base64')
   }
-  if (decoded.length < 1 || decoded.length > 32) {
+  if (decoded.length < 1 || decoded.length > MAX_HISTORICAL_CERTIFICATE_TYPE_BYTES) {
     throw new Error(
-      `Invalid certificate type length: expected 1 to 32 bytes, received ${decoded.length}`
+      `Invalid certificate type length: expected 1 to ${MAX_HISTORICAL_CERTIFICATE_TYPE_BYTES} bytes, received ${decoded.length}`
     )
   }
   return decoded
@@ -170,10 +173,6 @@ function assertCompressedPublicKey(value: number[], fieldName: string): void {
 export default class Certificate {
   /**
    * Type identifier for the certificate, base64 encoded string, 32 bytes.
-   *
-   * Certificates issued before SDK 2.8.0 may carry a shorter type. `verify()`
-   * still accepts their signatures, but `toBinary()`, `fromBinary()`, `sign()`
-   * and the binary wallet wire require the canonical 32 bytes.
    */
   type: Base64String
 
@@ -257,13 +256,13 @@ export default class Certificate {
   /**
    * Shared serializer for `toBinary()` and signature verification. The layout
    * has no type length prefix, so the canonical encoding requires a 32-byte
-   * type; verification also reproduces the historical serialization of a
-   * pre-2.8.0 certificate whose type is shorter.
+   * type; {@link verifyHistoricalSignature} also reproduces the serialization
+   * of a certificate issued before SDK 2.8.0 under a non-compliant type.
    */
   #serialize(includeSignature: boolean, historicalType: boolean): number[] {
     const writer = new Writer()
 
-    // Write type (Base64String, 32 bytes; 1–32 bytes for a historical certificate)
+    // Write type (Base64String, 32 bytes; a historical certificate may differ)
     const typeBytes = historicalType
       ? assertHistoricalCertificateType(this.type)
       : assertCanonicalBase64Length(this.type, 'type', 32)
@@ -460,11 +459,7 @@ export default class Certificate {
    */
   async verify(): Promise<boolean> {
     try {
-      // Exclude the signature from the verification data. A certificate issued
-      // before SDK 2.8.0 may carry a sub-32-byte type; its signature covers the
-      // historical serialization, which the signing key derivation below also
-      // binds to the exact type and serial number.
-      const verificationData = this.#serialize(false, true)
+      const verificationData = this.toBinary(false) // Exclude the signature from the verification data
       const certifierKey = PublicKey.fromString(this.certifier).deriveChild(
         new BigNumber(1) as PrivateKey,
         `2-certificate signature-${this.type} ${this.serialNumber}`
@@ -476,6 +471,38 @@ export default class Certificate {
     } catch {
       // Preserve the historical boolean verification contract. Malformed or
       // absent signatures are invalid credentials, not exceptional control flow.
+      return false
+    }
+  }
+
+  /**
+   * Recovery-only signature check for a certificate issued before SDK 2.8.0
+   * whose `type` is not the BRC-52 32 bytes (nothing bounded it then, and
+   * `@bsv/simple` before 0.6 derived it from a schema identifier). The
+   * historical serialization wrote the decoded type bytes as-is, so this
+   * rebuilds that preimage for a 1–128-byte canonical-base64 type; the signing
+   * key is still derived from the exact `type` and `serialNumber`.
+   *
+   * Use it only to authenticate a stored legacy record before reissuing a
+   * compliant replacement. {@link verify}, `sign()`, `toBinary()`,
+   * `fromBinary()` and every wallet certificate method stay canonical, and a
+   * certificate that passes here is not thereby BRC-52 compliant.
+   *
+   * @returns {Promise<boolean>} - True when the signature matches the
+   * historical serialization; it makes no revocation-status assertion.
+   */
+  async verifyHistoricalSignature(): Promise<boolean> {
+    try {
+      const verificationData = this.#serialize(false, true)
+      const certifierKey = PublicKey.fromString(this.certifier).deriveChild(
+        new BigNumber(1) as PrivateKey,
+        `2-certificate signature-${this.type} ${this.serialNumber}`
+      )
+      return certifierKey.verify(
+        verificationData,
+        Signature.fromDER(UtilsToArray(this.signature ?? '', 'hex'))
+      )
+    } catch {
       return false
     }
   }

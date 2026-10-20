@@ -6,6 +6,17 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## wallet-toolbox 2.15.0
 
+- Certificates issued before `@bsv/sdk` 2.8.0 under a non-BRC-52 `type`
+  ([#1085](https://github.com/bsv-blockchain/ts-stack/issues/1085)):
+  `listCertificates` leaves them out at the storage query
+  (`FindCertificatesArgs.legacyTypes: 'exclude'`; `length(type) = 44` on
+  Knex, the same test on IndexedDB), so one such record no longer fails every
+  listing. New recovery methods on `Wallet`, outside BRC-100 and not forwarded
+  by `WalletPermissionsManager`: `listLegacyCertificates()` returns those
+  records with fields and master keyring, and `relinquishLegacyCertificate()`
+  retires one. Storage-level `relinquishCertificate` accepts a 1–128-byte
+  canonical-base64 type for that path while the BRC-100 method stays strict;
+  upgrade a remote storage server together with the wallet.
 - Adds a `regtest` `Chain` for Teranode regression-network deployments
   (go-chaincfg `RegressionNetParams`). `genesisHeader('regtest')` returns the
   canonical regtest genesis header; `ChaintracksServiceClient` and

@@ -46,8 +46,12 @@ mapping for this instance.
 
 Do not pass a short legacy identifier to current SDK wallet methods or expose
 it from a remote service: current `WalletInterface` validation rejects short
-types. Export legacy records with the storage version that created them,
-authenticate them offline, and reissue/import a canonical replacement.
+types, and `@bsv/sdk` 3.3.0 listings leave such stored records out rather than
+failing. To migrate, list the affected records with `@bsv/wallet-toolbox`
+`Wallet.listLegacyCertificates()` (or export them with the storage version
+that created them on an older toolbox), authenticate them offline with
+`Certificate.verifyHistoricalSignature()`, reissue/import a canonical
+replacement, then retire the old record with `relinquishLegacyCertificate()`.
 
 ## Issuing a Certificate
 

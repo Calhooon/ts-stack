@@ -33,6 +33,9 @@ export async function listCertificates(
       partial,
       certifiers: vargs.certifiers,
       types: vargs.types,
+      // A record issued before @bsv/sdk 2.8.0 under a non-BRC-52 type is not
+      // a BRC-100 listing; Wallet.listLegacyCertificates is the recovery path.
+      legacyTypes: 'exclude',
       paged,
       trx
     }

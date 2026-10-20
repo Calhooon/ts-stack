@@ -4,7 +4,6 @@ import {
   type ValidListCertificatesArgs,
   type ValidListOutputsArgs,
   parseWalletOutpoint,
-  validateRelinquishCertificateArgs,
   validateRelinquishOutputArgs
 } from '@bsv/sdk/wallet/validationHelpers'
 import {
@@ -34,6 +33,7 @@ import { getBeefForTransaction, getBeefForTransactions } from './methods/getBeef
 import { GetReqsAndBeefDetail, GetReqsAndBeefResult, processAction } from './methods/processAction'
 import { attemptToPostReqsToNetwork, PostReqsToNetworkResult } from './methods/attemptToPostReqsToNetwork'
 import { listCertificates } from './methods/listCertificates'
+import { validateLegacyCertificateReference } from './methods/legacyCertificates'
 import { createAction } from './methods/createAction'
 import { internalizeAction } from './methods/internalizeAction'
 import { StorageReaderWriter, StorageReaderWriterOptions } from './StorageReaderWriter'
@@ -1352,7 +1352,10 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   }
 
   async relinquishCertificate(auth: AuthId, args: RelinquishCertificateArgs): Promise<number> {
-    const vargs = validateRelinquishCertificateArgs(args)
+    // The BRC-100 Wallet method validates the canonical 32-byte type before
+    // reaching storage; storage itself also serves the recovery path, which
+    // retires a record issued before @bsv/sdk 2.8.0 under a legacy type.
+    const vargs = validateLegacyCertificateReference(args)
     const cert = verifyOne(
       await this.findCertificates({
         partial: {

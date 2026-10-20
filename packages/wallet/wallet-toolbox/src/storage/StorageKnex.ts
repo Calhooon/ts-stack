@@ -1368,6 +1368,9 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
     const q = this.setupQuery('certificates', args)
     if (args.certifiers != null && args.certifiers.length > 0) void q.whereIn('certifier', args.certifiers)
     if (args.types != null && args.types.length > 0) void q.whereIn('type', args.types)
+    // A BRC-52 type is 32 bytes, 44 base64 characters; see FindCertificatesArgs.legacyTypes.
+    if (args.legacyTypes === 'exclude') void q.whereRaw('length(??) = ?', ['type', 44])
+    if (args.legacyTypes === 'only') void q.whereRaw('length(??) <> ?', ['type', 44])
     return q
   }
 

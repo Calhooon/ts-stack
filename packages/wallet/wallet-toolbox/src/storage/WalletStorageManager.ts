@@ -9,6 +9,7 @@ import {
   validateRelinquishOutputArgs
 } from '@bsv/sdk/wallet/validationHelpers'
 import { SyncPageBudget } from './sync/SyncPageBudget'
+import { validateLegacyCertificateReference } from './methods/legacyCertificates'
 import { assertLiveSyncChainsMatch, throwIfProcessSyncChunkError } from './sync/liveSyncGuards'
 import { validateSyncCheckpoint } from './sync/syncCheckpoint'
 import {
@@ -520,6 +521,20 @@ export class WalletStorageManager implements sdk.WalletStorage {
     return await this.runAsWriter(async writer => {
       const auth = await this.getAuth(true)
       return await writer.relinquishCertificate(auth, args)
+    })
+  }
+
+  /**
+   * Recovery path for a certificate issued before @bsv/sdk 2.8.0 under a
+   * non-BRC-52 type: the same relinquishment as {@link relinquishCertificate}
+   * with the type allowed to be any canonical base64 of 1–128 bytes. A remote
+   * storage server must be upgraded to accept such a reference.
+   */
+  async relinquishLegacyCertificate(args: RelinquishCertificateArgs): Promise<number> {
+    const vargs = validateLegacyCertificateReference(args)
+    return await this.runAsWriter(async writer => {
+      const auth = await this.getAuth(true)
+      return await writer.relinquishCertificate(auth, vargs)
     })
   }
 
