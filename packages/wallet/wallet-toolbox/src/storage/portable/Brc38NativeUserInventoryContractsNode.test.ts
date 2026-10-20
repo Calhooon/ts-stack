@@ -145,14 +145,32 @@ test.each(['2026-10-02', '2026-10-03', '2026-10-04'])(
                 target = before.find(row => row.physicalRowId === selectedId),
                 other = before.find(row => row.physicalRowId === 2)
               if (target === undefined || other === undefined) throw new Error('Independent user fault graph differs')
+              let retainedPrimaryEpoch: Readonly<{ userId: number; epoch: number }> | undefined
               await fixture.withWriter(async trx => {
                 const update: Record<string, string | number> = {},
                   key =
                     variant === 'wrong-user-id' || variant === 'other-user-changed' || variant === 'missing-user'
                       ? 2
                       : selectedId
-                if (variant === 'missing-user') expect(await trx('users').where({ userId: key }).delete()).toBe(1)
-                else if (variant === 'extra-user')
+                if (variant === 'missing-user') {
+                  // The preceding activeStorage variant created a genuine ABA
+                  // fence. Keep its exact counter while the parent is absent;
+                  // never disable its FK or rewind it when restoring the user.
+                  const epochs = (await trx('snapshot_sync_primary_epochs')
+                    .where({ userId: key })
+                    .select('userId', 'epoch')
+                    .limit(2)) as Array<{ userId: number; epoch: number }>
+                  expect(epochs).toHaveLength(1)
+                  const epoch = epochs[0]
+                  if (epoch.userId !== key || !Number.isSafeInteger(epoch.epoch) || epoch.epoch < 1)
+                    throw new Error('Independent secondary-user primary epoch differs')
+                  retainedPrimaryEpoch = Object.freeze({ ...epoch })
+                  await expect(trx('users').where({ userId: key }).delete()).rejects.toThrow(
+                    /FOREIGN KEY constraint failed/i
+                  )
+                  expect(await trx('snapshot_sync_primary_epochs').where(retainedPrimaryEpoch).delete()).toBe(1)
+                  expect(await trx('users').where({ userId: key }).delete()).toBe(1)
+                } else if (variant === 'extra-user')
                   await trx('users').insert({ ...other.metadata, userId: 3, identityKey: extraIdentity })
                 else {
                   if (variant === 'created-date') update.created_at = '2026-10-02T00:00:00.000Z'
@@ -173,7 +191,18 @@ test.each(['2026-10-02', '2026-10-03', '2026-10-04'])(
                   if (variant === 'wrong-user-id')
                     expect(await trx('users').where({ userId: -2 }).update({ userId: 2 })).toBe(1)
                   if (variant === 'extra-user') expect(await trx('users').where({ userId: 3 }).delete()).toBe(1)
-                  if (variant === 'missing-user') await trx('users').insert(other.metadata)
+                  if (variant === 'missing-user') {
+                    if (retainedPrimaryEpoch === undefined)
+                      throw new Error('Independent missing-user fixture lost its actual primary epoch')
+                    await trx('users').insert(other.metadata)
+                    expect(
+                      await trx('snapshot_sync_primary_epochs').where({ userId: 2 }).select('epoch').limit(2)
+                    ).toHaveLength(0)
+                    await trx('snapshot_sync_primary_epochs').insert(retainedPrimaryEpoch)
+                    expect(
+                      await trx('snapshot_sync_primary_epochs').where({ userId: 2 }).select('userId', 'epoch').limit(2)
+                    ).toEqual([retainedPrimaryEpoch])
+                  }
                   for (const row of before)
                     expect(await trx('users').where({ userId: row.physicalRowId }).update(row.metadata)).toBe(1)
                 })
