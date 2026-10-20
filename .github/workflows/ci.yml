@@ -1118,8 +1118,8 @@ jobs:
         env:
           TS_STACK_SNAPSHOT_HOSTED_MYSQL: '1'
         run: node test/storage/runSnapshotJournalMysql.cjs
-      - name: Deliver the pinned native browser for ordinary wallet shards
-        if: startsWith(matrix.id, 'shard-')
+      - name: Deliver the pinned native browser for the serial browser cases
+        if: matrix.id == 'shard-4'
         run: node scripts/provision-wallet-native-browser.mjs
       - name: Deliver the exactly pinned qualified native test executable
         run: bash scripts/provision-wallet-native-tests.sh
@@ -1155,6 +1155,29 @@ jobs:
             ${{ runner.temp }}/ts-wallet-native-tests.*/brc38-qualification-*/component-delivery-failure.json
           if-no-files-found: ignore
           retention-days: 7
+      - name: Run every original browser case serially before ordinary shard-4
+        if: matrix.id == 'shard-4'
+        env:
+          RUNPOSTGRES: '1'
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
+            '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
+          export POSTGRES_CONNECTION
+          pnpm --filter @bsv/wallet-toolbox exec jest \
+            --coverage --coverageDirectory=coverage/browser --runInBand --watchman=false \
+            --runTestsByPath src/storage/portable/Brc38NativeBrowserComponents.test.cjs \
+            src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts \
+            src/utility/BrowserArgon2idWorker.native.test.cjs \
+            --json --outputFile="$GITHUB_WORKSPACE/wallet-browser-result.json"
+          node scripts/normalize-lcov-paths.mjs \
+            packages/wallet/wallet-toolbox/coverage/browser/lcov.info \
+            packages/wallet/wallet-toolbox
+          mkdir -p .coverage-output
+          cp packages/wallet/wallet-toolbox/coverage/browser/lcov.info \
+            .coverage-output/wallet-browser.lcov.info
+          node scripts/wallet-browser-ci.mjs capture wallet-browser-result.json \
+            .coverage-output/wallet-browser.lcov.info .coverage-output/wallet.wallet-browser.json
       - name: Generate wallet-toolbox coverage shard
         env:
           WALLET_SHARD: ${{ matrix.shard }}
@@ -1209,7 +1232,7 @@ jobs:
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs|src/storage/portable/Brc38NativeBrowserComponents.test.cjs|src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts|src/utility/BrowserArgon2idWorker.native.test.cjs')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
@@ -1243,7 +1266,7 @@ jobs:
           cp packages/wallet/wallet-toolbox/coverage/${{ matrix.id }}/lcov.info \
             .coverage-output/wallet-${{ matrix.id }}.lcov.info
       - name: Release the exact native browser sandbox attachment
-        if: always() && startsWith(matrix.id, 'shard-')
+        if: always() && matrix.id == 'shard-4'
         run: node scripts/provision-wallet-native-browser.mjs --cleanup
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -1501,6 +1524,9 @@ jobs:
       - name: Verify all original native user cases at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-composed-native-ci.mjs user-verify .coverage-artifacts
+      - name: Verify all original browser cases and their coverage at this exact head
+        if: needs.prepare.outputs.wallet == 'true'
+        run: node scripts/wallet-browser-ci.mjs verify .coverage-artifacts
       - name: Compose Codecov inputs
         id: cov
         run: |

@@ -5,6 +5,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { REPOSITORY_ROOT } from '../repository-health.mjs'
+import { createHash } from 'node:crypto'
+import { walletCoverageMatrix } from '../wallet-composed-native-ci.mjs'
+import { walletBrowserSuites } from '../wallet-browser-ci.mjs'
 
 test('actual scope Bash routes every affected wallet to complete coverage exactly once', async () => {
   const { parse } = await import('yaml')
@@ -152,4 +155,109 @@ test('ordinary wallet discovery removes only the two complete mandatory native f
       )
     )
   }
+})
+
+test('the complete browser inventory runs serially inside original shard-4 with no job or budget increase', async () => {
+  const { parse } = await import('yaml')
+  const workflow = parse(readFileSync(join(REPOSITORY_ROOT, '.github/workflows/ci.yml'), 'utf8'))
+  const job = workflow.jobs['coverage-wallet']
+  assert.equal(
+    job['timeout-minutes'],
+    "${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || matrix.native_merge_minutes || matrix.native_auth_minutes || 40 }}"
+  )
+  assert.equal(job.strategy['max-parallel'], 3)
+  assert.equal(job.env.NODE_OPTIONS, '--max-old-space-size=1536')
+  assert.notEqual(job['continue-on-error'], true)
+  const hash = value => createHash('sha256').update(value).digest('hex')
+  assert.equal(
+    hash(JSON.stringify(walletCoverageMatrix().include)),
+    'dd62fabe497f3c76ffb5a660c477eb11ce2980d8a93ffbf9aa2ff8380392be6a'
+  )
+  const browser = job.steps.find(step =>
+    step.run?.includes('scripts/wallet-browser-ci.mjs capture')
+  )
+  const ordinary = job.steps.find(step => step.env?.WALLET_SHARD !== undefined)
+  assert.equal(browser.if, "matrix.id == 'shard-4'")
+  assert.notEqual(browser['continue-on-error'], true)
+  assert.equal(browser.env.RUNPOSTGRES, '1')
+  assert.ok(job.steps.indexOf(browser) < job.steps.indexOf(ordinary))
+  assert.ok(browser.run.includes('--runInBand'))
+  assert.ok(browser.run.includes('--coverage --coverageDirectory=coverage/browser'))
+  assert.ok(browser.run.includes('--json --outputFile='))
+  assert.equal(browser.run.includes('--testNamePattern'), false)
+  assert.equal(browser.run.includes('--maxWorkers'), false)
+  const files = walletBrowserSuites.map(suite =>
+    suite.file.slice('packages/wallet/wallet-toolbox/'.length)
+  )
+  const selected = browser.run
+    .split('--runTestsByPath ')[1]
+    .split('--json')[0]
+    .replaceAll('\\', '')
+    .trim()
+    .split(/\s+/)
+  assert.deepEqual(selected, files)
+  const pattern = /args\+=\(--testPathIgnorePatterns='([^']+)'\)/.exec(ordinary.run)[1]
+  assert.deepEqual(
+    pattern.split('|').filter(value => files.includes(value)),
+    files
+  )
+  const original = pattern
+    .split('|')
+    .filter(value => !files.includes(value))
+    .join('|')
+  assert.equal(hash(original), 'a71ebd28bbfcc834c30e24049159cac87118ca5e63aed225caaabfc1825bf0f8')
+  const discover = ignored => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox/node_modules/jest/bin/jest.js'),
+        '--listTests',
+        '--json',
+        '--runInBand',
+        '--watchman=false',
+        '--testPathIgnorePatterns=' + ignored
+      ],
+      {
+        cwd: join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox'),
+        encoding: 'utf8',
+        timeout: 30000,
+        maxBuffer: 4194304
+      }
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+      .map(file => file.replaceAll('\\', '/'))
+      .sort()
+  }
+  const before = discover(original),
+    after = discover(pattern)
+  assert.equal(before.length - after.length, 3)
+  assert.deepEqual(
+    before
+      .filter(file => !after.includes(file))
+      .map(file => file.slice(file.indexOf('/src/') + 1))
+      .sort(),
+    [...files].sort()
+  )
+  assert.deepEqual(
+    after.filter(file => !before.includes(file)),
+    []
+  )
+  const delivery = job.steps.find(
+    step => step.run === 'node scripts/provision-wallet-native-browser.mjs'
+  )
+  assert.equal(delivery.if, browser.if)
+  assert.ok(job.steps.indexOf(delivery) < job.steps.indexOf(browser))
+  assert.ok(browser.run.includes('.coverage-output/wallet-browser.lcov.info'))
+  const gate = workflow.jobs['coverage-upload'].steps.find(
+    step => step.run === 'node scripts/wallet-browser-ci.mjs verify .coverage-artifacts'
+  )
+  assert.equal(gate.if, "needs.prepare.outputs.wallet == 'true'")
+  assert.notEqual(gate['continue-on-error'], true)
+  assert.ok(
+    workflow.jobs['coverage-upload'].steps.indexOf(gate) <
+      workflow.jobs['coverage-upload'].steps.findIndex(
+        step => step.name === 'Compose Codecov inputs'
+      )
+  )
 })

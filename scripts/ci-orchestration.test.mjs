@@ -689,7 +689,7 @@ test('all original privileged root-copy cases run once as installer with mandato
   assert.doesNotMatch(root, /testNamePattern|continue-on-error|passWithNoTests/)
   assert.match(
     wallet,
-    /--testPathIgnorePatterns='[^']*\|src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs'/
+    /--testPathIgnorePatterns='[^']*\|src\/storage\/portable\/native\/RootNativeCopyContracts\.test\.cjs(?:\||')/
   )
 })
 
@@ -702,7 +702,9 @@ test('native browser jobs always release only their delivered exact-path sandbox
     assert.ok(source, name)
     assert.match(
       source,
-      /if: always\(\) && (matrix\.wallet_native|startsWith\(matrix\.id, 'shard-'\))/
+      name === 'mutation-tests'
+        ? /if: always\(\) && matrix\.wallet_native/
+        : /if: always\(\) && matrix\.id == 'shard-4'/
     )
     assert.match(source, /run: node scripts\/provision-wallet-native-browser\.mjs --cleanup/)
     assert.doesNotMatch(

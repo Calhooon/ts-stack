@@ -1621,6 +1621,14 @@ branches, 42.57% functions, and 45.46% lines; that collection includes imported
 `out/src` code as well as source files. Use the exact run's coverage report,
 rather than comparing unlike source-only and combined collections.
 
+The existing fourth shard first runs all three native-browser test files serially,
+then runs its remaining ordinary tests in a separate Jest invocation. The complete
+64-case browser inventory, exact source/run identity, report hash and separately
+retained LCOV must pass the root coverage receipt gate. Discovery checks prove
+that exactly those three whole files moved out of ordinary sharding. All 67 wallet
+matrix rows, the original job and case deadlines, browser pin, memory and parallel
+job limits remain unchanged.
+
 `pnpm test:property` selects every registered Wallet Toolbox property suite, including
 the portable BRC-38/39 suites. Keep the manual-test ignore option before the
 boolean runner options and file list: Jest treats it as an array and otherwise
