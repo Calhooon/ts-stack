@@ -2,6 +2,7 @@ import { createCoreOverlayTestProjects } from '../../packages/overlays/overlay/j
 import { createOverlayTestProjects } from '../../packages/overlays/overlay-express/jest-projects.config.mjs'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker, endMarker) {
   const lines = readFileSync(resolve(repositoryRoot, packageDirectory, filePath), 'utf8').split(
@@ -19,6 +20,11 @@ function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker
   return `${filePath}:${startIndex + 1}-${endIndex}`
 }
 
+// Restores Stryker's first-failure bail for Jest; see the module's header.
+const STOP_ON_KILL_ENVIRONMENT = fileURLToPath(
+  new URL('./stop-on-kill-environment.cjs', import.meta.url)
+)
+
 function jestTarget(
   configFile,
   testMatch,
@@ -33,14 +39,19 @@ function jestTarget(
         projectType: 'custom',
         configFile,
         enableFindRelatedTests: findRelated,
-        ...(testMatch === undefined
-          ? {}
-          : {
-              config: {
-                ...config,
-                testMatch
+        config: {
+          ...config,
+          ...(config.projects
+            ? {
+                projects: config.projects.map(project => ({
+                  ...project,
+                  testEnvironment: STOP_ON_KILL_ENVIRONMENT
+                }))
               }
-            })
+            : {}),
+          testEnvironment: STOP_ON_KILL_ENVIRONMENT,
+          ...(testMatch === undefined ? {} : { testMatch })
+        }
       },
       ...(esm ? { testRunnerNodeArgs: ['--experimental-vm-modules'] } : {})
     }

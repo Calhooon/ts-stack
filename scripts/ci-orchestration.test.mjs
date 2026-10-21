@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
-import { partitionedMutationTargets } from './mutation-partitions.mjs'
+import { mutationExecutionMatrix, partitionedMutationTargets } from './mutation-partitions.mjs'
 import { APPLICATION_COVERAGE_SHARDS } from './output-knowledge-coverage-validation.mjs'
 import { REPOSITORY_ROOT } from './repository-health.mjs'
 
@@ -613,6 +613,77 @@ test('the actual required mutation gate rejects missing, altered and unordered e
   }
 })
 
+function assertPartitionDownload(aggregate, id) {
+  const downloads = aggregate
+    .split(/\n {6}- /)
+    .filter(
+      step =>
+        step.startsWith('uses: actions/download-artifact@') &&
+        step.includes('pattern: mutation-*\n')
+    )
+  assert.equal(downloads.length, 1, id)
+  assert.ok(downloads[0].includes("if: needs.prepare.outputs.partition-targets != '[]'"), id)
+  assert.ok(downloads[0].includes('path: .mutation-parts-raw'), id)
+  const verify = aggregate.indexOf('name: Require every selected canonical partition target gate')
+  assert.ok(verify > aggregate.indexOf(downloads[0]), id)
+  const staging = aggregate.slice(verify)
+  assert.match(staging, /MUTATION_MATRIX:/)
+  assert.match(staging, /select\(\.target == \$target and \.partition != "whole"\)/)
+  assert.match(staging, /\.mutation-parts-raw\/mutation-\$target-\$partition/)
+  assert.match(staging, /Missing mutation partition evidence/)
+  assert.match(staging, /--target "\$target" --directory "\.mutation-parts\/\$target"/)
+}
+
+test('canonical staging requires exact selected artifacts and excludes prefix neighbours', () => {
+  const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
+    job => job.name === 'mutation-quality'
+  ).source
+  const body = aggregate.slice(
+    aggregate.indexOf('name: Require every selected canonical partition target gate')
+  )
+  const script = body.match(/ {8}run: \|\n([\s\S]*?)(?=\n {6}- )/)[1]
+  const directory = mkdtempSync(join(tmpdir(), 'stack-mutation-staging-'))
+  const targets = buildMutationTargets(REPOSITORY_ROOT)
+  const selected = partitionedMutationTargets(Object.keys(targets), targets)
+  const matrix = mutationExecutionMatrix(selected, targets)
+  const rows = matrix.include.filter(row => row.partition !== 'whole')
+  const artifact = row =>
+    join(directory, '.mutation-parts-raw', `mutation-${row.target}-${row.partition}`)
+  const run = () =>
+    spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', 'node() { :; }\n' + script], {
+      cwd: directory,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PARTITION_TARGETS: JSON.stringify(selected),
+        MUTATION_MATRIX: JSON.stringify(matrix)
+      }
+    })
+  try {
+    for (const row of rows) mkdirSync(artifact(row), { recursive: true })
+    mkdirSync(artifact({ target: rows[0].target + '-foreign', partition: rows[0].partition }), {
+      recursive: true
+    })
+    const passed = run()
+    assert.equal(passed.status, 0, passed.stderr)
+    for (const target of selected)
+      assert.deepEqual(
+        readdirSync(join(directory, '.mutation-parts', target)).sort(),
+        rows
+          .filter(row => row.target === target)
+          .map(row => `mutation-${row.target}-${row.partition}`)
+          .sort()
+      )
+    rmSync(join(directory, '.mutation-parts'), { recursive: true })
+    rmSync(artifact(rows.at(-1)), { recursive: true })
+    const missing = run()
+    assert.notEqual(missing.status, 0)
+    assert.match(missing.stdout, /Missing mutation partition evidence/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('every selected application and LCH execution part is downloaded before canonical aggregation', () => {
   const targets = buildMutationTargets(REPOSITORY_ROOT)
   const application = Object.keys(targets).filter(
@@ -644,30 +715,7 @@ test('every selected application and LCH execution part is downloaded before can
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const steps = aggregate.split(/\n {6}- /)
-  for (const id of selected) {
-    const downloads = steps.filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-    assert.equal(downloads.length, 1, id)
-    assert.ok(
-      downloads[0].includes(
-        `if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')\n`
-      ),
-      id
-    )
-    assert.ok(
-      downloads[0].split('\n').some(line => line.trim() === `path: .mutation-parts/${id}`),
-      id
-    )
-    assert.ok(
-      aggregate.indexOf(downloads[0]) <
-        aggregate.indexOf('name: Require every selected canonical partition target gate'),
-      id
-    )
-  }
+  for (const id of selected) assertPartitionDownload(aggregate, id)
   assert.ok(
     aggregate.includes('node scripts/mutation-partition-evidence.mjs verify --mode diagnostic')
   )
@@ -681,20 +729,7 @@ test('wallet recovery encoding downloads all complete execution parts before can
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
+  assertPartitionDownload(aggregate, id)
 })
 
 test('protected ledger aggregation requires selected complete execution artifacts', () => {
@@ -703,24 +738,7 @@ test('protected ledger aggregation requires selected complete execution artifact
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('private publication aggregation requires selected complete execution artifacts', () => {
@@ -729,24 +747,7 @@ test('private publication aggregation requires selected complete execution artif
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('lineage graph aggregation requires selected complete execution artifacts', () => {
@@ -755,24 +756,7 @@ test('lineage graph aggregation requires selected complete execution artifacts',
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('verified publication service aggregation requires selected complete execution artifacts', () => {
@@ -781,24 +765,7 @@ test('verified publication service aggregation requires selected complete execut
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('private publication coordination aggregation requires selected complete execution artifacts', () => {
@@ -807,24 +774,7 @@ test('private publication coordination aggregation requires selected complete ex
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('private publication HTTP aggregation requires selected complete execution artifacts', () => {
@@ -833,24 +783,7 @@ test('private publication HTTP aggregation requires selected complete execution 
   const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
     job => job.name === 'mutation-quality'
   ).source
-  const downloads = aggregate
-    .split(/\n {6}- /)
-    .filter(
-      step =>
-        step.startsWith('uses: actions/download-artifact@') &&
-        step.includes(`pattern: mutation-${id}-*\n`)
-    )
-  assert.equal(downloads.length, 1)
-  assert.ok(
-    downloads[0].includes(
-      `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-    )
-  )
-  assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-  assert.ok(
-    aggregate.indexOf(downloads[0]) <
-      aggregate.indexOf('name: Require every selected canonical partition target gate')
-  )
+  assertPartitionDownload(aggregate, id)
 })
 
 test('acquisition and proposal HTTP aggregation require every selected part artifact', () => {
@@ -868,23 +801,6 @@ test('acquisition and proposal HTTP aggregation require every selected part arti
     const aggregate = workflowJobBlocks(readFileSync(CI_PATH, 'utf8')).find(
       job => job.name === 'mutation-quality'
     ).source
-    const downloads = aggregate
-      .split(/\n {6}- /)
-      .filter(
-        step =>
-          step.startsWith('uses: actions/download-artifact@') &&
-          step.includes(`pattern: mutation-${id}-*\n`)
-      )
-    assert.equal(downloads.length, 1)
-    assert.ok(
-      downloads[0].includes(
-        `contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), '${id}')`
-      )
-    )
-    assert.ok(downloads[0].includes(`path: .mutation-parts/${id}`))
-    assert.ok(
-      aggregate.indexOf(downloads[0]) <
-        aggregate.indexOf('name: Require every selected canonical partition target gate')
-    )
+    assertPartitionDownload(aggregate, id)
   }
 })
