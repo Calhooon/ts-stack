@@ -8,16 +8,23 @@ all frozen reference Script and positive vector bytes. Implemented contracts and
 remaining qualification are tracked in [specification alignment](./SPEC-ALIGNMENT.md).
 Historical integration evidence for an earlier exemplar retains its own identity.
 
-The second review checkpoint requires complete qualification of the final source,
-with the applicable corpus, seeds, limits, thresholds, platform and packed-consumer
-checks preserved. Prefer local execution where feasible; the complete mutation
-campaign may instead run on hosted Linux when serial local execution is not
-practical. Each receipt must retain its actual source, runtime, run and attempt
-identity. Partial local and hosted results cannot be combined into a complete
-campaign, and a local pass is never reported as hosted CI green. The exact-head
-repository merge, Sonar and CodeQL gates remain required before readiness, merge
-or publication. The implementation and documentation checkmarks below do not by
-themselves qualify either checkpoint.
+Final Checkpoint 2 qualification requires complete qualification of the final
+source, with the applicable corpus, seeds, limits, thresholds, platform and
+packed-consumer checks preserved. PR review and source merge are earlier,
+separate decisions: require the exact-head repository merge, Sonar and CodeQL
+gates, resolved review findings, affected regressions and an explicit account of
+remaining qualification. Neither source merge nor the implementation checkmarks
+below declare Checkpoint 2 complete or authorize publication.
+
+Use the [iterative mutation review](../../governance/mutation-testing/REVIEW-2026-10-20-PR674.md)
+to prioritize prior uncovered/invalid mutations and changed critical boundaries,
+measure each bounded run, then run complete affected targets. The exhaustive
+campaign remains mandatory for final Checkpoint 2 and before publication under
+the protected release workflow. Prefer local feedback where feasible; hosted
+Linux supplies reproducible full release qualification. Every receipt retains
+its actual source, runtime, run and attempt identity. Partial local and hosted
+results cannot be combined into a complete campaign, and a local pass is never
+reported as hosted CI green.
 
 The current alias owner, coordinator, independent currentness, physical disclosure,
 buyer recovery and candidate-bound LCH layers are assembled with current-profile
@@ -91,12 +98,18 @@ native/browser/platform and packed-consumer profiles on the final source, with
 concrete evidence for every workflow above.
 
 The complete affected mutation campaign must qualify under current upstream
-policy. Ordinary PR CI defers mutation; a deferred check is not campaign evidence.
+policy before final Checkpoint 2 acceptance and publication. Ordinary PR CI
+defers mutation; a deferred check is not campaign evidence. This inventory's
+previous requirement to finish the exhaustive campaign before requesting PR
+review is replaced by the measured, risk-prioritized sequence above. All
+original targets, partitions, cases, seeds, limits and score/status gates remain.
 
-The completed branch must have resolved review findings and successful hosted
-CI, zero-new Sonar and CodeQL gates on its exact PR commit before it is marked
-ready. The PR completion evidence identifies that immutable commit and the full
-campaign; historical local receipts alone cannot satisfy either condition.
+The branch must have resolved review findings, successful hosted CI and zero-new
+Sonar and CodeQL gates on its exact PR commit before it is marked ready for
+review. Its completion evidence identifies that immutable commit, bounded
+critical-boundary evidence and every remaining qualification gap. Human review
+assesses those gaps before source merge. Historical local receipts cannot
+substitute for the exact-head repository gate or complete release qualification.
 
 The downstream application migrations belong to checkpoint three. This inventory
 does not authorize package publication, deployment, funded operations or merge.
@@ -195,10 +208,10 @@ are checked against exact tarballs. Final acceptance also requires all affected
 native/browser/mobile profiles, complete governed mutation qualification and
 terminal successful hosted checks on the final published head.
 
-## Final acceptance requirements
+## Final Checkpoint 2 and prepublication requirements
 
 - Pass complete uninstrumented coverage on the final published source, including the original 300-run disclosure and coordinator properties.
 - Pass the full 153-target/400-row governed mutation campaign and independently reconcile every raw result. Reconciliation with `main` adds the two WebRTCPay targets to the original 151-target/398-row inventory; all original targets, partitions and gates remain required.
 - Verify final packed consumers, platforms, conformance, actual CodeQL and zero-new Sonar findings on the same published head.
 
-The PR completion evidence must establish each requirement on the exact published head. Demonstrated reference components do not by themselves complete Checkpoint 2; this source inventory does not self-certify qualification.
+The final Checkpoint 2 evidence must establish each requirement on the exact source being qualified. PR review and source merge may precede that qualification, with the remaining work explicitly recorded; publication may not. Demonstrated reference components do not by themselves complete Checkpoint 2; this source inventory does not self-certify qualification.
