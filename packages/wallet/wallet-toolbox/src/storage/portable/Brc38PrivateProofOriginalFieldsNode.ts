@@ -44,7 +44,7 @@ export async function equalBrc38PrivateProofOriginalFields(
     field = selected.field,
     width = selected.maximumReadBytes,
     signal = selected.signal,
-    expiresAt = store.limits.expiresAt,
+    expiresAt = store.operationExpiresAt,
     deadline = performance.now() + Math.max(0, expiresAt - Date.now())
   if (
     working === undefined ||

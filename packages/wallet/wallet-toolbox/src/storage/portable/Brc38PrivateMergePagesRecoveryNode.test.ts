@@ -17,6 +17,9 @@ import { authenticatedStagePassword, encrypted } from './Brc38AuthenticatedPriva
 import { semanticStageFixture } from './Brc38SemanticStageFixture'
 import { inspectBrc38PrivateMergePages } from './Brc38PrivateMergePagesNode'
 import * as sourceSeal from './Brc38AuthenticatedSourceSealNode'
+import { composedNativeFixture, composedFixtureChain } from './Brc38ComposedNativeFixture'
+import { Brc38NativeLocalBaselineSource } from './Brc38NativeLocalBaselineSourceNode'
+import { equalBrc38PrivateProofOriginalFields } from './Brc38PrivateProofOriginalFieldsNode'
 import { readRow } from './Brc38PublishedProfileReceiptNode'
 
 // A real expired original and fresh frozen copy exercise only the read-lifetime
@@ -48,7 +51,8 @@ test('expired page inspection uses only the actual recovery owner and still refu
       maximumJournalLogicalBytes: 516096,
       services: proof.services
     })
-  let profile: Awaited<ReturnType<typeof root.publish>> | undefined,
+  let liveSource: Awaited<ReturnType<typeof composedNativeFixture>> | undefined,
+    profile: Awaited<ReturnType<typeof root.publish>> | undefined,
     database: Knex | undefined,
     catalog: Knex | undefined,
     session: object | undefined,
@@ -88,6 +92,11 @@ test('expired page inspection uses only the actual recovery owner and still refu
     await catalog.destroy()
     catalog = undefined
     await profile.close()
+    // Construct the separate genuine source while the original admission is
+    // still alive. Both setups remain inside this unchanged case owner; the
+    // comparison below still waits for the real original UTC expiry.
+    await waitForNativeTestExpiry(originalLimits.expiresAt - 120000)
+    liveSource = await composedNativeFixture(executable)
     await waitForNativeTestExpiry(originalLimits.expiresAt)
     expect(Date.now()).toBeGreaterThanOrEqual(originalLimits.expiresAt)
     const attempt = await driver.NativeProfileSqlite.startForClaim(
@@ -172,6 +181,51 @@ test('expired page inspection uses only the actual recovery owner and still refu
                           inspectBrc38PrivateMergePages(copy, read, restore.admission, { workingAllocation: working })
                         ).rejects.toThrow('Private merge page history differs')
                         expect(verified).toBe(true)
+                        const live = liveSource!
+                        await Brc38NativeLocalBaselineSource.with(
+                          live.storage,
+                          {
+                            identityKey: live.manager.getActiveUser().identityKey,
+                            chain: composedFixtureChain(live.storage),
+                            targetStorageIdentityKey: live.manager.getActiveStore(),
+                            mode: 'merge'
+                          },
+                          previewReceiptPolicy,
+                          {
+                            workingAllocation: working,
+                            maximumMetadataBytes: 65536,
+                            maximumReadBytes: 1024,
+                            expiresAt
+                          },
+                          async source => {
+                            const rows = await Brc38NativeLocalBaselineSource.ownedPage(source, 'proven_txs', null, 2)
+                            expect(rows).toHaveLength(1)
+                            const original = {
+                                origin: 'local' as const,
+                                sourceRowId: rows[0],
+                                bytes: proof.tx.toBinary().length
+                              },
+                              selected = {
+                                field: 'rawTx' as const,
+                                left: original,
+                                right: original,
+                                maximumReadBytes: 1024,
+                                workingAllocation: working
+                              }
+                            await expect(
+                              equalBrc38PrivateProofOriginalFields(copy, source, read, selected)
+                            ).resolves.toBe(true)
+                            const abort = new AbortController(),
+                              stopped = new Error('proof comparison cancelled')
+                            abort.abort(stopped)
+                            await expect(
+                              equalBrc38PrivateProofOriginalFields(copy, source, read, {
+                                ...selected,
+                                signal: abort.signal
+                              })
+                            ).rejects.toBe(stopped)
+                          }
+                        )
                         const abort = new AbortController(),
                           stopped = new Error('page inspection cancelled')
                         abort.abort(stopped)
@@ -211,6 +265,7 @@ test('expired page inspection uses only the actual recovery owner and still refu
       }
     },
     async () => await catalog?.destroy(),
+    async () => await liveSource?.close(),
     async () => await profile?.close(),
     async () => await restore.close(),
     async () => await admission.close(),
