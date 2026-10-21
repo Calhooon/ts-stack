@@ -453,3 +453,16 @@ SQL. Original component and property files remain selected, including all
 300-run collation/conflict schedules. Their fixture and schema inputs participate
 in affected-target selection and source binding. This adds semantic coverage;
 the separately required owned-native and real MySQL qualification still apply.
+
+The complete 39-case native integrity file uses its existing six mandatory
+cohorts and complete exact-head report/LCOV union, instead of repeating the
+whole file inside each catalog mutation baseline. All original data, case
+names (including repeated names), 180-second owners, 210-second case guards and
+4,096-operation limits remain. Actual Jest discovery verifies that this removes
+only the duplicate full-file invocation and preserves every other selected
+component and the registered property suite. The full file remains an affected
+input; native lane dispatch/receipt controls also select owning mutation targets
+and participate in final qualification identity. Every canonical mutant and
+score/zero-uncovered/invalid/unexecuted gate remains required. This scheduling
+repair does not resolve the separately observed retained-snapshot/sqlite-bootstrap
+300-second startup failure or qualify the still-failing native integrity cases.

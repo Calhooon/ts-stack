@@ -209,7 +209,6 @@
     "src/storage/portable/Brc38NativeCandidateUniqueContractsNode.test.ts",
     "src/storage/portable/Brc38NativeCatalogNode.property.test.ts",
     "src/storage/portable/Brc38NativeCatalogNode.test.ts",
-    "src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts",
     "src/storage/portable/Brc38NativeDeleteActivationNode.test.ts",
     "src/storage/portable/Brc38NativeIncomingAllocationContractsNode.test.ts",
     "src/storage/portable/Brc38NativeLocalCaptureContractsNode.test.ts",

@@ -11,7 +11,8 @@ import {
   nativeMergeTestFile,
   nativeAuthenticatedMergeTestFile,
   nativeReadTestFile,
-  nativeUserTestFile
+  nativeUserTestFile,
+  nativeIntegrityTestFile
 } from './wallet-composed-native-ci.mjs'
 
 import {
@@ -35,7 +36,8 @@ const nativeFunctionalFiles = [
   nativeMergeTestFile,
   nativeAuthenticatedMergeTestFile,
   nativeReadTestFile,
-  nativeUserTestFile
+  nativeUserTestFile,
+  nativeIntegrityTestFile
 ].map(file => file.slice('packages/wallet/wallet-toolbox/'.length))
 
 const targets = {
@@ -636,6 +638,58 @@ test('full native and ordinary journal functional files retain affected-target o
     selectAffectedMutationTargets(precise, ['packages/example/test/full.test.ts.extra']),
     []
   )
+})
+
+test('native integrity mutation routing keeps mandatory full-case admission and removes only its duplicate execution', async () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)
+  const id = 'wallet-current-brc38-native-catalog-node'
+  const target = canonical[id]
+  const file = nativeIntegrityTestFile.slice(target.packageDirectory.length + 1)
+  assert.ok(target.requiredFunctionalTests.includes(file))
+  const wallet = resolve(REPOSITORY_ROOT, target.packageDirectory)
+  const base = await (await import('../packages/wallet/wallet-toolbox/jest.config.cjs')).default()
+  const config = { ...base, ...target.runnerOptions.jest.config, rootDir: wallet }
+  const escaped = '<rootDir>/' + file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
+  const before = {
+    ...config,
+    testMatch: [...config.testMatch, '<rootDir>/' + file],
+    testPathIgnorePatterns: config.testPathIgnorePatterns.filter(value => value !== escaped)
+  }
+  const discover = selection =>
+    JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          resolve(wallet, 'node_modules/jest/bin/jest.js'),
+          '--listTests',
+          '--json',
+          '--runInBand',
+          '--watchman=false',
+          '--config',
+          JSON.stringify(selection)
+        ],
+        { cwd: wallet, encoding: 'utf8', timeout: 15000, maxBuffer: 1048576 }
+      )
+    ).sort()
+  const original = discover(before),
+    routed = discover(config)
+  assert.deepEqual(
+    original.filter(value => !routed.includes(value)),
+    [resolve(wallet, file)]
+  )
+  assert.deepEqual(
+    routed.filter(value => !original.includes(value)),
+    []
+  )
+  assert.ok(
+    routed.includes(resolve(wallet, target.propertyTest.slice(target.packageDirectory.length + 1)))
+  )
+  for (const input of [
+    nativeIntegrityTestFile,
+    'scripts/wallet-composed-native-ci.mjs',
+    '.github/workflows/ci.yml'
+  ])
+    assert.ok(selectAffectedMutationTargets(canonical, [input]).includes(id))
 })
 
 test('reviewed component routing preserves properties, broader input ownership and native browser coverage', () => {

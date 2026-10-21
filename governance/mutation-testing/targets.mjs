@@ -329,7 +329,8 @@ function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker
 }
 
 // The original full native and ordinary journal cases have mandatory exact-head CI
-// lanes and receipt-union gates. Six real expiry waits alone take at least6h;
+// lanes and receipt-union gates. Six real expiry waits alone take at least6h.
+// The complete39-case integrity file also has mandatory cohort/receipt admission;
 // repeating these complete files in a mutation baseline cannot fit a hosted
 // job. The ordinary ten-case journal file also runs serially with report/LCOV
 // admission in the existing shard-2 job. Component tests must still cover every
@@ -343,6 +344,7 @@ const requiredFunctionalTests = new Set([
   '<rootDir>/src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts',
   '<rootDir>/src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts',
   '<rootDir>/src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts',
+  '<rootDir>/src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts',
   '<rootDir>/src/storage/__test/WalletStorageManager.journal.test.ts'
 ])
 
@@ -8354,8 +8356,20 @@ export function buildMutationTargets(repositoryRoot) {
               '.github/workflows/ci.yml'
             ])
           ]
+        if (
+          functional.some(
+            file => file !== '<rootDir>/src/storage/__test/WalletStorageManager.journal.test.ts'
+          )
+        )
+          target.configurationInputs = [
+            ...new Set([
+              ...(target.configurationInputs ?? []),
+              'scripts/wallet-composed-native-ci.mjs',
+              '.github/workflows/ci.yml'
+            ])
+          ]
         // Jest replaces this array when merging its configuration. Preserve the
-        // package's generated-directory boundaries, then exclude only the seven
+        // package's generated-directory boundaries, then exclude only the eight
         // already governed functional files, including matches through globs.
         config.testPathIgnorePatterns = [
           ...new Set([

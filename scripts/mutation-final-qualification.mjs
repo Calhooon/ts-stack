@@ -24,6 +24,7 @@ const INPUTS = [
   'governance/mutation-testing/execution-partitions.json',
   'scripts/mutation-partition-evidence.mjs',
   'scripts/wallet-journal-ci.mjs',
+  'scripts/wallet-composed-native-ci.mjs',
   '.github/workflows/ci.yml',
   '.github/workflows/mutation-tests.yml',
   'package.json',
