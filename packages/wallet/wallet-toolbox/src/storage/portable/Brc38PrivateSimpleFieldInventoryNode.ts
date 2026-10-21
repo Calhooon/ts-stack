@@ -572,7 +572,7 @@ async function inspectFieldRows(
               }
               for (;;) {
                 check()
-                const next = await nextBrc38PrivateMergeTargetAlias(k, admission, table, rowId, aliasCursor)
+                const next = await nextBrc38PrivateMergeTargetAlias(store, k, admission, table, rowId, aliasCursor)
                 if (next === undefined) break
                 const position = next - offsets.get(table)!
                 if (position < 0 || position >= counts.get(table)! || ++aliases > store.limits.maximumRows) invalid()

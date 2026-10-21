@@ -373,7 +373,7 @@ export async function inspectBrc38PrivateRequestInventory(
         await Brc38PrivateDerivedTextLifetimes.with(store, projection, async lifetimes => {
           for (;;) {
             const next = await read(
-              async k => await nextBrc38PrivateMergeTargetAlias(k, admission, 'provenTxReqs', rowId, aliasCursor)
+              async k => await nextBrc38PrivateMergeTargetAlias(store, k, admission, 'provenTxReqs', rowId, aliasCursor)
             )
             if (next === undefined) break
             const position = next - layout.offset

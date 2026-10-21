@@ -6485,3 +6485,5 @@ checks around each read. Targeted file-copy/primary ABA and early-wake
 regressions do not establish full native recovery qualification.
 
 Read-only native merge-page history follows the actual bounded operation owner, including a fresh frozen recovery copy after original import expiry. Historical writer and checkpoint timestamps remain bounded by the immutable original admission. Comparison never renews financial import authority; current owner, seal, schema, page-chain and charge checks remain required. No API, wire, schema, native ABI or resource-limit migration; complete recovery qualification remains required.
+
+Read-only native merge-target alias lookup now uses the exact borrowed transaction of its actual bounded operation owner, including frozen recovery after original import expiry. Original financial admission, query-only mode, complete receipt, journal/schema/row/mapping checks and all limits remain unchanged. No public API, wire, schema or native ABI migration; complete expired-recovery qualification remains required.

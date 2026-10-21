@@ -203,7 +203,7 @@ export async function inspectBrc38PrivateProofInventory(
           touched = false
         for (;;) {
           check()
-          const next = await nextBrc38PrivateMergeTargetAlias(k, admission, 'provenTxs', rowId, afterAlias)
+          const next = await nextBrc38PrivateMergeTargetAlias(store, k, admission, 'provenTxs', rowId, afterAlias)
           if (next === undefined) break
           const position = next - proofOffset
           if (position < 0 || position >= proofCount || ++aliases > store.limits.maximumRows) invalid()

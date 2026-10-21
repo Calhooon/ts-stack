@@ -9,7 +9,11 @@ import { loadBrc38ImportIdMap, type Brc38ImportIdReference } from './Brc38Import
 import { brc38ImportTargetIndexes, brc38ImportTargetIndexName } from './Brc38ImportTargetIndexes'
 import { brc38PrivatePageIdForms } from './Brc38PrivatePageIdsNode'
 import { chargeBrc38ImportDecodedBudget } from './Brc38ImportDecodedBudget'
-import { isBrc38OwnedPrivateNativeSqlite, isBrc38OwnedPrivateNativeWriter } from './KnexBrc38StagingStore'
+import {
+  isBrc38OwnedPrivateNativeSqlite,
+  isBrc38OwnedPrivateNativeWriter,
+  type KnexBrc38StagingStore
+} from './KnexBrc38StagingStore'
 
 export const brc38PrivateMergeTargetsTable = 'brc38_private_merge_targets'
 export const brc38PrivateMergeTargetsBudgetTable = 'brc38_private_merge_targets_budget'
@@ -302,6 +306,7 @@ export async function inspectBrc38PrivateMergeTarget(
 /** Indexed one-alias cursor for the later semantic inventory. This returns
  * DATA only; the caller must reconstruct and compare originals/current rows. */
 export async function nextBrc38PrivateMergeTargetAlias(
+  store: KnexBrc38StagingStore,
   k: Knex.Transaction,
   admission: Brc38ImportJournalAdmission,
   selectedTable: Brc38StageTable,
@@ -309,6 +314,7 @@ export async function nextBrc38PrivateMergeTargetAlias(
   afterSourceRow: number
 ): Promise<number | undefined> {
   actual(k)
+  store.assertPrivateNativeReadTransaction(k)
   if (!(await hasBrc38PrivateMergeTargets(k)) || selectedTable === 'syncStates' || integer(afterSourceRow) < 0)
     invalid()
   integer(physical)
@@ -318,7 +324,9 @@ export async function nextBrc38PrivateMergeTargetAlias(
   if (
     mode.length !== 1 ||
     mode[0].query_only !== 1 ||
-    Date.now() >= admission.expiresAt ||
+    // A frozen recovery copy owns a separate bounded read lifetime. The
+    // immutable admission still describes the original financial import.
+    Date.now() >= store.operationExpiresAt ||
     recovery?.phase !== 'IMPORT' ||
     recovery.activeImportId !== admission.scope.importId ||
     recovery.bindingSha256 !== admission.scope.bindingSha256 ||
@@ -334,7 +342,8 @@ export async function nextBrc38PrivateMergeTargetAlias(
     .select('sourceRow')
     .limit(1)) as Array<{ sourceRow: unknown }>
   actual(k)
-  if (Date.now() >= admission.expiresAt) invalid()
+  store.assertPrivateNativeReadTransaction(k)
+  if (Date.now() >= store.operationExpiresAt) invalid()
   if (rows.length === 0) return undefined
   const sourceRow = integer(rows[0].sourceRow)
   if (sourceRow <= afterSourceRow || sourceRow >= admission.totalRows) invalid()
