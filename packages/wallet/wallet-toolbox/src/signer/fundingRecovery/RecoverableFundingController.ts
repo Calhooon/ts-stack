@@ -3,7 +3,7 @@ import type { Wallet } from '../../Wallet'
 import { parseFundingRecoveryOperation, requireFunding, type FundingRecoveryResult } from '../../storage/fundingRecovery/FundingRecoveryProtocol'
 import { SQLiteFundingRecoveryStore } from '../../storage/fundingRecovery/SQLiteFundingRecoveryStore'
 import { internalizeAction as signInternalize } from '../methods/internalizeAction'
-import { internalizeAction as storeInternalize } from '../../storage/methods/internalizeAction'
+import { internalizeActionWithRecovery } from '../../storage/methods/internalizeActionWithRecovery'
 
 /**
  * Explicit local custody capability above BRC-100. The installed application must
@@ -36,7 +36,7 @@ export class RecoverableFundingController {
         tx: decodeOutputBytes(operation.beef, 65536),
         outputs: [{ outputIndex: operation.funding.outputIndex, protocol: 'wallet payment', paymentRemittance: { derivationPrefix: operation.derivationPrefix, derivationSuffix: operation.derivationSuffix, senderIdentityKey: operation.buyer } }],
         description: 'Recoverable acquisition funding'
-      }, async args => await storeInternalize(this.store.storage, auth, args, retained))
+      }, async args => await internalizeActionWithRecovery(this.store.storage, auth, args, retained))
       const result = await this.store.getInternalization(userId, this.wallet.identityKey, operation.id)
       requireFunding(result.state === 'accepted', 'Funding recovery ownership has not committed')
       return result

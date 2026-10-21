@@ -6,6 +6,7 @@ import { fundingFixture } from '../../../storage/fundingRecovery/__tests__/fundi
 import { blockHash, genesisHeader, serializeBaseBlockHeader } from '../../../services/chaintracker/chaintracks/util/blockHeaderUtilities'
 import { EntityProvenTxReq } from '../../../storage/schema/entities/EntityProvenTxReq'
 import { internalizeAction as internalizeStorage } from '../../../storage/methods/internalizeAction'
+import { internalizeActionWithRecovery } from '../../../storage/methods/internalizeActionWithRecovery'
 import type { FundingRecoveryCommit } from '../../../storage/fundingRecovery/FundingRecoveryProtocol'
 import { TaskSendWaiting } from '../../../monitor/tasks/TaskSendWaiting'
 
@@ -20,6 +21,49 @@ describe('durable local acquisition funding', () => {
     const controller = new RecoverableFundingController(context.wallet, store)
     return { ...fixture, store, controller }
   }
+
+  test.each(['three arguments', 'four arguments', 'expired fourth-argument fence'] as const)(
+    'preserves historical storage internalization with %s',
+    async mode => {
+      const { operation, tx } = await setup()
+      tx.merklePath = new MerklePath(1400, [[{ offset: 0, hash: tx.id('hex'), txid: true }]])
+      const input = operation()
+      jest.mocked(context.services.getChainTracker).mockResolvedValue({ currentHeight: async () => 1400, isValidRootForHeight: async () => true })
+      const header = { ...genesisHeader(context.chain), height: 1400, merkleRoot: tx.id('hex') }
+      jest.spyOn(context.services, 'getHeaderForHeight').mockResolvedValue(serializeBaseBlockHeader(header))
+      const auth = await context.wallet.storage.getAuth(true)
+      const args = {
+        tx: Utils.toArray(input.beef, 'base64'),
+        outputs: [{ outputIndex: 1, protocol: 'wallet payment' as const, paymentRemittance: { derivationPrefix: input.derivationPrefix, derivationSuffix: input.derivationSuffix, senderIdentityKey: input.buyer } }],
+        description: 'Historical storage call fixture'
+      }
+      const run = () => mode === 'three arguments'
+        ? internalizeStorage(context.activeStorage, auth, args)
+        : context.activeStorage.withInternalizeReceipt(auth, args, async claim => {
+            if (mode === 'expired fourth-argument fence') {
+              await context.activeStorage.knex('internalize_receipts')
+                .where({ userId: context.userId, txid: input.funding.txid })
+                .update({ leaseUntil: 0 })
+            }
+            return await internalizeStorage(context.activeStorage, auth, args, claim)
+          })
+      if (mode === 'expired fourth-argument fence') {
+        await expect(run()).rejects.toThrow('wallet receipt claim expired or was superseded')
+        expect(await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })).toEqual([])
+        expect(await context.activeStorage.findTransactions({ partial: { userId: context.userId, txid: input.funding.txid } })).toEqual([])
+      } else {
+        await expect(run()).resolves.toMatchObject({ accepted: true })
+        const outputs = await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })
+        expect(outputs).toHaveLength(1)
+        expect(outputs[0]).toMatchObject({ vout: 1, satoshis: 100 })
+        if (mode === 'four arguments') {
+          expect(await context.activeStorage.knex('internalize_receipts').where({ userId: context.userId, txid: input.funding.txid }).first()).toMatchObject({ state: 'complete' })
+          await expect(run()).resolves.toMatchObject({ accepted: true, isMerge: true })
+          expect(await context.activeStorage.findOutputs({ partial: { userId: context.userId, txid: input.funding.txid } })).toHaveLength(1)
+        }
+      }
+    }
+  )
 
   test('the backend receipt port rejects absent authorization and incomplete transaction evidence before invoking a writer', async () => {
     const { operation } = await setup()
@@ -406,7 +450,7 @@ describe('durable local acquisition funding', () => {
   test('rejects unsupported hooks before verification and refuses failed, overflowing or inconsistent wallet state', async () => {
     const { operation, controller, store } = await setup(), input = operation()
     const hook = await store.retain(context.userId, context.identityKey, input)
-    await expect(internalizeStorage(context.activeStorage, { userId: context.userId }, { tx: [], outputs: [], description: 'Invalid local hook fixture' }, { ...hook, protocol: 'future' } as unknown as FundingRecoveryCommit)).rejects.toThrow('Unsupported funding recovery protocol')
+    await expect(internalizeActionWithRecovery(context.activeStorage, { userId: context.userId }, { tx: [], outputs: [], description: 'Invalid local hook fixture' }, { ...hook, protocol: 'future' } as unknown as FundingRecoveryCommit)).rejects.toThrow('Unsupported funding recovery protocol')
     const now = new Date()
     const transactionId = await context.activeStorage.insertTransaction({ created_at: now, updated_at: now, transactionId: 0, userId: context.userId, status: 'failed', reference: 'Zml4dHVyZQ==', isOutgoing: false, satoshis: 0, description: 'Inconsistent public fixture', txid: input.funding.txid })
     await expect(controller.internalizeOnce(input)).rejects.toThrow('invalid status failed')

@@ -228,7 +228,7 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
 
   override async internalizeAction(auth: AuthId, args: InternalizeActionArgs): Promise<StorageInternalizeActionResult> {
     validateInternalizeActionArgs(args)
-    return await this.withInternalizeReceipt(auth, args, claim => internalizeAction(this, auth, args, undefined, claim))
+    return await this.withInternalizeReceipt(auth, args, claim => internalizeAction(this, auth, args, claim))
   }
 
   override async internalizeBrc197Action(

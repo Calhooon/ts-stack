@@ -211,3 +211,14 @@ An integration test also passes the retained request to the ordinary wallet
 monitor with a local synthetic processor response. It verifies the unmined
 transition and unchanged receipt/balance after replay; it does not contact a
 public transaction processor.
+
+## Storage helper compatibility
+
+The existing storage helper retains `internalizeAction(storage, auth, args, receipt?)`.
+Both the three-argument call and the fourth-argument SQL receipt fence remain
+unchanged, including expiry checks and transactional rollback. Explicit local
+funding recovery uses the separate deep import
+`@bsv/wallet-toolbox/out/src/storage/methods/internalizeActionWithRecovery`,
+which exports `internalizeActionWithRecovery(storage, auth, args, recovery, receipt?)`.
+The controller uses this named opt-in entry point; both helpers share the same
+validated ownership core. Ordinary wallet and provider methods require no migration.

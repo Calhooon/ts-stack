@@ -337,6 +337,7 @@ function walletFundingTarget(repositoryRoot, source, property) {
     'src/storage/fundingRecovery/**',
     'src/signer/fundingRecovery/**',
     'src/storage/methods/internalizeAction.ts',
+    'src/storage/methods/internalizeActionWithRecovery.ts',
     'src/signer/methods/internalizeAction.ts',
     'src/storage/methods/internalizeActionCore.ts',
     'src/signer/methods/internalizeActionCore.ts',
@@ -450,6 +451,7 @@ export function buildMutationTargets(repositoryRoot) {
         // The entire shared pipelines include every site in the historical
         // method ranges, plus the new selected profile and ownership checks.
         'src/storage/methods/internalizeAction.ts',
+        'src/storage/methods/internalizeActionWithRecovery.ts',
         'src/signer/methods/internalizeAction.ts',
         'src/storage/methods/internalizeActionCore.ts',
         'src/signer/methods/internalizeActionCore.ts',

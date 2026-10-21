@@ -6,6 +6,10 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## wallet-toolbox 2.15.0 (source candidate)
 
+- Preserve the existing storage `internalizeAction(storage, auth, args, receipt?)`
+  call signature. Local funding recovery uses the separate
+  `internalizeActionWithRecovery` deep import; historical callers need no migration.
+
 - Acquire the local funding route's shared SQL receipt fence inside its atomic
   ownership/journal transaction. A killed uncommitted writer leaves no pending
   lease, and independently prepared contenders can reach their coordination
