@@ -656,14 +656,7 @@ export default class WalletWireTransceiver implements WalletInterface {
     this.#writeOptionalVarInt(paramWriter, args.offset)
     this.#writeOptionalBool(paramWriter, args.seekPermission)
 
-    // Historical peers omit spendability from output records. Only request the
-    // extended layout explicitly; never guess it from response field values.
-    if (this.#listOutputsSpendable) paramWriter.writeUInt8(1)
-    const result = await this.#transmit('listOutputs', originator, paramWriter.toUint8Array())
-    const resultReader = new ReaderUint8Array(result)
-    if (this.#listOutputsSpendable && resultReader.readVarIntNumStrict() !== -1) {
-      throw new Error('Missing listOutputs spendable encoding acknowledgement')
-    }
+    const resultReader = await this.#transmitListOutputs(paramWriter, originator)
     if (isModuleBalanceQuery(args.basket)) {
       const balance = toUTF8Strict(resultReader.read(resultReader.readVarIntNumStrict(false)))
       if (!resultReader.eof()) throw new Error('Invalid listOutputs module balance response')
@@ -688,6 +681,21 @@ export default class WalletWireTransceiver implements WalletInterface {
     }
     this.#assertPageCount(outputs.length, totalOutputs, 'listOutputs')
     return validateWalletResult('listOutputs', { totalOutputs, BEEF, outputs }, bindingRequest)
+  }
+
+  async #transmitListOutputs(
+    params: WriterUint8Array,
+    originator?: OriginatorDomainNameStringUnder250Bytes
+  ): Promise<ReaderUint8Array> {
+    // Historical peers omit spendability from output records. Only request the
+    // extended layout explicitly; never guess it from response field values.
+    if (this.#listOutputsSpendable) params.writeUInt8(1)
+    const result = await this.#transmit('listOutputs', originator, params.toUint8Array())
+    const reader = new ReaderUint8Array(result)
+    if (this.#listOutputsSpendable && reader.readVarIntNumStrict() !== -1) {
+      throw new Error('Missing listOutputs spendable encoding acknowledgement')
+    }
+    return reader
   }
 
   #parseListOutputEntry(reader: ReaderUint8Array): ListOutputsResult['outputs'][number] {

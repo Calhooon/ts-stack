@@ -775,9 +775,9 @@ async function dispatchListOutputs(
     const request = Array.from(Buffer.from(input.wireRequestHex, 'hex'))
     const response = Array.from(Buffer.from(input.wireResponseHex, 'hex'))
     const caller = new WalletWireTransceiver({
-      transmitToWallet: async actual => {
+      transmitToWallet: actual => {
         expect(actual).toEqual(request)
-        return response
+        return Promise.resolve(response)
       }
     })
     const result = await caller.listOutputs(
@@ -789,10 +789,10 @@ async function dispatchListOutputs(
       ...(result.BEEF === undefined ? {} : { BEEF: Array.from(result.BEEF) })
     }).toEqual(expected)
     const processor = new WalletWireProcessor({
-      listOutputs: async (args: ListOutputsArgs, originator?: string) => {
+      listOutputs: (args: ListOutputsArgs, originator?: string) => {
         expect(args).toEqual(input.args)
         expect(originator).toBe(input.originator)
-        return expected
+        return Promise.resolve(expected)
       }
     } as unknown as WalletInterface)
     await expect(processor.transmitToWallet(request)).resolves.toEqual(response)
