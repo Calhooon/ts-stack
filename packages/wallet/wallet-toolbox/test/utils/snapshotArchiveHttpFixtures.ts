@@ -16,6 +16,10 @@ import { seedArchiveClosure } from './snapshotArchiveFixtures'
 import { runInSeries } from '../../src/utility/runInSeries'
 import type { Chain } from '../../src/sdk/types'
 
+// These remain independent, file-backed SQLite stores with real WAL and locks.
+// Linux CI uses its existing tmpfs; compiler caches and other fixtures stay put.
+const fixtureTemporaryRoot = process.platform === 'linux' && process.env.CI === 'true' ? '/dev/shm' : tmpdir()
+
 export function snapshotAuthenticationWallet(privateKey: PrivateKey, chain: Chain = 'test'): Wallet {
   return new Wallet({
     chain,
@@ -58,7 +62,7 @@ export async function snapshotHttpFixture(
   storageIdentityKey = 'http-snapshot-source',
   authenticationKey?: PrivateKey
 ) {
-  const directory = await mkdtemp(join(tmpdir(), 'snapshot-http-'))
+  const directory = await mkdtemp(join(fixtureTemporaryRoot, 'snapshot-http-'))
   const key = authenticationKey ?? PrivateKey.fromRandom()
   const identityKey = key.toPublicKey().toString()
   const wallet = snapshotAuthenticationWallet(key, chain)

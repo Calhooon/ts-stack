@@ -22,6 +22,9 @@ import { encodeSyncTransfer, syncTransferDigest } from '../remoting/SyncTransfer
 const identity = '02' + '11'.repeat(32)
 const foreignIdentity = '03' + '22'.repeat(32)
 const when = new Date('2026-01-01T00:00:00.000Z')
+// Keep private SQLite files on Linux CI's existing tmpfs. Compiler caches keep
+// their normal temporary directory; real WAL, locks and process-loss checks remain.
+const fixtureTemporaryRoot = process.platform === 'linux' && process.env.CI === 'true' ? '/dev/shm' : tmpdir()
 const stores: StorageKnex[] = []
 const directories: string[] = []
 function deferred() {
@@ -48,7 +51,7 @@ async function waitForBoundary(boundary: Promise<void>, operation: Promise<unkno
   ])
 }
 async function fixture(count = 130, wal = true, disabled?: 'source' | 'destination') {
-  const directory = await mkdtemp(join(tmpdir(), 'wallet-snapshot-sync-'))
+  const directory = await mkdtemp(join(fixtureTemporaryRoot, 'wallet-snapshot-sync-'))
   directories.push(directory)
   async function open(name: string, snapshotSync = true) {
     const store = new StorageKnex({

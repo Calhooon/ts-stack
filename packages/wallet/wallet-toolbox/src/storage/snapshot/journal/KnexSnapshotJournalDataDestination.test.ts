@@ -39,9 +39,13 @@ import {
 import type { RemoteSnapshotJournalArchive } from './openRemoteSnapshotJournalArchive'
 import type { SnapshotJournalDestinationCheckpoint } from './SnapshotJournalTypes'
 
+// Match the source fixture's private Linux CI tmpfs without moving Jest caches
+// or changing SQLite durability settings and the original receiver deadlines.
+const fixtureTemporaryRoot = process.platform === 'linux' && process.env.CI === 'true' ? '/dev/shm' : tmpdir()
+
 async function fixture(full = false) {
   const source = await snapshotHttpFixture(true, full),
-    directory = await mkdtemp(join(tmpdir(), 'journal-data-target-'))
+    directory = await mkdtemp(join(fixtureTemporaryRoot, 'journal-data-target-'))
   const target = new StorageKnex({
     ...StorageProvider.createStorageBaseOptions('test'),
     knex: knex({

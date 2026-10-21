@@ -6456,3 +6456,9 @@ October 3 timestamp through the admitted source writer after real activation.
 Activation stamps a changed primary with current UTC; setting the test baseline
 afterwards preserves the intended older, equal and newer header comparisons.
 All three dates and their original corruption, refold and resource checks remain.
+
+Linux CI keeps disposable snapshot-sync and HTTP journal SQLite fixtures in
+private directories on its existing `/dev/shm` filesystem. Other platforms use
+the normal temporary directory. WAL, locking, process-crash recovery, independent
+databases, assertions and deadlines remain unchanged; compiler caches stay on
+their normal storage. No filesystem or container memory allowance is increased.
