@@ -33,9 +33,22 @@ This is a source candidate; publication and deployment are separate actions.
 `ListOutputsResult.totalOutputs` is `PositiveIntegerOrZero | DecimalString`. A
 BRC-112 module balance query (`p <module> balance <basket>`) returns the exact
 balance as decimal text, with no outputs and no BEEF. Every other query still
-returns a count. The binary `listOutputs` response carries that text and each
-output's `spendable` byte, so both ends of a binary wallet connection must be
-on 4.0.
+returns a count. Ordinary binary `listOutputs` requests and responses retain
+the SDK 2/3 encoding, with implicit `spendable: true`; existing applications
+and wallets can upgrade independently. Module balance text is selected only
+by the new balance query.
+
+Module inventory can include non-spendable records. To carry those over binary,
+explicitly construct `new WalletWireTransceiver(wire, { listOutputsEncoding:
+'spendable' })` against a processor supporting that extension. The request
+appends one version byte (`1`) after `seekPermission`; the response acknowledges
+it with signed VarInt `-1` immediately after the success byte, then carries a
+byte (`0` or `1`) after each output's locking script. Default
+`WalletClient` connections do not request this extension. Unknown extensions
+and trailing bytes are rejected before calling the wallet. A legacy request
+whose result contains `spendable: false` fails rather than reporting it as true.
+JSON also preserves those records. There is no format guessing or automatic
+retry against an older processor.
 
 Code that uses `totalOutputs` as a number narrows it first:
 

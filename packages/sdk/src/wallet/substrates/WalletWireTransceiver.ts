@@ -83,9 +83,18 @@ const ACTION_STATUS_MAP: Record<number, ActionStatus> = {
  */
 export default class WalletWireTransceiver implements WalletInterface {
   wire: WalletWire
+  readonly #listOutputsSpendable: boolean
 
-  constructor(wire: WalletWire) {
+  constructor(wire: WalletWire, options: { listOutputsEncoding?: 'legacy' | 'spendable' } = {}) {
     this.wire = wire
+    if (
+      options.listOutputsEncoding !== undefined &&
+      options.listOutputsEncoding !== 'legacy' &&
+      options.listOutputsEncoding !== 'spendable'
+    ) {
+      throw new Error('Invalid listOutputs encoding')
+    }
+    this.#listOutputsSpendable = options.listOutputsEncoding === 'spendable'
   }
 
   async #transmit(
@@ -647,8 +656,14 @@ export default class WalletWireTransceiver implements WalletInterface {
     this.#writeOptionalVarInt(paramWriter, args.offset)
     this.#writeOptionalBool(paramWriter, args.seekPermission)
 
+    // Historical peers omit spendability from output records. Only request the
+    // extended layout explicitly; never guess it from response field values.
+    if (this.#listOutputsSpendable) paramWriter.writeUInt8(1)
     const result = await this.#transmit('listOutputs', originator, paramWriter.toUint8Array())
     const resultReader = new ReaderUint8Array(result)
+    if (this.#listOutputsSpendable && resultReader.readVarIntNumStrict() !== -1) {
+      throw new Error('Missing listOutputs spendable encoding acknowledgement')
+    }
     if (isModuleBalanceQuery(args.basket)) {
       const balance = toUTF8Strict(resultReader.read(resultReader.readVarIntNumStrict(false)))
       if (!resultReader.eof()) throw new Error('Invalid listOutputs module balance response')
@@ -686,7 +701,9 @@ export default class WalletWireTransceiver implements WalletInterface {
     const output: ListOutputsResult['outputs'][number] = { spendable: true, outpoint, satoshis }
     const scriptLen = reader.readVarIntNumStrict()
     if (scriptLen >= 0) output.lockingScript = toHex(reader.read(scriptLen))
-    output.spendable = this.#readBooleanFlag(reader, 'listOutputs spendable')
+    if (this.#listOutputsSpendable) {
+      output.spendable = this.#readBooleanFlag(reader, 'listOutputs spendable')
+    }
     const custLen = reader.readVarIntNumStrict()
     if (custLen >= 0) output.customInstructions = toUTF8Strict(reader.read(custLen))
     const tagsLen = reader.readVarIntNumStrict()

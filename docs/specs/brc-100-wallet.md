@@ -268,6 +268,23 @@ Returns:
 
 `WalletOutput` includes `outpoint`, `satoshis`, `spendable`, optional `lockingScript`, optional `customInstructions`, optional `tags`, and optional action `labels`.
 
+The deployed SDK 2/3 binary response omits a spendability byte: ordinary output
+records imply `spendable: true`. This remains the default request/response
+layout, including historical module baskets. Module-balance decimal text is
+selected by the new balance query only.
+
+The SDK's opt-in `WalletWireTransceiver` option `listOutputsEncoding: 'spendable'`
+adds a request extension byte `1` after `seekPermission`. A supporting
+`WalletWireProcessor` acknowledges it with signed VarInt `-1` after the success
+byte (a value invalid as a legacy output count), then writes one `0`/`1`
+spendability byte between each
+output's locking script and custom-instructions length. An unextended request
+receives the historical encoding; non-spendable records produce an error in
+that encoding, never an implicit `true`. Unknown extension versions and trailing
+request bytes are rejected before invoking the wallet. This explicit SDK
+extension needs a supporting processor; no format detection or retry occurs.
+JSON can represent either spendability value without this binary extension.
+
 ### relinquishOutput
 
 Removes an output from a basket without spending it.

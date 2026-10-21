@@ -1759,16 +1759,19 @@ describe('WalletWire Integration Tests', () => {
 
     it('carries a module inventory record that is not spendable', async () => {
       const outpoint = 'deadbeef20248806deadbeef20248806deadbeef20248806deadbeef20248806.0'
-      const wallet = createTestWalletWire(
-        mockUnsupportedMethods({
-          listOutputs: jest.fn().mockResolvedValue({
-            totalOutputs: 2,
-            outputs: [
-              { outpoint, satoshis: 1, spendable: false },
-              { outpoint: outpoint.replace(/\.0$/, '.1'), satoshis: 1, spendable: true }
-            ]
+      const wallet = new WalletWireTransceiver(
+        new WalletWireProcessor(
+          mockUnsupportedMethods({
+            listOutputs: jest.fn().mockResolvedValue({
+              totalOutputs: 2,
+              outputs: [
+                { outpoint, satoshis: 1, spendable: false },
+                { outpoint: outpoint.replace(/\.0$/, '.1'), satoshis: 1, spendable: true }
+              ]
+            })
           })
-        })
+        ),
+        { listOutputsEncoding: 'spendable' }
       )
 
       const result = await wallet.listOutputs({ basket: 'p color assets' })

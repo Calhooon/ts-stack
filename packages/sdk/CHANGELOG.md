@@ -268,10 +268,18 @@ replay, payment authorization, wire change or consumer migration is introduced.
   exact balance as canonical decimal text with no outputs and no BEEF; every
   other query still returns a count. Result validation requires decimal text
   for those queries and rejects it for all others.
-- The BRC-100 binary `listOutputs` response carries the module balance as a
-  UTF-8 string and each output's `spendable` byte after its locking script, as
-  BRC-100 specifies. Both sides of a binary connection must update together:
-  earlier codecs neither write nor read the `spendable` byte.
+- Restore the deployed SDK 2/3 binary `listOutputs` layout by default: no
+  spendability byte is inserted before custom instructions. Existing clients
+  and wallets can upgrade independently. Frozen published SDK 3.2.1 frames
+  cover both interoperability directions, six-output pages, BEEF, absent/empty/
+  single-byte/Unicode/253-byte instructions, tags, labels and module baskets.
+- Non-spendable inventory records use an explicitly selected request extension:
+  `new WalletWireTransceiver(wire, { listOutputsEncoding: 'spendable' })` appends
+  version byte `1` after `seekPermission`; the response acknowledges it with
+  signed VarInt `-1` after the success byte. A supporting processor includes each
+  output's spendability byte only for that request. Legacy requests cannot
+  silently turn a non-spendable record into a spendable one. JSON preserves
+  non-spendable records too. New module balance queries carry only decimal text.
 - Migration: TypeScript that compares or adds `totalOutputs` must first check
   `typeof totalOutputs === 'number'`. Ordinary baskets always return a number.
 
