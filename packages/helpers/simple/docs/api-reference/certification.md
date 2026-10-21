@@ -70,7 +70,7 @@ type.
 
 The current SDK deliberately rejects short certificate types in
 `WalletInterface` list, acquire, prove, and relinquish operations, and
-`@bsv/sdk` 3.3.0 listings leave such stored records out rather than failing.
+`@bsv/sdk` 4.0.0 listings leave such stored records out rather than failing.
 The legacy values returned here are for an explicit migration, not wallet
 filter arrays or remote metadata. Find affected records with
 `@bsv/wallet-toolbox` `Wallet.listLegacyCertificates()` (or export them

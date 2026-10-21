@@ -3,7 +3,7 @@ id: bsv-sdk
 title: '@bsv/sdk'
 kind: package
 domain: sdk
-version: '3.3.0'
+version: '4.0.0'
 npm: '@bsv/sdk'
 last_updated: '2026-10-20'
 last_verified: '2026-10-20'
@@ -14,6 +14,15 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk'
 ---
 
 # @bsv/sdk
+
+The 4.0.0 source candidate types `ListOutputsResult.totalOutputs` as
+`PositiveIntegerOrZero | DecimalString`. A BRC-112 module balance query
+(`p <module> balance <basket>`) returns the exact balance as decimal text with
+no outputs and no BEEF; every other query returns a count. The binary
+`listOutputs` response carries that text and each output's `spendable` byte, so
+both ends of a binary connection must update together. Code that uses
+`totalOutputs` as a number must check `typeof totalOutputs === 'number'` first.
+This candidate is not publication.
 
 The isolated SDK3 retirement candidate removes the obsolete serial-DID token
 validation module. Native identity, certificate and authentication APIs remain.
@@ -42,7 +51,7 @@ position above `INT32_MAX`. Operands of eight bytes or fewer are unchanged and
 no API, wire or wallet-data migration is required. This candidate is not
 publication.
 
-The 3.3.0 source candidate adds the migration path for certificates issued
+The 4.0.0 source candidate also adds the migration path for certificates issued
 before 2.8.0 under a non-BRC-52 `type`
 ([#1085](https://github.com/bsv-blockchain/ts-stack/issues/1085)). Every
 wallet certificate argument, BRC-103 requested set, `Certificate.verify()`,
@@ -50,7 +59,7 @@ wallet certificate argument, BRC-103 requested set, `Certificate.verify()`,
 `listCertificates` and discovery results now leave such a record out instead
 of failing as a whole, and the recovery-only
 `Certificate.verifyHistoricalSignature()` authenticates one before it is
-reissued. See [legacy certificate types](#legacy-certificate-types-since-330).
+reissued. See [legacy certificate types](#legacy-certificate-types-since-400).
 This candidate is not publication.
 
 For `RegistryClient` and optional ProtoMap, BasketMap and CertMap descriptions,
@@ -549,7 +558,7 @@ response validation and origin checks are unchanged. No API or wire migration
 is needed. Applications affected by the timeout defect can update their bundled
 SDK; a wallet release alone cannot replace code served by a web application.
 
-### Legacy certificate types since 3.3.0
+### Legacy certificate types since 4.0.0
 
 A BRC-52 certificate `type` decodes to exactly 32 bytes; the binary
 certificate format (`Certificate.toBinary()`/`fromBinary()`) and the binary
@@ -563,7 +572,7 @@ BRC-103 `requestedCertificates`, `Certificate.verify()`, `sign()`,
 `toBinary()` and `fromBinary()` all require 32 bytes, and a non-compliant
 certificate cannot be used, proven or exchanged.
 
-What 3.3.0 changes is the handling of records a wallet already holds.
+What 4.0.0 changes is the handling of records a wallet already holds.
 `listCertificates`, `discoverByIdentityKey` and `discoverByAttributes` result
 validation leaves a certificate out when its `type` is canonical base64 that
 does not decode to 32 bytes (up to 128 bytes), lowering `totalCertificates`,

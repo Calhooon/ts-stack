@@ -94,7 +94,7 @@ A BRC-52 certificate `type` is exactly 32 bytes. Storage created before
 bounded the type then, and `@bsv/simple` before 0.6 derived it from a schema
 identifier. Since 2.15.0 `listCertificates` leaves those records out at the
 storage query (`FindCertificatesArgs.legacyTypes: 'exclude'`), so one of
-them no longer fails every listing, and `@bsv/sdk` 3.3.0 result validation
+them no longer fails every listing, and `@bsv/sdk` 4.0.0 result validation
 does the same for a wallet that has not been upgraded. Two recovery methods
 exist outside BRC-100, on the `Wallet` instance only (`WalletPermissionsManager`
 and other BRC-100 proxies do not forward them):
