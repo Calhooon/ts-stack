@@ -383,17 +383,20 @@ Hand-written plans cannot keep up with new targets: `color-permission`, added
 with 1,072 mutants on 2026-10-20, ran alone for more than 25 minutes in the next
 full campaign while every planned part had finished within 6m15s.
 
-A target without an explicit plan now splits by file automatically when it is
-slow. Mutant count does not predict time, because tests dominate (676 `auth`
+A target without an explicit plan now splits automatically when it is slow.
+Mutant count does not predict time, because tests dominate (676 `auth`
 mutants take under two minutes; 358 `brc52-envelope` mutants took fifteen), so
 the estimate is the target's measured seconds in
 `governance/mutation-testing/durations.json`. A target never measured uses a
-deliberately pessimistic one second per code line. The part count is the
-estimate over 240 seconds, capped by the number of files; files are grouped
-largest first into the lightest part, and every range of a file stays in one
-part. Explicit plans, including single-file line cuts, keep priority. Today only
-`color-permission` is split automatically (four parts); the exhaustiveness
-replay covers every target that executes in parts.
+deliberately pessimistic one second per code line. A file whose share of the
+estimate exceeds one 240-second part is cut inside at top-level declaration
+lines (`function`, `class`, `const`, `export …` at column zero) that are unique
+line prefixes, balanced by code lines; a mutant cannot span two top-level
+statements. Whole files and file segments are then grouped heaviest first into
+the estimate over 240 seconds parts. Explicit plans, including hand-placed line
+cuts, keep priority. Today only `color-permission` splits automatically, into
+eight parts; the exhaustiveness replay covers every target that executes in
+parts, so an automatic cut that dropped or duplicated a mutant fails CI.
 
 ### Stop-on-kill Jest environment
 

@@ -251,7 +251,7 @@ test('automatic plans split slow multi-file targets by file and leave fast or si
   // Measured slow: parts by time, capped by the number of files.
   const plan = automaticPlan('t', target, 5000)
   assert.equal(new Set(plan.files.values()).size, 4)
-  assert.equal(plan.files.get('src/a.ts'), 'files-1')
+  assert.match(plan.files.get('src/a.ts'), /^auto-\d$/)
   // Every range of a file stays in one part, and nothing is dropped.
   const owner = new Map()
   for (const specification of target.mutate) {
@@ -270,4 +270,35 @@ test('automatic plans split slow multi-file targets by file and leave fast or si
     partitionMutationTarget('sdk-auth-http', { ...target, mutate: ['src/a.ts'] }).map(p => p.id),
     ['core']
   )
+})
+
+test('automatic plans cut a slow single file at unique top-level declarations', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ts-stack-auto-lines-'))
+  mkdirSync(join(directory, 'src'), { recursive: true })
+  const blocks = Array.from({ length: 8 }, (_, block) => [
+    `export function step${block}(value: number): number {`,
+    ...Array.from({ length: 30 }, (_, line) => `  value = value + ${block * 100 + line}`),
+    '  return value',
+    '}'
+  ]).flat()
+  writeFileSync(join(directory, 'src/one.ts'), blocks.join('\n'))
+  const target = { packageDirectory: directory, mutate: ['src/one.ts'] }
+  // Fast: stays whole.
+  assert.equal(automaticPlan('t', target, 100), undefined)
+  // Slow: cut into balanced segments that each start at a declaration.
+  const plan = automaticPlan('t', target, 1000)
+  const cuts = plan.lines.get('src/one.ts')
+  assert.ok(cuts.length >= 2)
+  assert.equal(cuts[0][1], null)
+  for (const [, marker] of cuts.slice(1)) assert.match(marker, /^export function step\d\(/)
+  const parts = partitionMutationTarget('t', target)
+  // Partitions re-derive the same plan and cover the file contiguously.
+  const ranges = parts
+    .flatMap(part => part.target.mutate)
+    .map(spec => spec.split(':')[1].split('-').map(Number))
+    .sort((left, right) => left[0] - right[0])
+  assert.equal(ranges[0][0], 1)
+  assert.equal(ranges.at(-1)[1], blocks.length)
+  for (let index = 1; index < ranges.length; index += 1)
+    assert.equal(ranges[index][0], ranges[index - 1][1] + 1)
 })
