@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "engine": "9.6.1",
   "canonicalTargets": 100,
-  "executionRows": 248,
+  "executionRows": 253,
   "units": [
     {
       "target": "wallet-snapshot-remote-reader",
@@ -1735,6 +1735,64 @@
           "mutate": ["src/storage/snapshot/journal/SnapshotJournalIdentityRetirements.ts:104-193"],
           "count": 111,
           "id": "range-004"
+        }
+      ]
+    },
+    {
+      "target": "wallet-retained-snapshot",
+      "existingPartition": "sqlite-bootstrap",
+      "packageDirectory": "packages/wallet/wallet-toolbox",
+      "originalMutate": [
+        "src/storage/schema/snapshotSqliteIndexBootstrap.ts",
+        "src/storage/schema/snapshotSqliteIndexState.ts"
+      ],
+      "sourceHashes": {
+        "src/storage/schema/snapshotSqliteIndexBootstrap.ts": "89e21d1952fe89f678e6b4f22e687137c94c86def0d946ad1517c4a423ff87a6",
+        "src/storage/schema/snapshotSqliteIndexState.ts": "db758c4ab0c000641016237cd410961adfe64a1230b8e061d938b53fe251dff8"
+      },
+      "canonicalCount": 499,
+      "packingHint": 100,
+      "parts": [
+        {
+          "mutate": [
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:13-13",
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:14-14",
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:15-31"
+          ],
+          "count": 100,
+          "id": "sqlite-bootstrap-001"
+        },
+        {
+          "mutate": [
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:32-54",
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:55-96"
+          ],
+          "count": 95,
+          "id": "sqlite-bootstrap-002"
+        },
+        {
+          "mutate": ["src/storage/schema/snapshotSqliteIndexBootstrap.ts:97-149"],
+          "count": 74,
+          "id": "sqlite-bootstrap-003"
+        },
+        {
+          "mutate": ["src/storage/schema/snapshotSqliteIndexBootstrap.ts:150-209"],
+          "count": 108,
+          "id": "sqlite-bootstrap-004"
+        },
+        {
+          "mutate": [
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:210-215",
+            "src/storage/schema/snapshotSqliteIndexBootstrap.ts:225-243",
+            "src/storage/schema/snapshotSqliteIndexState.ts:6-6"
+          ],
+          "count": 51,
+          "id": "sqlite-bootstrap-005"
+        },
+        {
+          "mutate": ["src/storage/schema/snapshotSqliteIndexState.ts:12-41"],
+          "count": 71,
+          "id": "sqlite-bootstrap-006"
         }
       ]
     }

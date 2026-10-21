@@ -401,7 +401,7 @@ test('all original retained suites remain in actual ordinary or receipt-gated br
   const selected = selectedMutationPartition(
     'wallet-retained-snapshot',
     canonical,
-    'sqlite-bootstrap'
+    'sqlite-bootstrap-001'
   )
   const base = await (
     await import('../../packages/wallet/wallet-toolbox/jest.config.cjs')

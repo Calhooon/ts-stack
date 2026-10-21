@@ -9,7 +9,8 @@ import {
   partitionMutationTarget,
   canonicalMutationPartitions,
   selectedMutationPartition,
-  mutationExecutionMatrix
+  mutationExecutionMatrix,
+  applyPartitionComponentTests
 } from './mutation-partitions.mjs'
 
 function lexicalCompare(left, right) {
@@ -123,9 +124,17 @@ test('every generated refinement retains the actual full canonical inventory and
   let count = 0
   for (const unit of plan.units) {
     const canonical = targets[unit.target],
-      base = canonicalMutationPartitions(unit.target, canonical).find(
+      originalBase = canonicalMutationPartitions(unit.target, canonical).find(
         part => part.id === unit.existingPartition
       ),
+      base =
+        unit.target === 'wallet-retained-snapshot' && unit.existingPartition === 'sqlite-bootstrap'
+          ? applyPartitionComponentTests(
+              originalBase,
+              canonical.componentTestPartitions['sqlite-bootstrap'],
+              file => fs.readFileSync(join(REPOSITORY_ROOT, canonical.packageDirectory, file))
+            )
+          : originalBase,
       ids = new Set(unit.parts.map(part => part.id)),
       parts = partitionMutationTarget(unit.target, canonical).filter(part => ids.has(part.id)),
       directory = join(REPOSITORY_ROOT, canonical.packageDirectory),
@@ -135,8 +144,9 @@ test('every generated refinement retains the actual full canonical inventory and
       files = new Set()
     assert.equal(parts.length, unit.parts.length)
     for (const part of parts) {
-      assert.equal(part.target.runnerOptions, canonical.runnerOptions)
-      assert.deepEqual(part.target, { ...canonical, mutate: part.target.mutate })
+      if (base === originalBase) assert.equal(part.target.runnerOptions, canonical.runnerOptions)
+      else assert.deepEqual(part.target.runnerOptions, base.target.runnerOptions)
+      assert.deepEqual(part.target, { ...base.target, mutate: part.target.mutate })
       const partSources = targetSources(REPOSITORY_ROOT, part.target)
       for (const [file, source] of partSources) {
         assert.equal(

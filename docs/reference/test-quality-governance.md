@@ -482,3 +482,12 @@ limit changes. The 499-mutant canonical inventory, score and zero-uncovered,
 invalid and unexecuted gates remain required. Targeted startup and coverage
 measurements do not replace assertion-killed mutation quality or complete
 exact-head functional and system qualification.
+
+The retained snapshot `sqlite-bootstrap` execution unit uses six source-bound
+canonical range packs with an explicit scheduling hint of 100 mutants. Its
+complete 499-mutant inventory remains mandatory, with the same nine component
+and property files in every child. The original 21 refinements are unchanged;
+the complete execution matrix has 253 rows within its existing 256-row ceiling.
+Packing changes scheduling only. Complete per-part receipts, the canonical
+union, zero uncovered/invalid/unexecuted mutants and the original global score
+and status gates remain required; an initial-run pass is not qualification.

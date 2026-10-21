@@ -13,6 +13,9 @@ const OUTPUT = 'governance/mutation-testing/execution-partitions.json'
 // The first twenty original units passed their initial run, then exhausted
 // their existing job envelopes in run39466463041. The retirement unit also
 // exhausted an unchanged 45-minute local envelope after its 108-case dry run.
+// The bootstrap unit now passes its original 300-second initial run, but its
+// complete 499-mutant diagnostic exceeded a shorter 900-second observer cap.
+// Its explicit hint bounds scheduling work while retaining the complete corpus.
 // Only execution placement changes here; final hosted qualification is required.
 const reviewedUnits = [
   ['wallet-snapshot-remote-reader', 'lease'],
@@ -35,7 +38,8 @@ const reviewedUnits = [
   ['wallet-current-snapshot-journal-delta-frame', 'whole'],
   ['wallet-current-snapshot-journal-delta-page', 'whole'],
   ['wallet-current-snapshot-journal-destination-stage', 'whole'],
-  ['wallet-current-snapshot-journal-identity-retirements', 'whole']
+  ['wallet-current-snapshot-journal-identity-retirements', 'whole'],
+  ['wallet-retained-snapshot', 'sqlite-bootstrap', 100]
 ]
 const lexical = (left, right) => (left < right ? -1 : left > right ? 1 : 0)
 const tuple = mutant => mutantTuple(mutant.fileName, mutant)
@@ -44,7 +48,7 @@ const sourceFile = specification => specification.replace(/:\d+(?:-\d+)?$/, '')
 export async function buildExecutionPartitionPlan(root = ROOT) {
   const targets = buildMutationTargets(root),
     units = []
-  for (const [targetId, existingPartition] of reviewedUnits) {
+  for (const [targetId, existingPartition, reviewedPackingHint] of reviewedUnits) {
     const target = targets[targetId]
     assert.ok(target, `Missing original execution target ${targetId}`)
     const base = canonicalMutationPartitions(targetId, target).find(
@@ -86,7 +90,7 @@ export async function buildExecutionPartitionPlan(root = ROOT) {
     }
     // Packing is a scheduling hint, never a runtime/test/quality allowance.
     // An indivisible parent span remains whole even when larger than the hint.
-    const packingHint = inventory.length <= 300 ? 100 : 250
+    const packingHint = reviewedPackingHint ?? (inventory.length <= 300 ? 100 : 250)
     const parts = []
     let pack = { mutate: [], count: 0 }
     for (const component of components) {

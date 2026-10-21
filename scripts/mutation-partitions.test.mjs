@@ -148,7 +148,11 @@ test('retained partitions preserve complete lifecycle/reader/storage unions and 
       'src/storage/snapshot/FutureHelper.ts'
     ]
   }
-  const parts = partitionMutationTarget('wallet-retained-snapshot', retained)
+  const parts = canonicalMutationPartitions('wallet-retained-snapshot', retained)
+  assert.throws(
+    () => partitionMutationTarget('wallet-retained-snapshot', retained),
+    /Unknown or duplicate original execution partition/
+  )
   assert.deepEqual(
     parts.map(part => part.id),
     ['lifecycle', 'reader', 'storage']
@@ -172,7 +176,7 @@ test('retained partitions preserve complete lifecycle/reader/storage unions and 
   assert.throws(() => selectedMutationPartition('wallet-retained-snapshot', retained, 'missing'))
   const targets = {
     'sdk-auth-http': target,
-    'wallet-retained-snapshot': retained,
+    'wallet-retained-snapshot': buildMutationTargets(REPOSITORY_ROOT)['wallet-retained-snapshot'],
     other: { mutate: ['src/whole.ts'] }
   }
   assert.deepEqual(partitionedMutationTargets(['other'], targets), [])
@@ -573,7 +577,9 @@ test('stale source, changed original specifications and malformed or overlapping
 test('sqlite bootstrap components change only that source-bound partition and retain the full functional universe', () => {
   const canonical = buildMutationTargets(REPOSITORY_ROOT)['wallet-retained-snapshot']
   const parts = partitionMutationTarget('wallet-retained-snapshot', canonical)
-  const selected = parts.find(part => part.id === 'sqlite-bootstrap').target
+  const children = parts.filter(part => /^sqlite-bootstrap-\d{3}$/.test(part.id))
+  assert.equal(children.length, 6)
+  const selected = children[0].target
   assert.deepEqual(
     selectAffectedMutationTargets({ 'wallet-retained-snapshot': canonical }, [
       'scripts/mutation-partitions.mjs'
@@ -592,10 +598,21 @@ test('sqlite bootstrap components change only that source-bound partition and re
       '<rootDir>/src/storage/snapshot/RetainedReadSnapshot.property.test.ts'
     )
   )
-  for (const part of parts.filter(part => part.id !== 'sqlite-bootstrap'))
+  for (const child of children) assert.deepEqual(child.target.runnerOptions, selected.runnerOptions)
+  for (const part of parts.filter(part => !children.includes(part)))
     assert.equal(part.target.runnerOptions, canonical.runnerOptions)
   assert.equal(selectedMutationPartition('wallet-retained-snapshot', canonical), canonical)
-  assert.deepEqual(parts.flatMap(part => part.target.mutate).sort(), [...canonical.mutate].sort())
+  const original = canonicalMutationPartitions('wallet-retained-snapshot', canonical)
+  assert.deepEqual(
+    parts
+      .filter(part => !children.includes(part))
+      .flatMap(part => part.target.mutate)
+      .sort(),
+    original
+      .filter(part => part.id !== 'sqlite-bootstrap')
+      .flatMap(part => part.target.mutate)
+      .sort()
+  )
   assert.deepEqual(selected.runnerOptions, {
     ...canonical.runnerOptions,
     jest: {
