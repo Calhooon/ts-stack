@@ -170,7 +170,7 @@ test('the complete browser inventory runs serially inside original shard-4 with 
   assert.notEqual(job['continue-on-error'], true)
   const hash = value => createHash('sha256').update(value).digest('hex')
   assert.equal(
-    hash(JSON.stringify(walletCoverageMatrix().include)),
+    hash(JSON.stringify(walletCoverageMatrix().include.slice(0, 67))),
     'dd62fabe497f3c76ffb5a660c477eb11ce2980d8a93ffbf9aa2ff8380392be6a'
   )
   const browser = job.steps.find(step =>
@@ -212,7 +212,15 @@ test('the complete browser inventory runs serially inside original shard-4 with 
     .filter(value => value !== journalPattern)
     .join('|')
   assert.equal(
-    hash(beforeJournalScheduling),
+    hash(
+      beforeJournalScheduling
+        .split('|')
+        .filter(
+          value =>
+            value !== 'src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts'
+        )
+        .join('|')
+    ),
     'a71ebd28bbfcc834c30e24049159cac87118ca5e63aed225caaabfc1825bf0f8'
   )
   const discover = ignored => {
@@ -267,6 +275,116 @@ test('the complete browser inventory runs serially inside original shard-4 with 
     workflow.jobs['coverage-upload'].steps.indexOf(gate) <
       workflow.jobs['coverage-upload'].steps.findIndex(
         step => step.name === 'Compose Codecov inputs'
+      )
+  )
+})
+
+test('native integrity routing removes only its original fullfile and requires the complete fresh union', async () => {
+  const { parse } = await import('yaml')
+  const workflow = parse(readFileSync(join(REPOSITORY_ROOT, '.github/workflows/ci.yml'), 'utf8'))
+  const job = workflow.jobs['coverage-wallet']
+  assert.equal(
+    job['timeout-minutes'],
+    "${{ matrix.native_cohort == 'completed' && 265 || matrix.native_cohort != '' && 145 || matrix.native_merge_minutes || matrix.native_auth_minutes || 40 }}"
+  )
+  assert.equal(job.strategy['max-parallel'], 3)
+  assert.equal(job.env.NODE_OPTIONS, '--max-old-space-size=1536')
+  const step = job.steps.find(value => value.env?.WALLET_SHARD !== undefined)
+  const file = 'src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts'
+  const pattern = /args\+=\(--testPathIgnorePatterns='([^']+)'\)/.exec(step.run)[1]
+  assert.equal(pattern.split('|').filter(value => value === file).length, 1)
+  const discover = ignored => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox/node_modules/jest/bin/jest.js'),
+        '--listTests',
+        '--json',
+        '--runInBand',
+        '--watchman=false',
+        '--testPathIgnorePatterns=' + ignored
+      ],
+      {
+        cwd: join(REPOSITORY_ROOT, 'packages/wallet/wallet-toolbox'),
+        encoding: 'utf8',
+        timeout: 30000,
+        maxBuffer: 4194304
+      }
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+      .map(file => file.replaceAll('\\', '/'))
+      .sort()
+  }
+  for (const lane of walletCoverageMatrix().include.filter(
+    value => value.native_integrity_cohort
+  )) {
+    const dispatch = step.run
+      .split('pnpm --filter @bsv/wallet-toolbox exec jest')[0]
+      .replaceAll('${{ matrix.id }}', lane.id)
+    const actual = spawnSync(
+      '/bin/bash',
+      ['-e', '-c', dispatch + '\nprintf "%s\\0" "${args[@]}"'],
+      {
+        cwd: REPOSITORY_ROOT,
+        encoding: 'utf8',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          WALLET_SHARD: '',
+          SYNC_LATENCY: '',
+          NATIVE_COHORT: '',
+          NATIVE_PAIR_COHORT: '',
+          NATIVE_MERGE_COHORT: '',
+          NATIVE_AUTH_COHORT: '',
+          NATIVE_READ_COHORT: '',
+          NATIVE_USER_COHORT: '',
+          NATIVE_INTEGRITY_COHORT: lane.native_integrity_cohort,
+          GITHUB_WORKSPACE: REPOSITORY_ROOT
+        }
+      }
+    )
+    assert.equal(actual.status, 0, actual.stderr)
+    const args = actual.stdout.split('\0').filter(Boolean)
+    assert.ok(args.includes('--runInBand'))
+    assert.ok(args.includes('--coverage'))
+    assert.equal(args[args.indexOf('--runTestsByPath') + 1], file)
+    assert.ok(args.some(value => value.startsWith('--testNamePattern=^')))
+    assert.ok(args.includes('--json'))
+  }
+  const after = discover(pattern),
+    before = discover(
+      pattern
+        .split('|')
+        .filter(value => value !== file)
+        .join('|')
+    )
+  assert.equal(before.length - after.length, 1)
+  assert.deepEqual(
+    before
+      .filter(value => !after.includes(value))
+      .map(value => value.slice(value.indexOf('/src/') + 1)),
+    [file]
+  )
+  assert.deepEqual(
+    after.filter(value => !before.includes(value)),
+    []
+  )
+  assert.equal(step.env.NATIVE_INTEGRITY_COHORT, '${{ matrix.native_integrity_cohort }}')
+  assert.ok(step.run.includes('integrity-pattern "$NATIVE_INTEGRITY_COHORT"'))
+  assert.ok(step.run.includes('integrity-capture "$NATIVE_INTEGRITY_COHORT"'))
+  assert.ok(step.run.includes('--runTestsByPath ' + file))
+  const gate = workflow.jobs['coverage-upload'].steps.find(
+    value =>
+      value.run ===
+      'node scripts/wallet-composed-native-ci.mjs integrity-verify .coverage-artifacts'
+  )
+  assert.equal(gate.if, "needs.prepare.outputs.wallet == 'true'")
+  assert.notEqual(gate['continue-on-error'], true)
+  assert.ok(
+    workflow.jobs['coverage-upload'].steps.indexOf(gate) <
+      workflow.jobs['coverage-upload'].steps.findIndex(
+        value => value.name === 'Compose Codecov inputs'
       )
   )
 })

@@ -240,6 +240,82 @@ export const composedNativeCaseNames = Object.freeze(
     .sort((a, b) => Number(a > b) - Number(a < b))
 )
 
+// Every original comparison runs its complete fresh native fixture. Keep
+// repeated names together: rawTx/merklePath and history/notify are distinct
+// cases whose original full names intentionally have multiplicity two.
+export const nativeIntegrityTestFile =
+  'packages/wallet/wallet-toolbox/src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts'
+export const nativeIntegrityCaseNames = Object.freeze(
+  [
+    'complete current comparison rejects metadata mutation in users',
+    'complete current comparison rejects metadata mutation in settings',
+    'complete current comparison rejects metadata mutation in proven_txs',
+    'complete current comparison rejects metadata mutation in proven_tx_reqs',
+    'complete current comparison rejects metadata mutation in output_baskets',
+    'complete current comparison rejects metadata mutation in output_tags',
+    'complete current comparison rejects metadata mutation in tx_labels',
+    'complete current comparison rejects metadata mutation in transactions',
+    'complete current comparison rejects metadata mutation in outputs',
+    'complete current comparison rejects metadata mutation in commissions',
+    'complete current comparison rejects metadata mutation in tx_labels_map',
+    'complete current comparison rejects metadata mutation in output_tags_map',
+    'complete current comparison rejects metadata mutation in certificates',
+    'complete current comparison rejects metadata mutation in monitor_events',
+    'complete current comparison rejects metadata mutation in prepared_beef_metadata',
+    'complete current comparison rejects metadata mutation in auth_sessions',
+    'complete current comparison rejects metadata mutation in auth_message_nonces',
+    'complete current comparison rejects metadata mutation in snapshot_sync_sessions',
+    'complete current comparison rejects metadata mutation in snapshot_sync_ids',
+    'complete current comparison rejects metadata mutation in snapshot_sync_primary_epochs',
+    'complete current comparison rejects metadata mutation in snapshot_reconciliation_window_progress',
+    'complete current comparison rejects binary mutation in proven_txs',
+    'complete current comparison rejects binary mutation in proven_txs',
+    'complete current comparison rejects binary mutation in outputs',
+    'complete current comparison rejects binary mutation in prepared_beefs',
+    'complete current comparison rejects binary mutation in action_batch_blobs',
+    'complete current comparison rejects binary mutation in sync_transfer_parts',
+    'complete current comparison rejects binary mutation in snapshot_reconciliation_stage_pages',
+    'complete current comparison rejects binary mutation in snapshot_reconciliation_provenance',
+    'complete current comparison rejects text mutation in transactions',
+    'complete current comparison rejects text mutation in certificate_fields',
+    'complete current comparison rejects text mutation in certificates',
+    'complete current comparison rejects text mutation in commissions',
+    'complete current comparison rejects text mutation in proven_tx_reqs',
+    'complete current comparison rejects text mutation in proven_tx_reqs',
+    'complete current comparison rejects text mutation in sync_states',
+    'complete current comparison rejects text mutation in monitor_events',
+    'complete current comparison rejects text mutation in action_batches',
+    'complete current comparison rejects text mutation in sync_transfers'
+  ].sort((a, b) => Number(a > b) - Number(a < b))
+)
+
+function integrityCohorts() {
+  const groups = []
+  for (const name of new Set(nativeIntegrityCaseNames)) {
+    const cases = nativeIntegrityCaseNames.filter(value => value === name).length
+    let group = groups.at(-1)
+    if (group === undefined || group.cases + cases > 7) {
+      group = { id: `part-${groups.length + 1}`, names: [], cases: 0 }
+      groups.push(group)
+    }
+    group.names.push(name)
+    group.cases += cases
+  }
+  return groups.map(group =>
+    Object.freeze({
+      ...group,
+      names: Object.freeze(group.names),
+      pattern: `^(?:${group.names.map(escapePattern).join('|')})$`
+    })
+  )
+}
+export const nativeIntegrityCohorts = Object.freeze(integrityCohorts())
+const integrityPlan = {
+  testFile: nativeIntegrityTestFile,
+  cohorts: nativeIntegrityCohorts,
+  names: nativeIntegrityCaseNames
+}
+
 const composedPlan = {
   testFile: composedNativeTestFile,
   cohorts: composedNativeCohorts,
@@ -302,6 +378,10 @@ export function walletCoverageMatrix() {
       ...nativeUserCohorts.map(cohort => ({
         id: `native-user-${cohort.id}`,
         native_user_cohort: cohort.id
+      })),
+      ...nativeIntegrityCohorts.map(cohort => ({
+        id: `native-integrity-${cohort.id}`,
+        native_integrity_cohort: cohort.id
       }))
     ]
   }
@@ -334,7 +414,10 @@ function validateNativeReport(report, cohortId, plan) {
   )
     throw new Error('Native report lacks the complete original case inventory')
   for (const value of assertions) {
-    const selected = value.fullName === cohort.name
+    const selected =
+      cohort.names === undefined
+        ? value.fullName === cohort.name
+        : cohort.names.includes(value.fullName)
     if (value.status !== (selected ? 'passed' : 'pending') || value.failureMessages?.length !== 0)
       throw new Error('Native selected case failed, skipped or differs from its cohort')
   }
@@ -427,6 +510,14 @@ export const validateNativeUserReceipts = (receipts, identity) =>
 export const validateNativeUserReceiptReport = (receipt, bytes) =>
   validateNativeReceiptReport(receipt, bytes, userPlan)
 
+export const nativeIntegrityCohort = id => nativeCohort(id, integrityPlan)
+export const validateNativeIntegrityReport = (report, id) =>
+  validateNativeReport(report, id, integrityPlan)
+export const validateNativeIntegrityReceipts = (receipts, identity) =>
+  validateNativeReceipts(receipts, identity, integrityPlan)
+export const validateNativeIntegrityReceiptReport = (receipt, bytes) =>
+  validateNativeReceiptReport(receipt, bytes, integrityPlan)
+
 function identity(root, plan) {
   return {
     head: execFileSync(GIT_EXECUTABLE, ['rev-parse', 'HEAD'], {
@@ -446,6 +537,14 @@ function receiptFiles(directory, suffix) {
 }
 
 function commandFamily(command) {
+  if (command?.startsWith('integrity-'))
+    return {
+      prefix: 'integrity-',
+      plan: integrityPlan,
+      suffix: '.native-integrity.json',
+      label: 'native integrity'
+    }
+
   if (command?.startsWith('read-'))
     return { prefix: 'read-', plan: readPlan, suffix: '.native-read.json', label: 'native read' }
   if (command?.startsWith('user-'))
@@ -510,7 +609,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       )
     } else
       throw new Error(
-        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs, merge- for native merge contracts, or auth- for authenticated native merge contracts'
+        'Expected matrix, pattern <cohort>, capture <cohort> <report> <receipt>, or verify <directory>; prefix pattern/capture/verify with pair- for native pairs, merge- for native merge contracts, auth- for authenticated native merge contracts, read- for native readers, user- for native users, or integrity- for full native comparisons'
       )
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))

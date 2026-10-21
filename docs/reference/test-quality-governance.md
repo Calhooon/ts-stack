@@ -454,9 +454,11 @@ SQL. Original component and property files remain selected, including all
 in affected-target selection and source binding. This adds semantic coverage;
 the separately required owned-native and real MySQL qualification still apply.
 
-The complete 39-case native integrity file uses its existing six mandatory
-cohorts and complete exact-head report/LCOV union, instead of repeating the
-whole file inside each catalog mutation baseline. All original data, case
+The complete 39-case native integrity file runs in six mandatory cohorts with
+a complete exact-head report/LCOV union. The original 67 matrix rows remain
+unchanged; the six added rows retain the existing three-job concurrency,
+40-minute job limit and 1,536-MiB heap. The ordinary shards and catalog mutation
+baselines avoid repeating that complete file. All original data, case
 names (including repeated names), 180-second owners, 210-second case guards and
 4,096-operation limits remain. Actual Jest discovery verifies that this removes
 only the duplicate full-file invocation and preserves every other selected

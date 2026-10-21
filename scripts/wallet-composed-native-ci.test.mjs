@@ -23,6 +23,9 @@ import {
   validateNativePairReceiptReport
 } from './wallet-composed-native-ci.mjs'
 
+const selectedByCohort = (cohort, name) =>
+  cohort.names === undefined ? name === cohort.name : cohort.names.includes(name)
+
 function makeReport(cohort, testFile, names) {
   return {
     success: true,
@@ -40,7 +43,7 @@ function makeReport(cohort, testFile, names) {
         name: '/repo/' + testFile,
         assertionResults: names.map(fullName => ({
           fullName,
-          status: fullName === cohort.name ? 'passed' : 'pending',
+          status: selectedByCohort(cohort, fullName) ? 'passed' : 'pending',
           failureMessages: []
         }))
       }
@@ -73,12 +76,13 @@ test('routing preserves all21 original cases including both identical completed 
     value =>
       !['journal-field', 'archive-native-cache'].includes(value.native_pair_cohort) &&
       !value.native_read_cohort &&
-      !value.native_user_cohort
+      !value.native_user_cohort &&
+      !value.native_integrity_cohort
   )
   assert.equal(originalMatrix.length, 56)
   assert.equal(new Set(originalMatrix.map(value => value.id)).size, 56)
-  assert.equal(matrix.length, 67)
-  assert.equal(new Set(matrix.map(value => value.id)).size, 67)
+  assert.equal(matrix.length, 73)
+  assert.equal(new Set(matrix.map(value => value.id)).size, 73)
   assert.equal(
     createHash('sha256')
       .update(JSON.stringify(matrix.slice(0, 58)))
@@ -363,6 +367,15 @@ for (const family of [
     bytes: nativeRouting.validateNativeReadReceiptReport
   },
   {
+    label: 'native integrity',
+    file: nativeRouting.nativeIntegrityTestFile,
+    cohorts: nativeRouting.nativeIntegrityCohorts,
+    names: nativeRouting.nativeIntegrityCaseNames,
+    report: nativeRouting.validateNativeIntegrityReport,
+    receipts: nativeRouting.validateNativeIntegrityReceipts,
+    bytes: nativeRouting.validateNativeIntegrityReceiptReport
+  },
+  {
     label: 'native user',
     file: nativeRouting.nativeUserTestFile,
     cohorts: nativeRouting.nativeUserCohorts,
@@ -413,12 +426,14 @@ for (const family of [
     const cohort = composedNativeCohorts[0]
     const mutations = [
       value => {
-        value.testResults[0].assertionResults.find(item => item.fullName === cohort.name).status =
-          'pending'
+        value.testResults[0].assertionResults.find(item =>
+          selectedByCohort(cohort, item.fullName)
+        ).status = 'pending'
       },
       value => {
-        value.testResults[0].assertionResults.find(item => item.fullName !== cohort.name).status =
-          'passed'
+        value.testResults[0].assertionResults.find(
+          item => !selectedByCohort(cohort, item.fullName)
+        ).status = 'passed'
       },
       value => {
         value.testResults[0].assertionResults[0].failureMessages.push('failure')
@@ -478,14 +493,15 @@ for (const family of [
       ...validateComposedNativeReport(report(cohort), cohort.id),
       reportSha256: createHash('sha256').update(bytes).digest('hex')
     }
-    assert.equal(validateComposedNativeReceiptReport(receipt, bytes).passedCases, 1)
+    assert.equal(validateComposedNativeReceiptReport(receipt, bytes).passedCases, cohort.cases)
     assert.throws(() =>
       validateComposedNativeReceiptReport(receipt, Buffer.concat([bytes, Buffer.from(' ')]))
     )
     assert.throws(() => validateComposedNativeReceiptReport({ ...receipt, passedCases: 0 }, bytes))
     const skipped = report(cohort)
-    skipped.testResults[0].assertionResults.find(value => value.fullName === cohort.name).status =
-      'pending'
+    skipped.testResults[0].assertionResults.find(value =>
+      selectedByCohort(cohort, value.fullName)
+    ).status = 'pending'
     const changed = Buffer.from(JSON.stringify(skipped))
     assert.throws(() =>
       validateComposedNativeReceiptReport(
@@ -574,4 +590,42 @@ test('read and user mandatory cohorts preserve their exact independently declare
       assert.equal(new RegExp(cohort.pattern).test(cohort.name + ' changed'), false)
     }
   }
+})
+
+test('all39 original integrity comparisons retain names, multiplicities and disjoint bounded cohorts', () => {
+  const source = readFileSync(
+    new URL('../' + nativeRouting.nativeIntegrityTestFile, import.meta.url),
+    'utf8'
+  )
+  const declared = source.split('const damages: readonly Damage[] = [')[1].split('\n]')[0]
+  const names = [...declared.matchAll(/kind: '(metadata|binary|text)',\s*table: '([^']+)'/g)]
+    .map(([, kind, table]) => `complete current comparison rejects ${kind} mutation in ${table}`)
+    .sort()
+  assert.equal(names.length, 39)
+  assert.deepEqual(nativeRouting.nativeIntegrityCaseNames, names)
+  assert.match(source, /const nativeFixtureCaseTimeoutMs = 180000 \+ 30000/)
+  assert.equal(nativeRouting.nativeIntegrityCohorts.length, 6)
+  for (const name of names) {
+    assert.equal(
+      nativeRouting.nativeIntegrityCohorts.filter(cohort => new RegExp(cohort.pattern).test(name))
+        .length,
+      1
+    )
+  }
+  for (const cohort of nativeRouting.nativeIntegrityCohorts) {
+    assert.ok(cohort.cases > 0 && cohort.cases <= 7)
+    assert.equal(names.filter(name => new RegExp(cohort.pattern).test(name)).length, cohort.cases)
+    assert.ok(names.every(name => !new RegExp(cohort.pattern).test(name + ' changed')))
+  }
+  const matrix = walletCoverageMatrix().include
+  assert.equal(
+    createHash('sha256')
+      .update(JSON.stringify(matrix.slice(0, 67)))
+      .digest('hex'),
+    'dd62fabe497f3c76ffb5a660c477eb11ce2980d8a93ffbf9aa2ff8380392be6a'
+  )
+  assert.deepEqual(
+    matrix.slice(67).map(value => value.native_integrity_cohort),
+    nativeRouting.nativeIntegrityCohorts.map(cohort => cohort.id)
+  )
 })

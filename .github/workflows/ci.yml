@@ -1288,6 +1288,7 @@ jobs:
           NATIVE_AUTH_COHORT: ${{ matrix.native_auth_cohort }}
           NATIVE_READ_COHORT: ${{ matrix.native_read_cohort }}
           NATIVE_USER_COHORT: ${{ matrix.native_user_cohort }}
+          NATIVE_INTEGRITY_COHORT: ${{ matrix.native_integrity_cohort }}
           POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # The two real-HTTP latency scenarios run in independent processes;
@@ -1327,12 +1328,17 @@ jobs:
               --runTestsByPath src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts
               --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs user-pattern "$NATIVE_USER_COHORT")"
               --json --outputFile="$GITHUB_WORKSPACE/native-user-result.json")
+          elif [ -n "$NATIVE_INTEGRITY_COHORT" ]; then
+            args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
+              --runTestsByPath src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts
+              --testNamePattern="$(node scripts/wallet-composed-native-ci.mjs integrity-pattern "$NATIVE_INTEGRITY_COHORT")"
+              --json --outputFile="$GITHUB_WORKSPACE/native-integrity-result.json")
           elif [ -n "$WALLET_SHARD" ]; then
             export RUNPOSTGRES=1
             POSTGRES_CONNECTION="$(jq -cn --arg password "$POSTGRES_PASSWORD" \
               '{host: "127.0.0.1", port: 5432, user: "postgres", password: $password, database: "postgres"}')"
             export POSTGRES_CONNECTION
-            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs|src/storage/portable/Brc38NativeBrowserComponents.test.cjs|src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts|src/utility/BrowserArgon2idWorker.native.test.cjs|src/storage/__test/WalletStorageManager\.journal\.test\.ts$')
+            args+=(--testPathIgnorePatterns='man.test.ts|bench.test.ts|test/monitor/Monitor.test.ts|client/test|mobile/test|src/storage/sync/syncTransferHttp.test.ts|src/storage/portable/Brc39ComposedNativeRecoveryNode.test.ts|src/storage/snapshot/NativeSnapshotMergeContractsNode.test.ts|src/storage/portable/Brc38NativeMergeContractsNode.test.ts|src/storage/portable/Brc38NativeAuthenticatedMergeContractsNode.test.ts|src/storage/snapshot/NativeSnapshotReadContractsNode.test.ts|src/storage/portable/Brc38NativeUserInventoryContractsNode.test.ts|src/storage/portable/native/RootNativeCopyContracts.test.cjs|src/storage/portable/Brc38NativeBrowserComponents.test.cjs|src/storage/snapshot/PackedIdbCurrentStructuredRead.test.ts|src/utility/BrowserArgon2idWorker.native.test.cjs|src/storage/portable/Brc38NativeComposedIntegrityContractsNode.test.ts|src/storage/__test/WalletStorageManager\.journal\.test\.ts$')
             args+=(--shard="$WALLET_SHARD/4")
           else
             args=(--coverage --coverageDirectory=coverage/${{ matrix.id }} --runInBand
@@ -1362,6 +1368,9 @@ jobs:
           elif [ -n "$NATIVE_USER_COHORT" ]; then
             node scripts/wallet-composed-native-ci.mjs user-capture "$NATIVE_USER_COHORT" \
               native-user-result.json ".coverage-output/${{ matrix.id }}.native-user.json"
+          elif [ -n "$NATIVE_INTEGRITY_COHORT" ]; then
+            node scripts/wallet-composed-native-ci.mjs integrity-capture "$NATIVE_INTEGRITY_COHORT" \
+              native-integrity-result.json ".coverage-output/${{ matrix.id }}.native-integrity.json"
           fi
           cp packages/wallet/wallet-toolbox/coverage/${{ matrix.id }}/lcov.info \
             .coverage-output/wallet-${{ matrix.id }}.lcov.info
@@ -1624,6 +1633,9 @@ jobs:
       - name: Verify all original native user cases at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-composed-native-ci.mjs user-verify .coverage-artifacts
+      - name: Verify all original native integrity cases at this exact head
+        if: needs.prepare.outputs.wallet == 'true'
+        run: node scripts/wallet-composed-native-ci.mjs integrity-verify .coverage-artifacts
       - name: Verify all original browser cases and their coverage at this exact head
         if: needs.prepare.outputs.wallet == 'true'
         run: node scripts/wallet-browser-ci.mjs verify .coverage-artifacts
