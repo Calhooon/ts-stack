@@ -175,8 +175,69 @@ function lineSegments(target, file, cuts) {
 // File plans keep a whole file in one part; line plans intersect every original
 // range with contiguous segments that cover the file. New canonical files join
 // the target's fallback; a future helper cannot disappear.
+// Targets without an explicit plan split by file automatically once they are
+// slow. Mutant count does not predict time (tests dominate: 676 auth mutants
+// take under two minutes while 358 envelope mutants took fifteen), so the
+// estimate is the target's measured hosted seconds. A target never measured
+// uses a deliberately pessimistic code-line estimate: an unneeded split costs
+// one job's setup, a missed split holds the whole campaign.
+const AUTO_PART_SECONDS = 240
+const UNMEASURED_SECONDS_PER_CODE_LINE = 1
+let measuredSeconds
+function measuredTargetSeconds(targetId) {
+  measuredSeconds ??= JSON.parse(
+    readFileSync(path.join(ROOT, 'governance/mutation-testing/durations.json'), 'utf8')
+  ).seconds
+  const parts = Object.entries(measuredSeconds).filter(([key]) => key.startsWith(`${targetId}/`))
+  return parts.length === 0 ? undefined : parts.reduce((sum, [, value]) => sum + value, 0)
+}
+
+function codeLines(target, specification) {
+  const lines = readFileSync(
+    path.resolve(ROOT, target.packageDirectory, partitionFile(specification)),
+    'utf8'
+  ).split('\n')
+  const [first, last] = specificationLines(specification, lines.length)
+  return lines.slice(first - 1, last).filter(line => {
+    const text = line.trim()
+    return text !== '' && !text.startsWith('//') && !text.startsWith('*') && !text.startsWith('/*')
+  }).length
+}
+
+export function automaticPlan(targetId, target, measured = measuredTargetSeconds(targetId)) {
+  if (typeof target.packageDirectory !== 'string') return undefined
+  const weights = new Map()
+  for (const specification of target.mutate) {
+    const file = partitionFile(specification)
+    if (/[!*?{}[\]]/.test(file) || path.posix.isAbsolute(file) || file.split('/').includes('..'))
+      return undefined
+    weights.set(file, (weights.get(file) ?? 0) + codeLines(target, specification))
+  }
+  const total = [...weights.values()].reduce((sum, value) => sum + value, 0)
+  const estimate = measured ?? total * UNMEASURED_SECONDS_PER_CODE_LINE
+  const count = Math.min(weights.size, Math.ceil(estimate / AUTO_PART_SECONDS))
+  if (count < 2) return undefined
+  // Largest file first into the lightest group; ties by path keep it stable.
+  const groups = Array.from({ length: count }, () => ({ weight: 0, files: [] }))
+  const files = [...weights].sort(([left, a], [right, b]) => b - a || left.localeCompare(right))
+  for (const [file, weight] of files) {
+    let lightest = groups[0]
+    for (const group of groups) if (group.weight < lightest.weight) lightest = group
+    lightest.files.push(file)
+    lightest.weight += weight
+  }
+  for (const group of groups) group.files.sort((left, right) => left.localeCompare(right))
+  groups.sort((left, right) => left.files[0].localeCompare(right.files[0]))
+  return {
+    fallback: 'files-1',
+    files: new Map(
+      groups.flatMap((group, index) => group.files.map(file => [file, `files-${index + 1}`]))
+    )
+  }
+}
+
 export function partitionMutationTarget(targetId, target) {
-  const plan = plans.get(targetId)
+  const plan = plans.get(targetId) ?? automaticPlan(targetId, target)
   if (!plan) return [{ id: 'whole', target }]
   const groups = new Map()
   const add = (id, specification) => {
@@ -236,10 +297,6 @@ export function mutationExecutionMatrix(selected, targets) {
       }))
     })
   }
-}
-
-export function partitionedTargetIds() {
-  return [...plans.keys()]
 }
 
 // Longest-processing-time-first scheduling: GitHub starts matrix jobs in listed

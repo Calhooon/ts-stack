@@ -9,7 +9,8 @@ import {
   selectedMutationPartition,
   mutationExecutionMatrix,
   partitionedMutationTargets,
-  longestFirst
+  longestFirst,
+  automaticPlan
 } from './mutation-partitions.mjs'
 const target = {
   mutate: [
@@ -223,4 +224,50 @@ test('longest-first scheduling reorders but never adds, drops or duplicates part
   const key = row => `${row.target}/${row.partition}`
   assert.deepEqual(ordered.map(key).sort(), matrix.include.map(key).sort())
   assert.deepEqual(longestFirst({ include: [] }, seconds), { include: [] })
+})
+
+test('automatic plans split slow multi-file targets by file and leave fast or single-file ones whole', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ts-stack-auto-partition-'))
+  mkdirSync(join(directory, 'src'), { recursive: true })
+  const write = (file, lines) =>
+    writeFileSync(
+      join(directory, file),
+      Array.from({ length: lines }, (_, i) => `x(${i})`).join('\n')
+    )
+  write('src/a.ts', 300)
+  write('src/b.ts', 200)
+  write('src/c.ts', 120)
+  write('src/d.ts', 60)
+  const target = {
+    packageDirectory: directory,
+    runnerOptions: { jest: { config: { testMatch: ['all-original-tests'] } } },
+    mutate: ['src/a.ts', 'src/b.ts:1-150', 'src/b.ts:120-200', 'src/c.ts', 'src/d.ts']
+  }
+  // Measured as fast: one job, whatever the size.
+  assert.equal(automaticPlan('t', target, 200), undefined)
+  // Never measured: the pessimistic estimate (680 code lines) splits it.
+  const unmeasured = automaticPlan('t', target, undefined)
+  assert.equal(new Set(unmeasured.files.values()).size, 3)
+  // Measured slow: parts by time, capped by the number of files.
+  const plan = automaticPlan('t', target, 5000)
+  assert.equal(new Set(plan.files.values()).size, 4)
+  assert.equal(plan.files.get('src/a.ts'), 'files-1')
+  // Every range of a file stays in one part, and nothing is dropped.
+  const owner = new Map()
+  for (const specification of target.mutate) {
+    const file = specification.replace(/:\d+(?:-\d+)?$/, '')
+    const id = plan.files.get(file)
+    assert.ok(id)
+    assert.ok(!owner.has(file) || owner.get(file) === id)
+    owner.set(file, id)
+  }
+  // Single-file, wildcard and directory-less targets never auto-split.
+  assert.equal(automaticPlan('t', { ...target, mutate: ['src/a.ts'] }, 5000), undefined)
+  assert.equal(automaticPlan('t', { ...target, mutate: ['src/*.ts'] }, 5000), undefined)
+  assert.equal(automaticPlan('t', { mutate: target.mutate }, 5000), undefined)
+  // Explicit plans keep priority over automatic ones.
+  assert.deepEqual(
+    partitionMutationTarget('sdk-auth-http', { ...target, mutate: ['src/a.ts'] }).map(p => p.id),
+    ['core']
+  )
 })

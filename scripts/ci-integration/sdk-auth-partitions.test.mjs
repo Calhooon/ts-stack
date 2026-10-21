@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { buildMutationTargets } from '../../governance/mutation-testing/targets.mjs'
-import { partitionMutationTarget, partitionedTargetIds } from '../mutation-partitions.mjs'
+import { partitionMutationTarget } from '../mutation-partitions.mjs'
 import { targetEvidence } from '../mutation-final-qualification.mjs'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
@@ -19,7 +19,15 @@ const tuple = mutant =>
     mutant.statusReason
   ])
 const targets = buildMutationTargets(root)
-for (const id of partitionedTargetIds().filter(id => Object.hasOwn(targets, id)))
+// Every target that executes in parts, whether by an explicit or an automatic
+// plan, must replay to exactly its canonical inventory.
+const partitioned = Object.keys(targets).filter(
+  id => partitionMutationTarget(id, targets[id]).length > 1
+)
+test('automatic planning splits the slow unplanned color-permission target', () => {
+  assert.ok(partitioned.includes('color-permission'))
+})
+for (const id of partitioned)
   test(`actual pinned ${id} partitions exhaust the original canonical mutant inventory and complete test configuration`, async () => {
     const target = targets[id]
     const canonical = await targetEvidence(root, target, id)

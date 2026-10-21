@@ -377,6 +377,24 @@ Each extra part repeats the target's dry run and job setup, so total compute
 rises while the campaign tail falls. The matrix grows from 41 to 56 jobs under
 the unchanged 20-job limit.
 
+### Automatic file partitions
+
+Hand-written plans cannot keep up with new targets: `color-permission`, added
+with 1,072 mutants on 2026-10-20, ran alone for more than 25 minutes in the next
+full campaign while every planned part had finished within 6m15s.
+
+A target without an explicit plan now splits by file automatically when it is
+slow. Mutant count does not predict time, because tests dominate (676 `auth`
+mutants take under two minutes; 358 `brc52-envelope` mutants took fifteen), so
+the estimate is the target's measured seconds in
+`governance/mutation-testing/durations.json`. A target never measured uses a
+deliberately pessimistic one second per code line. The part count is the
+estimate over 240 seconds, capped by the number of files; files are grouped
+largest first into the lightest part, and every range of a file stays in one
+part. Explicit plans, including single-file line cuts, keep priority. Today only
+`color-permission` is split automatically (four parts); the exhaustiveness
+replay covers every target that executes in parts.
+
 ### Stop-on-kill Jest environment
 
 StrykerJS treats a mutant as killed by its first failing test and bails for its
