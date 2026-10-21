@@ -28,15 +28,37 @@ See [identity integration](../../docs/guides/identity-did-vc.md) and
 [migration guidance](../../docs/guides/identity-did-vc-migration.md) before upgrading.
 This is a source candidate; publication and deployment are separate actions.
 
-## 3.3.0 source candidate
+## 4.0.0 source candidate
 
 The additive payment transport helpers, typed recovery outcomes and AuthFetch
-multipart support in this source require a minor release after immutable
+multipart support in this source are included with the SDK4 major release after immutable
 published 3.2.1. This candidate is built from this branch; changing its version
 does not publish it or replace any registry artifact. Existing non-multipart
 wire behavior and security limits remain. The complete dependency and supported
 peer matrix must qualify before release; an unavailable SDK2 version is not a
 compatibility implementation.
+
+## Module balances and listOutputs spendability (4.0 candidate)
+
+`ListOutputsResult.totalOutputs` is `PositiveIntegerOrZero | DecimalString`. A
+BRC-112 module balance query (`p <module> balance <basket>`) returns the exact
+balance as decimal text, with no outputs and no BEEF. Every other query still
+returns a count. The binary `listOutputs` response carries that text and each
+output's `spendable` byte, so both ends of a binary wallet connection must be
+on 4.0.
+
+Code that uses `totalOutputs` as a number narrows it first:
+
+```ts
+// 3.x
+const { totalOutputs } = await wallet.listOutputs({ basket: 'default' })
+const pages = Math.ceil(totalOutputs / 100)
+
+// 4.0
+const { totalOutputs } = await wallet.listOutputs({ basket: 'default' })
+if (typeof totalOutputs !== 'number') throw new Error('Expected an output count')
+const pages = Math.ceil(totalOutputs / 100)
+```
 
 ## Wallet integration
 
@@ -99,7 +121,7 @@ Request framing remains capped at 16 MiB, configured response body limits remain
 enforced, and handshake, certificate, signature, nonce and redirect checks are
 unchanged. No API, wire or wallet-data migration is required.
 
-The unpublished 3.3.0 minor candidate captures byte-array descriptor values once
+The unpublished 4.0.0 candidate captures byte-array descriptor values once
 while validating and owning authenticated payloads. It avoids repeated copy
 validation and retaining a descriptor object for every byte of a large request.
 Dense-byte checks, payload capacities, signature bytes and response deadlines

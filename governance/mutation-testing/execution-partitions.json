@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "engine": "9.6.1",
-  "canonicalTargets": 99,
-  "executionRows": 247,
+  "canonicalTargets": 100,
+  "executionRows": 248,
   "units": [
     {
       "target": "wallet-snapshot-remote-reader",

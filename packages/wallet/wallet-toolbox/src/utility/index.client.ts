@@ -9,6 +9,7 @@ export * from './utilityHelpers.noBuffer'
 export * from './brc114ActionTimeLabels'
 export * from './brc153ReferenceLabels'
 export * from './brc177NoSendExpiry'
+export * from './numericTotalOutputs'
 export * from './Argon2idBackend'
 
 export * from './BrowserArgon2idWorker'

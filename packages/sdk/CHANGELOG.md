@@ -214,13 +214,27 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
-- Version the new exported payment transport/error/payload APIs as the additive
-  3.3.0 source candidate after immutable published 3.2.1. No publication occurs
+### BRC-112 module balances and listOutputs spendability (4.0.0 candidate)
+
+- `ListOutputsResult.totalOutputs` is `PositiveIntegerOrZero | DecimalString`.
+  A BRC-112 module balance query (`p <module> balance <basket>`) returns the
+  exact balance as canonical decimal text with no outputs and no BEEF; every
+  other query still returns a count. Result validation requires decimal text
+  for those queries and rejects it for all others.
+- The BRC-100 binary `listOutputs` response carries the module balance as a
+  UTF-8 string and each output's `spendable` byte after its locking script, as
+  BRC-100 specifies. Both sides of a binary connection must update together:
+  earlier codecs neither write nor read the `spendable` byte.
+- Migration: TypeScript that compares or adds `totalOutputs` must first check
+  `typeof totalOutputs === 'number'`. Ordinary baskets always return a number.
+
+- Version the new exported payment transport/error/payload APIs as part of the
+  4.0.0 source candidate after immutable published 3.2.1. No publication occurs
   through this source change.
 
 - Reduce authenticated large-payload preparation overhead with one-pass byte validation/copy and value-only array snapshots; preserve byte checks, wire formats, limits and deadlines. No migration is required.
 
-### 3.3.0 candidate — prepared BRC-118 payments and recipient interoperability
+### 4.0.0 candidate — prepared BRC-118 payments and recipient interoperability
 
 - Preserve native body serialization and inferred Content-Type on ordinary HTTP
   fallback, including cached unauthenticated peers; retain owned payment bytes.

@@ -3,7 +3,7 @@ id: pkg-fund-wallet
 title: '@bsv/fund-wallet'
 kind: package
 domain: helpers
-version: '1.5.3'
+version: '1.5.4'
 source_repo: 'bsv-blockchain/ts-stack'
 last_updated: '2026-09-23'
 last_verified: '2026-09-23'
@@ -16,11 +16,11 @@ tags: [helpers, testing, faucet, development]
 
 # @bsv/fund-wallet
 
-The unpublished 1.5.3 candidate refreshes the packed first-party dependency
+The unpublished 1.5.4 candidate refreshes the packed first-party dependency
 ranges for the next wallet interoperability release; no independent API or wire
 format changes are introduced. Adopt after the dependency graph is published.
 
-This source candidate declares SDK peer `^2.1.6 || ^3.0.0`. SDK3 remains
+This source candidate declares SDK peer `^2.1.6 || ^3.0.0 || ^4.0.0`. SDK3 remains
 a coordinated proposal; see the [qualification and migration limits](../../guides/identity-did-vc-migration.md)
 before adopting it.
 

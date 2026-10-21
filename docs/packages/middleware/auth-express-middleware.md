@@ -18,7 +18,7 @@ tags: [middleware, express, auth, brc-103, brc-104]
 
 The unpublished 2.3 candidate adds opt-in bounded raw request capture for exact BRC-118 authentication. Mount it before body parsers; multipart extraction happens only after authentication. See the [BRC-118 deployment guide](../../guides/brc118-payments.md).
 
-This source candidate declares SDK peer `^2.9.0 || ^3.0.0`. SDK3 remains
+This source candidate declares SDK peer `^2.8.5 || ^3.0.0 || ^4.0.0`. SDK3 remains
 a coordinated proposal; see the [qualification and migration limits](../../guides/identity-did-vc-migration.md)
 before adopting it.
 

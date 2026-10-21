@@ -3,10 +3,10 @@ id: bsv-sdk
 title: '@bsv/sdk'
 kind: package
 domain: sdk
-version: '3.3.0'
+version: '4.0.0'
 npm: '@bsv/sdk'
-last_updated: '2026-10-18'
-last_verified: '2026-10-18'
+last_updated: '2026-10-19'
+last_verified: '2026-10-19'
 review_cadence_days: 30
 status: stable
 tags: ['sdk', 'crypto', 'transactions']
@@ -15,14 +15,23 @@ repo: 'https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk'
 
 # @bsv/sdk
 
-The unpublished 3.3.0 candidate adds bounded BRC-118 payment transport to `AuthFetch` and retains recipient-side BRC-29 derivation. See the [BRC-118 integration and migration guide](../../guides/brc118-payments.md) for preparation, negotiation, exact-byte authentication and uncertain-payment recovery. Existing nonempty non-multipart signing preimages and the 8 KiB header selection default are preserved.
+The unpublished 4.0.0 candidate adds bounded BRC-118 payment transport to `AuthFetch` and retains recipient-side BRC-29 derivation. See the [BRC-118 integration and migration guide](../../guides/brc118-payments.md) for preparation, negotiation, exact-byte authentication and uncertain-payment recovery. Existing nonempty non-multipart signing preimages and the 8 KiB header selection default are preserved.
 
 Ordinary HTTP fallback retains native text, URLSearchParams, typed Blob and
 FormData serialization and inferred Content-Type, including cached peers.
 Mutable inputs are copied before asynchronous work; explicit headers prevail.
 Authenticated payment retries retain their owned-byte snapshots.
 
-The integrated SDK3 candidate removes the obsolete serial-DID token
+The 4.0.0 source candidate types `ListOutputsResult.totalOutputs` as
+`PositiveIntegerOrZero | DecimalString`. A BRC-112 module balance query
+(`p <module> balance <basket>`) returns the exact balance as decimal text with
+no outputs and no BEEF; every other query returns a count. The binary
+`listOutputs` response carries that text and each output's `spendable` byte, so
+both ends of a binary connection must update together. Code that uses
+`totalOutputs` as a number must check `typeof totalOutputs === 'number'` first.
+This candidate is not publication.
+
+The integrated SDK4 candidate removes the obsolete serial-DID token
 validation module. Native identity, certificate and authentication APIs remain.
 Use the [identity/DID/VC guide](../../guides/identity-did-vc.md) and
 [migration map](../../guides/identity-did-vc-migration.md). SDK3 consumer peer

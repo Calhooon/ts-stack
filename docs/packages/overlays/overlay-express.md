@@ -4,7 +4,7 @@ title: '@bsv/overlay-express'
 kind: package
 domain: overlays
 npm: '@bsv/overlay-express'
-version: '2.7.4'
+version: '2.7.5'
 last_updated: '2026-10-01'
 last_verified: '2026-10-01'
 review_cadence_days: 30
@@ -15,11 +15,11 @@ tags: ['overlay', 'express', 'http']
 
 # @bsv/overlay-express
 
-The unpublished 2.7.4 candidate refreshes the packed first-party dependency
+The unpublished 2.7.5 candidate refreshes the packed first-party dependency
 ranges for the next wallet interoperability release; no independent API or wire
 format changes are introduced. Adopt after the dependency graph is published.
 
-This source candidate declares SDK peer `^2.4.0 || ^3.0.0`. SDK3 remains
+This source candidate declares SDK peer `^2.4.0 || ^3.0.0 || ^4.0.0`. SDK3 remains
 a coordinated proposal; see the [qualification and migration limits](../../guides/identity-did-vc-migration.md)
 before adopting it.
 

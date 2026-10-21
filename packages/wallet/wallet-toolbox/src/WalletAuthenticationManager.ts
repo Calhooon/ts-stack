@@ -1,6 +1,7 @@
 import { awaitFromSync, mapAwaitFromSync } from './utility/promiseFromSync'
 import { CWIStyleWalletManager, UMPTokenInteractor } from './CWIStyleWalletManager'
 import { PrivilegedKeyManager } from './sdk/PrivilegedKeyManager'
+import { numericTotalOutputs } from './utility/numericTotalOutputs'
 import {
   WalletInterface,
   Random,
@@ -161,12 +162,13 @@ async function hasInternalizedFaucetOutput(
       { basket: 'default', includeLabels: true, limit: pageSize, offset },
       adminOriginator
     )
+    const totalOutputs = numericTotalOutputs(page)
     if (
       !Array.isArray(page.outputs) ||
-      !Number.isSafeInteger(page.totalOutputs) ||
-      page.totalOutputs < 0 ||
+      !Number.isSafeInteger(totalOutputs) ||
+      totalOutputs < 0 ||
       page.outputs.length > pageSize ||
-      offset + page.outputs.length > page.totalOutputs
+      offset + page.outputs.length > totalOutputs
     ) {
       throw new Error('Wallet returned invalid faucet payment outputs.')
     }
@@ -185,7 +187,7 @@ async function hasInternalizedFaucetOutput(
       return true
     }
     offset += page.outputs.length
-    if (offset >= page.totalOutputs) return false
+    if (offset >= totalOutputs) return false
     if (page.outputs.length === 0) throw new Error('Wallet returned an incomplete faucet output page.')
   }
 }

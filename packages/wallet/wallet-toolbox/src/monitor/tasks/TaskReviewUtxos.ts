@@ -13,6 +13,7 @@ import {
   UtxoReviewDiagnostics
 } from '../../storage/methods/reviewUtxoOutputs'
 import { verifyOne } from '../../utility/utilityHelpers'
+import { numericTotalOutputs } from '../../utility/numericTotalOutputs'
 import { Monitor } from '../Monitor'
 import { WalletMonitorTask } from './WalletMonitorTask'
 import {
@@ -123,7 +124,7 @@ export class TaskReviewUtxos extends WalletMonitorTask {
       }
 
       const total = result.outputs.reduce((sum, output) => sum + output.satoshis, 0)
-      return this.toUserLog(user, result.outputs, result.totalOutputs, total, tags)
+      return this.toUserLog(user, result.outputs, numericTotalOutputs(result), total, tags)
     })
   }
 
