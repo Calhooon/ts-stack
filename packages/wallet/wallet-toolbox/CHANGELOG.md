@@ -1,5 +1,12 @@
 ## Held #569 implementation candidate — unreleased
 
+Expired native recovery translates the original import journal's physical
+destination address only after the actual frozen copy matches the complete
+original image. The original admitted preview remains bound; every current
+schema, clock, profile and semantic check is retained. Real UTC expiry fixtures
+recheck the clock after early timer wakeups without renewing any deadline.
+No API, wire, schema or native ABI migration; full recovery qualification remains.
+
 Native merge-history scope admits other original user profiles while retaining
 the exact selected-user check and complete independent user inventory. Source
 index validation shares virtual-table reads across all thirteen original

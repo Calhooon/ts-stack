@@ -292,16 +292,23 @@ const walletDataAdditions = {
     ]
   },
   'wallet-current-brc38-native-catalog-node': {
-    mutate: ['src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts'],
+    mutate: [
+      'src/storage/snapshot/journal/SnapshotJournalNativeActionMerge.ts',
+      'src/storage/portable/Brc38CopiedImportDestinationNode.ts'
+    ],
     additionalInputs: [
       'test/utils/snapshotJournalFieldNativeCache.ts',
       'src/storage/snapshot/preparePackedNativeSnapshotFieldNode.case.ts',
       'src/storage/snapshot/journal/SnapshotJournalOwnedRowFingerprint.ts',
       'src/storage/snapshot/journal/SnapshotJournalFieldSql.ts',
       'src/storage/snapshot/journal/KnexSnapshotJournalWindowDestination.ts',
-      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts'
+      'src/storage/snapshot/journal/KnexSnapshotJournalFieldDestination.ts',
+      'src/storage/portable/Brc38NativeTestClock.ts'
     ],
-    tests: []
+    tests: [
+      '<rootDir>/src/storage/portable/Brc38CopiedImportDestinationNode.test.ts',
+      '<rootDir>/src/storage/portable/Brc38NativeTestClock.test.ts'
+    ]
   }
 }
 

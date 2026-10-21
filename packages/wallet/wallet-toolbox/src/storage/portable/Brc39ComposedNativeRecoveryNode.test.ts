@@ -1,4 +1,5 @@
 import { nativeTestExecutable } from './Brc38NativeTestPath'
+import { waitForNativeTestExpiry } from './Brc38NativeTestClock'
 import { brc38ImportRequestIdentity, snapshotSyncRequestMetadata } from '../snapshot/SnapshotSyncRequestMetadata'
 import { readNativeSnapshotSyncRequestCurrent } from '../snapshot/NativeSnapshotSyncRequestsCurrentNode'
 import { createSyncMap } from '../schema/entities/EntityBase'
@@ -580,7 +581,7 @@ test.each([
       if (scenario.expired) {
         // Real UTC expiry, never a mocked clock, changed original packet, kernel
         // argument rewrite or admission renewal. All first-attempt owners drained.
-        await new Promise<void>(resolve => setTimeout(resolve, Math.max(1, fixture.expiresAt - Date.now() + 1)))
+        await waitForNativeTestExpiry(fixture.expiresAt)
         expect(Date.now()).toBeGreaterThanOrEqual(fixture.expiresAt)
       }
       const result = await recoverBrc39ComposedNativeImport(fixture.chunks(), authenticatedStagePassword, {

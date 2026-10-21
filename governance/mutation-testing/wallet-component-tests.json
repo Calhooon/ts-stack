@@ -200,6 +200,7 @@
   "wallet-current-brc38-native-catalog-node": [
     "src/storage/portable/Brc38ComposedDatabaseImageNode.test.ts",
     "src/storage/portable/Brc38ComposedPublishedReceiptNode.test.ts",
+    "src/storage/portable/Brc38CopiedImportDestinationNode.test.ts",
     "src/storage/portable/Brc38ImportFieldPolicyRowsNode.test.ts",
     "src/storage/portable/Brc38NativeBinaryFieldNode.test.ts",
     "src/storage/portable/Brc38NativeBinaryReadNode.test.ts",
@@ -227,6 +228,7 @@
     "src/storage/portable/Brc38NativeRetirementNode.test.ts",
     "src/storage/portable/Brc38NativeTailLayout.test.ts",
     "src/storage/portable/Brc38NativeTailLayoutNode.test.ts",
+    "src/storage/portable/Brc38NativeTestClock.test.ts",
     "src/storage/portable/Brc38NativeTextReadNode.test.ts",
     "src/storage/portable/Brc38PrivateNativeCopyDescriptorNode.test.ts",
     "src/storage/portable/Brc38StructuredNativeReceiverSchemaNode.test.ts",

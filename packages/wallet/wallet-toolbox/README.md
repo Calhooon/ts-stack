@@ -6471,3 +6471,15 @@ checks distinct epochs versus both the template and another copy, unchanged
 empty templates and data isolation. Migration-specific suites keep their own
 fresh fixtures. WAL, process-crash recovery, original cases and deadlines remain
 exercised against independent databases.
+
+Expired native recovery translates the original import journal's physical
+destination address only after the actual frozen copy matches the complete
+original image. The original admitted preview remains bound; every current
+schema, clock, profile and semantic check is retained. Real UTC expiry fixtures
+recheck the clock after early timer wakeups without renewing any deadline.
+No API, wire, schema or native ABI migration; full recovery qualification remains.
+
+The expiry integration fixtures retain their original case timeout and actual
+UTC expiry assertion. The copied scratch retains fresh physical ownership
+checks around each read. Targeted file-copy/primary ABA and early-wake
+regressions do not establish full native recovery qualification.

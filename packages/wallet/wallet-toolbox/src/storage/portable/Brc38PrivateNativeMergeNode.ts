@@ -35,7 +35,12 @@ import {
 } from './Brc38StructuredRestoreResourcesNode'
 import { snapshotJournalReceiptPolicy } from '../snapshot/journal/SnapshotJournalReceipt'
 import { registerBrc38PrivateDestinationLease } from './Brc38PrivateDestinationLeaseNode'
-import { previewBrc38PrivateImport } from './Brc38PrivateImportPreviewNode'
+import {
+  previewBrc38PrivateImport,
+  readBrc38PrivateImportPreview,
+  type Brc38PrivateImportPreview
+} from './Brc38PrivateImportPreviewNode'
+import { brc38CopiedImportDestinationDigest } from './Brc38CopiedImportDestinationNode'
 import {
   brc38ImportDestinationDigest,
   prepareBrc38PrivateImportJournal,
@@ -877,7 +882,15 @@ export class Brc38PrivateNativeMergeNode {
         // advances its legitimate scratch scheduling state. The kernel already
         // freezes semantic mutations; complete row/custody comparisons still
         // run here, and the receiving owner independently reads its full image.
-        await this.#inspectComposedRows(true, mode === 'retired' ? receipt : undefined)
+        let copiedPreview: Readonly<Brc38PrivateImportPreview> | undefined
+        if (this.#store.recoveryComparisonOnly) {
+          if (mode !== 'retired') invalid()
+          // Only this actual frozen copy, after full original image equality,
+          // can translate the original journal's physical destination address.
+          // The freshly admitted scratch backend is still checked on each read.
+          copiedPreview = await readBrc38PrivateImportPreview(this.#store)
+        }
+        await this.#inspectComposedRows(true, mode === 'retired' ? receipt : undefined, copiedPreview)
         if ((await checkSource()) !== sourceBefore) invalid()
         this.#compositionImageReceipt = receipt
         this.#compositionImageMode = mode
@@ -986,9 +999,11 @@ export class Brc38PrivateNativeMergeNode {
   }
   async #inspectComposedRows(
     freeze: boolean,
-    retired?: Readonly<Brc38ComposedProfileReceipt>
+    retired?: Readonly<Brc38ComposedProfileReceipt>,
+    copiedPreview?: Readonly<Brc38PrivateImportPreview>
   ): ReturnType<Brc38PrivateNativeMergeNode['inspectComposedRows']> {
     this.#check()
+    if (this.#store.recoveryComparisonOnly !== (copiedPreview !== undefined)) invalid()
     const status = await this.#status(),
       admission = status.admission,
       working = this.#options.workingAllocation,
@@ -1077,7 +1092,11 @@ export class Brc38PrivateNativeMergeNode {
             async (k, actual) => {
               await clock(k)
               const receipt = await readBrc38ImportJournal(k, admission, working)
-              if (receipt.destinationSha256 !== brc38ImportDestinationDigest(actual)) invalid()
+              const destinationSha256 =
+                copiedPreview === undefined
+                  ? brc38ImportDestinationDigest(actual)
+                  : brc38CopiedImportDestinationDigest(actual, copiedPreview, admission)
+              if (receipt.destinationSha256 !== destinationSha256) invalid()
               await assertBrc38PrivateMergeProgramBudget(k, admission)
               const value = await operation(k)
               await clock(k)
