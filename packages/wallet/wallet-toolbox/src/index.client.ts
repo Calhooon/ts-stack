@@ -1,4 +1,5 @@
 export * as sdk from './sdk/index'
+export { specOpBasketPrefixOutputs } from './sdk/types'
 
 export * from './utility/index.client'
 export * from './storage/index.client'

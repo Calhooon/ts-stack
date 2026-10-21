@@ -30,6 +30,12 @@ Ordinary replica merge and coherent archive capture are separate APIs. A
 replica checkpoint is never substituted for the source archive's original
 sync-state rows. Existing BRC-38/39 formats remain unchanged.
 
+The 2.15 candidate also exports `specOpBasketPrefixOutputs` directly for
+permission-module consumers. Its value is identical to
+`sdk.specOpBasketPrefixOutputs`; existing namespace imports remain compatible.
+The named import lets bundlers retain only the requested storage operation.
+No API or wire migration is required.
+
 ## Receiving already-broadcast payments
 
 The 2.14.9 source candidate completes broadcast results even when storage
