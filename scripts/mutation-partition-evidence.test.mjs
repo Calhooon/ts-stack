@@ -255,3 +255,47 @@ test('joining a source file rejects cross-part canonical overlap and unequal com
     /different complete metadata or source/
   )
 })
+
+test('component-partition configuration is independently verified before canonical score aggregation', () => {
+  const selected = parts.map((part, index) => ({
+    ...part,
+    evidence: {
+      ...part.evidence,
+      config: {
+        ...part.evidence.config,
+        jest: {
+          config: { testMatch: [`<rootDir>/test/component-${index}.test.ts`] }
+        }
+      }
+    }
+  }))
+  const packets = selected.map(part => packetFor(part))
+  const combined = combinePartitionEvidence(
+    identity,
+    'one',
+    selected,
+    packets,
+    policy,
+    'full',
+    evidence
+  )
+  assert.deepEqual(JSON.parse(combined.reportBytes).config, evidence.config)
+  assert.equal(combined.receipt.metrics.valid, 10)
+  assert.equal(combined.receipt.metrics.score, 100)
+  const stale = selected.map(part => ({
+    ...part,
+    evidence: {
+      ...part.evidence,
+      config: {
+        ...part.evidence.config,
+        jest: {
+          config: { testMatch: ['<rootDir>/test/another.test.ts'] }
+        }
+      }
+    }
+  }))
+  assert.throws(
+    () => combinePartitionEvidence(identity, 'one', stale, packets, policy, 'full', evidence),
+    /configuration|config/
+  )
+})

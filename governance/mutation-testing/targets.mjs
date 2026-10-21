@@ -7359,6 +7359,32 @@ export function buildMutationTargets(repositoryRoot) {
       ],
       propertyTest:
         'packages/wallet/wallet-toolbox/src/storage/snapshot/RetainedReadSnapshot.property.test.ts',
+      configurationInputs: ['scripts/mutation-partitions.mjs'],
+      componentTestPartitions: {
+        'sqlite-bootstrap': {
+          mutate: [
+            'src/storage/schema/snapshotSqliteIndexBootstrap.ts',
+            'src/storage/schema/snapshotSqliteIndexState.ts'
+          ],
+          sourceHashes: {
+            'src/storage/schema/snapshotSqliteIndexBootstrap.ts':
+              '89e21d1952fe89f678e6b4f22e687137c94c86def0d946ad1517c4a423ff87a6',
+            'src/storage/schema/snapshotSqliteIndexState.ts':
+              'db758c4ab0c000641016237cd410961adfe64a1230b8e061d938b53fe251dff8'
+          },
+          tests: [
+            'src/storage/schema/snapshotSqliteDefinitions.test.ts',
+            'src/storage/snapshot/SnapshotSqliteBootstrap.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGeneration.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGenerationCost.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGenerationMigration.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGenerationReaders.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGenerationRegistry.test.ts',
+            'src/storage/snapshot/SnapshotSqliteGenerationRetirement.test.ts',
+            'src/storage/snapshot/RetainedReadSnapshot.property.test.ts'
+          ]
+        }
+      },
       mutate: [
         'src/storage/snapshot/RetainedReadSnapshot.ts',
         'src/storage/snapshot/KnexWalletReadSnapshot.ts',

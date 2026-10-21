@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
-import { parseArguments, REPOSITORY_ROOT } from './mutation-testing.mjs'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  parseArguments,
+  REPOSITORY_ROOT,
+  selectAffectedMutationTargets
+} from './mutation-testing.mjs'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import {
   partitionMutationTarget,
@@ -9,7 +15,8 @@ import {
   selectedMutationPartition,
   mutationExecutionMatrix,
   partitionedMutationTargets,
-  refineMutationPartition
+  refineMutationPartition,
+  applyPartitionComponentTests
 } from './mutation-partitions.mjs'
 const target = {
   mutate: [
@@ -561,4 +568,84 @@ test('stale source, changed original specifications and malformed or overlapping
     change(changed)
     assert.throws(() => refineMutationPartition(base, changed, () => source))
   }
+})
+
+test('sqlite bootstrap components change only that source-bound partition and retain the full functional universe', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)['wallet-retained-snapshot']
+  const parts = partitionMutationTarget('wallet-retained-snapshot', canonical)
+  const selected = parts.find(part => part.id === 'sqlite-bootstrap').target
+  assert.deepEqual(
+    selectAffectedMutationTargets({ 'wallet-retained-snapshot': canonical }, [
+      'scripts/mutation-partitions.mjs'
+    ]),
+    ['wallet-retained-snapshot']
+  )
+  assert.deepEqual(
+    selectAffectedMutationTargets({ 'wallet-retained-snapshot': canonical }, [
+      'scripts/mutation-partitions.mjs.extra'
+    ]),
+    []
+  )
+  assert.equal(selected.runnerOptions.jest.config.testMatch.length, 9)
+  assert.ok(
+    selected.runnerOptions.jest.config.testMatch.includes(
+      '<rootDir>/src/storage/snapshot/RetainedReadSnapshot.property.test.ts'
+    )
+  )
+  for (const part of parts.filter(part => part.id !== 'sqlite-bootstrap'))
+    assert.equal(part.target.runnerOptions, canonical.runnerOptions)
+  assert.equal(selectedMutationPartition('wallet-retained-snapshot', canonical), canonical)
+  assert.deepEqual(parts.flatMap(part => part.target.mutate).sort(), [...canonical.mutate].sort())
+  assert.deepEqual(selected.runnerOptions, {
+    ...canonical.runnerOptions,
+    jest: {
+      ...canonical.runnerOptions.jest,
+      config: {
+        ...canonical.runnerOptions.jest.config,
+        testMatch: selected.runnerOptions.jest.config.testMatch
+      }
+    }
+  })
+})
+
+test('component topology refuses stale source, missing properties, unknown suites and another partition', () => {
+  const canonical = buildMutationTargets(REPOSITORY_ROOT)['wallet-retained-snapshot']
+  const base = canonicalMutationPartitions('wallet-retained-snapshot', canonical).find(
+    part => part.id === 'sqlite-bootstrap'
+  )
+  const selection = canonical.componentTestPartitions['sqlite-bootstrap']
+  const read = file => readFileSync(join(REPOSITORY_ROOT, canonical.packageDirectory, file))
+  for (const patch of [
+    { mutate: [...selection.mutate, 'src/future.ts'] },
+    { sourceHashes: {} },
+    { sourceHashes: { ...selection.sourceHashes, 'src/extra.ts': 'a'.repeat(64) } },
+    { tests: [] },
+    { tests: [...selection.tests, selection.tests[0]] },
+    {
+      tests: selection.tests.filter(file => !file.endsWith('RetainedReadSnapshot.property.test.ts'))
+    },
+    ...[
+      '../escape.test.ts',
+      '/outside.test.ts',
+      'src/**/*.test.ts',
+      'src/unknown.test.ts',
+      canonical.requiredFunctionalTests[0]
+    ].map(file => ({ tests: [...selection.tests, file] }))
+  ])
+    assert.throws(() => applyPartitionComponentTests(base, { ...selection, ...patch }, read))
+  assert.throws(
+    () => applyPartitionComponentTests(base, selection, () => Buffer.from('changed source')),
+    /source changed/
+  )
+  assert.throws(
+    () =>
+      partitionMutationTarget('wallet-retained-snapshot', {
+        ...canonical,
+        componentTestPartitions: { missing: selection }
+      }),
+    /Unknown component/
+  )
+  const before = JSON.stringify(canonical)
+  applyPartitionComponentTests(base, selection, read)
+  assert.equal(JSON.stringify(canonical), before)
 })

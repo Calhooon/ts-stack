@@ -292,8 +292,87 @@ export function refineMutationPartition(base, unit, readSource) {
   return parts
 }
 
+// A component selection is bound to one complete original source partition.
+// The canonical target keeps its entire test universe for affected selection and
+// independent CI; only this partition's repeated mutation execution changes.
+export function applyPartitionComponentTests(base, selection, readSource) {
+  const target = base.target
+  if (
+    !selection ||
+    typeof selection !== 'object' ||
+    !isDeepStrictEqual(selection.mutate, target.mutate) ||
+    !selection.sourceHashes ||
+    typeof selection.sourceHashes !== 'object' ||
+    Array.isArray(selection.sourceHashes) ||
+    !Array.isArray(selection.tests) ||
+    selection.tests.length === 0 ||
+    new Set(selection.tests).size !== selection.tests.length
+  )
+    throw new Error('Invalid source-bound component selection')
+  const files = [...new Set(target.mutate.map(value => sourceSpecification(value).file))].sort()
+  if (!isDeepStrictEqual(files, Object.keys(selection.sourceHashes).sort()))
+    throw new Error('Component source inventory differs')
+  for (const file of files) {
+    const expected = selection.sourceHashes[file]
+    if (
+      typeof expected !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(expected) ||
+      createHash('sha256').update(readSource(file)).digest('hex') !== expected
+    )
+      throw new Error('Component source changed; review its selection and coverage')
+  }
+  const config = target.runnerOptions?.jest?.config
+  const property = target.propertyTest?.slice(target.packageDirectory.length + 1)
+  if (
+    !config ||
+    !Array.isArray(config.testMatch) ||
+    !selection.tests.includes(property) ||
+    selection.tests.some(
+      file =>
+        typeof file !== 'string' ||
+        file.includes('\\') ||
+        path.posix.isAbsolute(file) ||
+        /[!*?{}[\]:]/.test(file) ||
+        file.split('/').some(part => part === '.' || part === '..') ||
+        target.requiredFunctionalTests?.includes(file) ||
+        !config.testMatch.some(pattern => path.matchesGlob('<rootDir>/' + file, pattern))
+    )
+  )
+    throw new Error('Component tests omit a property or escape the original universe')
+  return {
+    ...base,
+    target: {
+      ...target,
+      runnerOptions: {
+        ...target.runnerOptions,
+        jest: {
+          ...target.runnerOptions.jest,
+          config: {
+            ...config,
+            testMatch: selection.tests.map(file => '<rootDir>/' + file)
+          }
+        }
+      }
+    }
+  }
+}
+
 export function partitionMutationTarget(targetId, target) {
-  const base = canonicalMutationPartitions(targetId, target)
+  const original = canonicalMutationPartitions(targetId, target)
+  const selections = target.componentTestPartitions ?? {}
+  if (
+    typeof selections !== 'object' ||
+    Array.isArray(selections) ||
+    Object.keys(selections).some(id => !original.some(part => part.id === id))
+  )
+    throw new Error('Unknown component execution partition')
+  const base = original.map(part =>
+    selections[part.id] === undefined
+      ? part
+      : applyPartitionComponentTests(part, selections[part.id], file =>
+          fs.readFileSync(path.join(ROOT, target.packageDirectory, file))
+        )
+  )
   const plan = JSON.parse(fs.readFileSync(path.join(ROOT, executionPlanPath), 'utf8'))
   if (plan.schemaVersion !== 1 || plan.engine !== '9.6.1' || !Array.isArray(plan.units))
     throw new Error('Missing reviewed execution refinement manifest')

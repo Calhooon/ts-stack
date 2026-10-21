@@ -468,3 +468,17 @@ and participate in final qualification identity. Every canonical mutant and
 score/zero-uncovered/invalid/unexecuted gate remains required. This scheduling
 repair does not resolve the separately observed retained-snapshot/sqlite-bootstrap
 300-second startup failure or qualify the still-failing native integrity cases.
+
+The retained-snapshot `sqlite-bootstrap` mutation partition uses the eight
+existing direct schema component files and its unchanged registered property
+suite. The selection is pinned to that partition's two complete source files
+and their hashes; stale source, unknown tests/partitions and missing properties
+refuse admission. Its original canonical target retains all 81 discovered
+suites as affected inputs, and every other source partition keeps the original
+runner configuration. Actual CI Bash and Jest discovery verifies that all 81
+still execute exactly once in the four ordinary shards or the existing
+receipt-gated browser lane. No original test, data, case, timeout or resource
+limit changes. The 499-mutant canonical inventory, score and zero-uncovered,
+invalid and unexecuted gates remain required. Targeted startup and coverage
+measurements do not replace assertion-killed mutation quality or complete
+exact-head functional and system qualification.
