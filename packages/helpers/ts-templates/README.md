@@ -1,6 +1,6 @@
 # BSV Script Templates
 
-Patch candidate `2.0.1` updates packed first-party runtime or development dependency ranges. This metadata-only patch preserves public APIs, peer ranges, wire formats and defaults. No additional consumer or data migration is required; earlier migration guidance still applies.
+Candidate `2.1.0` adds the `OneColor` BRC-162 template and SDK4 peer support from current main, alongside updated packed first-party dependency ranges. Existing templates, wire formats and defaults remain supported. The additive `OneColor` API and migration guidance are documented below.
 
 BSV BLOCKCHAIN | Script Templates
 

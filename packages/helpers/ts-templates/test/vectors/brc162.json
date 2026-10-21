@@ -1577,7 +1577,10 @@
       "txid": "abababababababababababababababababababababababababababababababcd",
       "digestHex": "6d616e64616c612d6465706c6f793a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626364",
       "issuerIdentityKey": "0364f4edfaef6066ac3b98005c5670d8c771f986640abbd2f804364d271d410f2e",
-      "protocolID": [2, "mandala deploy"],
+      "protocolID": [
+        2,
+        "mandala deploy"
+      ],
       "keyID": "1",
       "counterparty": "anyone",
       "signatureHex": "3044022073e985499c764e64d136e92cac1c6fafe42335065c7c396167c2fdbb9835ede202200287c7f0ebc9cbecf1b56ef194ce67ff5b6f862c4a587743b33e08f34cc49682"
@@ -1587,7 +1590,10 @@
       "txid": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "digestHex": "6d616e64616c612d6465706c6f793a30303031303230333034303530363037303830393061306230633064306530663130313131323133313431353136313731383139316131623163316431653166",
       "issuerIdentityKey": "0364f4edfaef6066ac3b98005c5670d8c771f986640abbd2f804364d271d410f2e",
-      "protocolID": [2, "mandala deploy"],
+      "protocolID": [
+        2,
+        "mandala deploy"
+      ],
       "keyID": "1",
       "counterparty": "anyone",
       "signatureHex": "304402207e8c09fb4c0431feff38603192439068b80e878fef29dfdadb1bc5ce490327b102205ce60329bdf5c50a877b70cbad0c72da69dab8dc41fa8c85f770d3dffa6edc3f"
