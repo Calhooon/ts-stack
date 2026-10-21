@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -18,6 +19,7 @@ import { WERR_UNAUTHORIZED } from '../../sdk/WERR_errors'
 import { EntitySyncState } from '../schema/entities/EntitySyncState'
 import { KnexSyncTransferStore } from '../remoting/KnexSyncTransferStore'
 import { encodeSyncTransfer, syncTransferDigest } from '../remoting/SyncTransfer'
+import { migrateSnapshotJournalSqliteSourceAddition } from './journal/SnapshotJournalSqliteGeneration'
 
 const identity = '02' + '11'.repeat(32)
 const foreignIdentity = '03' + '22'.repeat(32)
@@ -27,6 +29,43 @@ const when = new Date('2026-01-01T00:00:00.000Z')
 const fixtureTemporaryRoot = process.platform === 'linux' && process.env.CI === 'true' ? '/dev/shm' : tmpdir()
 const stores: StorageKnex[] = []
 const directories: string[] = []
+const schemaTemplates = new Map<string, string>()
+let templateDirectory: string | undefined
+
+// Real migrations belong to suite initialization, including Stryker's static
+// coverage. Each case owns new files and rotates its epoch through the real writer.
+beforeAll(async () => {
+  templateDirectory = await mkdtemp(join(fixtureTemporaryRoot, 'wallet-snapshot-template-'))
+  for (const name of ['source', 'destination']) {
+    const filename = join(templateDirectory, `${name}.sqlite`)
+    const storage = new StorageKnex({
+      ...StorageProvider.createStorageBaseOptions('test'),
+      knex: knex({
+        client: 'better-sqlite3',
+        connection: { filename },
+        useNullAsDefault: true,
+        pool: { min: 1, max: 1 }
+      })
+    })
+    try {
+      await storage.migrate(name, name)
+    } finally {
+      // Close SQLite before copying its main file; no live WAL is copied.
+      await storage.knex.destroy()
+    }
+    schemaTemplates.set(name, filename)
+  }
+})
+
+function schemaTemplate(name: string): string {
+  const filename = schemaTemplates.get(name)
+  if (filename === undefined) throw new Error('Snapshot fixture template is unavailable')
+  return filename
+}
+
+afterAll(async () => {
+  if (templateDirectory !== undefined) await rm(templateDirectory, { recursive: true, force: true })
+})
 function deferred() {
   let resolve!: () => void
   const promise = new Promise<void>(r => {
@@ -54,12 +93,14 @@ async function fixture(count = 130, wal = true, disabled?: 'source' | 'destinati
   const directory = await mkdtemp(join(fixtureTemporaryRoot, 'wallet-snapshot-sync-'))
   directories.push(directory)
   async function open(name: string, snapshotSync = true) {
+    const filename = join(directory, `${name}.sqlite`)
+    await copyFile(schemaTemplate(name), filename, constants.COPYFILE_EXCL)
     const store = new StorageKnex({
       ...StorageProvider.createStorageBaseOptions('test'),
       snapshotSync,
       knex: knex({
         client: 'better-sqlite3',
-        connection: { filename: join(directory, `${name}.sqlite`) },
+        connection: { filename },
         useNullAsDefault: true,
         pool: { min: 1, max: 1 },
         acquireConnectionTimeout: 1000
@@ -71,6 +112,9 @@ async function fixture(count = 130, wal = true, disabled?: 'source' | 'destinati
     jest.spyOn(store, 'supportsSnapshotJournalSync').mockResolvedValue(false)
     if (wal) await store.knex.raw('PRAGMA journal_mode = WAL')
     await store.migrate(name, name)
+    await store.knex.transaction(async trx => {
+      await migrateSnapshotJournalSqliteSourceAddition(trx, async () => undefined)
+    })
     await store.makeAvailable()
     const { user } = await store.findOrInsertUser(identity)
     await store.updateUser(user.userId, { activeStorage: 'source' })
@@ -125,6 +169,33 @@ afterEach(async () => {
   await runInSeries(stores.splice(0), store => store.destroy())
   await Promise.allSettled(pendingOperations.splice(0))
   await runInSeries(directories.splice(0), directory => rm(directory, { recursive: true, force: true }))
+})
+
+test('closed schema templates retain fresh epochs and independent data', async () => {
+  const first = await fixture(1)
+  const second = await fixture(1)
+  const before = await first.source.knex('snapshot_journal_generation').first('epoch')
+  const after = await second.source.knex('snapshot_journal_generation').first('epoch')
+  expect(typeof before.epoch).toBe('string')
+  expect(after.epoch).not.toBe(before.epoch)
+  await first.source.knex('tx_labels').where({ userId: first.user.userId }).update({ label: 'private-change' })
+  expect(await second.source.findTxLabels({ partial: { userId: second.user.userId } })).toMatchObject([
+    { label: 'label-0' }
+  ])
+  const template = knex({
+    client: 'better-sqlite3',
+    connection: { filename: schemaTemplate('source') },
+    useNullAsDefault: true
+  })
+  try {
+    const original = await template('snapshot_journal_generation').first('epoch')
+    expect(before.epoch).not.toBe(original.epoch)
+    expect(after.epoch).not.toBe(original.epoch)
+    expect(await template('users')).toEqual([])
+    expect(await template('tx_labels')).toEqual([])
+  } finally {
+    await template.destroy()
+  }
 })
 
 test('ordinary backup yields during preparation while its coherent view excludes foreground changes', async () => {

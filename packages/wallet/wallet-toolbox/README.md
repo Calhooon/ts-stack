@@ -6462,3 +6462,12 @@ private directories on its existing `/dev/shm` filesystem. Other platforms use
 the normal temporary directory. WAL, locking, process-crash recovery, independent
 databases, assertions and deadlines remain unchanged; compiler caches stay on
 their normal storage. No filesystem or container memory allowance is increased.
+
+The retained snapshot integration suite builds empty schemas with the actual
+registered migrations in `beforeAll` and physically closes their connections.
+Each case owns independent file copies, checks current migrations, and rotates
+its journal epoch through the validated source-addition writer. A regression
+checks distinct epochs versus both the template and another copy, unchanged
+empty templates and data isolation. Migration-specific suites keep their own
+fresh fixtures. WAL, process-crash recovery, original cases and deadlines remain
+exercised against independent databases.
