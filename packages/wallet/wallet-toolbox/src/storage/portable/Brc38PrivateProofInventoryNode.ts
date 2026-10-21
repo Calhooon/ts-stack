@@ -100,14 +100,18 @@ export async function inspectBrc38PrivateProofInventory(
     admission.scope.archiveSha256 !== binding.binding.archiveSha256
   )
     invalid()
-  const frame = working.claim(2097152),
-    check = (): void => {
-      signal?.throwIfAborted()
-      if (store.binding !== binding || Date.now() >= store.operationExpiresAt || performance.now() >= deadline)
-        invalid()
-      store.assertPrivateNativeReadTransaction(k)
-      Brc38NativeLocalBaselineSource.assertSharedWorking(source, working)
-    }
+  const check = (): void => {
+    signal?.throwIfAborted()
+    if (store.binding !== binding || Date.now() >= store.operationExpiresAt || performance.now() >= deadline) invalid()
+    store.assertPrivateNativeReadTransaction(k)
+    Brc38NativeLocalBaselineSource.assertSharedWorking(source, working)
+  }
+  // Page reconstruction owns its own scratch frame. Drain it before reserving
+  // the proof frame; no proof row or metadata has been materialized yet. Both
+  // phases still inspect the same actual transaction and original allocation.
+  check()
+  await inspectBrc38PrivateMergePages(store, k, admission, { workingAllocation: working, signal })
+  const frame = working.claim(2097152)
   let rows = 0,
     aliases = 0,
     logicalBytes = 0n,
@@ -126,7 +130,6 @@ export async function inspectBrc38PrivateProofInventory(
       receipt.nextRow !== admission.totalRows
     )
       invalid()
-    await inspectBrc38PrivateMergePages(store, k, admission, { workingAllocation: working, signal })
     let offset = 1,
       proofOffset = 0,
       proofCount = 0
