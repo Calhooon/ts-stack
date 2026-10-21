@@ -111,4 +111,49 @@ describe('Wallet legacy certificate recovery', () => {
       await ctx.storage.destroy()
     }
   })
+
+  test('listLegacyCertificates pages and filters what an older storage server returns', async () => {
+    const ctx = await _tu.createSQLiteTestWallet({
+      databaseName: 'legacyCertificateRecoveryPaging',
+      dropAll: true
+    })
+    try {
+      const certifierKey = PrivateKey.fromRandom()
+      const longLegacyType = Utils.toBase64(Array.from({ length: 39 }, (_, index) => index + 1))
+      await insertCertificate(ctx, legacyType, serialOf(4), certifierKey)
+      await insertCertificate(ctx, longLegacyType, serialOf(5), certifierKey)
+
+      const page = await ctx.wallet.listLegacyCertificates({ limit: 1, offset: 1 })
+      expect(page.totalCertificates).toBe(2)
+      expect(page.certificates).toHaveLength(1)
+      expect([legacyType, longLegacyType]).toContain(page.certificates[0].type)
+
+      // A storage server that predates `legacyTypes` ignores the filter and
+      // returns every record, possibly without fields; the wallet filters again.
+      const now = new Date()
+      const row = (certificateId: number, type: string, serialNumber: string) => ({
+        certificateId,
+        created_at: now,
+        updated_at: now,
+        userId: ctx.userId,
+        type,
+        serialNumber,
+        certifier: certifierKey.toPublicKey().toString(),
+        subject: ctx.identityKey,
+        revocationOutpoint: `${'00'.repeat(32)}.0`,
+        signature: '3006020101020101',
+        isDeleted: false
+      })
+      jest
+        .spyOn(ctx.wallet.storage, 'findCertificates')
+        .mockResolvedValue([row(7, canonicalType, serialOf(6)), row(8, legacyType, serialOf(7))])
+
+      const filtered = await ctx.wallet.listLegacyCertificates()
+      expect(filtered.totalCertificates).toBe(1)
+      expect(filtered.certificates[0]).toMatchObject({ type: legacyType, fields: {}, keyring: {} })
+    } finally {
+      jest.restoreAllMocks()
+      await ctx.storage.destroy()
+    }
+  })
 })

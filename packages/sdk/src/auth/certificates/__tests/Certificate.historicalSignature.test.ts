@@ -120,4 +120,11 @@ describe('Certificate.verifyHistoricalSignature', () => {
     const historical = historicalPreimage(certificate, Utils.toArray(legacyType, 'base64'))
     expect(() => Certificate.fromBinary(historical)).toThrow()
   })
+
+  it('reports an unsigned certificate as unverified', async () => {
+    const certificate = certificateWithType(legacyType)
+
+    expect(certificate.signature).toBeUndefined()
+    await expect(certificate.verifyHistoricalSignature()).resolves.toBe(false)
+  })
 })
