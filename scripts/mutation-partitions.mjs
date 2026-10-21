@@ -309,8 +309,15 @@ export function applyPartitionComponentTests(base, selection, readSource) {
     new Set(selection.tests).size !== selection.tests.length
   )
     throw new Error('Invalid source-bound component selection')
-  const files = [...new Set(target.mutate.map(value => sourceSpecification(value).file))].sort()
-  if (!isDeepStrictEqual(files, Object.keys(selection.sourceHashes).sort()))
+  const files = [...new Set(target.mutate.map(value => sourceSpecification(value).file))].sort(
+    (left, right) => left.localeCompare(right)
+  )
+  if (
+    !isDeepStrictEqual(
+      files,
+      Object.keys(selection.sourceHashes).sort((left, right) => left.localeCompare(right))
+    )
+  )
     throw new Error('Component source inventory differs')
   for (const file of files) {
     const expected = selection.sourceHashes[file]
