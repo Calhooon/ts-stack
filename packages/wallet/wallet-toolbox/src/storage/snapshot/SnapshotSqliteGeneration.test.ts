@@ -151,6 +151,7 @@ test('the SQLite generation refuses a different database client before issuing q
   const query = jest.fn()
   k.on('query', query)
   try {
+    await expect(readGenerationIndexState(k)).resolves.toBeUndefined()
     await expect(readPlan(k)).rejects.toThrow('SQLite rebuild requires SQLite')
     expect(query).not.toHaveBeenCalled()
   } finally {
