@@ -53,6 +53,16 @@ it('explicit pending candidate custody retains incomplete evidence and recovers 
       expect(
         Beef.fromBinaryStrict(decodeOutputBytes(saved.beef, 8192)).findTxid(saved.txid)!.tx!.toHex()
       ).toBe(f.target.toHex())
+      // A later txid-only update must preserve the complete proof already held.
+      reopened.propose(f.original, incomplete, clock, guard).retain(clock, guard)
+      const retained = reopened.read(f.original, clock, guard).candidate!
+      expect(retained.acquisitionId).toBe(f.candidate.acquisitionId)
+      expect(retained.txid).toBe(f.candidate.txid)
+      expect(
+        Beef.fromBinaryStrict(decodeOutputBytes(retained.beef, 8192))
+          .findTxid(retained.txid)!
+          .tx!.toHex()
+      ).toBe(f.target.toHex())
     } finally {
       f.base.close(opened.domain)
     }
@@ -188,6 +198,34 @@ it('requires synchronous live authority for reservation, recovery and retention'
   f.base.setPermitted(false)
   expect(() => plan.retain(clock, guard)).toThrow('authority changed')
   expect(() => f.owner.read(f.original, clock, guard)).toThrow('authority changed')
+})
+
+it('rechecks recipient authority inside the final native proof writer before committing', () => {
+  const f = purchaseEvidenceFixture(),
+    { clock, guard } = f.base,
+    ledger = f.base.owner.domain.ledger,
+    commit = ledger.commit.bind(ledger)
+  let revokeAtWrite = false
+  jest.spyOn(ledger, 'commit').mockImplementation((...args) => {
+    if (revokeAtWrite) f.base.setPermitted(false)
+    return commit(...args)
+  })
+  const owner = new SQLitePrivatePurchaseEvidence(
+    f.base.owner.domain,
+    f.base.f.f.contracts,
+    f.limits
+  )
+  try {
+    owner.reserve(f.original, clock, guard)
+    const plan = owner.propose(f.original, f.candidate, clock, guard)
+    revokeAtWrite = true
+    expect(() => plan.retain(clock, guard)).toThrow('authority changed')
+    f.base.setPermitted(true)
+    expect(owner.read(f.original, clock, guard).candidate).toBeNull()
+  } finally {
+    f.base.setPermitted(true)
+    f.base.dispose()
+  }
 })
 
 function coordinatedEvidence(maximumUpdates = 4) {

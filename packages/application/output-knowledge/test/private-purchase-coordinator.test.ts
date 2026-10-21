@@ -210,9 +210,13 @@ test('unknown admission stays pinned; another transaction never invokes admissio
     status: 'admission-pending',
     txid: f.f.candidate.txid
   })
+  const beforeConflict = f.current(),
+    verified = f.counts.verify
   await expect(
     f.coordinator.submit({ ...f.f.candidate, txid: 'aa'.repeat(32) }, f.caller)
   ).rejects.toMatchObject({ code: 'conflict' })
+  expect(f.counts.verify).toBe(verified)
+  expect(f.current()).toEqual(beforeConflict)
   expect(f.counts.admission).toBe(1)
   expect(f.counts.issue).toBe(0)
   f.setAdmitted(true)
