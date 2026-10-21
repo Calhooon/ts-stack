@@ -131,9 +131,11 @@ the unpatched `braces` path without an advisory exclusion or dependency override
 
 ## Test runner
 
-Run `npm test` for the complete service suite. Jest binds the standard `Math`
-object directly inside its test sandbox to avoid VM global-lookup overhead
-when authenticating full-size chunks. The suite retains its original test
+Run `npm test` for the complete service suite. Jest binds the stable `Math`, `String`,
+`Number`, `Object`, `Array` and `Reflect` intrinsics from the same test realm
+to avoid VM global-lookup overhead in per-byte authentication validation and
+byte-equality assertions. Realm prototypes and spies remain intact; replaceable
+clocks, fetch, WebAssembly, typed arrays and Buffer retain dynamic lookup. The suite retains its original test
 selection, assertions, request bytes and case deadlines, including the 30-second
 authenticated 4 MiB upload case. Service runtime behavior and production limits
 are unchanged.
