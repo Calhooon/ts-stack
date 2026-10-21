@@ -31,7 +31,7 @@ Node consumers; they do not require a browser or mobile device to provide Node A
 
 ## Public package manifest
 
-The release graph currently contains **35 public packages**. Versions
+The release graph currently contains **36 public packages**. Versions
 below are source-manifest versions; registry publication is a separate, explicitly
 authorized release action.
 
@@ -44,7 +44,7 @@ authorized release action.
 | helpers | `@bsv/did` | `0.3.1` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm | browser, node | `>=22` | [packages/helpers/did](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/did) |
 | helpers | `@bsv/fund-wallet` | `1.5.4` | cli | cli | node | `>=22` | [packages/helpers/fund-wallet](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/fund-wallet) |
 | helpers | `@bsv/simple` | `0.7.1` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm | browser, node | `>=22` | [packages/helpers/simple](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/simple) |
-| helpers | `@bsv/templates` | `2.0.1` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm | browser, node | `>=22` | [packages/helpers/ts-templates](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/ts-templates) |
+| helpers | `@bsv/templates` | `2.1.0` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm | browser, node | `>=22` | [packages/helpers/ts-templates](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/ts-templates) |
 | helpers | `@bsv/wallet-helper` | `0.1.10` | node-library | node-cjs, node-esm | node | `>=22` | [packages/helpers/bsv-wallet-helper](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/bsv-wallet-helper) |
 | helpers | `create-bsv-app` | `1.1.2` | cli | cli | node | `>=22` | [packages/helpers/create-bsv-app](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/helpers/create-bsv-app) |
 | messaging | `@bsv/authsocket` | `2.1.10` | node-library | node-cjs, node-esm | node | `>=22` | [packages/messaging/authsocket](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/messaging/authsocket) |
@@ -63,10 +63,11 @@ authorized release action.
 | overlays | `@bsv/overlay-discovery-services` | `2.2.8` | node-library | node-cjs, node-esm | node | `>=22` | [packages/overlays/overlay-discovery-services](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/overlays/overlay-discovery-services) |
 | overlays | `@bsv/overlay-express` | `2.8.0` | node-library | node-cjs, node-esm | node | `>=22` | [packages/overlays/overlay-express](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/overlays/overlay-express) |
 | overlays | `@bsv/overlay-topics` | `2.0.2` | node-library | node-esm | node | `>=22` | [packages/overlays/topics](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/overlays/topics) |
-| sdk | `@bsv/sdk` | `3.3.0` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm, umd-global | browser, node, umd | `>=22` | [packages/sdk](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk) |
+| sdk | `@bsv/sdk` | `4.0.0` | browser-library | browser-bundler, browser-esm, node-cjs, node-esm, umd-global | browser, node, umd | `>=22` | [packages/sdk](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/sdk) |
 | sdk | `@bsv/verifast` | `0.3.8` | wasm-library | browser-bundler, browser-esm, node-cjs, node-esm, umd-global, wasm-worker | browser, node, umd, wasm, worker | `>=22` | [packages/verifast](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/verifast) |
 | wallet | `@bsv/btms` | `1.2.5` | node-library | node-cjs, node-esm | node | `>=22` | [packages/wallet/btms](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/btms) |
 | wallet | `@bsv/btms-permission-module` | `1.2.3` | node-library | node-esm | node | `>=22` | [packages/wallet/btms-permission-module](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/btms-permission-module) |
+| wallet | `@bsv/color-permission-module` | `0.1.0` | browser-library | browser-bundler, browser-esm, node-esm | browser, node | `>=22` | [packages/wallet/color-permission-module](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/color-permission-module) |
 | wallet | `@bsv/ecpm-permission-module` | `0.1.3` | browser-library | browser-bundler, browser-esm, node-esm | browser, node | `>=22` | [packages/wallet/ecpm-permission-module](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/ecpm-permission-module) |
 | wallet | `@bsv/wallet-relay` | `0.5.3` | cli-library | browser-bundler, browser-esm, cli, node-cjs, node-esm | browser, node | `>=22` | [packages/wallet/ts-wallet-relay](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/ts-wallet-relay) |
 | wallet | `@bsv/wallet-toolbox` | `2.15.0` | node-library | node-cjs | node | `>=22` | [packages/wallet/wallet-toolbox](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/wallet-toolbox) |
@@ -93,9 +94,9 @@ the separately released and verified image digest.
 
 | Metric | Count |
 | --- | --- |
-| Governed projects | 44 |
-| Package-area projects | 38 |
-| Public npm packages | 35 |
+| Governed projects | 45 |
+| Package-area projects | 39 |
+| Public npm packages | 36 |
 | Private package-area projects | 3 |
 | Standalone infrastructure projects | 8 |
 
@@ -130,7 +131,7 @@ targets have been completed.
 
 | Metric | Current value | Authority |
 | --- | --- | --- |
-| Projects with a test:coverage script | 37 | current package manifests |
+| Projects with a test:coverage script | 38 | current package manifests |
 | Aggregate line coverage | 66.97% | https://app.codecov.io/gh/BSV-blockchain/ts-stack |
 | Reported source files | 543 | https://app.codecov.io/gh/BSV-blockchain/ts-stack |
 | Reported lines (hit / missed / partial) | 30981 / 11619 / 3659 | https://app.codecov.io/gh/BSV-blockchain/ts-stack |

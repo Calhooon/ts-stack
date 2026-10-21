@@ -75,6 +75,34 @@ function source(
 }
 
 describe('finite wallet output source', () => {
+  it.each(['0', '90071992547409931234567890'])(
+    'does not present SDK4 module balance %s as an empty output scan',
+    async totalOutputs => {
+      const balanceQuery = { basket: 'p color balance asset' },
+        balanceScope = {
+          ...scope,
+          queryDigest: walletOutputQueryDigest(scope.service, balanceQuery)
+        },
+        output = new WalletOutputSource({
+          id: 'wallet-balance',
+          scope: balanceScope,
+          query: balanceQuery,
+          wallet: { listOutputs: async () => ({ totalOutputs, outputs: [] }) }
+        }),
+        batches: SourceBatch[] = []
+      await expect(
+        (async () => {
+          for await (const batch of output.open(
+            { ...request(), scope: balanceScope },
+            new AbortController().signal
+          ))
+            batches.push(batch)
+        })()
+      ).rejects.toMatchObject({ code: 'unsupported' })
+      expect(batches).toEqual([])
+    }
+  )
+
   it('retains exact aggregate targets and opaque metadata, and requests no wallet actions', async () => {
     const calls: ListOutputsArgs[] = [],
       output = source(async args => {

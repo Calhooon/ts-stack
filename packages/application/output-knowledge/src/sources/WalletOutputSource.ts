@@ -105,8 +105,13 @@ export class WalletOutputSource implements Source {
             remaining
           )
         this.session.check(signal)
-        const result = validateWalletResult('listOutputs', raw, args),
-          beef = Utils.toBase64(result.BEEF ?? []),
+        const result = validateWalletResult('listOutputs', raw, args)
+        if (typeof result.totalOutputs !== 'number')
+          throw new OutputProtocolError(
+            'unsupported',
+            'Wallet output sources require output-count pages, not module balances'
+          )
+        const beef = Utils.toBase64(result.BEEF ?? []),
           observations: OutputObservation[] = result.outputs.map((row, index) => {
             const [txid, outputIndex] = row.outpoint.split('.')
             return {

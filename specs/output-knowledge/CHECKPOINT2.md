@@ -211,7 +211,7 @@ terminal successful hosted checks on the final published head.
 ## Final Checkpoint 2 and prepublication requirements
 
 - Pass complete uninstrumented coverage on the final published source, including the original 300-run disclosure and coordinator properties.
-- Pass the full 153-target/400-row governed mutation campaign and independently reconcile every raw result. Reconciliation with `main` adds the two WebRTCPay targets to the original 151-target/398-row inventory; all original targets, partitions and gates remain required.
+- Pass the full 154-target/401-row governed mutation campaign and independently reconcile every raw result. Reconciliation with `main` adds the two WebRTCPay targets and the SDK4/color target to the original 151-target/398-row inventory; all original targets, partitions and gates remain required.
 - Verify final packed consumers, platforms, conformance, actual CodeQL and zero-new Sonar findings on the same published head.
 
 The final Checkpoint 2 evidence must establish each requirement on the exact source being qualified. PR review and source merge may precede that qualification, with the remaining work explicitly recorded; publication may not. Demonstrated reference components do not by themselves complete Checkpoint 2; this source inventory does not self-certify qualification.

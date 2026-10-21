@@ -215,7 +215,7 @@ changes, and existing serialization remains available.
 
 See the [provider guide](../../../docs/guides/durable-live-lookup.md) for creation,
 restart, projection, disclosure guards, HTTP mounting and retention. The optional
-Overlay Express adapter requires SDK 3.3.0 and a signed matching capability. This
+Overlay Express adapter requires SDK 3.3.0 or SDK 4.0 and a signed matching capability. This
 increment does not complete topic admission, payment, private acquisition or the
 full BRC-192–199 reference application.
 
@@ -313,10 +313,16 @@ local-policy approval or permission to serve. `SDKRootEvictionEvidence` retains
 its existing request-signature and withdrawal/consumption checks using the same
 underlying verifier.
 
+`WalletOutputSource` consumes ordinary BRC-100 output-count pages. SDK 4.0's
+BRC-112 module balance queries return exact decimal text, not output counts;
+the adapter refuses those results before emitting observations or an empty-scan
+completion. Use the wallet module balance API separately; balances must not be
+coerced into pagination counts or interpreted as output withdrawal evidence.
+
 ## Getting started
 
 This package is an unpublished implementation candidate requiring the coordinated
-SDK 3.3.0 candidate or a compatible later 3.x release. SDK 3.0–3.2 do not contain
+SDK 3.3.0 candidate, a compatible later 3.x release, or SDK 4.0. SDK 3.0–3.2 do not contain
 the output-protocol APIs imported by this package. From this TS Stack workspace, run `pnpm --filter @bsv/sdk build:ts`, then
 `pnpm --filter @bsv/output-knowledge build`. Workspace consumers declare
 `@bsv/output-knowledge` with `workspace:^`; external installation waits for the
