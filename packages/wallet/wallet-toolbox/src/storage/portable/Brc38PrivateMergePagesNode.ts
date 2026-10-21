@@ -291,7 +291,9 @@ export async function inspectBrc38PrivateMergePages(
   const working = brc38WorkingAllocation(selected.workingAllocation),
     signal = selected.signal,
     binding = store.binding,
-    deadline = performance.now() + Math.max(0, admission.expiresAt - Date.now())
+    // Original admission expiry still bounds every historical writer below.
+    // Read-only recovery is owned by its independently bounded actual copy.
+    deadline = performance.now() + Math.max(0, store.operationExpiresAt - Date.now())
   if (
     working === undefined ||
     binding === undefined ||
@@ -304,7 +306,8 @@ export async function inspectBrc38PrivateMergePages(
   const frame = working.claim(2097152),
     check = (): void => {
       signal?.throwIfAborted()
-      if (store.binding !== binding || Date.now() >= admission.expiresAt || performance.now() >= deadline) invalid()
+      if (store.binding !== binding || Date.now() >= store.operationExpiresAt || performance.now() >= deadline)
+        invalid()
       store.assertPrivateNativeReadTransaction(k)
     },
     limits = JSON.parse(admission.originalLimitsJson) as number[],

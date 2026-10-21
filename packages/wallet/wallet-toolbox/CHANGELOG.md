@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+Read-only native merge-page history follows the actual bounded operation owner, including a fresh frozen recovery copy after original import expiry. Historical writer and checkpoint timestamps remain bounded by the immutable original admission. Comparison never renews financial import authority; current owner, seal, schema, page-chain and charge checks remain required. No API, wire, schema, native ABI or resource-limit migration; complete recovery qualification remains required.
+
 Expired native recovery translates the original import journal's physical
 destination address only after the actual frozen copy matches the complete
 original image. The original admitted preview remains bound; every current
