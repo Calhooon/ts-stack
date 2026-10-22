@@ -928,8 +928,24 @@ export interface ValidBasketInsertion {
   tags: BasketStringUnder300Bytes[]
 }
 
+/** Ordinary `customInstructions` limit for a basket insertion, in UTF-8 bytes. */
+const BASKET_INSERTION_CUSTOM_INSTRUCTIONS_MAX_BYTES = 1000
+
+/**
+ * `customInstructions` limit, in UTF-8 bytes, for a basket insertion into a
+ * BRC-207 color basket (`p color <assetTag>`): 16 MiB.
+ */
+const COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES = 16_777_216
+
 /**
  * Validate a BasketInsertion structure (basket, custom instructions, tags).
+ *
+ * `customInstructions` is limited to 1000 UTF-8 bytes, except for a basket that
+ * (after normalization) starts with `p color `: BRC-207 (0207:1442-1448) lets a
+ * color receipt carry required-profile data up to 16 MiB and requires that the
+ * exception be applied before ordinary string-length rejection. The color
+ * permission module parses such a receipt, enforces the asset's own profile
+ * limit and forwards only the bounded custody JSON to the underlying wallet.
  *
  * @param args - BasketInsertion or undefined
  * @returns ValidBasketInsertion or undefined
@@ -937,13 +953,17 @@ export interface ValidBasketInsertion {
 export function validateBasketInsertion(args?: BasketInsertion): ValidBasketInsertion | undefined {
   if (args === undefined) return undefined
   validateRecord(args, 'insertionRemittance')
+  const basket = validateBasket(args.basket)
+  const maxCustomInstructionsBytes = basket.startsWith('p color ')
+    ? COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES
+    : BASKET_INSERTION_CUSTOM_INSTRUCTIONS_MAX_BYTES
   const v: ValidBasketInsertion = {
-    basket: validateBasket(args.basket),
+    basket,
     customInstructions: validateOptionalStringLength(
       args.customInstructions,
       'customInstructions',
       0,
-      1000
+      maxCustomInstructionsBytes
     ),
     tags: validateArray(args.tags, 'tags').map(t => validateTag(t))
   }

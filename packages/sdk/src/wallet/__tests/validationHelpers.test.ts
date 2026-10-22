@@ -832,6 +832,58 @@ describe('validateBasketInsertion', () => {
   it('throws for an empty basket name', () => {
     expect(() => validateBasketInsertion({ basket: '' })).toThrow(WERR_INVALID_PARAMETER)
   })
+
+  it('allows p color receipt instructions up to 16 MiB', () => {
+    expect(
+      validateBasketInsertion({
+        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
+        customInstructions: 'x'.repeat(1001)
+      })!.customInstructions
+    ).toHaveLength(1001)
+    expect(
+      validateBasketInsertion({
+        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
+        customInstructions: 'x'.repeat(16_777_216)
+      })!.customInstructions
+    ).toHaveLength(16_777_216)
+    expect(() =>
+      validateBasketInsertion({
+        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
+        customInstructions: 'x'.repeat(16_777_217)
+      })
+    ).toThrow(WERR_INVALID_PARAMETER)
+  })
+
+  it('measures the p color limit in UTF-8 bytes on the normalized basket', () => {
+    expect(
+      validateBasketInsertion({
+        basket: '  P Color ' + 'AB'.repeat(32) + 'v0',
+        customInstructions: 'x'.repeat(1001)
+      })!.basket
+    ).toBe('p color ' + 'ab'.repeat(32) + 'v0')
+    expect(() =>
+      validateBasketInsertion({
+        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
+        customInstructions: '\u00e9'.repeat(8_388_609)
+      })
+    ).toThrow(WERR_INVALID_PARAMETER)
+  })
+
+  it('keeps 1000 bytes for every other basket, including p colorful', () => {
+    expect(
+      validateBasketInsertion({ basket: 'default', customInstructions: 'x'.repeat(1000) })!
+        .customInstructions
+    ).toHaveLength(1000)
+    expect(() =>
+      validateBasketInsertion({ basket: 'default', customInstructions: 'x'.repeat(1001) })
+    ).toThrow(WERR_INVALID_PARAMETER)
+    expect(() =>
+      validateBasketInsertion({ basket: 'p colorful', customInstructions: 'x'.repeat(1001) })
+    ).toThrow(WERR_INVALID_PARAMETER)
+    expect(() =>
+      validateBasketInsertion({ basket: 'p color', customInstructions: 'x'.repeat(1001) })
+    ).toThrow(WERR_INVALID_PARAMETER)
+  })
 })
 
 // ============================================================================
