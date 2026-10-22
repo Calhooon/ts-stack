@@ -130,12 +130,12 @@ describe('HostDiscovery', () => {
       await rawSlapTokenOutput(hostWallet, 'http://127.0.0.1:4001', 'ls_x'),
       await rawSlapTokenOutput(hostWallet, 'ftp://files.example', 'ls_x'),
       await rawSlapTokenOutput(hostWallet, 'not a url', 'ls_x'),
-      await rawSlapTokenOutput(hostWallet, 'https://digits.example', 'ls_x2')
+      await rawSlapTokenOutput(hostWallet, 'https://upper.example', 'ls_X')
     ]
     for (const networkPreset of ['mainnet', 'local'] as const) {
       const discovery = new HostDiscovery({ resolver: resolverFor(outputs), networkPreset })
       expect(await discovery.hostsFor({ kind: 'overlay-lookup', service: 'ls_x' })).toEqual([])
-      expect(await discovery.hostsFor({ kind: 'overlay-lookup', service: 'ls_x2' })).toEqual([])
+      expect(await discovery.hostsFor({ kind: 'overlay-lookup', service: 'ls_X' })).toEqual([])
     }
   })
 
