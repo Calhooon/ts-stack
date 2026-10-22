@@ -51,10 +51,27 @@ export {
 } from './identifiers.js'
 export type { TokenRole } from './identifiers.js'
 export type {
+  AttestedAdmittance,
+  AttestedSTEAK,
+  ColorModuleStore,
   ColorOverlayProvider,
   ColorPermissionModuleOptions,
-  ColorTokenAccessHandler
+  ColorTokenAccessHandler,
+  ProfileData
 } from './types.js'
+export type {
+  ColorAttestation,
+  ColorHandoffResult,
+  ColorSettleReport,
+  ColorSettleResult,
+  ProfileAssetContext,
+  ProfileDescriptor,
+  ProfileTxView,
+  ReceiptAdmission,
+  ReceiptGraph,
+  RequiredProfileHandler
+} from './profiles.js'
+export type { JsonValue } from './strictJson.js'
 
 export const createColorModule = (options: ColorPermissionModuleOptions): ColorPermissionModule =>
   new ColorPermissionModule(options)

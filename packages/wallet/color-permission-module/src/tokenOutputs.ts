@@ -73,8 +73,10 @@ function readPayloadMaps(payload: number[] | undefined): {
  * script as plain satoshis let this error through.
  */
 export class UnsupportedProfileError extends Error {
-  constructor() {
-    super('BRC-207: the asset requires processing profiles this wallet does not support')
+  constructor(
+    message = 'BRC-207: the asset requires processing profiles this wallet does not support'
+  ) {
+    super(message)
     this.name = 'UnsupportedProfileError'
   }
 }

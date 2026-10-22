@@ -81,10 +81,13 @@ import {
   type TokenOutput
 } from './tokenOutputs.js'
 import type {
+  ColorModuleStore,
   ColorOverlayProvider,
   ColorPermissionModuleOptions,
   ColorTokenAccessHandler
 } from './types.js'
+import { ColorConsentDeclinedError } from './errors.js'
+import { validateProfileHandlers, type RequiredProfileHandler } from './profiles.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
@@ -841,6 +844,10 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly wallet: WalletInterface
   protected readonly provider: ColorOverlayProvider
   protected readonly requestTokenAccess: ColorTokenAccessHandler
+  /** Registered required-profile handlers by profile id; empty when the host registers none. */
+  protected readonly profiles: ReadonlyMap<string, RequiredProfileHandler>
+  /** The host's durable store; never used when no profiles are registered. */
+  protected readonly store?: ColorModuleStore
   /** BRC-205 attribute for BRC-207's Discovery section: this module implements revision 5. */
   readonly capabilities: Readonly<Record<string, string>> = { 'brc207-color': '5' }
   /** Outputs a send in progress has selected, so a concurrent send does not select them too. */
@@ -854,9 +861,22 @@ export class ColorPermissionModule implements PermissionsModule {
     if (typeof options.requestTokenAccess !== 'function') {
       throw new TypeError('BRC-207: requestTokenAccess is required')
     }
+    this.profiles = validateProfileHandlers(options.profiles)
+    if (this.profiles.size > 0 && options.store == null) {
+      throw new TypeError('BRC-207: a store is required when profiles are registered')
+    }
+    if (
+      this.profiles.size > 0 &&
+      !(['get', 'set', 'delete', 'keys'] as const).every(
+        method => typeof options.store?.[method] === 'function'
+      )
+    ) {
+      throw new TypeError('BRC-207: the store must implement get, set, delete and keys')
+    }
     this.wallet = options.wallet
     this.provider = options.provider
     this.requestTokenAccess = options.requestTokenAccess
+    this.store = options.store ?? undefined
   }
 
   /** Clears in-memory selections and asset checks. */
@@ -2364,8 +2384,7 @@ export class ColorPermissionModule implements PermissionsModule {
 
   protected async approve(originator: string, request: Record<string, unknown>): Promise<void> {
     const approved = await this.requestTokenAccess(originator, JSON.stringify(request))
-    if (approved !== true)
-      throw new Error(`BRC-207: the user declined the ${String(request.type)} request`)
+    if (approved !== true) throw new ColorConsentDeclinedError(String(request.type))
   }
 
   /** Every `p color` read asks the host; the host decides whether an existing grant covers it. */
