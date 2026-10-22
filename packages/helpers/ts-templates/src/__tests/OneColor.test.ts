@@ -141,6 +141,14 @@ describe('OneColor.lockRemainder', () => {
     expect(() => OneColor.lockRemainder('x_0', 1n, pushDrop)).toThrow('<64 lowercase hex>_<vout>')
   })
 
+  it('rejects a remainder that ends in a truncated push, as decode would', () => {
+    // 05 0102: a 5-byte push with only two bytes left.
+    const truncated = LockingScript.fromHex('7551' + '050102')
+    expect(truncated.chunks.some(chunk => chunk.invalidLength === true)).toBe(true)
+    expect(() => OneColor.lockRemainder(`${TXID}_0`, 1n, truncated)).toThrow('truncated push')
+    expect(() => OneColor.lockRemainder(null, 0n, truncated, [1])).toThrow(Bsv21BinaryError)
+  })
+
   it('never aliases the remainder chunks or their data', () => {
     const r = LockingScript.fromHex('020102' + '75' + '51')
     const s = OneColor.lockRemainder(`${TXID}_0`, 1n, r)

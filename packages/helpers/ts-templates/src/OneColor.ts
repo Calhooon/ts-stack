@@ -141,7 +141,8 @@ export class OneColor implements ScriptTemplate {
    * With no payload, writes the empty-payload marker `OP_0 OP_DROP` iff the remainder
    * starts with `<push> OP_DROP` (0162:101/105), so the remainder's first push is never
    * read back as a payload. The remainder's chunks are copied unchanged (byte-exact,
-   * non-minimal pushes kept) and never aliased.
+   * non-minimal pushes kept) and never aliased. A remainder with a truncated push is
+   * refused, since `decode` would refuse the result.
    */
   static lockRemainder(
     tokenId: string | null,
@@ -149,6 +150,7 @@ export class OneColor implements ScriptTemplate {
     remainder: LockingScript,
     payload?: readonly number[]
   ): LockingScript {
+    if (remainder.chunks.some(chunk => chunk.invalidLength === true)) fail('truncated push')
     const chunks = prefixChunks(tokenId, amount)
     if (payload !== undefined) {
       chunks.push(payloadChunk(payload), { op: OP.OP_DROP })
