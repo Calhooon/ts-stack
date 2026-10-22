@@ -204,6 +204,7 @@ export function validateFrontier(input: FrontierInput): FrontierResult {
   function assertTransition(frame: Frame): void {
     let valueOut = 0n
     let jsonTransferOut = 0n
+    let jsonMint = false
     let authorityOut = 0
     frame.tx.outputs.forEach((_, vout) => {
       const token = assetToken(frame.tx, frame.txid, vout)
@@ -213,13 +214,18 @@ export function validateFrontier(input: FrontierInput): FrontierResult {
         return
       }
       valueOut += token.amount
-      // A BRC-161 transfer is funded by value inputs only; an authority cannot fund it.
-      if (token.encoding === 'brc161' && token.jsonOperation !== 'mint') {
-        jsonTransferOut += token.amount
+      // A BRC-161 transfer is funded by value inputs only; an authority cannot fund it. A
+      // BRC-161 mint needs an authority input even when value inputs would cover it (0207:853).
+      if (token.encoding === 'brc161') {
+        if (token.jsonOperation === 'mint') jsonMint = true
+        else jsonTransferOut += token.amount
       }
     })
     if (authorityOut > 0 && frame.authorityIn === 0) {
       throw reject('authority outputs need an authority input')
+    }
+    if (jsonMint && frame.authorityIn === 0) {
+      throw reject('legacy mint needs an authority input')
     }
     if (jsonTransferOut > frame.valueIn) throw reject('value outputs exceed inputs')
     if (valueOut > frame.valueIn && frame.authorityIn === 0) {

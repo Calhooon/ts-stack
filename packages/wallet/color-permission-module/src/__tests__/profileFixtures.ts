@@ -213,6 +213,33 @@ export type GraphOutput =
   | { assetId: string; amount: bigint; payload?: number[] }
   | { lockingScript: LockingScript }
 
+/**
+ * A BRC-161 JSON `op` inscription of `amt` of `assetId` in front of a P2PKH lock to `pubKeyHash`
+ * (lowercase hex; default a key nobody holds).
+ */
+export function jsonInscription(
+  op: string,
+  assetId: string,
+  amt: string,
+  pubKeyHash = '11'.repeat(20)
+): LockingScript {
+  const push = (bytes: number[]): string =>
+    (bytes.length > 75 ? '4c' : '') + bytes.length.toString(16).padStart(2, '0') + toHex(bytes)
+  const json = toArray(`{"p":"bsv-20","op":"${op}","id":"${assetId}","amt":"${amt}"}`, 'utf8')
+  return LockingScript.fromHex(
+    '0063' +
+      push(toArray('ord', 'utf8')) +
+      '51' +
+      push(toArray('application/bsv-20', 'utf8')) +
+      '00' +
+      push(json) +
+      '68' +
+      '76a914' +
+      pubKeyHash +
+      '88ac'
+  )
+}
+
 /** Builds real BRC-162 transaction graphs whose P2PKH scripts verify under the interpreter. */
 export interface GraphBuilder {
   /** The key every output pays to. */
@@ -344,6 +371,8 @@ export async function attestedReceipt(options: {
   signers: PrivateKey[]
   amount?: bigint
   unattested?: number
+  /** The output of each unattested hop (default: `amount` of the asset to the graph's owner). */
+  hopOutput?: GraphOutput
   attestTip?: boolean
   tipOffChainValues?: string
   tags?: string[]
@@ -360,7 +389,7 @@ export async function attestedReceipt(options: {
   const ancestors: Transaction[] = []
   let previous = anchor
   for (let hop = 0; hop < (options.unattested ?? 0); hop++) {
-    previous = await g.spend([{ tx: previous, vout: 0 }], [amount])
+    previous = await g.spend([{ tx: previous, vout: 0 }], [options.hopOutput ?? amount])
     ancestors.push(previous)
   }
   const custody = {

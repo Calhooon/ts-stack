@@ -37,6 +37,7 @@ import {
   ISSUER_LIKE_ID,
   issuerLikePayload,
   issuerLikeProfile,
+  jsonInscription,
   TestModule,
   type AttestedReceipt,
   type GraphBuilder
@@ -529,6 +530,25 @@ describe('attested receipts', () => {
     await expect(
       receive(moduleWith({ profiles: { [attested.id]: attested } }), receipt.args)
     ).rejects.toMatchObject({ name: 'AttestationEvidenceError', reason: 'trust snapshot changed' })
+    expect(store.writes.filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+  })
+
+  it('a BRC-161 mint without an authority input in the graph is not credited', async () => {
+    const { tx: deploy, assetId } = attestedAsset(g, SIGNER)
+    const owner = toHex(g.owner.toPublicKey().toHash() as number[])
+    const receipt = await attestedReceipt({
+      g,
+      deploy,
+      recipient: wallet,
+      signers: [K],
+      unattested: 1,
+      hopOutput: { lockingScript: jsonInscription('mint', assetId, '600', owner) }
+    })
+    await expect(receive(moduleWith(), receipt.args)).rejects.toMatchObject({
+      name: 'AttestationEvidenceError',
+      reason: 'legacy mint needs an authority input'
+    })
+    expect(prompts.filter(prompt => prompt.type === 'color_receive_offline')).toEqual([])
     expect(store.writes.filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
   })
 

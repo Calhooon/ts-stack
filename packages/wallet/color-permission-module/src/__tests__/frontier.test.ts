@@ -4,7 +4,7 @@ import { OneColor } from '@bsv/templates'
 import { validateFrontier, type FrontierInput } from '../frontier.js'
 import type { ColorAttestation } from '../profiles.js'
 import { readTokenOutput } from '../tokenOutputs.js'
-import { graph, type GraphBuilder } from './profileFixtures.js'
+import { graph, jsonInscription, type GraphBuilder } from './profileFixtures.js'
 
 const K = new PrivateKey(5555)
 const KEY = K.toPublicKey().toString()
@@ -54,21 +54,7 @@ const rejects = (input: FrontierInput, reason: string | RegExp): void => {
 
 /** A BRC-161 JSON transfer inscription of `amt` of `assetId`. */
 function jsonTransfer(assetId: string, amt: string): LockingScript {
-  const push = (bytes: number[]): string =>
-    (bytes.length > 75 ? '4c' : '') + bytes.length.toString(16).padStart(2, '0') + toHex(bytes)
-  const json = toArray(`{"p":"bsv-20","op":"transfer","id":"${assetId}","amt":"${amt}"}`, 'utf8')
-  return LockingScript.fromHex(
-    '0063' +
-      push(toArray('ord', 'utf8')) +
-      '51' +
-      push(toArray('application/bsv-20', 'utf8')) +
-      '00' +
-      push(json) +
-      '68' +
-      '76a914' +
-      '11'.repeat(20) +
-      '88ac'
-  )
+  return jsonInscription('transfer', assetId, amt)
 }
 
 describe('complete token frontier', () => {
@@ -483,6 +469,43 @@ describe('complete token frontier', () => {
       [0n, { lockingScript: jsonTransfer(g.assetId, '11') }]
     )
     rejects(frontier(g, tip, [attestation], { outputs: [1] }), 'value outputs exceed inputs')
+  })
+
+  it('a BRC-161 JSON mint output needs an authority input (0207:853, 0207:873)', async () => {
+    const g = graph()
+    // Fixed supply: no authority exists for this asset at all.
+    const deploy = g.deploy(1000n)
+    const attestation = await g.attest(K, deploy.tx, [0])
+    // P spends value only and writes a legacy mint: the mint is invalid and the input burned.
+    const P = await g.spend(
+      [{ tx: deploy.tx, vout: 0 }],
+      [
+        {
+          lockingScript: jsonInscription(
+            'mint',
+            g.assetId,
+            '1000',
+            toHex(g.owner.toPublicKey().toHash() as number[])
+          )
+        }
+      ]
+    )
+    const tip = await g.spend([{ tx: P, vout: 0 }], [1000n])
+    rejects(frontier(g, tip, [attestation]), 'legacy mint needs an authority input')
+    rejects(frontier(g, P, [attestation]), 'legacy mint needs an authority input')
+  })
+
+  it('a BRC-161 JSON mint output with an authority input is valid', async () => {
+    const g = graph()
+    const deploy = g.deploy(0n)
+    const X = await g.spend([{ tx: deploy.tx, vout: 0 }], [0n])
+    const tip = await g.spend(
+      [{ tx: X, vout: 0 }],
+      [0n, { lockingScript: jsonInscription('mint', g.assetId, '5') }]
+    )
+    expect(
+      validateFrontier(frontier(g, tip, [await g.attest(K, X, [0])], { outputs: [1] })).pending
+    ).toEqual([id(tip)])
   })
 
   it('a missing tip-side transaction body is reported by txid', async () => {
