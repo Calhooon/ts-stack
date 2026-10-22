@@ -50,7 +50,7 @@ import {
   validateCreateActionArgs,
   validateDiscoverByAttributesArgs,
   validateDiscoverByIdentityKeyArgs,
-  validateInternalizeActionArgs,
+  validateInternalizeActionRequestArgs,
   validateGetHeaderArgs,
   validateGetPublicKeyArgs,
   validateListActionsArgs,
@@ -240,7 +240,8 @@ export default class WalletClient implements WalletInterface {
   }
 
   async internalizeAction(args: InternalizeActionArgs): Promise<{ accepted: true }> {
-    validateInternalizeActionArgs(args)
+    // A BRC-207 color receipt travels to the wallet's color module with up to 16 MiB of data.
+    validateInternalizeActionRequestArgs(args)
     await this.connectToSubstrate()
     return await this.validatedResult(
       'internalizeAction',

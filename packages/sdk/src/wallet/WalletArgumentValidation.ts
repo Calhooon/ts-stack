@@ -12,7 +12,7 @@ import {
   validateDiscoverByIdentityKeyArgs,
   validateGetHeaderArgs,
   validateGetPublicKeyArgs,
-  validateInternalizeActionArgs,
+  validateInternalizeActionRequestArgs,
   validateListActionsArgs,
   validateListCertificatesArgs,
   validateListOutputsArgs,
@@ -48,7 +48,8 @@ export function validateWalletArgs(call: CallType, args: unknown): void {
       validateListActionsArgs(args as never)
       return
     case 'internalizeAction':
-      validateInternalizeActionArgs(args as never)
+      // A BRC-207 color receipt crosses transports on its way to the wallet's color module.
+      validateInternalizeActionRequestArgs(args as never)
       return
     case 'listOutputs':
       validateListOutputsArgs(args as never)

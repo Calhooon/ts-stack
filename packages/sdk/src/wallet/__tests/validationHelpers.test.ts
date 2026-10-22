@@ -7,6 +7,7 @@
  */
 
 import WERR_INVALID_PARAMETER from '../WERR_INVALID_PARAMETER'
+import { validateWalletArgs } from '../WalletArgumentValidation'
 import Transaction from '../../transaction/Transaction'
 import {
   parseWalletOutpoint,
@@ -28,6 +29,7 @@ import {
   validateBasketInsertion,
   validateInternalizeOutput,
   validateInternalizeActionArgs,
+  validateInternalizeActionRequestArgs,
   validateOriginator,
   validateOptionalOutpointString,
   validateOutpointString,
@@ -833,38 +835,96 @@ describe('validateBasketInsertion', () => {
     expect(() => validateBasketInsertion({ basket: '' })).toThrow(WERR_INVALID_PARAMETER)
   })
 
-  it('allows p color receipt instructions up to 16 MiB', () => {
+  const COLOR_BASKET = 'p color ' + 'ab'.repeat(32) + 'v0'
+  const COLOR = { colorReceipts: true }
+
+  it('allows p color receipt instructions up to 16 MiB only with colorReceipts', () => {
     expect(
-      validateBasketInsertion({
-        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
-        customInstructions: 'x'.repeat(1001)
-      })!.customInstructions
+      validateBasketInsertion(
+        { basket: COLOR_BASKET, customInstructions: 'x'.repeat(1001) },
+        COLOR
+      )!.customInstructions
     ).toHaveLength(1001)
     expect(
-      validateBasketInsertion({
-        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
-        customInstructions: 'x'.repeat(16_777_216)
-      })!.customInstructions
+      validateBasketInsertion(
+        { basket: COLOR_BASKET, customInstructions: 'x'.repeat(16_777_216) },
+        COLOR
+      )!.customInstructions
     ).toHaveLength(16_777_216)
     expect(() =>
-      validateBasketInsertion({
-        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
-        customInstructions: 'x'.repeat(16_777_217)
-      })
+      validateBasketInsertion(
+        { basket: COLOR_BASKET, customInstructions: 'x'.repeat(16_777_217) },
+        COLOR
+      )
+    ).toThrow(WERR_INVALID_PARAMETER)
+    // Wallet implementations and storage never see the large string: 1000 bytes there.
+    expect(() =>
+      validateBasketInsertion({ basket: COLOR_BASKET, customInstructions: 'x'.repeat(1001) })
     ).toThrow(WERR_INVALID_PARAMETER)
   })
 
-  it('measures the p color limit in UTF-8 bytes on the normalized basket', () => {
-    expect(
-      validateBasketInsertion({
-        basket: '  P Color ' + 'AB'.repeat(32) + 'v0',
-        customInstructions: 'x'.repeat(1001)
-      })!.basket
-    ).toBe('p color ' + 'ab'.repeat(32) + 'v0')
+  it('measures the p color limit in UTF-8 bytes on the raw basket name, as modules are routed', () => {
+    // A spelling that permission-module routing does not send to the color module.
+    for (const basket of ['  P Color ' + 'AB'.repeat(32) + 'v0', ' p color ' + 'ab'.repeat(32)]) {
+      expect(() =>
+        validateBasketInsertion({ basket, customInstructions: 'x'.repeat(1001) }, COLOR)
+      ).toThrow(WERR_INVALID_PARAMETER)
+      expect(
+        validateBasketInsertion({ basket, customInstructions: 'x'.repeat(1000) }, COLOR)!.basket
+      ).toBe(basket.trim().toLowerCase())
+    }
     expect(() =>
-      validateBasketInsertion({
-        basket: 'p color ' + 'ab'.repeat(32) + 'v0',
-        customInstructions: '\u00e9'.repeat(8_388_609)
+      validateBasketInsertion(
+        { basket: COLOR_BASKET, customInstructions: '\u00e9'.repeat(8_388_609) },
+        COLOR
+      )
+    ).toThrow(WERR_INVALID_PARAMETER)
+  })
+
+  it('bounds p color receipt instructions at 16 MiB per call in aggregate', () => {
+    const insertion = (outputIndex: number, bytes: number) => ({
+      outputIndex,
+      protocol: 'basket insertion' as const,
+      insertionRemittance: { basket: COLOR_BASKET, customInstructions: 'x'.repeat(bytes) }
+    })
+    const args = (outputs: Array<ReturnType<typeof insertion>>) => ({
+      tx: Array.from(new Transaction().toAtomicBEEF()),
+      outputs,
+      description: 'Receive tokens'
+    })
+    expect(() =>
+      validateInternalizeActionRequestArgs(args([insertion(0, 8_388_608), insertion(1, 8_388_608)]))
+    ).not.toThrow()
+    expect(() =>
+      validateInternalizeActionRequestArgs(args([insertion(0, 8_388_608), insertion(1, 8_388_609)]))
+    ).toThrow(WERR_INVALID_PARAMETER)
+    expect(() => validateInternalizeActionArgs(args([insertion(0, 1001)]))).toThrow(
+      WERR_INVALID_PARAMETER
+    )
+  })
+
+  it('applies the p color exception at the BRC-100 client and transport boundary', () => {
+    const args = {
+      tx: Array.from(new Transaction().toAtomicBEEF()),
+      outputs: [
+        {
+          outputIndex: 0,
+          protocol: 'basket insertion',
+          insertionRemittance: { basket: COLOR_BASKET, customInstructions: 'x'.repeat(2000) }
+        }
+      ],
+      description: 'Receive tokens'
+    }
+    expect(() => validateWalletArgs('internalizeAction', args)).not.toThrow()
+    expect(() =>
+      validateWalletArgs('internalizeAction', {
+        ...args,
+        outputs: [
+          {
+            ...args.outputs[0],
+            insertionRemittance: { basket: 'default', customInstructions: 'x'.repeat(1001) }
+          }
+        ]
       })
     ).toThrow(WERR_INVALID_PARAMETER)
   })
