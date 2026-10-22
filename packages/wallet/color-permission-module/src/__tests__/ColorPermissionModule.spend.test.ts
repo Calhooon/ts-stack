@@ -490,6 +490,33 @@ describe('spending attested assets', () => {
     await expect(plan(module, assetId, handOver)).rejects.toThrow(/insufficient spendable balance/)
   })
 
+  it('C55 a known conflicting spend of its evidence makes an offline output unavailable', async () => {
+    const module = attestedModule(b, {
+      trustedIdentities: async () => ({ snapshot: 'v1', identityKeys: [SIGNER] }),
+      extra: [listNoSendProfile()]
+    })
+    const { tx: deploy, assetId } = b.g.deploy(1000n, listNoSendPayload())
+    const { outpoint, anchor } = await receive(b, module, deploy)
+    const handOver = { options: { noSend: true } }
+    expect((await plan(module, assetId, handOver)).inputs!.map(input => input.outpoint)).toEqual([
+      outpoint
+    ])
+    // A stored record of another transaction consuming the anchor output the receipt spends.
+    const conflict = await b.g.spend([{ tx: anchor, vout: 0 }], [600n])
+    await b.colorStore.putTx(conflict.id('hex'), {
+      v: 1,
+      assetId,
+      rawTx: conflict.toHex(),
+      atomicBEEF: toHex(conflict.toAtomicBEEF()),
+      role: 'ancestor',
+      inputs: [`${anchor.id('hex')}.0`],
+      outputs: [],
+      offChainValues: '',
+      attestations: []
+    })
+    await expect(plan(module, assetId, handOver)).rejects.toThrow(/insufficient spendable balance/)
+  })
+
   it('C17 a settled list-mode output is not spent on its stored attestation once its signer is untrusted', async () => {
     let identityKeys: string[] = [SIGNER]
     const module = attestedModule(b, {

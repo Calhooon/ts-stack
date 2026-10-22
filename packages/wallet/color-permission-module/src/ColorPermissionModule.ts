@@ -216,6 +216,23 @@ function sumAmounts(inputs: ReadonlyArray<{ amount: bigint }>): bigint {
   return inputs.reduce((total, input) => total + input.amount, 0n)
 }
 
+/**
+ * Fails with `known conflicting spend` when a stored transaction other than the consuming one
+ * consumes an outpoint in `consumed` (pairs of a txid and the outpoints it consumes).
+ */
+function assertNoKnownConflict(
+  spends: ReadonlyMap<string, ReadonlySet<string>>,
+  consumed: ReadonlyArray<readonly [string, readonly string[]]>
+): void {
+  for (const [txid, outpoints] of consumed) {
+    for (const outpoint of outpoints) {
+      if ([...(spends.get(outpoint) ?? [])].some(other => other !== txid)) {
+        throw new AttestationEvidenceError('known conflicting spend')
+      }
+    }
+  }
+}
+
 function inputOutpoint(input: Transaction['inputs'][number]): string {
   const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
   if (txid === undefined) throw new Error('BRC-207: transaction input has no source transaction ID')
@@ -1939,6 +1956,13 @@ export class ColorPermissionModule implements PermissionsModule {
         )
       }
     })
+    // A known incompatible spend outside this graph defeats acceptance (0207:347-354, C28): an
+    // outpoint an unanchored graph transaction consumes must not be consumed by another stored
+    // transaction. Anchors are admitted by their overlay and are never such a conflict.
+    assertNoKnownConflict(
+      await this.storedSpends(),
+      frontier.pending.map(txid => [txid, bodies.get(txid)!.inputs.map(inputOutpoint)] as const)
+    )
     // A profile that defines admitReceipt decides every receipt (contract §2.2, D7), also one
     // whose tip the leaf already attests: it runs before the coverage decision and a throw
     // propagates with nothing written.
@@ -2166,6 +2190,28 @@ export class ColorPermissionModule implements PermissionsModule {
         })
       }
     }
+  }
+
+  /**
+   * Every outpoint consumed by a stored transaction record, with the txids consuming it. An
+   * aborted hand-over (its inputs were released) and a finally refused transaction (its spend was
+   * never admitted) consume nothing. Records are few and per wallet, so they are scanned.
+   */
+  protected async storedSpends(): Promise<Map<string, Set<string>>> {
+    const store = this.colorStore!
+    const refused = await store.refusedSet()
+    const spends = new Map<string, Set<string>>()
+    await eachInOrder(await store.txids(), async txid => {
+      if (refused.has(txid)) return
+      const record = await store.getTx(txid)
+      if (record === undefined || record.state === 'aborted') return
+      for (const outpoint of record.inputs) {
+        const consumers = spends.get(outpoint) ?? new Set<string>()
+        consumers.add(txid)
+        spends.set(outpoint, consumers)
+      }
+    })
+    return spends
   }
 
   /** Writes `record`, merged with any readable stored record; an unchanged record is not rewritten. */
@@ -4601,6 +4647,12 @@ export class ColorPermissionModule implements PermissionsModule {
         assetId,
         outputs.map(output => output.outpoint)
       )
+      // A known conflicting spend restricts the evidence (C55): no other stored transaction may
+      // consume an input of an unattested record behind these outputs, or the outputs themselves.
+      assertNoKnownConflict(await this.storedSpends(), [
+        ...evidence.records.map(([recordTxid, record]) => [recordTxid, record.inputs] as const),
+        ['', outputs.map(output => output.outpoint)] as const
+      ])
       // Identity mode trusts one fixed key, so the receipt-time validation still stands.
       if (params.trustMode === 'identity') return true
       const { handler } = resolved.handlers.find(

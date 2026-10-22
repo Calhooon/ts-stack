@@ -481,6 +481,57 @@ describe('attested receipts', () => {
     expect([...wallet.outputs.keys()].filter(key => key.startsWith(tip))).toEqual([`${tip}.0`])
   })
 
+  /** A different transaction spending the receipt's attested anchor output, paying the same. */
+  async function doubleSpend(receipt: AttestedReceipt): Promise<Transaction> {
+    const T2 = new Transaction()
+    T2.addInput({
+      sourceTransaction: receipt.anchor,
+      sourceOutputIndex: 0,
+      unlockingScriptTemplate: new OneColor().unlock(g.owner)
+    })
+    T2.addOutput({ lockingScript: receipt.tip.outputs[0].lockingScript, satoshis: 1 })
+    T2.lockTime = 7
+    await T2.sign()
+    expect(T2.id('hex')).not.toBe(receipt.tip.id('hex'))
+    return T2
+  }
+
+  it('C28/C55 a second offline receipt spending the same anchored outpoint is refused', async () => {
+    const { tx: deploy } = attestedAsset(g, SIGNER)
+    const receipt = await attestedReceipt({ g, deploy, recipient: wallet, signers: [K] })
+    await receive(moduleWith(), receipt.args)
+    const T2 = await doubleSpend(receipt)
+    prompts.length = 0
+    const writes = store.writes.length
+
+    await expect(
+      receive(moduleWith(), { ...receipt.args, tx: T2.toAtomicBEEF() })
+    ).rejects.toMatchObject({ name: 'AttestationEvidenceError', reason: 'known conflicting spend' })
+    expect(prompts).toEqual([])
+    expect(store.writes.slice(writes).filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+    expect(wallet.outputs.has(`${T2.id('hex')}.0`)).toBe(false)
+  })
+
+  it('an attested spend of the same outpoint is not a known conflict: the overlay admitted it', async () => {
+    const { tx: deploy } = attestedAsset(g, SIGNER)
+    const receipt = await attestedReceipt({ g, deploy, recipient: wallet, signers: [K] })
+    await receive(moduleWith(), receipt.args)
+    const T2 = await doubleSpend(receipt)
+    const custody = JSON.parse(receipt.args.outputs[0].insertionRemittance!.customInstructions!)
+    const leaf = custody.profileData[ATTESTED_PROFILE_ID][receipt.custody.assetId]
+    leaf.attestations = [
+      ...leaf.attestations,
+      { ...(await signAttestation(K, receipt.custody.assetId, T2.id('hex'), [0])) }
+    ]
+    leaf.submissions = [{ txid: T2.id('hex'), offChainValues: '' }]
+    await expect(
+      receive(moduleWith(), {
+        ...withInstructions(receipt.args, JSON.stringify(custody)),
+        tx: T2.toAtomicBEEF()
+      })
+    ).resolves.toBeDefined()
+  })
+
   it('a retry keeps a settled record and a credited state', async () => {
     const { tx: deploy } = attestedAsset(g, SIGNER)
     const receipt = await attestedReceipt({ g, deploy, recipient: wallet, signers: [K] })
@@ -507,7 +558,14 @@ describe('attested receipts', () => {
     })
     const forwarded = await receive(moduleWith(), settled.args)
     expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(['mine'])
-    const unsettled = await attestedReceipt({ g, deploy, recipient: wallet, signers: [K], tags })
+    // Another asset: a second receipt from the same deploy would spend its anchor output again.
+    const unsettled = await attestedReceipt({
+      g,
+      deploy: attestedAsset(g, SIGNER).tx,
+      recipient: wallet,
+      signers: [K],
+      tags
+    })
     const offlineForwarded = await receive(moduleWith(), unsettled.args)
     expect(offlineForwarded.outputs[0].insertionRemittance?.tags).toEqual(['mine', 'color_offline'])
     // The caller's args are not modified.

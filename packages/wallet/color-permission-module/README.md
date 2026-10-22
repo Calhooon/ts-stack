@@ -219,7 +219,12 @@ A receipt of an attested asset carries the attested `profileData` leaf
 (`declarationTx`, `transactions`, `attestations`, `submissions`). The module
 validates the complete token frontier behind the received outputs back to
 outputs attested by a qualifying signer, then applies the trust mode. A leaf
-carrying `lifecycles` is rejected.
+carrying `lifecycles` is rejected. A known incompatible spend defeats
+acceptance (`AttestationEvidenceError`, `known conflicting spend`): no
+unattested transaction of the graph may consume an outpoint that another
+transaction in the module's store consumes (an aborted hand-over and a finally
+refused transaction consume nothing). The same check makes an offline output
+unavailable for spending once such a conflict with its stored evidence is known.
 
 Trust decisions use the current snapshot. The receipt, `signAction` and
 `createSignature` paths capture the snapshot version with their decision and
