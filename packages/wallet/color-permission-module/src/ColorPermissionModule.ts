@@ -99,7 +99,7 @@ import {
   type ResolvedAsset
 } from './profiles.js'
 import { ColorStore } from './store.js'
-import { ATTESTED_PROFILE_ID } from './attestation.js'
+import { ATTESTED_PROFILE_ID, COLOR_OFFLINE_TAG } from './attestation.js'
 import { parseAttestedParams } from './attested.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
@@ -156,7 +156,17 @@ export interface ManagedInput extends SourceOutput {
   custody: Custody
 }
 
-type InventoryState = 'available' | 'reserved'
+/** `restricted` occurs only with profiles registered: a final overlay refusal (C55). */
+type InventoryState = 'available' | 'reserved' | 'restricted'
+
+/**
+ * The settled and refused txids, loaded once per listing from the `color.v1.` store, and only
+ * when profiles are registered.
+ */
+interface SettlementState {
+  settled: ReadonlySet<string>
+  refused: ReadonlySet<string>
+}
 
 /** Runs an SDK parser on untrusted input, prefixing its failure as a BRC-207 error. */
 function parsed<T>(label: string, parse: () => T): T {
@@ -792,8 +802,12 @@ interface InventoryView {
   tags: string[]
 }
 
-/** The token outputs of a namespace listing. */
-function inventoryRecords(outputs: WalletOutput[], beef: Beef | undefined): InventoryRecord[] {
+/** The token outputs of a namespace listing, read with `read`. */
+function inventoryRecords(
+  outputs: WalletOutput[],
+  beef: Beef | undefined,
+  read: TokenReader
+): InventoryRecord[] {
   const records: InventoryRecord[] = []
   for (const output of outputs) {
     const outpoint = parseOutpoint(output.outpoint)
@@ -804,7 +818,7 @@ function inventoryRecords(outputs: WalletOutput[], beef: Beef | undefined): Inve
     if (lockingScript === undefined) continue
     let token: TokenOutput | undefined
     try {
-      token = tryReadTokenOutput(lockingScript, outpoint)
+      token = tryReadTokenOutput(lockingScript, outpoint, read)
     } catch {
       continue // an unsupported asset's outputs are left out of the inventory
     }
@@ -818,9 +832,26 @@ function inventoryRecords(outputs: WalletOutput[], beef: Beef | undefined): Inve
   return records
 }
 
-/** Reserved by a pending action, else available. Wallet state only; the overlay is not consulted. */
-function inventoryState(record: InventoryRecord): InventoryState {
+/**
+ * Restricted when the overlay finally refused the output's transaction, else reserved by a pending
+ * action, else available. Wallet and store state only; the overlay is not consulted.
+ */
+function inventoryState(record: InventoryRecord, status?: SettlementState): InventoryState {
+  if (status?.refused.has(parseOutpoint(record.output.outpoint).txid) === true) return 'restricted'
   return record.output.spendable ? 'available' : 'reserved'
+}
+
+/**
+ * An output's stored tags without state tags. With profiles registered, the stored
+ * `color_offline` tag is dropped once its transaction has a settled record (contract §2.2-6), so a
+ * lost store shows the coin offline again (fail safe).
+ */
+function storedViewTags(output: WalletOutput, status?: SettlementState): string[] {
+  const settled =
+    status?.settled.has(parseOutpoint(output.outpoint).txid) === true
+      ? COLOR_OFFLINE_TAG
+      : undefined
+  return (output.tags ?? []).filter(tag => !tag.startsWith(STATE_TAG_PREFIX) && tag !== settled)
 }
 
 /**
@@ -849,12 +880,9 @@ export function tryReadTokenOutput(
 }
 
 /** A record with its stored tags and the computed state tag in place of any stored one. */
-function inventoryView(record: InventoryRecord): InventoryView {
-  const state = inventoryState(record)
-  const tags = [
-    ...(record.output.tags ?? []).filter(tag => !tag.startsWith(STATE_TAG_PREFIX)),
-    `${STATE_TAG_PREFIX}${state}`
-  ]
+function inventoryView(record: InventoryRecord, status?: SettlementState): InventoryView {
+  const state = inventoryState(record, status)
+  const tags = [...storedViewTags(record.output, status), `${STATE_TAG_PREFIX}${state}`]
   return { record, state, tags }
 }
 
@@ -1723,10 +1751,14 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<Candidate[]> {
     const outputs = await this.listBasket(assetBasket(assetId, role), originator, {})
+    // A finally refused transaction's outputs are never selected (C55).
+    const refused = this.profiles.size > 0 ? await this.colorStore!.refusedSet() : undefined
     return outputs.flatMap(output => {
       if (this.selected.has(output.outpoint) || output.customInstructions === undefined) return []
+      const outpoint = parseOutpoint(output.outpoint)
+      if (refused?.has(outpoint.txid) === true) return []
       const source = this.sourceOutput(output)
-      const token = tryReadTokenOutput(source.lockingScript, parseOutpoint(output.outpoint))
+      const token = tryReadTokenOutput(source.lockingScript, outpoint, this.read)
       if (token?.assetId !== assetId || token.role !== role) return []
       return [
         { ...source, token, amount: token.amount, customInstructions: output.customInstructions }
@@ -2164,8 +2196,18 @@ export class ColorPermissionModule implements PermissionsModule {
     // As in BTMS, a read reports wallet state alone: the basket's unreserved, unspent outputs.
     // The overlay is consulted only when spending. With profiles, the asset must resolve first,
     // so an unsupported asset fails closed (A.142/A.143) before any output is read.
-    if (this.profiles.size > 0) await this.resolveAsset(assetId)
-    const held = (await this.listBasket(assetBasket(assetId, role), originator, args))
+    let outputs: WalletOutput[]
+    if (this.profiles.size > 0) {
+      await this.resolveAsset(assetId)
+      outputs = await this.viewedBasket(assetBasket(assetId, role), args, originator)
+    } else {
+      const { tags, tagQueryMode } = args
+      outputs = await this.listBasket(assetBasket(assetId, role), originator, {
+        tags,
+        tagQueryMode
+      })
+    }
+    const held = outputs
       .map(output => {
         const source = this.sourceOutput(output)
         return this.read(source.lockingScript, parseOutpoint(output.outpoint))
@@ -2173,6 +2215,58 @@ export class ColorPermissionModule implements PermissionsModule {
       .filter(token => token?.assetId === assetId && token.role === role)
     const total = held.reduce((sum, token) => sum + (role === 'value' ? token!.amount : 1n), 0n)
     return { totalOutputs: total.toString(), outputs: [] }
+  }
+
+  /**
+   * With profiles registered, a basket's unreserved outputs as a balance sees them: refused
+   * transactions' outputs are left out (C55), and the caller's tag filter is applied to the view
+   * tags, so `color_offline` matches only outputs without a settled record (contract §2.2-6).
+   */
+  protected async viewedBasket(
+    basket: string,
+    args: ListOutputsArgs,
+    originator: string
+  ): Promise<WalletOutput[]> {
+    const status = await this.settlementState()
+    const outputs = await this.listBasket(basket, originator, { includeTags: true })
+    return outputs.filter(output => {
+      if (status.refused.has(parseOutpoint(output.outpoint).txid)) return false
+      const tags = [...storedViewTags(output, status), `${STATE_TAG_PREFIX}available`]
+      return matchesTags(tags, args.tags ?? [], args.tagQueryMode)
+    })
+  }
+
+  /** The settled and refused txids; called only when profiles are registered. */
+  protected async settlementState(): Promise<SettlementState> {
+    const [settled, refused] = await Promise.all([
+      this.colorStore!.settledSet(),
+      this.colorStore!.refusedSet()
+    ])
+    return { settled, refused }
+  }
+
+  /**
+   * With profiles registered, the records whose asset resolves: each distinct asset is resolved
+   * once per listing, and the outputs of an asset that fails with `UnsupportedProfileError` or
+   * `ProfileParamsError` are left out, as the 0.1.0 reader left them out (A.142). Any other
+   * resolution failure fails the listing.
+   */
+  protected async supportedRecords(records: InventoryRecord[]): Promise<InventoryRecord[]> {
+    const unsupported = new Set<string>()
+    await eachInOrder(new Set(records.map(record => record.assetId)), async assetId => {
+      try {
+        await this.resolveAsset(assetId)
+      } catch (error) {
+        if (
+          !isNamedError(error, 'UnsupportedProfileError') &&
+          !isNamedError(error, 'ProfileParamsError')
+        ) {
+          throw error
+        }
+        unsupported.add(assetId)
+      }
+    })
+    return records.filter(record => !unsupported.has(record.assetId))
   }
 
   /** `p color assets`: every held token output across all per-asset baskets, with its state. */
@@ -2191,8 +2285,14 @@ export class ColorPermissionModule implements PermissionsModule {
     )
     const beef =
       entireTransactions && listed.BEEF !== undefined ? Beef.fromBinary(listed.BEEF) : undefined
-    const views = inventoryRecords(listed.outputs, beef)
-      .map(inventoryView)
+    let records = inventoryRecords(listed.outputs, beef, this.read)
+    let status: SettlementState | undefined
+    if (this.profiles.size > 0) {
+      records = await this.supportedRecords(records)
+      status = await this.settlementState()
+    }
+    const views = records
+      .map(record => inventoryView(record, status))
       .filter(view => matchesTags(view.tags, args.tags ?? [], args.tagQueryMode))
     const limit = args.limit ?? 10
     const offset = args.offset ?? 0
@@ -2561,7 +2661,7 @@ export class ColorPermissionModule implements PermissionsModule {
   protected async listBasket(
     basket: string,
     originator: string,
-    filter: Pick<ListOutputsArgs, 'tags' | 'tagQueryMode'>
+    filter: Pick<ListOutputsArgs, 'tags' | 'tagQueryMode' | 'includeTags'>
   ): Promise<WalletOutput[]> {
     const outputs: WalletOutput[] = []
     for (;;) {
@@ -2572,6 +2672,7 @@ export class ColorPermissionModule implements PermissionsModule {
           tagQueryMode: filter.tagQueryMode,
           include: 'locking scripts',
           includeCustomInstructions: true,
+          ...(filter.includeTags === true ? { includeTags: true } : {}),
           limit: LIST_PAGE_LIMIT,
           offset: outputs.length
         },

@@ -146,6 +146,14 @@ export class TestModule extends ColorPermissionModule {
   async assertConformingTokensForTest(tokens: Iterable<TokenOutput>): Promise<void> {
     await this.assertConformingTokens(tokens)
   }
+
+  async candidatesForTest(
+    assetId: string,
+    role: 'value' | 'authority',
+    originator: string
+  ): Promise<Array<{ outpoint: string; amount: bigint }>> {
+    return await this.candidates(assetId, role, originator)
+  }
 }
 
 /**

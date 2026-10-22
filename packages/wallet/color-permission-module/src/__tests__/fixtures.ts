@@ -40,6 +40,8 @@ interface StoredOutput {
   customInstructions?: string
   reservedBy?: string
   spent: boolean
+  /** The output's stored wallet tags. */
+  tags?: string[]
 }
 
 /** Validates one input's unlocking script against its source output with the script interpreter. */
@@ -91,13 +93,20 @@ export class FakeWallet {
   encrypt: WalletInterface['encrypt'] = async args => await this.proto.encrypt(args)
   decrypt: WalletInterface['decrypt'] = async args => await this.proto.decrypt(args)
 
-  store(tx: Transaction, vout: number, basket?: string, customInstructions?: string): void {
+  store(
+    tx: Transaction,
+    vout: number,
+    basket?: string,
+    customInstructions?: string,
+    tags?: string[]
+  ): void {
     this.outputs.set(`${tx.id('hex')}.${vout}`, {
       tx,
       vout,
       basket,
       customInstructions,
-      spent: false
+      spent: false,
+      ...(tags === undefined ? {} : { tags: [...tags] })
     })
   }
 
@@ -127,7 +136,7 @@ export class FakeWallet {
               : undefined,
           customInstructions:
             args.includeCustomInstructions === true ? output.customInstructions : undefined,
-          tags: args.includeTags === true ? [] : undefined
+          tags: args.includeTags === true ? [...(output.tags ?? [])] : undefined
         }
       })
     }
@@ -172,7 +181,7 @@ export class FakeWallet {
     this.pending.delete(args.reference)
     for (const input of pending.args.inputs ?? []) this.outputs.get(input.outpoint)!.spent = true
     pending.args.outputs?.forEach((output, vout) => {
-      this.store(pending.tx, vout, output.basket, output.customInstructions)
+      this.store(pending.tx, vout, output.basket, output.customInstructions, output.tags)
     })
     return { txid: pending.tx.id('hex'), tx: pending.tx.toAtomicBEEF() }
   }
@@ -189,7 +198,13 @@ export class FakeWallet {
     for (const output of args.outputs) {
       const remittance = output.insertionRemittance
       if (remittance !== undefined)
-        this.store(tx, output.outputIndex, remittance.basket, remittance.customInstructions)
+        this.store(
+          tx,
+          output.outputIndex,
+          remittance.basket,
+          remittance.customInstructions,
+          remittance.tags
+        )
     }
     return { accepted: true }
   }
