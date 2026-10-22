@@ -429,6 +429,27 @@ function holdsStoredOutput(
  * What signAction keeps for `onResponse` of a profile action, by action reference: per profile
  * asset its submission data, same-asset inputs and wallet-owned outputs, and the plan labels.
  */
+/**
+ * How `spendable` decides an attested asset's held, unsettled (offline) outputs. Only a plain-noSend
+ * hand-over (`offline`) spends them with no overlay contact: its recipient submits their
+ * ancestors first. Every other action is published by this wallet (or, for a BRC-177 handoff,
+ * its split is), so their acceptance is established first (pinned brc-0207: parents first).
+ */
+interface SpendContext {
+  offline: boolean
+  originator?: string
+}
+
+const PUBLISHED_SPEND: SpendContext = { offline: false }
+
+/** True for a plain-noSend hand-over's arguments: `options.noSend` and no BRC-177 label. */
+function plainNoSendArgs(args: Pick<CreateActionArgs, 'options' | 'labels'>): boolean {
+  return (
+    args.options?.noSend === true &&
+    !(args.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX))
+  )
+}
+
 interface PendingHandoff {
   /** True for a plain-noSend hand-over (B2), which onResponse records and evidences. */
   plain: boolean
@@ -2167,8 +2188,10 @@ export class ColorPermissionModule implements PermissionsModule {
     // It ends when this handler returns; storage then rejects a second action that tries to spend
     // an input already marked spent.
     const reserved = new Set<string>()
+    // Only a plain-noSend hand-over may spend offline (unsettled) attested outputs.
+    const spend: SpendContext = { offline: plainNoSendArgs(args), originator }
     try {
-      const explicit = await this.explicitInputs(args, originator)
+      const explicit = await this.explicitInputs(args, originator, spend)
       this.reserve(reserved, explicit.managed)
       const { inputs, changes } = await this.fund(
         reserved,
@@ -2177,7 +2200,8 @@ export class ColorPermissionModule implements PermissionsModule {
         explicit,
         handoff,
         originator,
-        offline
+        offline,
+        spend
       )
       sighashScopes(plan, new Set([...explicit.managed, ...inputs].map(input => input.outpoint)))
       const ordered = orderInputs(explicit.inputs, tokenInputs(inputs), plan.inputPositions)
@@ -2451,7 +2475,8 @@ export class ColorPermissionModule implements PermissionsModule {
    */
   protected async explicitInputs(
     args: CreateActionArgs,
-    originator: string
+    originator: string,
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<ExplicitInputs> {
     const inputs = args.inputs ?? []
     const explicit: ExplicitInputs = { inputs: [...inputs], managed: [], holdings: new Map() }
@@ -2479,7 +2504,7 @@ export class ColorPermissionModule implements PermissionsModule {
     await eachInOrder(inputs, async input => {
       const output = own.get(input.outpoint)
       if (output === undefined) await this.foreignInput(explicit, beef, input.outpoint)
-      else await this.ownInput(explicit, output, originator)
+      else await this.ownInput(explicit, output, originator, spend)
     })
     return explicit
   }
@@ -2488,7 +2513,8 @@ export class ColorPermissionModule implements PermissionsModule {
   protected async ownInput(
     explicit: ExplicitInputs,
     output: WalletOutput,
-    originator: string
+    originator: string,
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<void> {
     if (!output.spendable)
       throw new Error('BRC-207: an explicit p color input is reserved by another action')
@@ -2497,7 +2523,7 @@ export class ColorPermissionModule implements PermissionsModule {
       throw new Error('BRC-207: an explicit p color input is not a managed token output')
     await this.assertSupportedAsset(managed.assetId)
     if (
-      !(await this.spendable(managed.assetId, [managed])).has(managed.outpoint) &&
+      !(await this.spendable(managed.assetId, [managed], spend)).has(managed.outpoint) &&
       !(await this.resubmitHeld(managed.assetId, managed.role, [managed], originator)).has(
         managed.outpoint
       )
@@ -2717,7 +2743,8 @@ export class ColorPermissionModule implements PermissionsModule {
     explicit: ExplicitInputs,
     handoff: boolean,
     originator: string,
-    offline: ReadonlySet<string> = new Set()
+    offline: ReadonlySet<string> = new Set(),
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<{
     inputs: ManagedInput[]
     changes: TokenChange[]
@@ -2739,7 +2766,8 @@ export class ColorPermissionModule implements PermissionsModule {
         assetId,
         planned.holdings.get(assetId) ?? emptyHolding(),
         explicit.holdings.get(assetId) ?? emptyExplicitHolding(),
-        originator
+        originator,
+        spend
       )
     })
     const settled = await mapInOrder(
@@ -2809,7 +2837,8 @@ export class ColorPermissionModule implements PermissionsModule {
     assetId: string,
     requested: Holding,
     explicit: ExplicitHolding,
-    originator: string
+    originator: string,
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<AssetFunding> {
     const declared = declaredOperations(plan, assetId)
     const selected: ManagedInput[] = []
@@ -2821,7 +2850,8 @@ export class ColorPermissionModule implements PermissionsModule {
           assetId,
           'value',
           requested.value - explicit.value,
-          originator
+          originator,
+          spend
         ))
       )
     }
@@ -2837,7 +2867,8 @@ export class ColorPermissionModule implements PermissionsModule {
           assetId,
           'authority',
           BigInt(authorityCount),
-          originator
+          originator,
+          spend
         ))
       )
     }
@@ -2878,7 +2909,8 @@ export class ColorPermissionModule implements PermissionsModule {
     assetId: string,
     role: TokenRole,
     target: bigint,
-    originator: string
+    originator: string,
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<ManagedInput[]> {
     const candidates = (await this.candidates(assetId, role, originator)).sort(byAmountDescending)
     const rejected = new Set<string>()
@@ -2888,7 +2920,15 @@ export class ColorPermissionModule implements PermissionsModule {
         throw new Error(
           `BRC-207: insufficient spendable ${role === 'value' ? 'balance' : 'authority'} of ${assetId}`
         )
-      const selected = await this.checkChosen(reserved, assetId, role, chosen, rejected, originator)
+      const selected = await this.checkChosen(
+        reserved,
+        assetId,
+        role,
+        chosen,
+        rejected,
+        originator,
+        spend
+      )
       if (selected !== undefined) return selected
     }
   }
@@ -2904,7 +2944,8 @@ export class ColorPermissionModule implements PermissionsModule {
     role: TokenRole,
     chosen: Candidate[],
     rejected: Set<string>,
-    originator: string
+    originator: string,
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<ManagedInput[] | undefined> {
     // Chosen outputs are held while they are checked, so a concurrent action cannot choose them.
     this.reserve(reserved, chosen)
@@ -2919,7 +2960,7 @@ export class ColorPermissionModule implements PermissionsModule {
       return undefined
     }
     const selected = inputs as ManagedInput[]
-    const admitted = await this.spendable(assetId, selected)
+    const admitted = await this.spendable(assetId, selected, spend)
     const unlisted = selected.filter(input => !admitted.has(input.outpoint))
     const recovered = await this.resubmitHeld(assetId, role, unlisted, originator)
     const missing = unlisted.filter(input => !recovered.has(input.outpoint))
@@ -2937,6 +2978,9 @@ export class ColorPermissionModule implements PermissionsModule {
    * settled one through the settle path (exact stored bytes and off-chain values, per-txid
    * latch), an offline one needs no overlay, and the wallet's copy carries no off-chain values
    * (contract §2.2-7). Returning nothing keeps a selection from submitting a txid twice.
+   * After store loss, an attested output the overlay does not list is therefore not resubmitted
+   * at selection: it is recovered by the sender's resend or by `settle()`, and until then it is
+   * excluded (fail closed).
    */
   protected async resubmitHeld(
     assetId: string,
@@ -3178,9 +3222,10 @@ export class ColorPermissionModule implements PermissionsModule {
       this.profiles.size > 0
         ? await this.profileSigning(plan, createArgs, tx, managed, originator)
         : undefined
+    const spend: SpendContext = { offline: plainNoSendArgs(createArgs), originator }
     await eachInOrder(new Set(tokens.consumed.map(input => input.assetId)), async assetId => {
       const assetInputs = tokens.consumed.filter(input => input.assetId === assetId)
-      const admitted = await this.spendable(assetId, assetInputs)
+      const admitted = await this.spendable(assetId, assetInputs, spend)
       if (assetInputs.some(input => !admitted.has(input.outpoint)))
         throw new Error(`BRC-207: a ${assetId} input is no longer spendable`)
     })
@@ -4207,18 +4252,26 @@ export class ColorPermissionModule implements PermissionsModule {
    *    failure proceeds on the stored attestation; an unlisted one is resubmitted through the
    *    settle path (its exact stored bytes and off-chain values, under the per-txid latch), then
    *    checked again, and excluded if still unlisted;
-   * 3. a held output with a stored record and no settlement is spendable offline, with no overlay
-   *    contact, when its stored evidence still holds: in identity mode the evidence walk to its
-   *    anchors, in the list modes the complete frontier against the current trust snapshot (C17);
+   * 3. a held output with a stored record and no settlement: for a plain-noSend hand-over
+   *    (`spend.offline`), whose recipient submits its ancestors first, it is spendable offline,
+   *    with no overlay contact, when its stored evidence still holds (in identity mode the
+   *    evidence walk to its anchors, in the list modes the complete frontier against the current
+   *    trust snapshot, C17). For any other action, which this wallet publishes, the transaction
+   *    and its unsettled ancestors are first settled, parents first, through `settle()` (one
+   *    single-flight run), and the output then gets the baseline live check: it is spent only
+   *    once the overlay lists it, and an unreachable overlay fails the check (pinned brc-0207:
+   *    before publishing a child, establish acceptance of its required ancestors);
    * 4. any other output gets the baseline live check.
    */
   protected async spendable(
     assetId: string,
-    outputs: readonly SourceOutput[]
+    outputs: readonly SourceOutput[],
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<Set<string>> {
     if (this.profiles.size > 0 && outputs.length > 0) {
       const resolved = await this.resolveAsset(assetId)
-      if (resolved.attested !== undefined) return await this.attestedSpendable(resolved, outputs)
+      if (resolved.attested !== undefined)
+        return await this.attestedSpendable(resolved, outputs, spend)
     }
     return await this.liveSpendable(assetId, outputs)
   }
@@ -4226,7 +4279,8 @@ export class ColorPermissionModule implements PermissionsModule {
   /** The attested branch of `spendable` (steps 1-4 there). */
   protected async attestedSpendable(
     resolved: ResolvedAsset,
-    outputs: readonly SourceOutput[]
+    outputs: readonly SourceOutput[],
+    spend: SpendContext = PUBLISHED_SPEND
   ): Promise<Set<string>> {
     const { assetId } = resolved
     const store = this.colorStore!
@@ -4290,13 +4344,23 @@ export class ColorPermissionModule implements PermissionsModule {
       }
     }
 
-    await eachInOrder(offline, async ([txid, group]) => {
-      if (await this.offlineEvidenceHolds(resolved, txid, group)) {
-        for (const output of group) spendable.add(output.outpoint)
-      } else {
-        baseline.push(...group)
-      }
-    })
+    if (spend.offline) {
+      await eachInOrder(offline, async ([txid, group]) => {
+        if (await this.offlineEvidenceHolds(resolved, txid, group)) {
+          for (const output of group) spendable.add(output.outpoint)
+        } else {
+          baseline.push(...group)
+        }
+      })
+    } else if (offline.size > 0) {
+      // Parents first, under the settler's single flight and per-txid latch; the live check
+      // below decides, so a refused, unreachable or failed settlement spends nothing.
+      await this.settler!.settle(
+        { txids: [...offline.keys()], assetIds: [assetId] },
+        spend.originator
+      ).catch(() => undefined)
+      for (const group of offline.values()) baseline.push(...group)
+    }
 
     if (baseline.length > 0) {
       for (const outpoint of await this.liveSpendable(assetId, baseline)) spendable.add(outpoint)

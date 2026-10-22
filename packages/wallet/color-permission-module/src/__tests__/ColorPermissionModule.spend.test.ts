@@ -125,6 +125,28 @@ function dataProfile(): RequiredProfileHandler {
   }
 }
 
+/** A list-mode plain-noSend profile: its hand-overs spend offline outputs with no overlay. */
+const LIST_NOSEND_ID = 'urn:example:color:list-nosend'
+
+function listNoSendProfile(): RequiredProfileHandler {
+  return {
+    id: LIST_NOSEND_ID,
+    versions: [1],
+    sendPolicy: 'plain-nosend',
+    operations: ['transfer'],
+    checkDescriptor: () => {}
+  }
+}
+
+function listNoSendPayload(): number[] {
+  return encodeStrictCbor({
+    req: {
+      [ATTESTED_PROFILE_ID]: { params: { trustMode: 'any' }, version: 1 },
+      [LIST_NOSEND_ID]: { params: null, version: 1 }
+    }
+  })
+}
+
 /** The deploy payload of an attested identity-mode asset that also requires the data profile. */
 function dataPayload(): number[] {
   return encodeStrictCbor({
@@ -137,13 +159,14 @@ function dataPayload(): number[] {
 
 /**
  * Receives an attested payment of 600 into `b.wallet` through `module`: offline (with consent)
- * unless `attestTip`, in which case the tip is attested by K and settled at receipt.
+ * unless `attestTip`, in which case the tip is attested by K and settled at receipt. `unattested`
+ * puts that many unattested hops between the attested anchor and the tip.
  */
 async function receive(
   b: Bench,
   module: ColorPermissionModule,
   deploy: Transaction,
-  options: { attestTip?: boolean; signers?: PrivateKey[] } = {}
+  options: { attestTip?: boolean; signers?: PrivateKey[]; unattested?: number } = {}
 ) {
   const receipt = await attestedReceipt({
     g: b.g,
@@ -151,6 +174,7 @@ async function receive(
     recipient: b.wallet,
     signers: options.signers ?? [K],
     attestTip: options.attestTip,
+    unattested: options.unattested,
     tipOffChainValues: 'e0'
   })
   const { args } = await module.onRequest({
@@ -274,18 +298,54 @@ describe('spending attested assets', () => {
     b = bench()
   })
 
-  it('an offline output is selectable and signable with no overlay contact', async () => {
+  it('a broadcast action settles an offline input and its ancestors, parents first, before signing', async () => {
     const module = attestedModule(b)
     const { tx: deploy, assetId } = attestedAsset(b.g, SIGNER)
-    const { outpoint } = await receive(b, module, deploy)
+    const { outpoint, R, ancestors } = await receive(b, module, deploy, { unattested: 1 })
     expect(b.prompts.map(prompt => prompt.type)).toContain('color_receive_offline')
-    const before = calls(b.ap)
+    expect(await module.isSettled(R)).toBe(false)
+    const A = ancestors[0].id('hex')
+    const before = b.ap.submissions.length
 
-    const { funded, signArgs } = await prepare(b, module, assetId)
+    const { funded, action, signArgs } = await prepare(b, module, assetId)
 
+    // The parent, then the receipt, reached the overlay before the wallet could broadcast.
+    expect(b.ap.submissions.slice(before).map(entry => entry.txid)).toEqual([A, R])
+    expect(await module.isSettled(R)).toBe(true)
     expect(funded.inputs!.map(input => input.outpoint)).toEqual([outpoint])
     expect(Object.keys(signArgs.spends)).toEqual(['0'])
-    expect(calls(b.ap)).toBe(before)
+
+    const result = (await module.onResponse(await b.wallet.signAction(signArgs), {
+      method: 'signAction',
+      originator: APP,
+      action
+    })) as SignActionResult
+    expect(b.ap.submissions.slice(before).map(entry => entry.txid)).toEqual([A, R, result.txid])
+  })
+
+  it('a broadcast action never spends an offline input its overlay does not accept', async () => {
+    const module = attestedModule(b)
+    const { tx: deploy, assetId } = attestedAsset(b.g, SIGNER)
+    const { outpoint, R } = await receive(b, module, deploy, { unattested: 1 })
+    const explicit = async () =>
+      await plan(module, assetId, {
+        inputs: [{ outpoint, inputDescription: 'Token' } as never],
+        outputs: [await paymentOutput(assetId, 600n)]
+      })
+
+    // Unreachable: nothing is funded, and nothing is recorded refused.
+    b.ap.failTransport()
+    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+    await expect(explicit()).rejects.toThrow(/not admitted and unspent/)
+    expect(await b.colorStore.refused(R)).toBeUndefined()
+    expect(await module.isSettled(R)).toBe(false)
+    expect(b.wallet.pending.size).toBe(0)
+
+    // A final refusal of the parent refuses the receipt; it is never selected again.
+    b.ap.refuse('ERR_CONFLICT', false)
+    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+    expect(await b.colorStore.refused(R)).toBeDefined()
+    expect(b.wallet.pending.size).toBe(0)
   })
 
   it('an offline output is handed over plain-noSend with no overlay contact', async () => {
@@ -365,6 +425,24 @@ describe('spending attested assets', () => {
     ).rejects.toThrow(/not admitted and unspent/)
   })
 
+  it('a refused resubmission of a settled transaction never marks it refused', async () => {
+    const module = attestedModule(b)
+    const { tx: deploy, assetId } = attestedAsset(b.g, SIGNER)
+    const { tip, outpoint, R } = await receive(b, module, deploy, { attestTip: true })
+    b.ap.refuse('ERR_CONFLICT', false)
+
+    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+    expect(b.ap.submitted).toHaveLength(1)
+    expect(await b.colorStore.refused(R)).toBeUndefined()
+    expect(await module.isSettled(R)).toBe(true)
+
+    // Listed again, the output is spendable: the refusal locked nothing.
+    b.ap.online()
+    b.ap.admit(assetId, tip, 0)
+    const funded = await plan(module, assetId)
+    expect(funded.inputs!.map(input => input.outpoint)).toEqual([outpoint])
+  })
+
   it('a refused output is never selected', async () => {
     const module = attestedModule(b)
     const { tx: deploy, assetId } = attestedAsset(b.g, SIGNER)
@@ -385,25 +463,29 @@ describe('spending attested assets', () => {
   it('C17 list-mode trust loss excludes offline outputs from new spends', async () => {
     let identityKeys: string[] = [SIGNER]
     const module = attestedModule(b, {
-      trustedIdentities: async () => ({ snapshot: `v${identityKeys.length}`, identityKeys })
+      trustedIdentities: async () => ({ snapshot: `v${identityKeys.length}`, identityKeys }),
+      extra: [listNoSendProfile()]
     })
-    const { tx: deploy, assetId } = attestedAsset(b.g, { trustMode: 'any' })
+    const { tx: deploy, assetId } = b.g.deploy(1000n, listNoSendPayload())
     const { outpoint } = await receive(b, module, deploy)
     expect(b.prompts.map(prompt => prompt.type)).toContain('color_receive_offline')
     const before = calls(b.ap)
+    const handOver = { options: { noSend: true } }
 
-    const trusted = await plan(module, assetId)
+    const trusted = await plan(module, assetId, handOver)
     expect(trusted.inputs!.map(input => input.outpoint)).toEqual([outpoint])
     expect(calls(b.ap)).toBe(before)
 
     identityKeys = [new PrivateKey(7777).toPublicKey().toString()]
-    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+    await expect(plan(module, assetId, handOver)).rejects.toThrow(/insufficient spendable balance/)
   })
 
   it('a broadcast attested action submits offChainValues and records a returned attestation as settled', async () => {
     const module = attestedModule(b, { extra: [dataProfile()] })
     const { tx: deploy, assetId } = b.g.deploy(1000n, dataPayload())
-    await receive(b, module, deploy)
+    const { tip, R } = await receive(b, module, deploy, { attestTip: true })
+    expect(await module.isSettled(R)).toBe(true)
+    b.ap.admit(assetId, tip, 0)
 
     const result = await send(b, module, assetId)
 

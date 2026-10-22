@@ -479,7 +479,8 @@ export class ColorSettler {
    * One submit: the stored AtomicBEEF and off-chain values verbatim to the asset's routed
    * provider. A verified, qualifying attestation that covers the record's outputs (an ancestor's:
    * every same-asset token output) is stored and the tx marked settled; an own hand-over is then
-   * sent with `sendWith`. A typed final refusal is recorded; anything else is `retry`.
+   * sent with `sendWith`. A typed final refusal of an unsettled tx is recorded; anything else,
+   * including any refusal of an already settled tx, is `retry`.
    */
   protected async submitTx(
     txid: string,
@@ -533,7 +534,14 @@ export class ColorSettler {
       entry = (steak as Record<string, unknown> | undefined)?.[topic]
     } catch (error) {
       const failure = providerFailure(error)
-      if (failure !== undefined && !failure.transport && !failure.retryable) {
+      // A resubmission of an already settled tx (spending's settleTx) never records a refusal:
+      // its admission stands, and a refused record would lock every output of it for good.
+      if (
+        failure !== undefined &&
+        !failure.transport &&
+        !failure.retryable &&
+        (await store.settled(txid)) === undefined
+      ) {
         await store.markRefused(txid, { code: failure.code, description: failure.message })
         await store.removeIntent(txid)
         return {
