@@ -12,6 +12,8 @@ import {
   type InternalizeActionArgs,
   type ListOutputsArgs,
   type ListOutputsResult,
+  type ListActionsArgs,
+  type ListActionsResult,
   type LookupAnswer,
   type SignActionArgs,
   type SignActionResult,
@@ -72,6 +74,19 @@ export class FakeWallet {
   readonly identityKey: string
   readonly outputs = new Map<string, StoredOutput>()
   readonly pending = new Map<string, { tx: Transaction; args: CreateActionArgs }>()
+  /** Every signed action, by reference: its txid, labels and toolbox-like status. */
+  readonly actions = new Map<
+    string,
+    { reference: string; txid: string; labels: string[]; status: string }
+  >()
+  /** The txids of every `sendWith` createAction, one array per call. */
+  readonly sentWith: string[][] = []
+  /** Thrown by the next `sendWith` createActions when set. */
+  sendWithError?: Error
+  /** The status each `sendWithResults` entry reports (default `'unproven'`). */
+  sendWithStatus?: 'unproven' | 'sending' | 'failed'
+  /** Thrown by `listActions` when set (a wallet outage). */
+  listActionsError?: Error
   #nextReference = 0
 
   constructor(key = PrivateKey.fromRandom()) {
@@ -145,6 +160,15 @@ export class FakeWallet {
   }
 
   async createAction(args: CreateActionArgs): Promise<CreateActionResult> {
+    const sendWith = args.options?.sendWith
+    if (sendWith !== undefined && sendWith.length > 0) {
+      this.sentWith.push([...sendWith])
+      if (this.sendWithError !== undefined) throw this.sendWithError
+      const status = this.sendWithStatus ?? 'unproven'
+      for (const action of this.actions.values())
+        if (sendWith.includes(action.txid) && status !== 'failed') action.status = status
+      return { sendWithResults: sendWith.map(txid => ({ txid, status })) }
+    }
     const tx = new Transaction()
     const reference = `reference-${this.#nextReference++}`
     for (const input of args.inputs ?? []) {
@@ -179,6 +203,12 @@ export class FakeWallet {
       if (!validInput(pending.tx, Number(index))) throw new Error(`input ${index} does not unlock`)
     }
     this.pending.delete(args.reference)
+    this.actions.set(args.reference, {
+      reference: args.reference,
+      txid: pending.tx.id('hex'),
+      labels: [...(pending.args.labels ?? [])],
+      status: 'nosend'
+    })
     for (const input of pending.args.inputs ?? []) this.outputs.get(input.outpoint)!.spent = true
     pending.args.outputs?.forEach((output, vout) => {
       this.store(pending.tx, vout, output.basket, output.customInstructions, output.tags)
@@ -188,9 +218,38 @@ export class FakeWallet {
 
   async abortAction(args: { reference: string }): Promise<{ aborted: true }> {
     this.pending.delete(args.reference)
+    const action = this.actions.get(args.reference)
+    if (action !== undefined) action.status = 'failed'
     for (const output of this.outputs.values())
       if (output.reservedBy === args.reference) output.reservedBy = undefined
     return { aborted: true }
+  }
+
+  /** The signed actions carrying the labels (all or any), except failed (aborted) ones, as the toolbox lists. */
+  async listActions(args: ListActionsArgs): Promise<ListActionsResult> {
+    if (this.listActionsError !== undefined) throw this.listActionsError
+    const all = args.labelQueryMode !== 'any'
+    const matching = [...this.actions.values()].filter(
+      action =>
+        action.status !== 'failed' &&
+        (all
+          ? args.labels.every(label => action.labels.includes(label))
+          : args.labels.some(label => action.labels.includes(label)))
+    )
+    const offset = args.offset ?? 0
+    const page = matching.slice(offset, offset + (args.limit ?? 10))
+    return {
+      totalActions: matching.length,
+      actions: page.map(action => ({
+        txid: action.txid,
+        satoshis: 0,
+        status: action.status as ListActionsResult['actions'][number]['status'],
+        isOutgoing: true,
+        description: 'Fake action',
+        version: 1,
+        lockTime: 0
+      }))
+    }
   }
 
   async internalizeAction(args: InternalizeActionArgs): Promise<{ accepted: true }> {

@@ -104,6 +104,7 @@ import {
   validateProfileHandlers,
   type ColorAttestation,
   type ColorHandoffResult,
+  type ColorSettleReport,
   type ProfileAssetContext,
   type ProfileDescriptor,
   type ProfileTxView,
@@ -112,6 +113,7 @@ import {
   type ResolvedAsset
 } from './profiles.js'
 import { ColorStore, type SettledRecord, type TxRecord } from './store.js'
+import { ColorSettler, type ColorSettleRequest } from './settle.js'
 import {
   ATTESTED_PROFILE_ID,
   COLOR_OFFLINE_TAG,
@@ -146,6 +148,7 @@ const NO_REQUIREMENTS: ReadonlyMap<string, ProfileDescriptor> = new Map()
 /** The attributes of a deploy that declares nothing, for a BRC-161 JSON deploy. */
 const ABSENT_ATTRIBUTES = readOneColorAttributes(undefined)
 const LOWER_HEX = /^(?:[0-9a-f]{2})+$/
+const TXID_PATTERN = /^[0-9a-f]{64}$/
 
 /** The transaction `hex` encodes, when it is lowercase canonical hex of a transaction with id `txid`. */
 function canonicalTransaction(hex: unknown, txid: string): Transaction | undefined {
@@ -1092,6 +1095,8 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly supportedAssets = new Map<string, Promise<ResolvedAsset>>()
   /** Profile actions signed here and not yet answered, by action reference. */
   protected readonly pendingHandoffs = new Map<string, PendingHandoff>()
+  /** Single-flight settlement (contract §2.3); constructed only when profiles are registered. */
+  protected readonly settler?: ColorSettler
   protected identityKey?: Promise<string>
 
   constructor(options: ColorPermissionModuleOptions) {
@@ -1122,17 +1127,48 @@ export class ColorPermissionModule implements PermissionsModule {
     if (this.profiles.size > 0) {
       this.colorStore = new ColorStore(options.store!)
       this.read = readProfiledTokenOutput
+      this.settler = new ColorSettler({
+        store: this.colorStore,
+        resolve: async assetId => await this.resolveAsset(assetId),
+        qualifies: async assetId => await this.qualifiesFor(assetId),
+        wallet: this.wallet,
+        holds: async (outpoint, assetId) => await this.holds(outpoint, assetId),
+        tokenOutputs: (tx, assetId) => this.tokenVouts(tx, assetId)
+      })
     } else {
       this.read = readTokenOutput
     }
   }
 
-  /** Clears in-memory selections, asset checks and pending hand-overs. */
+  /**
+   * Sync and idempotent: clears in-memory selections, asset checks, pending hand-overs and the
+   * settler's latches. An in-flight `settle()` resolves, but no new submit starts afterwards.
+   */
   dispose(): void {
     this.selected.clear()
     this.supportedAssets.clear()
     this.pendingHandoffs.clear()
     this.identityKey = undefined
+    this.settler?.dispose()
+  }
+
+  /**
+   * Settles offline state against the overlay (contract §2.3): every offline-credited receipt,
+   * every own plain-noSend hand-over its overlay already admitted, and the hand-overs named in
+   * `txids` (whose intent is kept until they settle). Single-flight; overlay refusals are
+   * reported, never thrown. Without profiles there is nothing to settle.
+   */
+  async settle(request?: ColorSettleRequest, originator?: string): Promise<ColorSettleReport> {
+    if (this.settler === undefined) return { results: [] }
+    return await this.settler.settle(request, originator)
+  }
+
+  /** True iff a verified attestation settled `txid` (its `color.v1.settled.` record exists). */
+  async isSettled(txid: string): Promise<boolean> {
+    if (this.colorStore === undefined || typeof txid !== 'string' || !TXID_PATTERN.test(txid)) {
+      return false
+    }
+    return (await this.colorStore.settled(txid)) !== undefined
   }
 
   /** Protocol- and basket-routed calls: key and signature operations and the read views. */
@@ -3950,6 +3986,49 @@ export class ColorPermissionModule implements PermissionsModule {
       }
       assertOwnExtEntries(asset.handlers, token.attributes)
     }
+  }
+
+  /**
+   * Whether an attestation signer counts for an asset: its identity key in identity mode, else a
+   * member of the current trust snapshot. An asset without the default attested construction
+   * trusts no signer, so it never settles through `settle()`.
+   */
+  protected async qualifiesFor(assetId: string): Promise<(signer: string) => boolean> {
+    const resolved = await this.resolveAsset(assetId)
+    const params = resolved.attested
+    if (params === undefined) return () => false
+    const { handler } = resolved.handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)!
+    const snapshot = await trustSnapshot(handler, params)
+    return qualifyingSigner(params, snapshot?.identityKeys)
+  }
+
+  /** True when the asset's value or authority basket lists `outpoint` (all pages). */
+  protected async holds(outpoint: string, assetId: string): Promise<boolean> {
+    for (const role of ['value', 'authority'] as const) {
+      const basket = assetBasket(assetId, role)
+      for (let offset = 0; ;) {
+        const page = await this.wallet.listOutputs({ basket, limit: LIST_PAGE_LIMIT, offset })
+        if (page.outputs.some(output => output.outpoint === outpoint)) return true
+        offset += page.outputs.length
+        if (page.outputs.length < LIST_PAGE_LIMIT) break
+      }
+    }
+    return false
+  }
+
+  /** The vouts of `tx`'s token outputs of `assetId`, read with this module's reader. */
+  protected tokenVouts(tx: Transaction, assetId: string): number[] {
+    const txid = tx.id('hex')
+    return tx.outputs.flatMap((output, vout) => {
+      try {
+        return readAnyTokenOutput(output.lockingScript, { txid, vout }, this.read)?.assetId ===
+          assetId
+          ? [vout]
+          : []
+      } catch {
+        return []
+      }
+    })
   }
 
   /** The provider for every query and submit of an asset: the default one without profiles. */

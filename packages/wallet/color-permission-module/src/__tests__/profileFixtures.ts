@@ -432,15 +432,17 @@ export function highS(signature: string): string {
  * `admissionSignature`). It records every submit's exact bytes and can be told to fail.
  */
 export class AttestingProvider extends FakeProvider {
-  readonly key = new PrivateKey(C0.PRIV)
+  /** The overlay's signing key: priv 5555 unless another is given. */
+  readonly key: PrivateKey
   /** Every submit's topics and exact bytes, in call order (also failed ones). */
   readonly submitted: Array<{ topics: string[]; beef: number[]; offChainValues?: number[] }> = []
   /** Sign high-S statements (a valid signature under BSV Chronicle). */
   highS = false
   #failure: ColorProviderError | undefined
 
-  constructor() {
+  constructor(key: PrivateKey = new PrivateKey(C0.PRIV)) {
     super()
+    this.key = key
     const admit = this.submit
     this.submit = async (topics, beef, offChainValues) => {
       this.submitted.push({
@@ -479,6 +481,11 @@ export class AttestingProvider extends FakeProvider {
   /** Every later submit is a transport failure. */
   failTransport(): void {
     this.#failure = new ColorProviderError('ERR_UNAVAILABLE', true, true, 'overlay unreachable')
+  }
+
+  /** Every later submit succeeds again. */
+  online(): void {
+    this.#failure = undefined
   }
 
   /** Every later submit is a typed overlay refusal. */
