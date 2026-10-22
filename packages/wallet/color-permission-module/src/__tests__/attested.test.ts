@@ -206,11 +206,11 @@ describe('attested profile descriptor (C05, C38, C39)', () => {
 
   it('advertises brc207-color-attested=1 only when registered', () => {
     expect(moduleWith({ [ATTESTED_PROFILE_ID]: attested }).capabilities).toEqual({
-      'brc207-color': '5',
+      'brc207-color': '4',
       'brc207-color-attested': '1'
     })
     expect(moduleWith({ [EVIDENCE]: stub(EVIDENCE) }).capabilities).toEqual({
-      'brc207-color': '5'
+      'brc207-color': '4'
     })
   })
 

@@ -204,7 +204,7 @@ describe('profile registry construction', () => {
 
   it('keeps the 0.1.0 capabilities without profiles', () => {
     expect(createModule(new FakeWallet(), new FakeProvider()).capabilities).toEqual({
-      'brc207-color': '5'
+      'brc207-color': '4'
     })
   })
 

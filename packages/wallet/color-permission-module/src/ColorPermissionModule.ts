@@ -1147,7 +1147,7 @@ export class ColorPermissionModule implements PermissionsModule {
   /** The BRC-162 reader: `readTokenOutput` without profiles, else the profile-aware reader. */
   protected readonly read: TokenReader
   /**
-   * BRC-205 attributes for BRC-207's Discovery section: this module implements revision 5, and
+   * BRC-205 attributes for BRC-207's Discovery section: this module implements revision 4, and
    * `brc207-color-attested` 1 when the attested profile is registered (0207:1501-1506).
    */
   readonly capabilities: Readonly<Record<string, string>>
@@ -1183,7 +1183,7 @@ export class ColorPermissionModule implements PermissionsModule {
     this.provider = options.provider
     this.requestTokenAccess = options.requestTokenAccess
     this.store = options.store ?? undefined
-    const capabilities: Record<string, string> = { 'brc207-color': '5' }
+    const capabilities: Record<string, string> = { 'brc207-color': '4' }
     if (this.profiles.has(ATTESTED_PROFILE_ID)) capabilities['brc207-color-attested'] = '1'
     this.capabilities = Object.freeze(capabilities)
     if (this.profiles.size > 0) {

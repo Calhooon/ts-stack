@@ -58,7 +58,7 @@ on every operation and keeps no grants; the host decides whether an existing
 grant covers a request and when to prompt the user.
 
 Call `color.dispose()` when the host tears down the wallet. Registered on a
-`WalletPermissionsManager`, the module advertises `brc207-color=5` (BRC-205) in
+`WalletPermissionsManager`, the module advertises `brc207-color=4` (BRC-205) in
 the manager's `getVersion` string, plus `brc207-color-attested=1` when the
 attested profile is registered.
 
