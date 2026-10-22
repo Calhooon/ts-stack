@@ -1,23 +1,37 @@
 import {
+  Curve,
   LockingScript,
   P2PKH,
   PrivateKey,
   ProtoWallet,
+  Signature,
   Transaction,
   type InternalizeActionArgs
 } from '@bsv/sdk'
 import { hash160 } from '@bsv/sdk/primitives/Hash'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { encodeStrictCbor, OneColor, type StrictCborValue } from '@bsv/templates'
-import { ATTESTED_PROFILE_ID } from '../attestation.js'
+import { ATTESTED_PROFILE_ID, attestationFromSteak } from '../attestation.js'
+import { parseAttestedParams } from '../attested.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
-import { ProfileParamsError } from '../errors.js'
+import {
+  ColorProviderError,
+  isNamedError,
+  ProfileDataError,
+  ProfileParamsError
+} from '../errors.js'
 import { assetBasket, COLOR_KEY_ID, colorProtocolID } from '../identifiers.js'
-import type { ColorAttestation, RequiredProfileHandler, ResolvedAsset } from '../profiles.js'
+import type {
+  ColorAttestation,
+  ProfileAssetContext,
+  ReceiptGraph,
+  RequiredProfileHandler,
+  ResolvedAsset
+} from '../profiles.js'
 import type { JsonValue } from '../strictJson.js'
 import type { TokenOutput } from '../tokenOutputs.js'
-import type { ColorModuleStore, ColorOverlayProvider } from '../types.js'
-import { remittanceString, type FakeWallet } from './fixtures.js'
+import type { AttestedSTEAK, ColorModuleStore, ColorOverlayProvider } from '../types.js'
+import { FakeProvider, remittanceString, type FakeWallet } from './fixtures.js'
 
 /** A Map-backed `ColorModuleStore` that logs every `set` key, in order. */
 export class FakeStore implements ColorModuleStore {
@@ -402,4 +416,154 @@ export async function attestedReceipt(options: {
     ...(options.seekPermission === undefined ? {} : { seekPermission: options.seekPermission })
   }
   return { args, tip, anchor, ancestors, leaf, custody }
+}
+
+/** The same signature with `s` replaced by `n - s` when it is low: the high-S twin (BSV Chronicle). */
+export function highS(signature: string): string {
+  const parsed = Signature.fromDER(signature, 'hex')
+  const n = new Curve().n
+  const s = parsed.s.gt(n.ushrn(1)) ? parsed.s : n.sub(parsed.s)
+  return new Signature(parsed.r, s).toDER('hex') as string
+}
+
+/**
+ * A `FakeProvider` whose `tm_color_*` STEAK entries carry an attested-v1 signature by priv 5555
+ * (contract §3: the root identity key in `admissionIdentityKey`, the child-key signature in
+ * `admissionSignature`). It records every submit's exact bytes and can be told to fail.
+ */
+export class AttestingProvider extends FakeProvider {
+  readonly key = new PrivateKey(C0.PRIV)
+  /** Every submit's topics and exact bytes, in call order (also failed ones). */
+  readonly submitted: Array<{ topics: string[]; beef: number[]; offChainValues?: number[] }> = []
+  /** Sign high-S statements (a valid signature under BSV Chronicle). */
+  highS = false
+  #failure: ColorProviderError | undefined
+
+  constructor() {
+    super()
+    const admit = this.submit
+    this.submit = async (topics, beef, offChainValues) => {
+      this.submitted.push({
+        topics: [...topics],
+        beef: [...beef],
+        ...(offChainValues === undefined ? {} : { offChainValues: [...offChainValues] })
+      })
+      if (this.#failure !== undefined) {
+        this.calls.submit++
+        throw this.#failure
+      }
+      const steak = await admit(topics, beef, offChainValues)
+      const txid = Transaction.fromAtomicBEEF(beef).id('hex')
+      const attested: AttestedSTEAK = {}
+      for (const [topic, entry] of Object.entries(steak)) {
+        if (!topic.startsWith('tm_color_') || entry.outputsToAdmit.length === 0) {
+          attested[topic] = entry
+          continue
+        }
+        const att = await signAttestation(
+          this.key,
+          topic.slice('tm_color_'.length),
+          txid,
+          entry.outputsToAdmit
+        )
+        attested[topic] = {
+          ...entry,
+          admissionSignature: this.highS ? highS(att.signature) : att.signature,
+          admissionIdentityKey: att.signer
+        }
+      }
+      return attested
+    }
+  }
+
+  /** Every later submit is a transport failure. */
+  failTransport(): void {
+    this.#failure = new ColorProviderError('ERR_UNAVAILABLE', true, true, 'overlay unreachable')
+  }
+
+  /** Every later submit is a typed overlay refusal. */
+  refuse(code: string, retryable: boolean): void {
+    this.#failure = new ColorProviderError(code, retryable, false, `overlay refused (${code})`)
+  }
+}
+
+/** The issuer-like test profile's id. */
+export const ISSUER_LIKE_ID = 'urn:example:color:issuer'
+
+/**
+ * The deploy payload of an issuer-like asset: attested v1 in identity mode with `K`, plus the
+ * issuer-like profile v1 with params `{identityKey: K}`.
+ */
+export function issuerLikePayload(K: string): number[] {
+  return encodeStrictCbor({
+    req: {
+      [ATTESTED_PROFILE_ID]: { params: { trustMode: 'identity', identityKey: K }, version: 1 },
+      [ISSUER_LIKE_ID]: { params: { identityKey: K }, version: 1 }
+    }
+  })
+}
+
+/**
+ * A Mandala-like required profile (contract §7.1, D6/D7): plain-noSend transfers only, a 16 MiB
+ * receipt limit, routed to `provider`. `admitReceipt` submits every pending tx in order, then the
+ * tip when it is not pending, with the exact bytes and off-chain values, and maps the tip's STEAK
+ * to `admitted`; a transport failure is `unavailable`, any other throw propagates. With
+ * `requireOffChain`, an empty submission fails with ProfileDataError before anything is sent.
+ */
+export function issuerLikeProfile(options: {
+  K: string
+  provider: ColorOverlayProvider
+  requireOffChain?: boolean
+  onAdmit?: (ctx: ProfileAssetContext, graph: ReceiptGraph) => void
+}): RequiredProfileHandler {
+  const { K, provider } = options
+  return {
+    id: ISSUER_LIKE_ID,
+    versions: [1],
+    sendPolicy: 'plain-nosend',
+    operations: ['transfer'],
+    maxReceiptBytes: 16_777_216,
+    provider: () => provider,
+    checkDescriptor: (descriptor, req) => {
+      const attested = req.get(ATTESTED_PROFILE_ID)
+      const params = attested === undefined ? undefined : parseAttestedParams(attested.params)
+      if (params?.trustMode !== 'identity' || params.identityKey !== K) {
+        throw new ProfileParamsError('BRC-207: the issuer profile requires attested identity K')
+      }
+      const own = descriptor.params as Record<string, unknown> | null
+      if (own === null || typeof own !== 'object' || own.identityKey !== K) {
+        throw new ProfileParamsError('BRC-207: the issuer profile names another identity')
+      }
+    },
+    checkPlanData: async () => {},
+    submissionData: async (_ctx, view) => toArray(JSON.stringify(view.planLeaf ?? null), 'utf8'),
+    admitReceipt: async (ctx, receipt) => {
+      options.onAdmit?.(ctx, receipt)
+      const entries = [...receipt.pending]
+      if (!entries.some(entry => entry.txid === receipt.tip.txid)) entries.push(receipt.tip)
+      if (
+        options.requireOffChain === true &&
+        entries.some(entry => entry.offChainValues.length === 0)
+      ) {
+        throw new ProfileDataError('BRC-207: the issuer profile requires off-chain values')
+      }
+      const topic = `tm_color_${receipt.assetId}`
+      let tipSteak: AttestedSTEAK | undefined
+      try {
+        for (const entry of entries) {
+          const steak = await provider.submit([topic], entry.atomicBEEF, entry.offChainValues)
+          if (entry.txid === receipt.tip.txid) tipSteak = steak
+        }
+      } catch (error) {
+        if (isNamedError(error, 'ColorProviderError') && (error as ColorProviderError).transport) {
+          return { status: 'unavailable' }
+        }
+        throw error
+      }
+      const entry = tipSteak?.[topic]
+      const att =
+        entry === undefined ? undefined : attestationFromSteak(receipt.tip.txid, topic, entry)
+      return { status: 'admitted', attestations: att === undefined ? [] : [att] }
+    }
+  }
 }

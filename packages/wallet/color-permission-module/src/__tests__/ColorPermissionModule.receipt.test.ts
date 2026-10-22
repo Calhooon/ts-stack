@@ -1,17 +1,32 @@
 import { beforeEach, describe, expect, it } from '@jest/globals'
-import { Beef, MerklePath, PrivateKey, Transaction, type InternalizeActionArgs } from '@bsv/sdk'
+import {
+  Beef,
+  Curve,
+  MerklePath,
+  PrivateKey,
+  Signature,
+  Transaction,
+  type InternalizeActionArgs
+} from '@bsv/sdk'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { ATTESTED_PROFILE_ID } from '../attestation.js'
 import { createAttestedProfile } from '../attested.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ColorProviderError } from '../errors.js'
 import { assetBasket } from '../identifiers.js'
-import type { RequiredProfileHandler } from '../profiles.js'
+import type {
+  ColorAttestation,
+  ProfileAssetContext,
+  ReceiptAdmission,
+  ReceiptGraph,
+  RequiredProfileHandler
+} from '../profiles.js'
 import { ColorStore } from '../store.js'
 import type { ColorPermissionModuleOptions } from '../types.js'
 import { createModule, deployAsset, FakeProvider, FakeWallet, tokenPayment } from './fixtures.js'
 import {
   A141A,
+  AttestingProvider,
   attestedAsset,
   attestedReceipt,
   C0,
@@ -19,7 +34,11 @@ import {
   FakeStore,
   fixtureDeploy,
   graph,
+  ISSUER_LIKE_ID,
+  issuerLikePayload,
+  issuerLikeProfile,
   TestModule,
+  type AttestedReceipt,
   type GraphBuilder
 } from './profileFixtures.js'
 
@@ -787,5 +806,312 @@ describe('attested receipts', () => {
       )
     ).rejects.toThrow('name a different asset than the output')
     await expect(receive(module, base)).resolves.toBeDefined()
+  })
+})
+
+describe('admitReceipt', () => {
+  let wallet: FakeWallet
+  let fallback: FakeProvider
+  let ap: AttestingProvider
+  let store: FakeStore
+  let colorStore: ColorStore
+  let g: GraphBuilder
+  let prompts: Array<Record<string, unknown>>
+  let walletCalls: number[]
+  let graphs: ReceiptGraph[]
+  let contexts: ProfileAssetContext[]
+
+  function issuerModule(handler?: RequiredProfileHandler): TestModule {
+    const attested = createAttestedProfile()
+    const issuer =
+      handler ??
+      issuerLikeProfile({
+        K: SIGNER,
+        provider: ap,
+        onAdmit: (ctx, graph) => {
+          contexts.push(ctx)
+          graphs.push(graph)
+        }
+      })
+    return new TestModule({
+      wallet: wallet.asWallet(),
+      provider: fallback,
+      requestTokenAccess: async (_app, message) => {
+        prompts.push(JSON.parse(message) as Record<string, unknown>)
+        return true
+      },
+      profiles: { [attested.id]: attested, [issuer.id]: issuer },
+      store
+    })
+  }
+
+  async function receive(
+    module: ColorPermissionModule,
+    args: InternalizeActionArgs
+  ): Promise<InternalizeActionArgs> {
+    const { args: forwarded } = await module.onRequest({
+      method: 'internalizeAction',
+      args,
+      originator: APP
+    })
+    walletCalls.push(store.writes.length)
+    await wallet.internalizeAction(forwarded as InternalizeActionArgs)
+    return forwarded as InternalizeActionArgs
+  }
+
+  /** An issuer-like asset (attested identity K + the issuer-like profile) and a receipt of it. */
+  async function issuerReceipt(
+    options: { attestTip?: boolean; tipOffChainValues?: string; unattested?: number } = {}
+  ): Promise<AttestedReceipt & { assetId: string }> {
+    const { tx: deploy, assetId } = g.deploy(1000n, issuerLikePayload(SIGNER))
+    const receipt = await attestedReceipt({
+      g,
+      deploy,
+      recipient: wallet,
+      signers: [K],
+      tipOffChainValues: 'e0',
+      ...options
+    })
+    return { ...receipt, assetId }
+  }
+
+  const nothingStored = (): void => {
+    expect(store.writes.filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+    expect(store.writes.filter(key => key.startsWith('color.v1.settled.'))).toEqual([])
+    expect(walletCalls).toEqual([])
+    expect(wallet.outputs.size).toBe(0)
+  }
+
+  beforeEach(() => {
+    wallet = new FakeWallet()
+    fallback = new FakeProvider()
+    ap = new AttestingProvider()
+    store = new FakeStore()
+    colorStore = new ColorStore(store)
+    g = graph()
+    prompts = []
+    walletCalls = []
+    graphs = []
+    contexts = []
+  })
+
+  it('admitReceipt: admitted ⇒ verified attestation covers the tip ⇒ settled credit, no offline tag', async () => {
+    const receipt = await issuerReceipt()
+    const tip = receipt.tip.id('hex')
+    const forwarded = await receive(issuerModule(), receipt.args)
+    expect(graphs).toHaveLength(1)
+    expect(graphs[0].pending.map(entry => entry.txid)).toEqual([tip])
+    expect(ap.submissions.map(entry => entry.txid)).toEqual([tip])
+    expect(prompts).toEqual([])
+    expect(await colorStore.settled(tip)).toEqual({ outputs: [0], signer: SIGNER })
+    expect(store.writes.indexOf(`color.v1.settled.${tip}`)).toBeGreaterThan(
+      store.writes.indexOf(txKey(tip))
+    )
+    expect(store.writes.indexOf(`color.v1.settled.${tip}`)).toBeLessThan(walletCalls[0])
+    const record = await colorStore.getTx(tip)
+    expect(record?.attestations).toEqual([
+      expect.objectContaining({ txid: tip, outputs: [0], signer: SIGNER })
+    ])
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toBeUndefined()
+    expect(forwarded.outputs[0].insertionRemittance?.customInstructions).toBe(
+      JSON.stringify(receipt.custody)
+    )
+    // Routed: the default provider is never asked.
+    expect(fallback.calls).toEqual({ spendability: 0, admission: 0, submit: 0 })
+  })
+
+  it('admitReceipt runs for an attested tip', async () => {
+    const receipt = await issuerReceipt({ attestTip: true, tipOffChainValues: 'beef01' })
+    const tip = receipt.tip.id('hex')
+    await receive(issuerModule(), receipt.args)
+    expect(graphs).toHaveLength(1)
+    expect(graphs[0].pending).toEqual([])
+    expect(graphs[0].tip).toEqual({
+      txid: tip,
+      atomicBEEF: [...receipt.args.tx],
+      offChainValues: [0xbe, 0xef, 0x01]
+    })
+    expect(graphs[0].outputIndexes).toEqual([0])
+    expect(ap.submitted).toEqual([
+      {
+        topics: [`tm_color_${receipt.assetId}`],
+        beef: [...receipt.args.tx],
+        offChainValues: [0xbe, 0xef, 0x01]
+      }
+    ])
+    expect(prompts).toEqual([])
+    expect(await colorStore.settled(tip)).toEqual({ outputs: [0], signer: SIGNER })
+  })
+
+  it('admitReceipt runs before the coverage decision even when the hook refuses an attested tip', async () => {
+    const receipt = await issuerReceipt({ attestTip: true })
+    ap.refuse('ERR_FROZEN', true)
+    await expect(receive(issuerModule(), receipt.args)).rejects.toMatchObject({
+      name: 'ColorProviderError',
+      code: 'ERR_FROZEN'
+    })
+    expect(ap.submitted).toHaveLength(1)
+    expect(prompts).toEqual([])
+    nothingStored()
+  })
+
+  it('admitReceipt unavailable ⇒ offline credit with consent', async () => {
+    const receipt = await issuerReceipt({ unattested: 1 })
+    const tip = receipt.tip.id('hex')
+    ap.failTransport()
+    const forwarded = await receive(issuerModule(), receipt.args)
+    // The hook ran: the first pending submit failed on transport.
+    expect(ap.submitted).toHaveLength(1)
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toMatchObject({
+      type: 'color_receive_offline',
+      assetId: receipt.assetId,
+      outputs: [{ outputIndex: 0, amount: '600' }],
+      unsettledTransactions: 2,
+      signer: SIGNER,
+      seekPermission: true
+    })
+    expect([...(prompts[0].profiles as string[])].sort()).toEqual(
+      [ATTESTED_PROFILE_ID, ISSUER_LIKE_ID].sort()
+    )
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(['color_offline'])
+    expect(await colorStore.getTx(tip)).toMatchObject({ role: 'receipt', state: 'staged' })
+    expect(await colorStore.settled(tip)).toBeUndefined()
+    expect(store.writes.indexOf(txKey(tip))).toBeLessThan(walletCalls[0])
+  })
+
+  it('admitReceipt unavailable for a tip the leaf attests credits it from the leaf (D7)', async () => {
+    const receipt = await issuerReceipt({ attestTip: true })
+    ap.failTransport()
+    const forwarded = await receive(issuerModule(), receipt.args)
+    expect(ap.submitted).toHaveLength(1)
+    expect(prompts).toEqual([])
+    expect(await colorStore.settled(receipt.tip.id('hex'))).toEqual({
+      outputs: [0],
+      signer: SIGNER
+    })
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toBeUndefined()
+  })
+
+  it('admitReceipt: a typed verdict thrown by the handler ⇒ no credit, nothing stored', async () => {
+    const receipt = await issuerReceipt()
+    const handler: RequiredProfileHandler = {
+      ...issuerLikeProfile({ K: SIGNER, provider: ap }),
+      admitReceipt: async () => {
+        throw new ColorProviderError('ERR_FROZEN', true, false, 'the asset is frozen')
+      }
+    }
+    await expect(receive(issuerModule(handler), receipt.args)).rejects.toMatchObject({
+      name: 'ColorProviderError',
+      message: '[ColorProviderError] the asset is frozen'
+    })
+    expect(prompts).toEqual([])
+    nothingStored()
+  })
+
+  it('admitReceipt: admitted with attestations that do not cover the output ⇒ AttestationEvidenceError', async () => {
+    const receipt = await issuerReceipt({ attestTip: true })
+    const admitWith = (attestations: ColorAttestation[]): RequiredProfileHandler => ({
+      ...issuerLikeProfile({ K: SIGNER, provider: ap }),
+      admitReceipt: async () => ({ status: 'admitted', attestations })
+    })
+    // A verifying statement over another output of the tip covers nothing that was received.
+    const otherOutput = await g.attest(K, receipt.tip, [1])
+    await expect(
+      receive(issuerModule(admitWith([otherOutput])), receipt.args)
+    ).rejects.toMatchObject({ name: 'AttestationEvidenceError' })
+    // No attestations at all, even though the leaf attests the tip.
+    await expect(receive(issuerModule(admitWith([])), receipt.args)).rejects.toMatchObject({
+      name: 'AttestationEvidenceError'
+    })
+    // A signer the asset does not trust.
+    const stranger = await g.attest(new PrivateKey(9), receipt.tip, [0])
+    await expect(receive(issuerModule(admitWith([stranger])), receipt.args)).rejects.toMatchObject({
+      name: 'AttestationEvidenceError'
+    })
+    // A statement that does not verify.
+    const good = await g.attest(K, receipt.tip, [0])
+    const forged = { ...good, signature: (await g.attest(K, receipt.anchor, [0])).signature }
+    await expect(receive(issuerModule(admitWith([forged])), receipt.args)).rejects.toMatchObject({
+      name: 'AttestationEvidenceError'
+    })
+    // A malformed attestation.
+    const malformed = { ...good, extra: 1 } as unknown as ColorAttestation
+    await expect(receive(issuerModule(admitWith([malformed])), receipt.args)).rejects.toMatchObject(
+      { name: 'AttestationEvidenceError' }
+    )
+    expect(prompts).toEqual([])
+    nothingStored()
+  })
+
+  it('admitReceipt: a handler answering neither admitted nor unavailable fails', async () => {
+    const receipt = await issuerReceipt()
+    const handler: RequiredProfileHandler = {
+      ...issuerLikeProfile({ K: SIGNER, provider: ap }),
+      admitReceipt: async () => ({ status: 'maybe' }) as unknown as ReceiptAdmission
+    }
+    await expect(receive(issuerModule(handler), receipt.args)).rejects.toMatchObject({
+      name: 'ProfileDataError'
+    })
+    nothingStored()
+  })
+
+  it('admitReceipt: admitted with a high-S attestation is accepted (BSV Chronicle)', async () => {
+    const receipt = await issuerReceipt()
+    const tip = receipt.tip.id('hex')
+    ap.highS = true
+    await receive(issuerModule(), receipt.args)
+    expect(await colorStore.settled(tip)).toEqual({ outputs: [0], signer: SIGNER })
+    const [stored] = (await colorStore.getTx(tip))!.attestations
+    const s = Signature.fromDER(stored.signature, 'hex').s
+    expect(s.gt(new Curve().n.ushrn(1))).toBe(true)
+    // Kept verbatim, never normalized.
+    expect(Signature.fromDER(stored.signature, 'hex').toDER('hex')).toBe(stored.signature)
+  })
+
+  it('admitReceipt: C42 a companion requiring off-chain values rejects empty submissions', async () => {
+    const receipt = await issuerReceipt({ tipOffChainValues: '' })
+    const handler = issuerLikeProfile({ K: SIGNER, provider: ap, requireOffChain: true })
+    await expect(receive(issuerModule(handler), receipt.args)).rejects.toMatchObject({
+      name: 'ProfileDataError'
+    })
+    expect(ap.submitted).toEqual([])
+    nothingStored()
+  })
+
+  it('admitReceipt: handler hooks receive the underlying wallet and identity key in ctx', async () => {
+    const receipt = await issuerReceipt()
+    await receive(issuerModule(), receipt.args)
+    expect(contexts).toHaveLength(1)
+    const [ctx] = contexts
+    expect(ctx.wallet).toBe(wallet.asWallet())
+    expect(ctx.identityKey).toBe(wallet.identityKey)
+    expect(ctx.originator).toBe(APP)
+    expect(ctx.assetId).toBe(receipt.assetId)
+    expect(ctx.profileId).toBe(ISSUER_LIKE_ID)
+    expect(ctx.descriptor).toEqual({ version: 1, params: { identityKey: SIGNER } })
+    expect([...ctx.req.keys()].sort()).toEqual([ATTESTED_PROFILE_ID, ISSUER_LIKE_ID].sort())
+    expect(ctx.declarationTx.id('hex')).toBe(receipt.assetId.split('_')[0])
+  })
+
+  it('admitReceipt requires the attested profile at resolution', async () => {
+    const ex = exampleProfile()
+    const { tx: deployTx, assetId } = fixtureDeploy(A141A.C)
+    fallback.admit(assetId, deployTx, 0)
+    const admitting: RequiredProfileHandler = {
+      ...ex,
+      admitReceipt: async () => ({ status: 'unavailable' })
+    }
+    const module = new TestModule({
+      wallet: wallet.asWallet(),
+      provider: fallback,
+      requestTokenAccess: async () => true,
+      profiles: { [ex.id]: admitting },
+      store
+    })
+    await expect(module.resolveAssetForTest(assetId)).rejects.toMatchObject({
+      name: 'ProfileParamsError',
+      message: '[ProfileParamsError] BRC-207: admitReceipt requires the attested profile'
+    })
   })
 })

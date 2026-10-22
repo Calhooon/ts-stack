@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@jest/globals'
-import { Transaction } from '@bsv/sdk'
+import { PrivateKey, Transaction } from '@bsv/sdk'
 import { OneColor } from '@bsv/templates'
 import { maybeDecryptMetadata, WalletPermissionsManager } from '@bsv/wallet-toolbox-client'
+import { createAttestedProfile } from '../attested.js'
+import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ColorPlan } from '../ColorPlan.js'
 import { assetBasket, assetTag } from '../identifiers.js'
 import {
@@ -13,6 +15,7 @@ import {
   tokenPayment,
   validInput
 } from './fixtures.js'
+import { attestedAsset, attestedReceipt, C0, FakeStore, graph } from './profileFixtures.js'
 
 const ADMIN = 'admin.example'
 const APP = 'app.example'
@@ -157,5 +160,45 @@ describe('color module registered on a WalletPermissionsManager', () => {
     await expect(
       manager.listOutputs({ basket: `p color balance ${assetTag(assetId)}` }, APP)
     ).resolves.toEqual({ totalOutputs: '300', outputs: [] })
+  })
+
+  it('an attested receipt larger than 1000 bytes passes through WalletPermissionsManager', async () => {
+    const wallet = new FakeWallet()
+    const attested = createAttestedProfile()
+    const store = new FakeStore()
+    const color = new ColorPermissionModule({
+      wallet: wallet.asWallet(),
+      provider: new FakeProvider(),
+      requestTokenAccess: async () => true,
+      profiles: { [attested.id]: attested },
+      store
+    })
+    const manager = new WalletPermissionsManager(wallet.asWallet(), ADMIN, {
+      permissionModules: { color },
+      seekSpendingPermissions: false,
+      encryptWalletMetadata: true
+    })
+    const g = graph()
+    const { tx: deploy } = attestedAsset(g, C0.SIGNER)
+    const receipt = await attestedReceipt({
+      g,
+      deploy,
+      recipient: wallet,
+      signers: [new PrivateKey(C0.PRIV)],
+      attestTip: true,
+      tipOffChainValues: 'ab'.repeat(2048)
+    })
+    const instructions = receipt.args.outputs[0].insertionRemittance!.customInstructions!
+    expect(instructions.length).toBeGreaterThan(4096)
+
+    await expect(manager.internalizeAction(receipt.args, APP)).resolves.toMatchObject({
+      accepted: true
+    })
+    const stored = wallet.outputs.get(`${receipt.tip.id('hex')}.0`)?.customInstructions ?? ''
+    expect(stored.startsWith('{')).toBe(false)
+    expect(await maybeDecryptMetadata(wallet.asWallet(), stored)).toBe(
+      JSON.stringify(receipt.custody)
+    )
+    expect(store.writes).toContain(`color.v1.settled.${receipt.tip.id('hex')}`)
   })
 })

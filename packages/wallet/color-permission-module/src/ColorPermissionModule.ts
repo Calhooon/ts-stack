@@ -70,7 +70,8 @@ import {
   jsonByteArray,
   jsonObject,
   jsonUint32,
-  parseStrictJsonBytes
+  parseStrictJsonBytes,
+  type JsonValue
 } from './strictJson.js'
 import {
   isDeployOutput,
@@ -109,7 +110,12 @@ import {
   type ResolvedAsset
 } from './profiles.js'
 import { ColorStore, type SettledRecord, type TxRecord } from './store.js'
-import { ATTESTED_PROFILE_ID, COLOR_OFFLINE_TAG } from './attestation.js'
+import {
+  ATTESTED_PROFILE_ID,
+  COLOR_OFFLINE_TAG,
+  parseAttestation,
+  verifyAttestation
+} from './attestation.js'
 import {
   assertCoverage,
   parseAttestedLeaf,
@@ -1646,12 +1652,17 @@ export class ColorPermissionModule implements PermissionsModule {
       })),
       attestations: distinctAttestations(leaf.attestations)
     }
-    // Task 11: a handler's admitReceipt is called here with `graph`, before the decision.
+    // A profile that defines admitReceipt decides every receipt (contract §2.2, D7), also one
+    // whose tip the leaf already attests: it runs before the coverage decision and a throw
+    // propagates with nothing written.
+    const admitted = await this.admitReceipt(resolved, graph, qualifies, snapshot, originator)
 
     const anchorsByOutpoint = new Map(frontier.anchors.map(anchor => [anchor.outpoint, anchor]))
     const tipAnchors = outputIndexes.map(vout => anchorsByOutpoint.get(`${tipTxid}.${vout}`))
     let settled: SettledRecord | undefined
-    if (tipAnchors.every(anchor => anchor !== undefined)) {
+    if (admitted !== undefined) {
+      settled = admitted.settled
+    } else if (tipAnchors.every(anchor => anchor !== undefined)) {
       const common = [...tipAnchors[0]!.signers]
         .filter(signer => tipAnchors.every(anchor => anchor!.signers.includes(signer)))
         .sort()
@@ -1681,7 +1692,10 @@ export class ColorPermissionModule implements PermissionsModule {
 
     // Records: every anchor transaction with its attestations, the pending ancestors (parents
     // first), then the tip. Each carries the exact AtomicBEEF settle and resubmit send.
-    const qualifying = graph.attestations.filter(att => qualifies(att.signer))
+    const qualifying = distinctAttestations([
+      ...graph.attestations.filter(att => qualifies(att.signer)),
+      ...(admitted?.attestations ?? [])
+    ])
     const record = (
       txid: string,
       role: TxRecord['role'],
@@ -1725,6 +1739,67 @@ export class ColorPermissionModule implements PermissionsModule {
       ...(settled === undefined ? {} : { settled }),
       declarationTx: resolved.declarationTx!,
       ...(snapshot === undefined ? {} : { snapshot: { handler, value: snapshot.snapshot } })
+    }
+  }
+
+  /**
+   * Runs the asset's `admitReceipt` hook, when a required profile defines one (contract §2.2).
+   * `unavailable` (transport only) returns undefined, so the caller takes the attested offline
+   * decision. `admitted` must carry verifying statements (low-S or high-S, never normalized) by
+   * signers the asset trusts that cover every receipt output of the tip in the asset's trust
+   * mode; it returns them (those of graph txs only) and the tip's settled record. Any other
+   * answer fails, and a throw from the hook propagates: nothing has been written yet.
+   */
+  protected async admitReceipt(
+    resolved: ResolvedAsset,
+    graph: ReceiptGraph,
+    qualifies: (signer: string) => boolean,
+    snapshot: { identityKeys: string[] } | undefined,
+    originator: string
+  ): Promise<{ attestations: ColorAttestation[]; settled: SettledRecord } | undefined> {
+    const entry = resolved.handlers.find(({ handler }) => handler.admitReceipt !== undefined)
+    if (entry === undefined) return undefined
+    const admission = await entry.handler.admitReceipt!(
+      await this.profileContext(resolved, entry, originator),
+      graph
+    )
+    // The answer comes from host code: read it defensively.
+    const answer = admission as { status?: unknown; attestations?: unknown } | null | undefined
+    if (answer?.status === 'unavailable') return undefined
+    if (answer?.status !== 'admitted' || !Array.isArray(answer.attestations)) {
+      throw new ProfileDataError(`BRC-207: ${entry.handler.id} admitReceipt gave no admission`)
+    }
+    const { assetId, outputIndexes } = graph
+    const tip = graph.tip.txid
+    const known = new Set([tip, ...graph.pending.map(pending => pending.txid)])
+    const attestations: ColorAttestation[] = []
+    for (const value of answer.attestations as unknown[]) {
+      const att = parseAttestation(value as JsonValue)
+      if (!verifyAttestation(att, assetId)) {
+        throw new AttestationEvidenceError('admission attestation does not verify')
+      }
+      if (qualifies(att.signer) && known.has(att.txid)) attestations.push(att)
+    }
+    const covering = attestations.filter(att => att.txid === tip)
+    const anchors = outputIndexes.map(vout => ({
+      outpoint: outpointString(tip, vout),
+      signers: [
+        ...new Set(covering.filter(att => att.outputs.includes(vout)).map(att => att.signer))
+      ].sort()
+    }))
+    if (anchors.some(anchor => anchor.signers.length === 0)) {
+      throw new AttestationEvidenceError('admission does not cover the receipt outputs')
+    }
+    assertCoverage(resolved.attested!, anchors, snapshot?.identityKeys)
+    const params = resolved.attested!
+    const common = anchors[0].signers.filter(signer =>
+      anchors.every(anchor => anchor.signers.includes(signer))
+    )
+    const signer =
+      params.trustMode === 'identity' ? params.identityKey! : (common[0] ?? anchors[0].signers[0])
+    return {
+      attestations: distinctAttestations(attestations),
+      settled: { outputs: [...outputIndexes], signer }
     }
   }
 
@@ -3144,6 +3219,14 @@ export class ColorPermissionModule implements PermissionsModule {
     const params =
       declared === undefined ? undefined : parseAttestedParams(declared.descriptor.params)
     const attested = params?.evidenceProfile === undefined ? params : undefined
+    // Offline acceptance after an `unavailable` admission needs the default attested evidence
+    // policy, so a hook on an asset without it would silently never run (Decision 3).
+    if (
+      attested === undefined &&
+      handlers.some(({ handler }) => handler.admitReceipt !== undefined)
+    ) {
+      throw new ProfileParamsError('BRC-207: admitReceipt requires the attested profile')
+    }
     return {
       assetId,
       declarationTx,
