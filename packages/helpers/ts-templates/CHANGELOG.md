@@ -35,6 +35,15 @@ All notable changes to this project will be documented in this file. The format 
   remain 32-byte only.
 - `Bsv21Binary`, `Bsv21Token` and every existing export are unchanged.
 
+### Fixed
+
+- `decodeStrictCbor` walks a chain of tag heads without recursion, so a long
+  chain of tag-42 heads fails with `StrictCborError` (`invalid CID`) instead of
+  exhausting the call stack; every message is the one the recursive reading
+  gave. `tryDecodeStrictCbor` therefore returns `undefined` for it.
+- `OneColor.lockRemainder` refuses a remainder that contains a truncated push,
+  which `OneColor.decode` would refuse.
+
 ### 2.1.0 candidate
 
 ### Added

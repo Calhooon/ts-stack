@@ -134,6 +134,23 @@ describe('readOneColorAttributes: payload and display fields', () => {
     expect(a.reqBytes).toBeUndefined()
   })
 
+  it('nesting beyond the decoder policy is opaque, never a throw', () => {
+    // Containers deeper than STRICT_CBOR_MAX_DEPTH, and a 200000-deep chain of tags.
+    const arrays = [0xa1, 0x61, 0x61, ...Array.from({ length: 5000 }, () => 0x81), 0x01]
+    const tags = [
+      0xa1,
+      0x61,
+      0x61,
+      ...Array.from({ length: 200_000 }, () => [0xd8, 0x2a]).flat(),
+      0x40
+    ]
+    const ext = [...hex('a1 63657874 a1 6a75726e3a783a61626364'), ...arrays.slice(3)]
+    for (const bytes of [arrays, tags, ext]) {
+      expect(readOneColorAttributes(bytes)).toEqual(OPAQUE)
+      expect(readOneColorAttributes(Uint8Array.from(bytes))).toEqual(OPAQUE)
+    }
+  })
+
   it('never throws on runtime garbage', () => {
     const revoked = Proxy.revocable([] as number[], {})
     revoked.revoke()
