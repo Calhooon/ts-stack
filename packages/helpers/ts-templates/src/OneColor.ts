@@ -188,3 +188,17 @@ export class OneColor implements ScriptTemplate {
     return new Bsv21Binary().unlock(privateKey, signOutputs, anyoneCanPay)
   }
 }
+
+/**
+ * Parses `<64 lowercase hex, display order>_<vout>` into the canonical 32- or 36-byte wire id
+ * (= `OneColor.tokenIdFromString`). Prefer this to `tokenIdFromString`, which accepts only
+ * 32-byte (`_0`) ids.
+ */
+export const oneColorTokenIdFromString = (id: string): number[] => OneColor.tokenIdFromString(id)
+
+/**
+ * Formats a canonical 32- or 36-byte wire id as `<64 hex, display order>_<vout>`
+ * (= `OneColor.tokenIdToString`). Prefer this to `tokenIdToString`, which accepts only 32-byte ids.
+ */
+export const oneColorTokenIdToString = (tokenId: readonly number[]): string =>
+  OneColor.tokenIdToString(tokenId)
