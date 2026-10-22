@@ -624,6 +624,38 @@ describe('attested receipts', () => {
     )
   })
 
+  it('stores an attested deploy anchor beyond a mined hop from declarationTx', async () => {
+    const { tx: deploy } = attestedAsset(g, SIGNER)
+    const receipt = await attestedReceipt({ g, deploy, recipient: wallet, signers: [] })
+    const P = receipt.anchor
+    P.merklePath = MerklePath.fromCoinbaseTxidAndHeight(P.id('hex'), 100)
+    const args = withInstructions(
+      { ...receipt.args, tx: receipt.tip.toAtomicBEEF() },
+      JSON.stringify({
+        ...receipt.custody,
+        profileData: {
+          [ATTESTED_PROFILE_ID]: {
+            [receipt.custody.assetId]: {
+              ...receipt.leaf,
+              transactions: [P.toHex()],
+              attestations: [{ ...(await g.attest(K, deploy, [0])) }]
+            }
+          }
+        }
+      })
+    )
+    // The deploy reaches the module only as the leaf's declarationTx.
+    expect(Beef.fromBinary(args.tx).findTxid(deploy.id('hex'))).toBeUndefined()
+    await receive(moduleWith(), args)
+    expect(prompts[0]).toMatchObject({ unsettledTransactions: 2 })
+    expect(await colorStore.getTx(deploy.id('hex'))).toMatchObject({
+      role: 'ancestor',
+      rawTx: deploy.toHex(),
+      outputs: [],
+      attestations: [expect.objectContaining({ txid: deploy.id('hex'), outputs: [0] })]
+    })
+  })
+
   it('a pending hop the receipt BEEF does not carry has no submit bytes', async () => {
     const { tx: deploy } = attestedAsset(g, SIGNER)
     const receipt = await attestedReceipt({

@@ -1607,6 +1607,9 @@ export class ColorPermissionModule implements PermissionsModule {
     for (const entry of receiptBeef.txs) {
       if (entry.tx !== undefined) bodies.set(entry.txid, entry.tx)
     }
+    // The frontier knows the deploy from declarationTx alone, so an attested deploy can be an
+    // anchor that neither the leaf's transactions nor the receipt BEEF carry.
+    bodies.set(resolved.declarationTx!.id('hex'), resolved.declarationTx!)
     const tipTxid = tip.id('hex')
     const outputIndexes = [...new Set(group.map(receipt => receipt.outputIndex))].sort(
       (a, b) => a - b
