@@ -1,5 +1,7 @@
 ## Held #569 implementation candidate — unreleased
 
+WAL recovery copies now finish through the pinned SQLite engine's rollback journal before frozen comparison opens the new scratch. The original retained source snapshot, physical/working quotas, operation deadline and financial expiry remain enforced. No WAL/SHM allowance, immutable-open shortcut, API, wire, persisted schema or native ABI change; complete platform and expired-recovery qualification remains required.
+
 Proof inventory drains complete page-history reconstruction before reserving its separate proof scratch frame. Both phases retain the same actual borrowed native transaction, shared working owner, fresh source/schema and complete byte/cache checks. The fixed original allocation ceiling and all financial and operation deadlines remain unchanged. No API, wire, persisted schema, native ABI or consumer migration; complete expired-recovery qualification remains required.
 
 Read-only original proof-field comparison now uses the actual bounded operation owner, including a frozen recovery copy after the immutable import deadline. Complete original byte/hash comparison, genuine source and borrowed-read ownership, cancellation, working charges and financial expiry remain enforced. No public API, wire, schema, native ABI or resource-limit migration; complete composed recovery qualification remains required.

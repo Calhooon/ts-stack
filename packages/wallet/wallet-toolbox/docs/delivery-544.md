@@ -410,8 +410,8 @@ update; all five actual comparison lifecycle cases pass on the corrected ARM
 executable. The full customer workflow exposed this omission after all 14 rows
 committed; publication, restart and repeat import still require a complete rerun.
 
-Both corrected Linux ARM and x64 candidates pass all thirteen original native
-contracts, with original worker/process/cgroup cleanup verified before their
+At the preceding comparison-lifecycle checkpoint, both Linux ARM and x64
+candidates passed all thirteen original native contracts, with original worker/process/cgroup cleanup verified before their
 static pins were adopted. ARM is 1,353,552 bytes with SHA-256
 `295ae7b2511b7565dd49ed352ba9e8de5cf6b924c89cb021e1d9ec5bcac929dd`;
 x64 is 1,381,576 bytes with SHA-256
@@ -420,6 +420,27 @@ Current normal delivery, packaging and complete customer/platform qualification
 remain required. No public API, wire format, schema, existing admission, native
 resource formula or browser limit changes. Existing unreleased minor-version
 and host-specific migration requirements still apply.
+
+### WAL recovery copy format
+
+The new recovery copy finishes through the pinned SQLite engine's own rollback
+journal before a frozen comparison process opens it. Online backup can preserve
+WAL header versions even when its destination was configured for DELETE mode.
+A post-copy SQL PRAGMA attempts a WAL open before it can change those versions,
+which the original private scratch VFS correctly refuses. Finalization therefore
+uses the pinned engine's journaled transition under the same actual copy owner,
+retained source READ, physical quota and original operation deadline. No direct
+filesystem/header write, immutable-open shortcut or extra WAL/SHM allowance is
+introduced. The source file and original financial expiry remain unchanged.
+
+The rebuilt Linux ARM64 component is 1,353,568 bytes with SHA-256
+`0eca37f702a2597cc39ee5b266ece6c189034caca80356e22a1b94e5afa40a31`.
+All thirteen original native component contracts pass on that exact source build.
+Actual frozen-copy and full expired-recovery evidence must be reported separately.
+The preceding x64 pin above belongs to the prior native source; qualification and
+an updated exact x64 component pin are still required before this combined source
+is ready for delivery. All original native ABI, source-build/loader checks,
+resource limits and complete platform/recovery gates remain mandatory.
 
 ### Closed-facade copy deadline
 

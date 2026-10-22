@@ -174,6 +174,35 @@ static int recoveryCopyStep(void) {
   if (rc == SQLITE_DONE) { recoveryCopyDone = 1; rc = SQLITE_OK; }
   return rc == SQLITE_OK ? recoveryCopyCheck() : rc;
 }
+/* Finalize the new copy through the pinned SQLite engine's
+ * rollback journal. Backup copies WAL header versions even into a DELETE
+ * destination. Its ordinary SQL reopen would try to create forbidden WAL
+ * files before a PRAGMA could switch the format. This engine transition owns
+ * the rollback journal, sync, locks and page write under this same quota VFS.
+ * The original source and financial admission remain untouched. */
+static int recoveryCopyFinalize(void) {
+  int rc = recoveryCopyCheck();
+  if (rc != SQLITE_OK || !recoveryCopy || !recoveryCopyDone || recoveryCopyRemaining)
+    return rc == SQLITE_OK ? SQLITE_AUTH : rc;
+  sqlite3_backup *finished = recoveryCopy;
+  recoveryCopy = NULL;
+  rc = sqlite3_backup_finish(finished);
+  if (rc != SQLITE_OK) return rc;
+  rc = recoveryCopyCheck();
+  if (rc != SQLITE_OK) return rc;
+  sqlite3_mutex_enter(sqlite3_db_mutex(recoveryCopyDb));
+  Btree *tree = recoveryCopyDb->aDb[0].pBt;
+  sqlite3BtreeEnter(tree);
+  rc = sqlite3BtreeSetVersion(tree, 1);
+  if (rc == SQLITE_OK) rc = sqlite3BtreeCommit(tree);
+  if (rc != SQLITE_OK) {
+    int rollback = sqlite3BtreeRollback(tree, SQLITE_OK, 0);
+    if (rollback != SQLITE_OK) rc = rollback;
+  }
+  sqlite3BtreeLeave(tree);
+  sqlite3_mutex_leave(sqlite3_db_mutex(recoveryCopyDb));
+  return rc == SQLITE_OK ? recoveryCopyCheck() : rc;
+}
 static int recoveryCopyReply(int rc) {
   if (rc != SQLITE_OK) return emit(driverDb[3], rc, 1, 0, 0);
   const char *names[] = {"done", "pages", "remaining"};
@@ -193,8 +222,7 @@ static int recoveryCopyRequest(const unsigned char *p, const unsigned char *end)
   else if (end - p != 1) rc = SQLITE_MISUSE;
   else if (*p == 1) rc = recoveryCopyStep();
   else if (*p == 2) {
-    rc = recoveryCopyCheck();
-    if (rc == SQLITE_OK && (!recoveryCopyDone || recoveryCopyRemaining)) rc = SQLITE_AUTH;
+    rc = recoveryCopyFinalize();
     if (rc == SQLITE_OK) rc = recoveryCopyClose();
   } else if (*p == 3) rc = recoveryCopyClose();
   else rc = SQLITE_MISUSE;

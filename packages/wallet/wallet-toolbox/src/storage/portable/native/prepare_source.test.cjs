@@ -53,8 +53,8 @@ test('qualified component lookup returns the immutable original static build met
   expect(pin).toEqual({
     platform: 'linux',
     architecture: 'arm64',
-    bytes: 1353552,
-    sha256: '295ae7b2511b7565dd49ed352ba9e8de5cf6b924c89cb021e1d9ec5bcac929dd'
+    bytes: 1353568,
+    sha256: '0eca37f702a2597cc39ee5b266ece6c189034caca80356e22a1b94e5afa40a31'
   })
   expect(Object.isFrozen(pin)).toBe(true)
   await expect(owner.pinnedNativeLaunchPath(pin)).rejects.toThrow('original pinned executable descriptor')
