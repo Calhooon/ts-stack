@@ -903,6 +903,27 @@ describe('validateBasketInsertion', () => {
     )
   })
 
+  it('counts a p color receipt without customInstructions as zero bytes in the aggregate', () => {
+    const v = validateInternalizeActionRequestArgs({
+      tx: Array.from(new Transaction().toAtomicBEEF()),
+      outputs: [
+        {
+          outputIndex: 0,
+          protocol: 'basket insertion',
+          insertionRemittance: { basket: COLOR_BASKET }
+        },
+        {
+          outputIndex: 1,
+          protocol: 'basket insertion',
+          insertionRemittance: { basket: COLOR_BASKET, customInstructions: 'x'.repeat(16_777_216) }
+        }
+      ],
+      description: 'Receive tokens'
+    })
+    expect(v.outputs[0].insertionRemittance?.customInstructions).toBeUndefined()
+    expect(v.outputs[1].insertionRemittance?.customInstructions).toHaveLength(16_777_216)
+  })
+
   it('applies the p color exception at the BRC-100 client and transport boundary', () => {
     const args = {
       tx: Array.from(new Transaction().toAtomicBEEF()),
