@@ -3,6 +3,7 @@ import { toArray } from '@bsv/sdk/primitives/utils'
 import { attestationFromSteak, verifyAttestation } from './attestation.js'
 import { isNamedError } from './errors.js'
 import { colorTopic, outpointString, parseAssetId, parseOutpoint } from './identifiers.js'
+import { eachInOrder } from './inOrder.js'
 import { readOutputList } from './overlay.js'
 import type {
   ColorAttestation,
@@ -181,185 +182,235 @@ export class ColorSettler {
     prior: ColorSettleReport | undefined
   ): Promise<ColorSettleReport> {
     if (this.disposed) return { results: [] }
+    const state = await this.openRun(req, originator)
+    const { results } = state
+
+    // 1. Promote staged receipts the wallet holds, or that a live own hand-over spends.
+    if (await this.promoteStaged(state)) return { results }
+
+    // 2. Own hand-overs whose wallet action is gone are aborted (Decision 16).
+    await this.detectAborted(state.records, state.inScope, state.open, originator)
+    if (this.disposed) return { results }
+
+    // 3. Retry sendWith for settled hand-overs not yet sent.
+    if (await this.retryUnsent(state)) return { results }
+
+    // 4. Candidates: named txids (their intent persisted first), persisted intents, credited
+    //    receipts, and own hand-overs the overlay already admitted.
+    await eachInOrder(req.txids ?? [], async txid => await this.addNamed(state, txid))
+    await eachInOrder(await this.deps.store.intents(), async txid => {
+      await this.addIntent(state, txid)
+    })
+    for (const [txid, record] of state.records) {
+      const credited = record.role === 'receipt' && record.state === 'credited'
+      if (credited && state.inScope(record) && state.open(txid)) addCandidate(state, txid)
+    }
+    if (await this.addAdmitted(state)) return { results }
+
+    // 5. Each candidate's unsettled ancestor closure, parents first, deduplicated.
+    const { order, parentsOf } = ancestorClosure(state)
+    const outcome = new Map<string, ColorSettleResult>()
+    await eachInOrder(order, async txid => {
+      if (this.disposed) return
+      const result = await this.decide(state, txid, parentsOf.get(txid)!, outcome)
+      outcome.set(txid, result)
+      state.report(result)
+    })
+
+    // A call that overlapped the previous run reports that run's final outcomes too.
+    await eachInOrder(prior?.results ?? [], async earlier => {
+      if (state.reported.has(earlier.txid)) return
+      const record = state.records.get(earlier.txid)
+      if (record === undefined || !state.inScope(record)) return
+      const done = await this.recorded(earlier.txid, record.assetId)
+      if (done !== undefined) state.report(done)
+    })
+    return { results }
+  }
+
+  /** A run's starting state: every stored record, then the settled and refused sets. */
+  protected async openRun(
+    req: ColorSettleRequest,
+    originator: string | undefined
+  ): Promise<SettleRun> {
     const { store } = this.deps
     const filter = req.assetIds === undefined ? undefined : new Set(req.assetIds)
     const records = new Map<string, TxRecord>()
-    for (const txid of await store.txids()) {
+    await eachInOrder(await store.txids(), async txid => {
       const record = await store.getTx(txid)
       if (record !== undefined) records.set(txid, record)
-    }
-    const inScope = (record: TxRecord): boolean => filter?.has(record.assetId) ?? true
+    })
     const settled = await store.settledSet()
     const refused = await store.refusedSet()
-    const open = (txid: string): boolean => !settled.has(txid) && !refused.has(txid)
     const results: ColorSettleResult[] = []
     const reported = new Set<string>()
-    const report = (result: ColorSettleResult): void => {
-      results.push(result)
-      reported.add(result.txid)
+    return {
+      originator,
+      records,
+      settled,
+      refused,
+      inScope: (record: TxRecord): boolean => filter?.has(record.assetId) ?? true,
+      open: (txid: string): boolean => !settled.has(txid) && !refused.has(txid),
+      candidates: [],
+      results,
+      reported,
+      report: (result: ColorSettleResult): void => {
+        results.push(result)
+        reported.add(result.txid)
+      }
     }
+  }
 
-    // 1. Promote staged receipts the wallet holds, or that a live own hand-over spends.
+  /**
+   * Runs `step` on each item in order while the settler is live; true when disposal stopped it
+   * (an item was reached after `dispose()`), as a `for … of` loop that returns on disposal would.
+   */
+  protected async eachWhileLive<T>(
+    items: Iterable<T>,
+    step: (item: T) => Promise<void>
+  ): Promise<boolean> {
+    let stopped = false
+    await eachInOrder(items, async item => {
+      if (this.disposed) {
+        stopped = true
+        return
+      }
+      await step(item)
+    })
+    return stopped
+  }
+
+  /** Step 1: credits each open staged receipt in scope that the wallet holds; true if disposed. */
+  protected async promoteStaged(state: SettleRun): Promise<boolean> {
+    const { records } = state
     const spentByHandovers = new Set(
       [...records.values()]
         .filter(record => record.role === 'handover' && record.state !== 'aborted')
         .flatMap(record => record.inputs)
     )
-    for (const [txid, record] of records) {
-      if (this.disposed) return { results }
-      if (record.role !== 'receipt' || record.state !== 'staged') continue
-      if (!inScope(record) || !open(txid)) continue
-      if (!(await this.held(txid, record, spentByHandovers))) continue
+    return await this.eachWhileLive(records, async ([txid, record]) => {
+      if (record.role !== 'receipt' || record.state !== 'staged') return
+      if (!state.inScope(record) || !state.open(txid)) return
+      if (!(await this.held(txid, record, spentByHandovers))) return
       const credited: TxRecord = { ...record, state: 'credited' }
-      await store.putTx(txid, credited)
+      await this.deps.store.putTx(txid, credited)
       records.set(txid, credited)
-    }
+    })
+  }
 
-    // 2. Own hand-overs whose wallet action is gone are aborted (Decision 16).
-    await this.detectAborted(records, inScope, open, originator)
-    if (this.disposed) return { results }
+  /** Step 3: sends each unsent live hand-over in scope again; true if disposed. */
+  protected async retryUnsent(state: SettleRun): Promise<boolean> {
+    const { store } = this.deps
+    return await this.eachWhileLive(await store.unsent(), async txid => {
+      const record = state.records.get(txid)
+      if (record?.role !== 'handover' || record.state === 'aborted' || !state.inScope(record))
+        return
+      if (await this.sendWith(txid, state.originator)) await store.removeUnsent(txid)
+    })
+  }
 
-    // 3. Retry sendWith for settled hand-overs not yet sent.
-    for (const txid of await store.unsent()) {
-      if (this.disposed) return { results }
-      const record = records.get(txid)
-      if (record?.role !== 'handover' || record.state === 'aborted' || !inScope(record)) continue
-      if (await this.sendWith(txid, originator)) await store.removeUnsent(txid)
+  /**
+   * Step 4, a named txid: an aborted one is reported refused and a finished one its outcome (both
+   * drop the intent); a staged receipt is reported `retry`; otherwise it is a candidate, and a
+   * hand-over's intent is persisted first.
+   */
+  protected async addNamed(state: SettleRun, txid: string): Promise<void> {
+    const { store } = this.deps
+    const record = state.records.get(txid)
+    if (record === undefined || !state.inScope(record) || state.reported.has(txid)) return
+    if (record.state === 'aborted') {
+      await store.removeIntent(txid)
+      state.report({
+        txid,
+        assetId: record.assetId,
+        status: 'refused',
+        code: 'ERR_ABORTED',
+        description: 'BRC-207: the hand-over was aborted in the wallet'
+      })
+      return
     }
+    const done = await this.recorded(txid, record.assetId)
+    if (done !== undefined) {
+      await store.removeIntent(txid)
+      state.report(done)
+      return
+    }
+    if (record.role === 'receipt' && record.state === 'staged') {
+      state.report({
+        txid,
+        assetId: record.assetId,
+        status: 'retry',
+        code: 'ERR_NOT_HELD',
+        description: 'BRC-207: the wallet does not hold this receipt'
+      })
+      return
+    }
+    if (record.role === 'handover') await store.addIntent(txid)
+    addCandidate(state, txid)
+  }
 
-    // 4. Candidates: named txids (their intent persisted first), persisted intents, credited
-    //    receipts, and own hand-overs the overlay already admitted.
-    const candidates: string[] = []
-    const add = (txid: string): void => {
-      if (!candidates.includes(txid)) candidates.push(txid)
+  /** Step 4, a persisted intent: a candidate while open and live, else dropped (out of scope: kept). */
+  protected async addIntent(state: SettleRun, txid: string): Promise<void> {
+    const record = state.records.get(txid)
+    if (record !== undefined && !state.inScope(record)) return
+    if (record === undefined || record.state === 'aborted' || !state.open(txid)) {
+      await this.deps.store.removeIntent(txid)
+      return
     }
-    for (const txid of req.txids ?? []) {
-      const record = records.get(txid)
-      if (record === undefined || !inScope(record) || reported.has(txid)) continue
-      if (record.state === 'aborted') {
-        await store.removeIntent(txid)
-        report({
-          txid,
-          assetId: record.assetId,
-          status: 'refused',
-          code: 'ERR_ABORTED',
-          description: 'BRC-207: the hand-over was aborted in the wallet'
-        })
-        continue
-      }
-      const done = await this.recorded(txid, record.assetId)
-      if (done !== undefined) {
-        await store.removeIntent(txid)
-        report(done)
-        continue
-      }
-      if (record.role === 'receipt' && record.state === 'staged') {
-        report({
-          txid,
-          assetId: record.assetId,
-          status: 'retry',
-          code: 'ERR_NOT_HELD',
-          description: 'BRC-207: the wallet does not hold this receipt'
-        })
-        continue
-      }
-      if (record.role === 'handover') await store.addIntent(txid)
-      add(txid)
-    }
-    for (const txid of await store.intents()) {
-      const record = records.get(txid)
-      if (record !== undefined && !inScope(record)) continue
-      if (record === undefined || record.state === 'aborted' || !open(txid)) {
-        await store.removeIntent(txid)
-        continue
-      }
-      add(txid)
-    }
-    for (const [txid, record] of records) {
-      if (record.role === 'receipt' && record.state === 'credited' && inScope(record) && open(txid))
-        add(txid)
-    }
-    for (const [txid, record] of records) {
-      if (this.disposed) return { results }
-      if (record.role !== 'handover' || record.state === 'aborted') continue
-      if (!inScope(record) || !open(txid) || candidates.includes(txid)) continue
-      if (await this.overlayAdmitted(txid, record)) add(txid)
-    }
+    addCandidate(state, txid)
+  }
 
-    // 5. Each candidate's unsettled ancestor closure, parents first, deduplicated.
-    const order: string[] = []
-    const parentsOf = new Map<string, string[]>()
-    const visit = (txid: string): void => {
-      if (parentsOf.has(txid)) return
-      const record = records.get(txid)!
-      const parents: string[] = []
-      parentsOf.set(txid, parents)
-      for (const input of record.inputs) {
-        const { txid: parent, vout } = parseOutpoint(input)
-        const source = records.get(parent)
-        // No record: nothing to submit, the overlay decides. An attested output is an anchor.
-        if (source === undefined || source.state === 'aborted') continue
-        if (source.attestations.some(att => att.txid === parent && att.outputs.includes(vout)))
-          continue
-        if (settled.has(parent)) continue
-        if (!parents.includes(parent)) parents.push(parent)
-        if (!refused.has(parent)) visit(parent)
-      }
-      order.push(txid)
-    }
-    for (const txid of candidates) visit(txid)
+  /** Step 4: each open live own hand-over in scope the overlay already admitted; true if disposed. */
+  protected async addAdmitted(state: SettleRun): Promise<boolean> {
+    return await this.eachWhileLive(state.records, async ([txid, record]) => {
+      if (record.role !== 'handover' || record.state === 'aborted') return
+      if (!state.inScope(record) || !state.open(txid) || state.candidates.includes(txid)) return
+      if (await this.overlayAdmitted(txid, record)) addCandidate(state, txid)
+    })
+  }
 
-    const outcome = new Map<string, ColorSettleResult>()
-    for (const txid of order) {
-      if (this.disposed) break
-      const record = records.get(txid)!
-      const parents = parentsOf.get(txid)!
-      const refusedParent = parents.find(
-        parent => refused.has(parent) || outcome.get(parent)?.status === 'refused'
-      )
-      let result: ColorSettleResult
-      if (refusedParent !== undefined) {
-        const description = `BRC-207: parent ${refusedParent} was refused`
-        await store.markRefused(txid, { code: 'ERR_PARENT_REFUSED', description })
-        await store.removeIntent(txid)
-        result = {
-          txid,
-          assetId: record.assetId,
-          status: 'refused',
-          code: 'ERR_PARENT_REFUSED',
-          description
-        }
-      } else {
-        const waiting = parents
-          .map(parent => outcome.get(parent))
-          .find(o => o?.status !== 'admitted')
-        if (waiting !== undefined || parents.some(parent => !outcome.has(parent))) {
-          result = {
-            txid,
-            assetId: record.assetId,
-            status: 'retry',
-            code: waiting?.code ?? 'ERR_UNAVAILABLE',
-            description: 'BRC-207: a parent transaction is not settled yet'
-          }
-        } else {
-          result =
-            (await this.recorded(txid, record.assetId)) ??
-            (await this.latched(txid, async () => await this.submitTx(txid, originator)))
-        }
+  /**
+   * Step 5, one transaction in parents-first order: refused when a parent was refused (recorded,
+   * intent dropped); `retry` while a parent is not admitted; else its recorded outcome or a submit
+   * through the per-txid latch.
+   */
+  protected async decide(
+    state: SettleRun,
+    txid: string,
+    parents: readonly string[],
+    outcome: ReadonlyMap<string, ColorSettleResult>
+  ): Promise<ColorSettleResult> {
+    const { store } = this.deps
+    const record = state.records.get(txid)!
+    const refusedParent = parents.find(
+      parent => state.refused.has(parent) || outcome.get(parent)?.status === 'refused'
+    )
+    if (refusedParent !== undefined) {
+      const description = `BRC-207: parent ${refusedParent} was refused`
+      await store.markRefused(txid, { code: 'ERR_PARENT_REFUSED', description })
+      await store.removeIntent(txid)
+      return {
+        txid,
+        assetId: record.assetId,
+        status: 'refused',
+        code: 'ERR_PARENT_REFUSED',
+        description
       }
-      outcome.set(txid, result)
-      report(result)
     }
-
-    // A call that overlapped the previous run reports that run's final outcomes too.
-    for (const earlier of prior?.results ?? []) {
-      if (reported.has(earlier.txid)) continue
-      const record = records.get(earlier.txid)
-      if (record === undefined || !inScope(record)) continue
-      const done = await this.recorded(earlier.txid, record.assetId)
-      if (done !== undefined) report(done)
+    const waiting = parents.map(parent => outcome.get(parent)).find(o => o?.status !== 'admitted')
+    if (waiting !== undefined || parents.some(parent => !outcome.has(parent))) {
+      return {
+        txid,
+        assetId: record.assetId,
+        status: 'retry',
+        code: waiting?.code ?? 'ERR_UNAVAILABLE',
+        description: 'BRC-207: a parent transaction is not settled yet'
+      }
     }
-    return { results }
+    return (
+      (await this.recorded(txid, record.assetId)) ??
+      (await this.latched(txid, async () => await this.submitTx(txid, state.originator)))
+    )
   }
 
   /** The stored outcome of a settled or refused transaction, or undefined while it is open. */
@@ -411,33 +462,25 @@ export class ColorSettler {
     originator: string | undefined
   ): Promise<void> {
     const { store } = this.deps
-    const groups = new Map<string, { labels: string[]; txids: string[] }>()
-    for (const [txid, record] of records) {
-      if (record.role !== 'handover' || record.state === 'aborted') continue
-      if (!inScope(record) || !open(txid)) continue
-      if (record.labels === undefined || record.labels.length === 0) continue
-      const key = JSON.stringify(record.labels)
-      const group = groups.get(key) ?? { labels: record.labels, txids: [] }
-      group.txids.push(txid)
-      groups.set(key, group)
-    }
-    for (const { labels, txids } of groups.values()) {
-      if (this.disposed) return
-      let live: Set<string>
-      try {
-        live = await this.liveActions(labels, originator)
-      } catch {
-        continue
+    await this.eachWhileLive(
+      handoverGroups(records, inScope, open).values(),
+      async ({ labels, txids }) => {
+        let live: Set<string>
+        try {
+          live = await this.liveActions(labels, originator)
+        } catch {
+          return
+        }
+        await eachInOrder(txids, async txid => {
+          if (live.has(txid)) return
+          const aborted: TxRecord = { ...records.get(txid)!, state: 'aborted' }
+          await store.putTx(txid, aborted)
+          await store.removeIntent(txid)
+          await store.removeUnsent(txid)
+          records.set(txid, aborted)
+        })
       }
-      for (const txid of txids) {
-        if (live.has(txid)) continue
-        const aborted: TxRecord = { ...records.get(txid)!, state: 'aborted' }
-        await store.putTx(txid, aborted)
-        await store.removeIntent(txid)
-        await store.removeUnsent(txid)
-        records.set(txid, aborted)
-      }
-    }
+    )
   }
 
   /** The txids of the wallet's listed actions carrying every one of `labels`, all pages. */
@@ -503,11 +546,8 @@ export class ColorSettler {
     }
     if (this.disposed)
       return retry(txid, assetId, 'ERR_DISPOSED', 'BRC-207: the module is disposed')
-    let tx: Transaction
-    try {
-      tx = Transaction.fromAtomicBEEF(toArray(record.atomicBEEF, 'hex'))
-      if (tx.id('hex') !== txid) throw new Error('subject mismatch')
-    } catch {
+    const tx = subjectTransaction(record, txid)
+    if (tx === undefined) {
       return retry(txid, assetId, 'ERR_EVIDENCE', 'BRC-207: the stored AtomicBEEF does not parse')
     }
     let resolved: ResolvedAsset
@@ -524,48 +564,10 @@ export class ColorSettler {
       )
     }
     const topic = colorTopic(assetId)
-    let entry: unknown
-    try {
-      const steak = await resolved.provider.submit(
-        [topic],
-        toArray(record.atomicBEEF, 'hex'),
-        toArray(record.offChainValues, 'hex')
-      )
-      entry = (steak as Record<string, unknown> | undefined)?.[topic]
-    } catch (error) {
-      const failure = providerFailure(error)
-      // A resubmission of an already settled tx (spending's settleTx) never records a refusal:
-      // its admission stands, and a refused record would lock every output of it for good.
-      if (
-        failure !== undefined &&
-        !failure.transport &&
-        !failure.retryable &&
-        (await store.settled(txid)) === undefined
-      ) {
-        await store.markRefused(txid, { code: failure.code, description: failure.message })
-        await store.removeIntent(txid)
-        return {
-          txid,
-          assetId,
-          status: 'refused',
-          code: failure.code,
-          description: failure.message
-        }
-      }
-      return retry(txid, assetId, failure?.code ?? 'ERR_UNAVAILABLE', messageOf(error))
-    }
-    if (entry === undefined || entry === null) {
-      return retry(txid, assetId, 'ERR_NO_ATTESTATION', 'BRC-207: the overlay gave no admission')
-    }
-    let att: ColorAttestation | undefined
-    try {
-      att = attestationFromSteak(txid, topic, entry as Parameters<typeof attestationFromSteak>[2])
-    } catch (error) {
-      return retry(txid, assetId, 'ERR_ATTESTATION', messageOf(error))
-    }
-    if (att === undefined) {
-      return retry(txid, assetId, 'ERR_NO_ATTESTATION', 'BRC-207: the admission is not attested')
-    }
+    const submitted = await this.submitRecord(txid, record, resolved, topic)
+    if ('status' in submitted) return submitted
+    const att = steakAttestation(txid, assetId, topic, submitted.entry)
+    if ('status' in att) return att
     const required =
       record.role === 'ancestor' || record.outputs.length === 0
         ? this.deps.tokenOutputs(tx, assetId)
@@ -599,6 +601,50 @@ export class ColorSettler {
   }
 
   /**
+   * Submits the record's stored AtomicBEEF and off-chain values to its asset topic, giving the
+   * STEAK entry for that topic. A typed final refusal of a not yet settled tx is recorded (the
+   * intent dropped) and returned; any other failure is `retry`.
+   */
+  protected async submitRecord(
+    txid: string,
+    record: TxRecord,
+    resolved: ResolvedAsset,
+    topic: string
+  ): Promise<{ entry: unknown } | ColorSettleResult> {
+    const { store } = this.deps
+    const { assetId } = record
+    try {
+      const steak = await resolved.provider.submit(
+        [topic],
+        toArray(record.atomicBEEF, 'hex'),
+        toArray(record.offChainValues, 'hex')
+      )
+      return { entry: (steak as Record<string, unknown> | undefined)?.[topic] }
+    } catch (error) {
+      const failure = providerFailure(error)
+      // A resubmission of an already settled tx (spending's settleTx) never records a refusal:
+      // its admission stands, and a refused record would lock every output of it for good.
+      if (
+        failure !== undefined &&
+        !failure.transport &&
+        !failure.retryable &&
+        (await store.settled(txid)) === undefined
+      ) {
+        await store.markRefused(txid, { code: failure.code, description: failure.message })
+        await store.removeIntent(txid)
+        return {
+          txid,
+          assetId,
+          status: 'refused',
+          code: failure.code,
+          description: failure.message
+        }
+      }
+      return retry(txid, assetId, failure?.code ?? 'ERR_UNAVAILABLE', messageOf(error))
+    }
+  }
+
+  /**
    * Moves an own noSend action out of `nosend` (D24): a resolved call is success unless its
    * entry for `txid` failed; a thrown "already broadcast/known/mined" is success too.
    */
@@ -615,6 +661,114 @@ export class ColorSettler {
       return ALREADY_SENT.test(messageOf(error))
     }
   }
+}
+
+/** One settle run's working state. */
+interface SettleRun {
+  originator: string | undefined
+  /** Every stored record by txid; promotions and aborts update it in place. */
+  records: Map<string, TxRecord>
+  settled: ReadonlySet<string>
+  refused: ReadonlySet<string>
+  /** Whether a record's asset is in the request's filter (every asset without one). */
+  inScope: (record: TxRecord) => boolean
+  /** Neither settled nor refused at the start of the run. */
+  open: (txid: string) => boolean
+  /** Txids to settle, in the order they were added, without duplicates. */
+  candidates: string[]
+  results: ColorSettleResult[]
+  reported: Set<string>
+  report: (result: ColorSettleResult) => void
+}
+
+/** The open live own hand-overs in scope that carry labels, grouped by their exact label list. */
+function handoverGroups(
+  records: ReadonlyMap<string, TxRecord>,
+  inScope: (record: TxRecord) => boolean,
+  open: (txid: string) => boolean
+): Map<string, { labels: string[]; txids: string[] }> {
+  const groups = new Map<string, { labels: string[]; txids: string[] }>()
+  for (const [txid, record] of records) {
+    if (record.role !== 'handover' || record.state === 'aborted') continue
+    if (!inScope(record) || !open(txid)) continue
+    if (record.labels === undefined || record.labels.length === 0) continue
+    const key = JSON.stringify(record.labels)
+    const group = groups.get(key) ?? { labels: record.labels, txids: [] }
+    group.txids.push(txid)
+    groups.set(key, group)
+  }
+  return groups
+}
+
+/** The record's stored AtomicBEEF subject when it parses and hashes to `txid`, else undefined. */
+function subjectTransaction(record: TxRecord, txid: string): Transaction | undefined {
+  try {
+    const tx = Transaction.fromAtomicBEEF(toArray(record.atomicBEEF, 'hex'))
+    return tx.id('hex') === txid ? tx : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The attestation in a STEAK topic entry, or the `retry` result when there is none or it fails. */
+function steakAttestation(
+  txid: string,
+  assetId: string,
+  topic: string,
+  entry: unknown
+): ColorAttestation | ColorSettleResult {
+  if (entry === undefined || entry === null) {
+    return retry(txid, assetId, 'ERR_NO_ATTESTATION', 'BRC-207: the overlay gave no admission')
+  }
+  let att: ColorAttestation | undefined
+  try {
+    att = attestationFromSteak(txid, topic, entry as Parameters<typeof attestationFromSteak>[2])
+  } catch (error) {
+    return retry(txid, assetId, 'ERR_ATTESTATION', messageOf(error))
+  }
+  if (att === undefined) {
+    return retry(txid, assetId, 'ERR_NO_ATTESTATION', 'BRC-207: the admission is not attested')
+  }
+  return att
+}
+
+function addCandidate(state: SettleRun, txid: string): void {
+  if (!state.candidates.includes(txid)) state.candidates.push(txid)
+}
+
+/**
+ * The candidates' unsettled ancestor closure, parents first, deduplicated, with each
+ * transaction's unsettled parents. A parent without a record (the overlay decides), an aborted
+ * one, one whose spent output is attested (an anchor) or a settled one is not followed; a refused
+ * parent is listed but not expanded.
+ */
+function ancestorClosure(state: SettleRun): {
+  order: string[]
+  parentsOf: Map<string, string[]>
+} {
+  const { records, settled, refused } = state
+  const order: string[] = []
+  const parentsOf = new Map<string, string[]>()
+  const visit = (txid: string): void => {
+    if (parentsOf.has(txid)) return
+    const record = records.get(txid)!
+    const parents: string[] = []
+    parentsOf.set(txid, parents)
+    for (const input of record.inputs) {
+      const { txid: parent, vout } = parseOutpoint(input)
+      const source = records.get(parent)
+      // No record: nothing to submit, the overlay decides. An attested output is an anchor.
+      if (source === undefined || source.state === 'aborted') continue
+      if (source.attestations.some(att => att.txid === parent && att.outputs.includes(vout)))
+        continue
+      if (settled.has(parent)) continue
+      if (!parents.includes(parent)) parents.push(parent)
+      if (!refused.has(parent)) visit(parent)
+    }
+    order.push(txid)
+  }
+  for (const txid of state.candidates) visit(txid)
+  return { order, parentsOf }
 }
 
 function retry(
