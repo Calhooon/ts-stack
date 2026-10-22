@@ -1,8 +1,8 @@
 import { LockingScript } from '@bsv/sdk/script'
-import { toArray } from '@bsv/sdk/primitives/utils'
+import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { isProfileId, readOneColorAttributes } from '../OneColorAttributes.js'
 import type { OneColorField } from '../OneColorAttributes.js'
-import { encodeStrictCbor } from '../strictCbor.js'
+import { encodeStrictCbor, StrictCborLink } from '../strictCbor.js'
 import { OneColor } from '../OneColor.js'
 
 const hex = (h: string): Uint8Array => Uint8Array.from(toArray(h.replace(/\s/g, ''), 'hex'))
@@ -225,5 +225,260 @@ describe('readOneColorAttributes: payload and display fields', () => {
   it('every A.141a fixture payload decodes as a map', () => {
     for (const script of Object.values(FIXTURE))
       expect(readOneColorAttributes(payloadOf(script)).payload).toBe('map')
+  })
+})
+
+// Contract §4 fixture F-REQ (generated with encodeStrictCbor at ts-stack cbdccfe), verbatim.
+const K = '02798b81951a6a8c7ef8beda09b06a23031d7efaf37b663265e0188ab378124046'
+const REQ_HEX =
+  'a2781c68747470733a2f2f6272632e6465762f3230372f6174746573746564a266706172616d73a26974727573744d6f6465686964656e746974796b6964656e746974794b657978423032373938623831393531613661386337656638626564613039623036613233303331643765666166333762363633323635653031383861623337383132343034366776657273696f6e01785068747470733a2f2f6769746875622e636f6d2f6273762d626c6f636b636861696e2f6d616e64616c612f626c6f622f6d61737465722f646f63732f70726f66696c65732f6973737565722d76312e6d64a266706172616d73a16b6964656e746974794b657978423032373938623831393531613661386337656638626564613039623036613233303331643765666166333762363633323635653031383861623337383132343034366776657273696f6e01'
+const FREQ_PAYLOAD =
+  'a4636465630263726571' + REQ_HEX + '6373796d6454555344656c6162656c6b5465737420446f6c6c6172'
+
+describe('readOneColorAttributes: req and ext', () => {
+  it('pins the F-REQ fixture sizes (contract §4)', () => {
+    expect(REQ_HEX.length / 2).toBe(328)
+    expect(FREQ_PAYLOAD.length / 2).toBe(365)
+  })
+
+  it('F-REQ: Mandala deploy payload (req in the middle of the map)', () => {
+    const a = readOneColorAttributes(hex(FREQ_PAYLOAD))
+    expect(a.payload).toBe('map')
+    expect(a.dec).toEqual({ status: 'valid', value: 2 })
+    expect(a.sym).toEqual({ status: 'valid', value: 'TUSD' })
+    expect(a.map!.label).toBe('Test Dollar')
+    const req = valid(a.req)
+    expect([...req.keys()]).toEqual([ATTESTED, MANDALA])
+    expect(req.get(ATTESTED)).toEqual({
+      version: 1,
+      params: { trustMode: 'identity', identityKey: K }
+    })
+    expect(req.get(MANDALA)).toEqual({ version: 1, params: { identityKey: K } })
+    expect(toHex([...a.reqBytes!])).toBe(REQ_HEX)
+    expect(a.reqBytes!.length).toBe(328)
+    expect(a.reqBytes).toBeInstanceOf(Uint8Array)
+    expect(a.ext).toEqual(ABSENT)
+    // number[] input reads identically
+    const fromArray = readOneColorAttributes([...hex(FREQ_PAYLOAD)])
+    expect(toHex([...fromArray.reqBytes!])).toBe(REQ_HEX)
+  })
+
+  it('A.141a fixtures (req last in the map for C and X)', () => {
+    const u = readOneColorAttributes(payloadOf(FIXTURE.U))
+    expect([...valid(u.req).entries()]).toEqual([
+      ['urn:example:color:unknown', { version: 1, params: null }]
+    ])
+    expect(u.ext).toEqual(ABSENT)
+    expect(
+      valid(readOneColorAttributes(payloadOf(FIXTURE.V)).req).get('urn:example:color:revision')!
+        .version
+    ).toBe(2)
+    const c = readOneColorAttributes(payloadOf(FIXTURE.C))
+    expect(valid(c.ext).get('urn:example:color:revision')).toEqual({ revision: 0n })
+    expect(toHex([...c.reqBytes!])).toBe(
+      'a1781a75726e3a6578616d706c653a636f6c6f723a7265766973696f6ea266706172616d73f66776657273696f6e01'
+    )
+    const x = readOneColorAttributes(payloadOf(FIXTURE.X))
+    expect([...valid(x.req).keys()]).toEqual([
+      'urn:example:color:unknown',
+      'urn:example:color:revision'
+    ]) // canonical order
+    const d = readOneColorAttributes(payloadOf(FIXTURE.D))
+    expect(d.req).toEqual(ABSENT)
+    expect(d.reqBytes).toBeUndefined()
+    expect([...valid(d.ext).keys()]).toEqual(['urn:example:display:words'])
+  })
+
+  it('A.147 fixture M: req null is malformed, not absent', () => {
+    const m = readOneColorAttributes(payloadOf(FIXTURE.M))
+    expect(m.payload).toBe('map')
+    expect(m.req.status).toBe('malformed')
+    expect(m.reqBytes).toBeUndefined()
+  })
+
+  it('an empty req map is valid and its bytes are a0', () => {
+    const a = readOneColorAttributes(cbor({ req: {} }))
+    expect(a.req.status).toBe('valid')
+    expect(valid(a.req).size).toBe(0)
+    expect([...a.reqBytes!]).toEqual([0xa0])
+  })
+
+  it('a map without req has no reqBytes', () => {
+    const a = readOneColorAttributes(cbor({ sym: 'S' }))
+    expect(a.req).toEqual(ABSENT)
+    expect(a.ext).toEqual(ABSENT)
+    expect(a.reqBytes).toBeUndefined()
+  })
+
+  it.each([
+    ['descriptor missing params', { 'a:b': { version: 1n } }],
+    ['descriptor missing version', { 'a:b': { params: null } }],
+    ['descriptor extra member', { 'a:b': { version: 1n, params: null, x: 1n } }],
+    ['descriptor empty map', { 'a:b': {} }],
+    ['descriptor not a map', { 'a:b': [1n, null] }],
+    ['descriptor null', { 'a:b': null }],
+    ['version 0', { 'a:b': { version: 0n, params: null } }],
+    ['version 2^32', { 'a:b': { version: 4294967296n, params: null } }],
+    ['version negative', { 'a:b': { version: -1n, params: null } }],
+    ['version text', { 'a:b': { version: '1', params: null } }],
+    ['version fractional float', { 'a:b': { version: 1.5, params: null } }],
+    ['bad profile id', { 'Bad:x': { version: 1n, params: null } }],
+    [
+      'one good entry and one bad profile id',
+      { 'a:b': { version: 1n, params: null }, nocolon: { version: 1n, params: null } }
+    ],
+    ['profile id over 200 bytes', { [OVER_MAX_ID]: { version: 1n, params: null } }]
+  ])('req malformed: %s', (_, req) => {
+    const a = readOneColorAttributes(cbor({ req: req as never }))
+    expect(a.payload).toBe('map')
+    expect(a.req.status).toBe('malformed')
+    expect(a.reqBytes).toBeUndefined()
+  })
+
+  it('req that is not a map (array, bytes, text, int, bool, link) is malformed', () => {
+    for (const req of [
+      [],
+      new Uint8Array([0xa0]),
+      'a0',
+      1n,
+      true,
+      new StrictCborLink(new Uint8Array([0, 1]))
+    ]) {
+      const a = readOneColorAttributes(cbor({ req: req as never }))
+      expect(a.req.status).toBe('malformed')
+      expect(a.reqBytes).toBeUndefined()
+    }
+  })
+
+  it('RF1-version: boundaries and float', () => {
+    expect(
+      valid(
+        readOneColorAttributes(cbor({ req: { 'a:b': { version: 4294967295n, params: null } } })).req
+      ).get('a:b')!.version
+    ).toBe(4294967295)
+    expect(
+      valid(
+        readOneColorAttributes(cbor({ req: { 'a:b': { version: 1n, params: null } } })).req
+      ).get('a:b')!.version
+    ).toBe(1)
+    // version float64 1.0, hand-written (encodeStrictCbor cannot produce it)
+    const f = readOneColorAttributes(
+      hex('a1 63726571 a1 63613a62 a2 66706172616d73 f6 6776657273696f6e fb3ff0000000000000')
+    )
+    expect(f.payload).toBe('map')
+    expect(f.req.status).toBe('malformed')
+    expect(f.reqBytes).toBeUndefined()
+  })
+
+  it('RF2-span: an integral float in params is kept byte-exact', () => {
+    const FLOAT_REQ = 'a163613a62a266706172616d73fb3ff00000000000006776657273696f6e01'
+    const a = readOneColorAttributes(hex('a163726571' + FLOAT_REQ))
+    expect(a.req.status).toBe('valid')
+    expect(toHex([...a.reqBytes!])).toBe(FLOAT_REQ)
+    // the re-encoding would have folded 1.0 into the integer 1: the span must not equal it
+    expect(toHex(encodeStrictCbor({ 'a:b': { params: 1n, version: 1n } }))).not.toBe(FLOAT_REQ)
+  })
+
+  it('span is exact through nested arrays, bytes, negative ints and tag-42 links', () => {
+    const req = {
+      'a:b': {
+        version: 1n,
+        params: [
+          new StrictCborLink(new Uint8Array([0, 1, 2])),
+          new Uint8Array([1, 2]),
+          -5n,
+          'x',
+          true,
+          { k: [null] }
+        ]
+      }
+    }
+    const a = readOneColorAttributes(cbor({ req, sym: 'S' }))
+    // no floats here, so re-encoding is a valid oracle
+    expect(toHex([...a.reqBytes!])).toBe(toHex(encodeStrictCbor(req)))
+    expect(a.sym).toEqual({ status: 'valid', value: 'S' })
+  })
+
+  it('span is exact past preceding values with multi-byte heads (1/2/4/8-byte arguments)', () => {
+    const req = {
+      'a:b': { version: 4294967295n, params: [2n ** 64n - 1n, -(2n ** 40n), 'y'.repeat(300)] }
+    }
+    const payload = {
+      // keys shorter than 'req' sort first and must be skipped by the span finder
+      a: new Uint8Array(70000),
+      b: [2n ** 63n, 'z'.repeat(256), { c: -(2n ** 33n) }],
+      e: 1.5,
+      req,
+      zzzz: [new Uint8Array(300), { q: 70000n }]
+    }
+    const a = readOneColorAttributes(cbor(payload))
+    expect(a.req.status).toBe('valid')
+    expect(toHex([...a.reqBytes!])).toBe(toHex(encodeStrictCbor(req)))
+  })
+
+  it('reqBytes is a fresh copy, detached from the input and from other reads', () => {
+    const input = hex(FREQ_PAYLOAD)
+    const a = readOneColorAttributes(input)
+    const b = readOneColorAttributes(input)
+    expect(a.reqBytes).not.toBe(b.reqBytes)
+    a.reqBytes![0] ^= 0xff
+    expect(toHex([...b.reqBytes!])).toBe(REQ_HEX)
+    expect(toHex([...input])).toBe(FREQ_PAYLOAD)
+    expect(toHex([...readOneColorAttributes(input).reqBytes!])).toBe(REQ_HEX)
+  })
+
+  it('reads the input once: an array whose contents change between reads cannot skew the span', () => {
+    const good = [...hex('a163726571a0')]
+    let reads = 0
+    // Each full iteration after the first yields a truncated, unvalidated byte sequence.
+    const shifty = new Proxy(good, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) {
+          reads++
+          const src = reads === 1 ? target : [0xa1, 0x63, 0x72, 0x65, 0x71, 0x9b]
+          return () => src[Symbol.iterator]()
+        }
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const a = readOneColorAttributes(shifty)
+    expect(a.req.status).toBe('valid')
+    expect([...a.reqBytes!]).toEqual([0xa0])
+    expect(reads).toBe(1)
+  })
+
+  it('is deterministic for req and ext', () => {
+    const r1 = readOneColorAttributes(hex(FREQ_PAYLOAD))
+    const r2 = readOneColorAttributes([...hex(FREQ_PAYLOAD)])
+    expect(r1).toEqual(r2)
+  })
+
+  it('ext: map of profile ids to any value', () => {
+    expect(valid(readOneColorAttributes(cbor({ ext: { 'a:b': null } })).ext).get('a:b')).toBeNull()
+    expect(valid(readOneColorAttributes(cbor({ ext: {} })).ext).size).toBe(0)
+    for (const ext of [null, [], 'x', 1n, new Uint8Array([0xa0]), { nocolon: 1n }, { 'Bad:x': 1n }])
+      expect(readOneColorAttributes(cbor({ ext: ext as never })).ext.status).toBe('malformed')
+  })
+
+  it('req/ext malformed does not disturb the display fields', () => {
+    const a = readOneColorAttributes(cbor({ req: null, ext: null, sym: 'S', dec: 2n }))
+    expect(a.req.status).toBe('malformed')
+    expect(a.ext.status).toBe('malformed')
+    expect(a.sym.status).toBe('valid')
+    expect(a.dec.status).toBe('valid')
+  })
+
+  it('ext malformed does not disturb a valid req and its span', () => {
+    const a = readOneColorAttributes(cbor({ req: {}, ext: [] }))
+    expect(a.ext.status).toBe('malformed')
+    expect(a.req.status).toBe('valid')
+    expect([...a.reqBytes!]).toEqual([0xa0])
+  })
+
+  it('opaque payloads never expose req, ext or reqBytes even when they contain req bytes', () => {
+    const a = readOneColorAttributes([...hex('a163726571' + 'a0'), 0x00]) // trailing byte
+    expect(a.payload).toBe('opaque')
+    expect(a.req).toEqual(ABSENT)
+    expect(a.reqBytes).toBeUndefined()
   })
 })

@@ -3,7 +3,7 @@
 // read under the BRC-207 wallet rules (pinned 0207:82-93): absent and malformed are
 // distinct, and nothing is recovered from a payload that is not a strictly valid
 // DAG-CBOR map. Every function here is pure and total; none throws on any input.
-import { tryDecodeStrictCbor } from './strictCbor.js'
+import { StrictCborLink, tryDecodeStrictCbor } from './strictCbor.js'
 import type { StrictCborMap, StrictCborValue } from './strictCbor.js'
 
 /** A required-profile descriptor: exactly `{params, version}` (0162:181-183). */
@@ -100,8 +100,134 @@ const readIcon = (map: StrictCborMap): Field<{ mediaType: string; bytes: Uint8Ar
   return malformed('icon must be exactly [text, bytes]')
 }
 
+// A CBOR map as the strict decoder returns it: a (null-prototype) object that is not an
+// array, byte string or tag-42 link.
+const isCborMap = (v: StrictCborValue | undefined): v is StrictCborMap =>
+  typeof v === 'object' &&
+  v !== null &&
+  !Array.isArray(v) &&
+  !(v instanceof Uint8Array) &&
+  !(v instanceof StrictCborLink)
+
+const VERSION_MAX = 4294967295n
+
+// A descriptor is exactly {params, version}, version a CBOR uint 1..2^32-1 (0162:181-183).
+// A float version (even 1.0) decodes as a number, not a bigint, so it is malformed.
+const readDescriptor = (v: StrictCborValue): OneColorProfileDescriptor | undefined => {
+  if (!isCborMap(v)) return undefined
+  if (Object.keys(v).length !== 2 || !has(v, 'params') || !has(v, 'version')) return undefined
+  const version = v.version
+  if (typeof version !== 'bigint' || version < 1n || version > VERSION_MAX) return undefined
+  return { version: Number(version), params: v.params }
+}
+
+// req: a map from profile ids to descriptors (0162:178-191). Profile ids always contain ':',
+// so none is an integer-like key and Object.keys keeps the decoded (canonical) order.
+const readReq = (map: StrictCborMap): Field<ReadonlyMap<string, OneColorProfileDescriptor>> => {
+  if (!has(map, 'req')) return absent()
+  const v = map.req
+  if (!isCborMap(v)) return malformed('req must be a map')
+  const out = new Map<string, OneColorProfileDescriptor>()
+  for (const id of Object.keys(v)) {
+    if (!isProfileId(id)) return malformed('req keys must be processing-profile identifiers')
+    const descriptor = readDescriptor(v[id])
+    if (descriptor === undefined) {
+      return malformed('req values must be exactly {params, version} with version 1..4294967295')
+    }
+    out.set(id, descriptor)
+  }
+  return { status: 'valid', value: out }
+}
+
+// ext: a map from profile ids to any value (0162:184-187).
+const readExt = (map: StrictCborMap): Field<ReadonlyMap<string, StrictCborValue>> => {
+  if (!has(map, 'ext')) return absent()
+  const v = map.ext
+  if (!isCborMap(v)) return malformed('ext must be a map')
+  const out = new Map<string, StrictCborValue>()
+  for (const id of Object.keys(v)) {
+    if (!isProfileId(id)) return malformed('ext keys must be processing-profile identifiers')
+    out.set(id, v[id])
+  }
+  return { status: 'valid', value: out }
+}
+
+// ---- exact byte span of a top-level value -------------------------------------------------
+// These helpers only ever run over bytes that decodeStrictCbor has already accepted (definite
+// lengths, minimal heads, every count within the input), so they validate nothing.
+
+// Reads a CBOR head at p: [major, argument, position after the head].
+const headAt = (b: Uint8Array, p: number): [number, bigint, number] => {
+  const major = b[p] >> 5
+  const info = b[p] & 0x1f
+  if (info < 24) return [major, BigInt(info), p + 1]
+  const width = 1 << (info - 24)
+  let arg = 0n
+  for (let i = 1; i <= width; i++) arg = (arg << 8n) | BigInt(b[p + i])
+  return [major, arg, p + 1 + width]
+}
+
+// The end of the data item starting at p. Iterative, so nesting depth costs no stack.
+const valueEnd = (b: Uint8Array, p: number): number => {
+  let pending = 1
+  while (pending > 0) {
+    const [major, arg, next] = headAt(b, p)
+    pending--
+    p = next
+    // Majors 2..5 carry counts the decoder bounded by the input length, so Number() is exact.
+    if (major === 2 || major === 3) p += Number(arg)
+    else if (major === 4) pending += Number(arg)
+    else if (major === 5) pending += 2 * Number(arg)
+    else if (major === 6) pending += 1
+    // majors 0, 1 and 7 (ints, simple values, floats) are the head alone
+  }
+  return p
+}
+
+const sameBytes = (
+  b: Uint8Array,
+  start: number,
+  end: number,
+  expected: readonly number[]
+): boolean => {
+  if (end - start !== expected.length) return false
+  for (let i = 0; i < expected.length; i++) if (b[start + i] !== expected[i]) return false
+  return true
+}
+
+// The encoded text key 'req' (0x63 'r' 'e' 'q'); keys are compared as whole encodings.
+const REQ_KEY = [0x63, 0x72, 0x65, 0x71] as const
+
+// [start, end) of the value stored under `key` in the top-level map, or undefined.
+const topLevelSpan = (b: Uint8Array, key: readonly number[]): [number, number] | undefined => {
+  const [, count, first] = headAt(b, 0)
+  let p = first
+  for (let i = 0n; i < count; i++) {
+    const keyEnd = valueEnd(b, p)
+    const valueStart = keyEnd
+    const end = valueEnd(b, valueStart)
+    if (sameBytes(b, p, keyEnd, key)) return [valueStart, end]
+    p = end
+  }
+  return undefined
+}
+
 const isByteContainer = (v: unknown): v is readonly number[] | Uint8Array =>
   Array.isArray(v) || v instanceof Uint8Array
+
+// Reads the caller's bytes exactly once into a private copy, so the decoder and the span finder
+// see the same validated bytes even if the caller's array changes between reads (a getter or
+// Proxy). An entry outside the integers 0..255 gives undefined (=> 'opaque'), as in the decoder.
+// Throws (=> 'opaque') on a non-iterable runtime value.
+const snapshot = (payload: readonly number[] | Uint8Array): Uint8Array | undefined => {
+  if (payload instanceof Uint8Array) return Uint8Array.from(payload)
+  const out: number[] = []
+  for (const b of payload) {
+    if (!Number.isInteger(b) || b < 0 || b > 255) return undefined
+    out.push(b)
+  }
+  return Uint8Array.from(out)
+}
 
 /**
  * Reads the BRC-162 1Color payload attributes. Pure and total: never throws.
@@ -109,28 +235,41 @@ const isByteContainer = (v: unknown): v is readonly number[] | Uint8Array =>
  * not a strictly valid DAG-CBOR map (non-arrays, entries outside 0..255, any decoder error)
  * => 'opaque', with every field absent and nothing recovered (0207:82-87). In a valid map a
  * reserved key that is present but ill-shaped is 'malformed', never 'absent' (0207:88-93).
+ * `reqBytes` is set iff `req` is valid.
  */
 export function readOneColorAttributes(
   payload: readonly number[] | Uint8Array | undefined
 ): OneColorAttributes {
   if (payload === undefined) return withoutFields('absent')
+  let bytes: Uint8Array | undefined
   let map: StrictCborMap | undefined
   try {
     if (isByteContainer(payload) && payload.length === 0) return withoutFields('empty')
-    // tryDecodeStrictCbor rethrows anything that is not a StrictCborError (e.g. a TypeError
-    // on a non-iterable runtime value); every such error also means 'opaque'.
-    map = tryDecodeStrictCbor(payload)
+    bytes = snapshot(payload)
+    // tryDecodeStrictCbor rethrows anything that is not a StrictCborError; every error here
+    // (including a TypeError on a non-iterable runtime value) also means 'opaque'.
+    map = bytes === undefined ? undefined : tryDecodeStrictCbor(bytes)
   } catch {
     map = undefined
   }
-  if (map === undefined) return withoutFields('opaque')
-  return {
+  if (map === undefined || bytes === undefined) return withoutFields('opaque')
+  const req = readReq(map)
+  const attributes: OneColorAttributes = {
     payload: 'map',
     dec: readDec(map),
     sym: readSym(map),
     icon: readIcon(map),
-    req: absent(),
-    ext: absent(),
+    req,
+    ext: readExt(map),
     map
   }
+  if (req.status !== 'valid') return attributes
+  // reqBytes is the exact wire span of the req value, not a re-encoding of map.req: the strict
+  // decoder accepted these very bytes, so the span is already canonical, and a re-encode would
+  // fold an integral float (1.0) into an integer that a Go reader keeps distinct.
+  const span = topLevelSpan(bytes, REQ_KEY)
+  // Unreachable for a decoded map that has 'req'; fail closed rather than report a valid req
+  // without its bytes.
+  if (span === undefined) return { ...attributes, req: malformed('req span not found') }
+  return { ...attributes, reqBytes: bytes.slice(span[0], span[1]) }
 }
