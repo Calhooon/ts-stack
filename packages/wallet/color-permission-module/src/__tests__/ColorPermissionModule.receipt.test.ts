@@ -4,16 +4,19 @@ import {
   Curve,
   MerklePath,
   PrivateKey,
+  ProtoWallet,
   Signature,
   Transaction,
   type InternalizeActionArgs
 } from '@bsv/sdk'
+import { hash160 } from '@bsv/sdk/primitives/Hash'
+import { OneColor } from '@bsv/templates'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { ATTESTED_PROFILE_ID } from '../attestation.js'
 import { createAttestedProfile } from '../attested.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ColorProviderError } from '../errors.js'
-import { assetBasket } from '../identifiers.js'
+import { assetBasket, COLOR_KEY_ID, colorProtocolID } from '../identifiers.js'
 import type {
   ColorAttestation,
   ProfileAssetContext,
@@ -23,7 +26,14 @@ import type {
 } from '../profiles.js'
 import { ColorStore } from '../store.js'
 import type { ColorPermissionModuleOptions } from '../types.js'
-import { createModule, deployAsset, FakeProvider, FakeWallet, tokenPayment } from './fixtures.js'
+import {
+  createModule,
+  deployAsset,
+  FakeProvider,
+  FakeWallet,
+  remittanceString,
+  tokenPayment
+} from './fixtures.js'
 import {
   A141A,
   AttestingProvider,
@@ -38,6 +48,7 @@ import {
   issuerLikePayload,
   issuerLikeProfile,
   jsonInscription,
+  signAttestation,
   TestModule,
   type AttestedReceipt,
   type GraphBuilder
@@ -713,6 +724,109 @@ describe('attested receipts', () => {
       reason: `no submit bytes for ${B.id('hex')}`
     })
     expect(store.writes.filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+  })
+
+  /**
+   * One transaction paying the bench wallet 1000 of each of two identity-mode attested assets,
+   * spending their attested deploys, with a receipt and attested leaf per asset.
+   */
+  async function twoAssetReceipt(): Promise<{ args: InternalizeActionArgs; tip: Transaction }> {
+    const assets = [attestedAsset(g, SIGNER), attestedAsset(g, SIGNER)]
+    const custodies = assets.map(({ assetId }) => ({
+      version: 1 as const,
+      assetId,
+      derivationPrefix: remittanceString(),
+      derivationSuffix: remittanceString(),
+      senderIdentityKey: g.owner.toPublicKey().toString()
+    }))
+    const outputs = await Promise.all(
+      custodies.map(async custody => {
+        const { publicKey } = await new ProtoWallet(g.owner).getPublicKey({
+          protocolID: colorProtocolID(
+            custody.assetId,
+            custody.derivationPrefix,
+            custody.derivationSuffix
+          ),
+          keyID: COLOR_KEY_ID,
+          counterparty: wallet.identityKey
+        })
+        return {
+          lockingScript: new OneColor().lock(
+            custody.assetId,
+            1000n,
+            hash160(toArray(publicKey, 'hex'))
+          )
+        }
+      })
+    )
+    const tip = await g.spend(
+      assets.map(({ tx }) => ({ tx, vout: 0 })),
+      outputs
+    )
+    const args: InternalizeActionArgs = {
+      tx: tip.toAtomicBEEF(),
+      description: 'Receive tokens',
+      outputs: await Promise.all(
+        assets.map(async ({ tx, assetId }, index) => ({
+          outputIndex: index,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: {
+            basket: assetBasket(assetId, 'value'),
+            customInstructions: JSON.stringify({
+              ...custodies[index],
+              profileData: {
+                [ATTESTED_PROFILE_ID]: {
+                  [assetId]: {
+                    declarationTx: tx.toHex(),
+                    transactions: [],
+                    attestations: [{ ...(await signAttestation(K, assetId, tx.id('hex'), [0])) }],
+                    submissions: [{ txid: tip.id('hex'), offChainValues: '' }]
+                  }
+                }
+              }
+            })
+          }
+        }))
+      )
+    }
+    return { args, tip }
+  }
+
+  it('a receipt transaction carries one attested asset: its records are per transaction', async () => {
+    const { args } = await twoAssetReceipt()
+    await expect(receive(moduleWith(), args)).rejects.toMatchObject({
+      name: 'ProfileParamsError',
+      message: expect.stringMatching(/one attested asset/)
+    })
+    expect(prompts).toEqual([])
+    expect(store.writes.filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+  })
+
+  it('a receipt never merges into a stored record of another asset', async () => {
+    const { tx: deploy } = attestedAsset(g, SIGNER)
+    const receipt = await attestedReceipt({ g, deploy, recipient: wallet, signers: [K] })
+    const txid = receipt.tip.id('hex')
+    const other = `${'cd'.repeat(32)}_0`
+    await colorStore.putTx(txid, {
+      v: 1,
+      assetId: other,
+      rawTx: receipt.tip.toHex(),
+      atomicBEEF: toHex(receipt.tip.toAtomicBEEF()),
+      role: 'receipt',
+      state: 'credited',
+      inputs: [],
+      outputs: [1],
+      offChainValues: '',
+      attestations: []
+    })
+    const writes = store.writes.length
+    await expect(receive(moduleWith(), receipt.args)).rejects.toMatchObject({
+      name: 'ProfileParamsError',
+      message: expect.stringMatching(/another asset/)
+    })
+    expect(prompts).toEqual([])
+    expect(store.writes.slice(writes).filter(key => key.startsWith('color.v1.tx.'))).toEqual([])
+    expect((await colorStore.getTx(txid))?.assetId).toBe(other)
   })
 
   it('two receipts of one asset must carry the same evidence', async () => {

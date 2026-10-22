@@ -1728,6 +1728,13 @@ export class ColorPermissionModule implements PermissionsModule {
       group.push(receipt)
       groups.set(receipt.token.assetId, group)
     }
+    // Evidence records are per transaction (contract §2.2-8), so one receipt transaction carries
+    // the receipts of at most one attested asset; a second would merge into the first's record.
+    if ([...groups.values()].filter(group => group[0].resolved.attested !== undefined).length > 1) {
+      throw new ProfileParamsError(
+        'BRC-207: a receipt transaction may carry one attested asset: its records are per transaction'
+      )
+    }
     const outcomes: AttestedOutcome[] = []
     for (const [assetId, group] of groups) {
       const resolved = group[0].resolved
@@ -1920,6 +1927,18 @@ export class ColorPermissionModule implements PermissionsModule {
       })),
       attestations: distinctAttestations(leaf.attestations)
     }
+    const anchorTxids = [
+      ...new Set(frontier.anchors.map(anchor => parseOutpoint(anchor.outpoint).txid))
+    ].filter(txid => txid !== tipTxid)
+    // A stored record is merged, never replaced: one recorded for another asset would be corrupted.
+    await eachInOrder(new Set([...anchorTxids, ...frontier.pending, tipTxid]), async txid => {
+      const stored = await this.colorStore!.getTx(txid)
+      if (stored !== undefined && stored.assetId !== assetId) {
+        throw new ProfileParamsError(
+          `BRC-207: transaction ${txid} of this receipt is recorded for another asset`
+        )
+      }
+    })
     // A profile that defines admitReceipt decides every receipt (contract §2.2, D7), also one
     // whose tip the leaf already attests: it runs before the coverage decision and a throw
     // propagates with nothing written.
@@ -1985,9 +2004,6 @@ export class ColorPermissionModule implements PermissionsModule {
       }
     }
     const records: Array<[string, TxRecord]> = []
-    const anchorTxids = [
-      ...new Set(frontier.anchors.map(anchor => parseOutpoint(anchor.outpoint).txid))
-    ].filter(txid => txid !== tipTxid)
     for (const txid of anchorTxids) {
       records.push([
         txid,

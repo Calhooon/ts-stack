@@ -310,6 +310,9 @@ The module fails explicitly, rather than falling back, on:
 - building a deploy that declares a non-empty `req`, and attested `ISSUE`
   leaves in plans and receipts: such deploys are built outside the module;
 - BRC-177 `lifecycles` in attested evidence;
+- receipts of more than one attested asset in one transaction, and attested
+  receipts whose graph includes a transaction already recorded for another
+  asset: evidence records are kept per transaction;
 - `createSignature` for assets whose profiles define `sendPolicy`,
   `submissionData` or `checkPlanData`, since a released signature cannot carry
   submission data, keep hand-over evidence or pass through a plan whose
