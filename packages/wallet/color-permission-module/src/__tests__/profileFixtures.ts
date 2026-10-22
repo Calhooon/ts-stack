@@ -1,6 +1,6 @@
-import { LockingScript, type PrivateKey, ProtoWallet, Transaction } from '@bsv/sdk'
+import { LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction } from '@bsv/sdk'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
-import type { StrictCborValue } from '@bsv/templates'
+import { OneColor, type StrictCborValue } from '@bsv/templates'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ProfileParamsError } from '../errors.js'
 import type { ColorAttestation, RequiredProfileHandler, ResolvedAsset } from '../profiles.js'
@@ -158,3 +158,96 @@ export const F_REQ_HEX =
 /** The Mandala issuer-v1 profile id (contract §4): a test constant only; the module never names Mandala. */
 export const MANDALA_ISSUER_ID =
   'https://github.com/bsv-blockchain/mandala/blob/master/docs/profiles/issuer-v1.md'
+
+/** The deploy payload `{req: F_REQ}`: the attested identity-mode profile and Mandala issuer-v1. */
+export const F_REQ_PAYLOAD: number[] = toArray(`a163726571${F_REQ_HEX}`, 'hex')
+
+/** A graph input: output `vout` of `tx`, unlocked by `key` (default: the graph's owner). */
+export interface GraphInput {
+  tx: Transaction
+  vout: number
+  key?: PrivateKey
+}
+
+/**
+ * A graph output: an amount of the graph's asset (`0n` is an authority), `'plain'` satoshis to the
+ * owner, an explicit token of any asset, or a raw locking script.
+ */
+export type GraphOutput =
+  | bigint
+  | 'plain'
+  | { assetId: string; amount: bigint; payload?: number[] }
+  | { lockingScript: LockingScript }
+
+/** Builds real BRC-162 transaction graphs whose P2PKH scripts verify under the interpreter. */
+export interface GraphBuilder {
+  /** The key every output pays to. */
+  readonly owner: PrivateKey
+  /** Every transaction built so far, keyed by txid. */
+  readonly bodies: Map<string, Transaction>
+  /** The asset of the last `deploy()`. */
+  readonly assetId: string
+  /** A no-input transaction with one plain P2PKH output (1000 sats) to the owner. */
+  fund: () => Transaction
+  /** A no-input deploy of `amount` (`0n`: the first authority) with `payload` (default F_REQ). */
+  deploy: (amount?: bigint, payload?: number[]) => { tx: Transaction; assetId: string }
+  /** A fully signed transaction spending `inputs` into `outputs` (1 sat each). */
+  spend: (inputs: GraphInput[], outputs: GraphOutput[]) => Promise<Transaction>
+  /** An attested-v1 statement by `signer` over `vouts` of `tx` for the graph's asset. */
+  attest: (signer: PrivateKey, tx: Transaction, vouts: number[]) => Promise<ColorAttestation>
+}
+
+export function graph(owner: PrivateKey = new PrivateKey(4242)): GraphBuilder {
+  const pubKeyHash = owner.toPublicKey().toHash() as number[]
+  const bodies = new Map<string, Transaction>()
+  let nonce = 1
+  let assetId: string | undefined
+  const add = (tx: Transaction): Transaction => {
+    bodies.set(tx.id('hex'), tx)
+    return tx
+  }
+  const asset = (): string => assetId ?? '0'.repeat(64) + '_0'
+  const lockingScript = (output: GraphOutput): LockingScript => {
+    if (output === 'plain') return new P2PKH().lock(pubKeyHash)
+    if (typeof output === 'bigint') return new OneColor().lock(asset(), output, pubKeyHash)
+    if ('lockingScript' in output) return output.lockingScript
+    return new OneColor().lock(output.assetId, output.amount, pubKeyHash, output.payload)
+  }
+  return {
+    owner,
+    bodies,
+    get assetId() {
+      return asset()
+    },
+    fund: () => {
+      const tx = new Transaction(1, [], [], nonce++)
+      tx.addOutput({ lockingScript: new P2PKH().lock(pubKeyHash), satoshis: 1000 })
+      return add(tx)
+    },
+    deploy: (amount = 0n, payload = F_REQ_PAYLOAD) => {
+      const tx = new Transaction(1, [], [], nonce++)
+      tx.addOutput({
+        lockingScript: new OneColor().lock(null, amount, pubKeyHash, payload),
+        satoshis: 1
+      })
+      add(tx)
+      assetId = `${tx.id('hex')}_0`
+      return { tx, assetId }
+    },
+    spend: async (inputs, outputs) => {
+      const tx = new Transaction()
+      for (const { tx: source, vout, key } of inputs) {
+        tx.addInput({
+          sourceTransaction: source,
+          sourceOutputIndex: vout,
+          unlockingScriptTemplate: new OneColor().unlock(key ?? owner)
+        })
+      }
+      for (const output of outputs)
+        tx.addOutput({ lockingScript: lockingScript(output), satoshis: 1 })
+      await tx.sign()
+      return add(tx)
+    },
+    attest: async (signer, tx, vouts) => await signAttestation(signer, asset(), tx.id('hex'), vouts)
+  }
+}
