@@ -1308,14 +1308,16 @@ export class ColorPermissionModule implements PermissionsModule {
       const pending = this.pendingHandoffs.get(context.action.reference)
       this.pendingHandoffs.delete(context.action.reference)
       await this.fileDeploy(res as SignActionResult, context.action, context.originator)
-      // A noSend action is a BRC-177 handoff or a plain-noSend hand-over (createAction refuses
-      // any other): its receiver submits it.
-      if (!context.action.noSend)
-        await this.submitSigned(res as SignActionResult, context.action.transaction, pending)
-      else if (pending?.plain === true) {
+      // A plain-noSend hand-over is never sent here, whatever noSend the host derived for the
+      // action (signAction fixed its send mode): its recipient submits it, parents first.
+      if (pending?.plain === true) {
         const colorHandoff = await this.recordHandoff(res as SignActionResult, pending)
         return { ...(res as SignActionResult), colorHandoff }
       }
+      // Any other noSend action is a BRC-177 handoff (createAction refuses the rest): its receiver
+      // submits it.
+      if (!context.action.noSend)
+        await this.submitSigned(res as SignActionResult, context.action.transaction, pending)
     }
     return res
   }
@@ -3265,6 +3267,16 @@ export class ColorPermissionModule implements PermissionsModule {
       this.profiles.size > 0
         ? await this.profileSigning(plan, createArgs, tx, managed, originator)
         : undefined
+    // B2: a plain-noSend hand-over may spend unsettled parents, so it must never be broadcast or
+    // batched here; signAction options would otherwise override the createAction noSend.
+    if (
+      pending?.plain === true &&
+      (args.options?.noSend === false || (args.options?.sendWith ?? []).length > 0)
+    ) {
+      throw new ProfileParamsError(
+        'BRC-207: a plain noSend hand-over is never sent by this wallet: signAction options.noSend cannot be false and sendWith must be empty'
+      )
+    }
     const spend: SpendContext = { offline: plainNoSendArgs(createArgs), originator }
     const consumedAssets = new Set(tokens.consumed.map(input => input.assetId))
     const trust = await this.trustVersions(consumedAssets)
@@ -3300,9 +3312,18 @@ export class ColorPermissionModule implements PermissionsModule {
       ))
     }
     if (pending === undefined) return { ...args, spends }
-    // onResponse needs the signed transaction itself, never only its txid.
+    // onResponse needs the signed transaction itself, never only its txid; a plain hand-over's
+    // send mode is fixed, as the toolbox fixes a BRC-177 protected action's.
     this.pendingHandoffs.set(args.reference, pending)
-    return { ...args, spends, options: { ...args.options, returnTXIDOnly: false } }
+    return {
+      ...args,
+      spends,
+      options: {
+        ...args.options,
+        ...(pending.plain ? { noSend: true, sendWith: [] } : {}),
+        returnTXIDOnly: false
+      }
+    }
   }
 
   /**

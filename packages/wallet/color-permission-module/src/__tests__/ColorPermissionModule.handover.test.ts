@@ -1047,6 +1047,72 @@ describe('signed hand-over', () => {
     expect(recipient.outputs.has(`${result.txid!}.0`)).toBe(true)
   })
 
+  /** A plain-noSend hand-over of 600 from an offline receipt, up to the module's signAction. */
+  async function signHandover(signOptions?: SignActionArgs['options']) {
+    const receipt = await offlineReceipt()
+    const module = issuerModule(b)
+    const funded = await plan(module, {
+      labels: planLabels(receipt.assetId),
+      outputs: [await paymentOutput(receipt.assetId, 600n)],
+      options: { noSend: true }
+    })
+    const signable = (await b.wallet.createAction(funded)).signableTransaction!
+    const action: PermissionsModuleAction = {
+      reference: signable.reference,
+      transaction: Transaction.fromAtomicBEEF(signable.tx),
+      noSend: true,
+      createArgs: b.wallet.pending.get(signable.reference)!.args
+    }
+    const signing = module.onRequest({
+      method: 'signAction',
+      args: {
+        reference: action.reference,
+        spends: {},
+        ...(signOptions === undefined ? {} : { options: signOptions })
+      },
+      originator: APP,
+      action
+    })
+    return { receipt, module, action, signing }
+  }
+
+  it.each([
+    ['options.noSend false', { noSend: false }],
+    ['a sendWith batch', { sendWith: ['ab'.repeat(32)] }]
+  ])('a plain hand-over is never signed with %s', async (_name, options) => {
+    const { signing } = await signHandover(options)
+    await expect(signing).rejects.toMatchObject({
+      name: 'ProfileParamsError',
+      message: expect.stringMatching(/is never sent by this wallet/)
+    })
+    expect(b.prompts).toEqual([])
+  })
+
+  it('fixes the send mode of a plain hand-over at signAction', async () => {
+    const { signing } = await signHandover({ acceptDelayedBroadcast: false })
+    expect(((await signing).args as SignActionArgs).options).toEqual({
+      acceptDelayedBroadcast: false,
+      noSend: true,
+      sendWith: [],
+      returnTXIDOnly: false
+    })
+  })
+
+  it('records a plain hand-over and submits nothing, whatever noSend the host reports', async () => {
+    const { module, action, signing } = await signHandover()
+    const signArgs = (await signing).args as SignActionArgs
+    // A host that derives action.noSend from the app's signAction options alone.
+    const result = (await module.onResponse(await b.wallet.signAction(signArgs), {
+      method: 'signAction',
+      originator: APP,
+      action: { ...action, noSend: false }
+    })) as HandoffResult
+    expect(result.colorHandoff).toMatchObject({ version: 1, txid: result.txid })
+    expect((await new ColorStore(b.store).getTx(result.txid!))?.role).toBe('handover')
+    expect(b.ap.submitted).toEqual([])
+    expect(b.fallback.submissions).toEqual([])
+  })
+
   it('a plain noSend hand-over moves exactly one asset', async () => {
     const one = await issuerAsset(b)
     const two = await issuerAsset(b)
