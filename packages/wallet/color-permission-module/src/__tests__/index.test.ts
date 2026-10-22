@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals'
+import { LockingScript, Transaction } from '@bsv/sdk'
 import * as api from '../index.js'
 
 describe('package exports', () => {
@@ -84,5 +85,35 @@ describe('package exports', () => {
     for (const method of ['settle', 'handoffEvidence', 'isSettled', 'dispose'])
       expect(typeof (m.ColorPermissionModule.prototype as any)[method]).toBe('function')
     expect(m.ATTESTATION_PROTOCOL_ID).toEqual([2, 'color admission attestation'])
+  })
+
+  it('keeps the 0.1.0 positional transactionConsent call beside the options object', () => {
+    const tx = new Transaction(
+      1,
+      [],
+      [{ lockingScript: LockingScript.fromHex('6a'), satoshis: 0 }],
+      0
+    )
+    const tokens = api.transactionTokens(tx)
+    const consent = (last: Parameters<typeof api.transactionConsent>[6]): Record<string, unknown> =>
+      api.transactionConsent(
+        tx,
+        tokens,
+        [],
+        () => false,
+        () => true,
+        [],
+        last
+      )
+    expect(consent({ deployOwned: false })).toEqual(consent(false))
+    const seen: number[] = []
+    consent({
+      deployOwned: false,
+      read: (_script, outpoint) => {
+        seen.push(outpoint.vout)
+        return undefined
+      }
+    })
+    expect(seen).toEqual([0])
   })
 })

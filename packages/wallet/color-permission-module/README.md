@@ -351,7 +351,9 @@ members are `protected`, so a derivative can override, for example, `approve`
 the module evaluates transactions with are exported too: the token readers
 (`readTokenOutput`, `tryReadTokenOutput`, `readSentToken`), `transactionTokens`,
 `requiredOperations`, `supplyChange`, and the consent builders `actionConsent`
-and `transactionConsent`.
+and `transactionConsent`. Their 0.1.0 positional calls are unchanged; the hand-over flag and
+the token reader go in a trailing options object (`ActionConsentOptions`, or
+`TransactionConsentOptions` in place of the `deployOwned` boolean).
 
 ## Verification
 

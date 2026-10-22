@@ -20,11 +20,13 @@ export {
   tryReadTokenOutput
 } from './ColorPermissionModule.js'
 export type {
+  ActionConsentOptions,
   Custody,
   Holding,
   ManagedInput,
   ReleasedSignature,
   SourceOutput,
+  TransactionConsentOptions,
   TransactionTokens
 } from './ColorPermissionModule.js'
 export {

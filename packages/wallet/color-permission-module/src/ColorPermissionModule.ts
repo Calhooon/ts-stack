@@ -461,6 +461,12 @@ interface SpendContext {
 
 const PUBLISHED_SPEND: SpendContext = { offline: false }
 
+/** The 0.2.0 members of a `fund` call: assets whose change stays offline, and the spend context. */
+interface FundOptions {
+  offline?: ReadonlySet<string>
+  spend?: SpendContext
+}
+
 /** True for a plain-noSend hand-over's arguments: `options.noSend` and no BRC-177 label. */
 function plainNoSendArgs(args: Pick<CreateActionArgs, 'options' | 'labels'>): boolean {
   return (
@@ -637,8 +643,9 @@ export function supplyChange(
  * `seekPermission`, every asset leg, with this wallet's and foreign inputs, kept and outgoing
  * outputs and the supply change; satoshi totals and fee; the signatures the module releases; and
  * the lock time. BRC-100 `CreateActionArgs` declare no `seekPermission`, so it is read as an
- * untyped host extension and is `true` unless that member is `false` (contract §2.5). `read` is
- * the BRC-162 reader.
+ * untyped host extension and is `true` unless that member is `false` (contract §2.5).
+ * `options.handoff` marks a plain-noSend hand-over and `options.read` is the BRC-162 reader
+ * (default `readTokenOutput`); the 0.1.0 six-argument call is unchanged.
  */
 export function actionConsent(
   plan: ColorPlan,
@@ -647,9 +654,9 @@ export function actionConsent(
   tokens: TransactionTokens,
   managed: readonly ManagedInput[],
   scopes: ReadonlyMap<string, number>,
-  handoff?: boolean,
-  read: TokenReader = readTokenOutput
+  options: ActionConsentOptions = {}
 ): Record<string, unknown> {
+  const { handoff, read = readTokenOutput } = options
   const requested = createArgs.outputs ?? []
   const kept = (index: number): boolean =>
     requested[index]?.basket?.startsWith(`${COLOR_BASKET_NAMESPACE} `) === true ||
@@ -671,10 +678,25 @@ export function actionConsent(
         inputIndex: tx.inputs.findIndex(candidate => inputOutpoint(candidate) === input.outpoint),
         sighashType: scopes.get(input.outpoint) ?? DEFAULT_SIGHASH
       })),
-      plan.ownedOutputs.some(remittance => remittance.outputIndex === 0),
-      read
+      { deployOwned: plan.ownedOutputs.some(remittance => remittance.outputIndex === 0), read }
     )
   }
+}
+
+/** The optional members of an {@link actionConsent} call. */
+export interface ActionConsentOptions {
+  /** A plain-noSend hand-over the recipient completes (a BRC-177 label also marks a hand-over). */
+  handoff?: boolean
+  /** The BRC-162 token reader; `readTokenOutput` when absent. */
+  read?: TokenReader
+}
+
+/** The deploy ownership and optional reader of a {@link transactionConsent} call. */
+export interface TransactionConsentOptions {
+  /** Whether this wallet keeps the transaction's deploy output. */
+  deployOwned: boolean
+  /** The BRC-162 token reader; `readTokenOutput` when absent. */
+  read?: TokenReader
 }
 
 export interface ReleasedSignature {
@@ -687,7 +709,9 @@ export interface ReleasedSignature {
  * The facts the user approves for any transaction this wallet signs token inputs of, whether the
  * wallet funded it or an app built it: every asset leg with this wallet's (`own`) and foreign
  * inputs, kept and outgoing outputs and the supply change; the destinations; satoshi totals and
- * fee; the signatures released; and the lock time. `read` is the BRC-162 reader.
+ * fee; the signatures released; and the lock time. The last argument is whether the wallet keeps
+ * the deploy (the 0.1.0 boolean), or {@link TransactionConsentOptions} that also name the BRC-162
+ * reader (default `readTokenOutput`).
  */
 export function transactionConsent(
   tx: Transaction,
@@ -696,9 +720,10 @@ export function transactionConsent(
   kept: (vout: number) => boolean,
   destination: (vout: number) => boolean,
   signatures: ReleasedSignature[],
-  deployOwned: boolean,
-  read: TokenReader = readTokenOutput
+  deploy: boolean | TransactionConsentOptions
 ): Record<string, unknown> {
+  const { deployOwned, read = readTokenOutput }: TransactionConsentOptions =
+    typeof deploy === 'object' && deploy !== null ? deploy : { deployOwned: deploy }
   const txid = tx.id('hex')
   const outputs = tx.outputs.map((output, vout) => ({
     vout,
@@ -2283,8 +2308,7 @@ export class ColorPermissionModule implements PermissionsModule {
         explicit,
         handoff,
         originator,
-        offline,
-        spend
+        { offline, spend }
       )
       sighashScopes(plan, new Set([...explicit.managed, ...inputs].map(input => input.outpoint)))
       const ordered = orderInputs(explicit.inputs, tokenInputs(inputs), plan.inputPositions)
@@ -2836,6 +2860,8 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * Funds each asset the plan involves, checks its operations, splits for a handoff, and returns
    * the selected inputs and token change. The user approves the funded action at signAction.
+   * `options.offline` names the assets whose change stays offline (a plain-noSend hand-over's)
+   * and `options.spend` how inputs are checked; both default as in 0.1.0.
    */
   protected async fund(
     reserved: Set<string>,
@@ -2844,12 +2870,12 @@ export class ColorPermissionModule implements PermissionsModule {
     explicit: ExplicitInputs,
     handoff: boolean,
     originator: string,
-    offline: ReadonlySet<string> = new Set(),
-    spend: SpendContext = PUBLISHED_SPEND
+    options: FundOptions = {}
   ): Promise<{
     inputs: ManagedInput[]
     changes: TokenChange[]
   }> {
+    const { offline = new Set<string>(), spend = PUBLISHED_SPEND } = options
     const assetIds = new Set([
       ...planned.holdings.keys(),
       ...explicit.holdings.keys(),
@@ -3352,16 +3378,10 @@ export class ColorPermissionModule implements PermissionsModule {
     })
     await this.approve(
       originator,
-      actionConsent(
-        plan,
-        createArgs,
-        tx,
-        tokens,
-        managed,
-        scopes,
-        (await this.plainNoSend(plan)) || undefined,
-        this.read
-      )
+      actionConsent(plan, createArgs, tx, tokens, managed, scopes, {
+        handoff: (await this.plainNoSend(plan)) || undefined,
+        read: this.read
+      })
     )
     // The decision stands only on the trust it was made with (C16).
     await this.assertTrustUnchanged(trust)
@@ -3847,8 +3867,7 @@ export class ColorPermissionModule implements PermissionsModule {
         kept,
         vout => !kept(vout),
         [{ outpoint, inputIndex, sighashType }],
-        kept(0),
-        this.read
+        { deployOwned: kept(0), read: this.read }
       )
     })
     // The decision stands only on the trust it was made with (C16).
