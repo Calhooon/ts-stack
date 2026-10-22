@@ -185,10 +185,10 @@ describe('attested profile descriptor (C05, C38, C39)', () => {
   })
 
   it('Mandala F-REQ payload resolves both profiles in canonical order', () => {
-    expect(F_REQ_HEX.length).toBe(656)
+    expect(F_REQ_HEX).toHaveLength(656)
     const payload =
       'a4636465630263726571' + F_REQ_HEX + '6373796d6454555344656c6162656c6b5465737420446f6c6c6172'
-    expect(payload.length).toBe(730)
+    expect(payload).toHaveLength(730)
     const registry = validateProfileHandlers({
       [ATTESTED_PROFILE_ID]: attested,
       [MANDALA_ISSUER_ID]: stub(MANDALA_ISSUER_ID)

@@ -120,7 +120,7 @@ async function offlineReceipt(
     args: receipt.args,
     originator: APP
   })
-  expect(b.ap.submitted.length).toBe(before)
+  expect(b.ap.submitted).toHaveLength(before)
   const forwarded = args as InternalizeActionArgs
   if (options.hold !== false) await b.wallet.internalizeAction(forwarded)
   return { ...receipt, assetId, deploy, R: receipt.tip.id('hex'), forwarded }
@@ -356,7 +356,7 @@ describe('settle', () => {
     const module = attestedModule(b)
     const { assetId, R } = await offlineReceipt(b, module)
     const [a, c] = await Promise.all([module.settle(), module.settle()])
-    expect(b.ap.submitted.filter(s => txidOf(s) === R).length).toBe(1)
+    expect(b.ap.submitted.filter(s => txidOf(s) === R)).toHaveLength(1)
     expect([...a.results, ...c.results].every(r => r.status === 'admitted')).toBe(true)
     // The second call reports the first call's admission from the settled record.
     expect(a.results).toEqual([admitted(R, assetId)])

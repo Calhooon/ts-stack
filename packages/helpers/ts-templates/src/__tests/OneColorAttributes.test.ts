@@ -38,9 +38,9 @@ const OVER_MAX_ID = 'a:' + 'x'.repeat(199)
 
 describe('isProfileId', () => {
   it('pins the fixture lengths (contract §4: the Mandala id is 80 bytes; 200-byte boundary)', () => {
-    expect(MANDALA.length).toBe(80)
-    expect(MAX_ID.length).toBe(200)
-    expect(OVER_MAX_ID.length).toBe(201)
+    expect(MANDALA).toHaveLength(80)
+    expect(MAX_ID).toHaveLength(200)
+    expect(OVER_MAX_ID).toHaveLength(201)
   })
 
   it.each([
@@ -278,7 +278,7 @@ describe('readOneColorAttributes: req and ext', () => {
     })
     expect(req.get(MANDALA)).toEqual({ version: 1, params: { identityKey: K } })
     expect(toHex([...a.reqBytes!])).toBe(REQ_HEX)
-    expect(a.reqBytes!.length).toBe(328)
+    expect(a.reqBytes!).toHaveLength(328)
     expect(a.reqBytes).toBeInstanceOf(Uint8Array)
     expect(a.ext).toEqual(ABSENT)
     // number[] input reads identically
