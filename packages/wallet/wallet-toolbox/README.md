@@ -5910,11 +5910,17 @@ introduced. The source file and original financial expiry remain unchanged.
 The rebuilt Linux ARM64 component is 1,353,568 bytes with SHA-256
 `0eca37f702a2597cc39ee5b266ece6c189034caca80356e22a1b94e5afa40a31`.
 All thirteen original native component contracts pass on that exact source build.
-Actual frozen-copy and full expired-recovery evidence must be reported separately.
-The preceding x64 pin above belongs to the prior native source; qualification and
-an updated exact x64 component pin are still required before this combined source
-is ready for delivery. All original native ABI, source-build/loader checks,
-resource limits and complete platform/recovery gates remain mandatory.
+The same native source also passed all thirteen original contracts on actual
+Linux x64 in the isolated candidate-contract workflow. That component is
+1,385,664 bytes with SHA-256
+`9e50ead53bd9aa0757f7aebcde29be6bd7ce3faecaad00249515d66198987fed`.
+Both reviewed static pins bind those measured artifacts; bootstrap evidence
+never installs or admits an executable. The ARM64 frozen-copy transport diagnostic
+also passes after real original expiry, including complete proof bytes,
+cancellation, capacity refusal and cleanup. Full composed expired recovery,
+normal delivery and complete platform qualification remain separate required
+gates. All original native ABI, source-build/loader checks and resource limits
+remain mandatory.
 
 ### Closed-facade copy deadline
 

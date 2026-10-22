@@ -26,8 +26,8 @@ const componentBuilds = Object.freeze({
   'linux/x64': Object.freeze({
     platform: 'linux',
     architecture: 'x64',
-    bytes: 1381576,
-    sha256: '4ae3984e9c4a89dd3628ae9ff86613f61c3813f281ac6c16dedbe98279dd4af1'
+    bytes: 1385664,
+    sha256: '9e50ead53bd9aa0757f7aebcde29be6bd7ce3faecaad00249515d66198987fed'
   })
 })
 /** Read-only build metadata for maintainer preflight, never executable admission.
