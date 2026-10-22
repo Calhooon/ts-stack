@@ -210,6 +210,21 @@
       "removeWhen": "Remove when chevrotain and the Mermaid parser chain naturally resolve lodash-es 4.18.0 or newer and dependency review remains green."
     },
     {
+      "id": "dompurify-mermaid-advisory-override",
+      "category": "override",
+      "target": "pnpm-workspace.yaml override DOMPurify releases below 3.4.17",
+      "owner": "ts-stack-maintainers",
+      "reason": "Mermaid 12 declares DOMPurify ^3.4.12 and the frozen graph resolved 3.4.15, affected by GHSA-cg2g-xh64-v4q7 (SAFE_FOR_TEMPLATES bypass through attached shadow-root content) and GHSA-mrv2-3pqr-j5jr (IN_PLACE hooks leaving detached-subtree handlers armed). 3.4.17 is the first patched release and stays within Mermaid's declared range, so the docs diagram toolchain API is unchanged.",
+      "evidence": [
+        "pnpm-workspace.yaml#overrides",
+        "https://github.com/advisories/GHSA-cg2g-xh64-v4q7",
+        "https://github.com/advisories/GHSA-mrv2-3pqr-j5jr"
+      ],
+      "created": "2026-10-22",
+      "reviewBy": "2026-11-21",
+      "removeWhen": "Remove when Mermaid naturally resolves DOMPurify 3.4.17 or newer and dependency review and the frozen high-severity audit remain green."
+    },
+    {
       "id": "nanoid-postcss-advisory-override",
       "category": "override",
       "target": "pnpm-workspace.yaml override nanoid releases below 3.3.18",
@@ -226,20 +241,21 @@
     {
       "id": "toml-frontmatter-advisory-override",
       "category": "override",
-      "target": "pnpm-workspace.yaml override for TOML releases below 4.2.0",
+      "target": "pnpm-workspace.yaml override for TOML releases below 5.0.1",
       "owner": "ts-stack-maintainers",
-      "reason": "remark-mdx-frontmatter 5.2.0 still constrains its TOML parser dependency to vulnerable 3.x even though it imports only the compatible parse API. GHSA-v5mp-jgw5-2x6j is fixed in 4.1.2, and GHSA-82x6-q7mm-w9cf requires 4.2.0. The workspace already requires Node 24, webpack-cli accepts TOML 4, and the docs validation, tests, and complete production build verify the substitution.",
+      "reason": "remark-mdx-frontmatter 5.2.0 still constrains its TOML parser dependency to vulnerable releases even though it imports only the parse API, and webpack-cli's optional TOML loader also calls only parse. TOML 5.0.1 is the first release fixing the quadratic array-of-tables, dotted-key and unbounded-integer parse DoS advisories; its parse(input, options) entry point is unchanged apart from the optional options argument, and webpack-cli 7.2.3 declares a ^3 || ^4 || ^5 peer range. The docs validation, tests, and complete production build verify the substitution.",
       "evidence": [
         "pnpm-workspace.yaml#overrides",
         "pnpm-lock.yaml#overrides",
         "governance/dependency-release-policy.json#overrideRegistry",
         "docs-site/package.json#scripts",
-        "https://github.com/advisories/GHSA-v5mp-jgw5-2x6j",
-        "https://github.com/advisories/GHSA-82x6-q7mm-w9cf"
+        "https://github.com/advisories/GHSA-4qx8-w7c3-pj3p",
+        "https://github.com/advisories/GHSA-9j65-hcg3-gc64",
+        "https://github.com/advisories/GHSA-9qmh-m7c6-f92p"
       ],
       "created": "2026-09-04",
-      "reviewBy": "2026-10-04",
-      "removeWhen": "Remove when remark-mdx-frontmatter or its supported successor natively resolves TOML 4.2.0 or newer and docs validation, tests, production build, and the frozen high-severity audit remain green."
+      "reviewBy": "2026-11-21",
+      "removeWhen": "Remove when remark-mdx-frontmatter or its supported successor natively resolves TOML 5.0.1 or newer and docs validation, tests, production build, and the frozen high-severity audit remain green."
     },
     {
       "id": "openapi-typescript-redocly-overrides",

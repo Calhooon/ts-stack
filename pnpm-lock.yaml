@@ -9,10 +9,11 @@ overrides:
   brace-expansion@<5.0.11: 5.0.11
   engine.io@<6.6.10: 6.6.10
   nanoid@<3.3.18: 3.3.18
-  toml@<4.2.0: 4.2.0
+  toml@<5.0.1: 5.0.1
   qs@<6.16.0: 6.16.0
   js-yaml@<3.15.2: 3.15.2
   lodash-es@<4.18.0: 4.18.1
+  dompurify@<3.4.17: 3.4.17
   metro-file-map@0.87.1>micromatch: '-'
 
 packageExtensionsChecksum: sha256-j1ipTIriuh1r8NrHzy5rLoGNr081FjMxVoEY/IdY3mE=
@@ -657,7 +658,7 @@ importers:
         version: 5.111.0(esbuild@0.28.2)(webpack-cli@7.2.3)
       webpack-cli:
         specifier: ^7.2.3
-        version: 7.2.3(json5@2.2.3)(toml@4.2.0)(webpack@5.111.0)
+        version: 7.2.3(json5@2.2.3)(toml@5.0.1)(webpack@5.111.0)
 
   packages/messaging/message-box-client:
     dependencies:
@@ -703,7 +704,7 @@ importers:
         version: 5.111.0(esbuild@0.28.2)(webpack-cli@7.2.3)
       webpack-cli:
         specifier: ^7.2.3
-        version: 7.2.3(json5@2.2.3)(toml@4.2.0)(webpack@5.111.0)
+        version: 7.2.3(json5@2.2.3)(toml@5.0.1)(webpack@5.111.0)
 
   packages/messaging/ts-paymail:
     dependencies:
@@ -5881,8 +5882,8 @@ packages:
   dom-accessibility-api@0.6.3:
     resolution: {integrity: sha512-7ZgogeTnjuHbo+ct10G9Ffp0mif17idi0IyWNVA/wcwcm7NPOD/WEHVP3n7n3MhXqxoIYm8d6MuZohYWIZ4T3w==}
 
-  dompurify@3.4.15:
-    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
+  dompurify@3.4.17:
+    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
 
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
@@ -8624,8 +8625,8 @@ packages:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
     engines: {node: '>=0.6'}
 
-  toml@4.2.0:
-    resolution: {integrity: sha512-TvAJjbHZlYmI323+srtqHQFyJsoWy6mI09ppkuj9+iRsqsVKG9fvTcOP7FHF2UCb0QSYtjEavffrKzdd0XgClg==}
+  toml@5.0.1:
+    resolution: {integrity: sha512-EqYNA/YvUNndrA2B3O2ojzLQoTQrBxeZ9UIjQwk8t10oe6n7dwclBwd9IdZQTOKwe6vWX+AXtl6IntXRbepdxQ==}
     engines: {node: '>=20'}
 
   tough-cookie@5.1.2:
@@ -9114,7 +9115,7 @@ packages:
     peerDependencies:
       js-yaml: ^4.0.0 || ^5.0.0
       json5: ^2.2.3
-      toml: 4.2.0
+      toml: 5.0.1
       webpack: ^5.101.0
       webpack-bundle-analyzer: ^4.0.0 || ^5.0.0
       webpack-dev-server: ^5.0.0 || ^6.0.0
@@ -13370,7 +13371,7 @@ snapshots:
 
   dom-accessibility-api@0.6.3: {}
 
-  dompurify@3.4.15:
+  dompurify@3.4.17:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -15140,7 +15141,7 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
       dayjs: 1.11.23
-      dompurify: 3.4.15
+      dompurify: 3.4.17
       elkjs: 0.9.3
       es-toolkit: 1.52.0
       katex: 0.16.47
@@ -16380,7 +16381,7 @@ snapshots:
     dependencies:
       '@types/mdast': 4.0.4
       estree-util-value-to-estree: 3.5.0
-      toml: 4.2.0
+      toml: 5.0.1
       unified: 11.0.5
       unist-util-mdx-define: 1.1.2
       yaml: 2.9.1
@@ -16990,7 +16991,7 @@ snapshots:
 
   toidentifier@1.0.1: {}
 
-  toml@4.2.0: {}
+  toml@5.0.1: {}
 
   tough-cookie@5.1.2:
     dependencies:
@@ -17456,7 +17457,7 @@ snapshots:
 
   webidl-conversions@7.0.0: {}
 
-  webpack-cli@7.2.3(json5@2.2.3)(toml@4.2.0)(webpack@5.111.0):
+  webpack-cli@7.2.3(json5@2.2.3)(toml@5.0.1)(webpack@5.111.0):
     dependencies:
       '@discoveryjs/json-ext': 1.1.0
       commander: 14.0.3
@@ -17469,7 +17470,7 @@ snapshots:
       webpack-merge: 6.0.1
     optionalDependencies:
       json5: 2.2.3
-      toml: 4.2.0
+      toml: 5.0.1
 
   webpack-merge@6.0.1:
     dependencies:
@@ -17536,7 +17537,7 @@ snapshots:
       watchpack: 2.5.2
       webpack-sources: 3.5.1
     optionalDependencies:
-      webpack-cli: 7.2.3(json5@2.2.3)(toml@4.2.0)(webpack@5.111.0)
+      webpack-cli: 7.2.3(json5@2.2.3)(toml@5.0.1)(webpack@5.111.0)
     transitivePeerDependencies:
       - '@minify-html/node'
       - '@napi-rs/image'

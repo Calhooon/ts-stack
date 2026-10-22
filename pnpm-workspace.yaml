@@ -42,10 +42,11 @@ overrides:
   # Vite's PostCSS graph permits nanoid 3 releases older than the security
   # fix. Select the first patched 3.x release without changing its public API.
   nanoid@<3.3.18: 3.3.18
-  # remark-mdx-frontmatter 5.2.0 still constrains TOML to vulnerable 3.x even
-  # though it only consumes the compatible parse() API. webpack-cli already
-  # accepts TOML 4; keep both paths on the first release fixing the advisories.
-  toml@<4.2.0: 4.2.0
+  # remark-mdx-frontmatter 5.2.0 and webpack-cli only consume TOML's parse(),
+  # whose signature 5.x keeps. Select the first release fixing the quadratic
+  # and unbounded-integer parse DoS advisories (GHSA-4qx8-w7c3-pj3p,
+  # GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p) on both paths.
+  toml@<5.0.1: 5.0.1
   # Express/body-parser, Superagent, and Stryker's typed-rest-client can retain
   # vulnerable qs releases. Select the first release fixing the bracket/comma
   # array-limit and attacker-controlled isBuffer advisories across every path.
@@ -58,6 +59,11 @@ overrides:
   # by GHSA-r5fr-rjxr-66jc (_.template imports key-name code injection). Select
   # the patched release already used elsewhere in the graph; the API is unchanged.
   lodash-es@<4.18.0: 4.18.1
+  # Mermaid 12 accepts DOMPurify ^3.4.12; the locked 3.4.15 is affected by the
+  # SAFE_FOR_TEMPLATES shadow-root bypass and IN_PLACE detached-handler
+  # advisories (GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr). Select the first
+  # patched release within Mermaid's range.
+  dompurify@<3.4.17: 3.4.17
   # Preserve Metro's existing Picomatch matcher while removing the unused braces closure.
   'metro-file-map@0.87.1>micromatch': '-'
 strictDepBuilds: true
