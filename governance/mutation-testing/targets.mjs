@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { matchesGlob, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // Additive #544 DATA/field coverage; existing identities and controls remain.
 const walletDataAdditions = {
@@ -328,6 +329,10 @@ function sourceLineRange(repositoryRoot, packageDirectory, filePath, startMarker
   return `${filePath}:${startIndex + 1}-${endIndex}`
 }
 
+const STOP_ON_KILL_ENVIRONMENT = fileURLToPath(
+  new URL('./stop-on-kill-environment.cjs', import.meta.url)
+)
+
 // The original full native and ordinary journal cases have mandatory exact-head CI
 // lanes and receipt-union gates. Six real expiry waits alone take at least6h.
 // The complete39-case integrity file also has mandatory cohort/receipt admission;
@@ -373,14 +378,11 @@ function jestTarget(
         projectType: 'custom',
         configFile,
         enableFindRelatedTests: findRelated,
-        ...(testMatch === undefined
-          ? {}
-          : {
-              config: {
-                ...config,
-                testMatch: componentTests
-              }
-            })
+        config: {
+          ...config,
+          testEnvironment: STOP_ON_KILL_ENVIRONMENT,
+          ...(testMatch === undefined ? {} : { testMatch: componentTests })
+        }
       },
       ...(esm ? { testRunnerNodeArgs: ['--experimental-vm-modules'] } : {})
     }

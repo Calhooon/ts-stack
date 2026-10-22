@@ -25,9 +25,19 @@ const tuple = mutant =>
     mutant.statusReason
   ])
 const targets = buildMutationTargets(root)
-for (const id of ['sdk-auth-http', 'wallet-retained-snapshot'].filter(id =>
-  Object.hasOwn(targets, id)
-))
+// Every target that executes in parts, whether by an explicit or an automatic
+// plan, must replay to exactly its canonical inventory.
+const partitioned = Object.keys(targets).filter(
+  id => partitionMutationTarget(id, targets[id]).length > 1
+)
+test('admitted scheduling stays within the original matrix ceiling and keeps every target', () => {
+  const matrix = Object.keys(targets).flatMap(id =>
+    partitionMutationTarget(id, targets[id]).map(part => ({ id, part: part.id }))
+  )
+  assert.ok(matrix.length <= 256)
+  assert.deepEqual([...new Set(matrix.map(row => row.id))].sort(), Object.keys(targets).sort())
+})
+for (const id of partitioned)
   test(`actual pinned ${id} partitions exhaust the original canonical mutant inventory and complete test configuration`, async () => {
     const target = targets[id]
     const canonical = await targetEvidence(root, target, id)

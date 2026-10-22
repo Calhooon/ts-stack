@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import { canonicalInventory, targetSources, mutantTuple } from './mutation-final-qualification.mjs'
-import { canonicalMutationPartitions } from './mutation-partitions.mjs'
+import { canonicalMutationPartitions, schedulingTopology } from './mutation-partitions.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const OUTPUT = 'governance/mutation-testing/execution-partitions.json'
@@ -51,7 +51,7 @@ export async function buildExecutionPartitionPlan(root = ROOT) {
   for (const [targetId, existingPartition, reviewedPackingHint] of reviewedUnits) {
     const target = targets[targetId]
     assert.ok(target, `Missing original execution target ${targetId}`)
-    const base = canonicalMutationPartitions(targetId, target).find(
+    const base = canonicalMutationPartitions(targetId, target, false).find(
       part => part.id === existingPartition
     )
     assert.ok(base, `Missing original execution unit ${targetId}/${existingPartition}`)
@@ -142,12 +142,7 @@ export async function buildExecutionPartitionPlan(root = ROOT) {
       parts
     })
   }
-  const originalRows = Object.entries(targets).reduce(
-    (sum, [id, target]) => sum + canonicalMutationPartitions(id, target).length,
-    0
-  )
-  const executionRows =
-    originalRows - units.length + units.reduce((sum, unit) => sum + unit.parts.length, 0)
+  const { executionRows } = schedulingTopology(targets, units)
   assert.ok(executionRows <= 256, 'Complete execution matrix exceeds the original 256-row ceiling')
   return {
     schemaVersion: 1,

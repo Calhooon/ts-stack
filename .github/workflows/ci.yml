@@ -647,141 +647,32 @@ jobs:
         if: needs.prepare.outputs.partition-targets != '[]' && needs.prepare.outputs.partition-targets != ''
         run: pnpm install --frozen-lockfile --ignore-scripts
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-canonical-chunks')
+        if: needs.prepare.outputs.partition-targets != '[]' && needs.prepare.outputs.partition-targets != ''
         with:
-          pattern: mutation-wallet-portable-canonical-chunks-*
-          path: .mutation-parts/wallet-portable-canonical-chunks
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'sdk-auth-http')
-        with:
-          pattern: mutation-sdk-auth-http-*
-          path: .mutation-parts/sdk-auth-http
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-retained-snapshot')
-        with:
-          pattern: mutation-wallet-retained-snapshot-*
-          path: .mutation-parts/wallet-retained-snapshot
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-sync')
-        with:
-          pattern: mutation-wallet-snapshot-sync-*
-          path: .mutation-parts/wallet-snapshot-sync
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-journal')
-        with:
-          pattern: mutation-wallet-snapshot-journal-*
-          path: .mutation-parts/wallet-snapshot-journal
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-remote-http')
-        with:
-          pattern: mutation-wallet-snapshot-remote-http-*
-          path: .mutation-parts/wallet-snapshot-remote-http
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-remote-service')
-        with:
-          pattern: mutation-wallet-snapshot-remote-service-*
-          path: .mutation-parts/wallet-snapshot-remote-service
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-archive')
-        with:
-          pattern: mutation-wallet-snapshot-archive-*
-          path: .mutation-parts/wallet-snapshot-archive
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-snapshot-remote-reader')
-        with:
-          pattern: mutation-wallet-snapshot-remote-reader-*
-          path: .mutation-parts/wallet-snapshot-remote-reader
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-packed-row')
-        with:
-          pattern: mutation-wallet-portable-packed-row-*
-          path: .mutation-parts/wallet-portable-packed-row
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-source-stream')
-        with:
-          pattern: mutation-wallet-portable-source-stream-*
-          path: .mutation-parts/wallet-portable-source-stream
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-knex-source')
-        with:
-          pattern: mutation-wallet-portable-knex-source-*
-          path: .mutation-parts/wallet-portable-knex-source
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-json-stream')
-        with:
-          pattern: mutation-wallet-portable-json-stream-*
-          path: .mutation-parts/wallet-portable-json-stream
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-portable-brc39-frame')
-        with:
-          pattern: mutation-wallet-portable-brc39-frame-*
-          path: .mutation-parts/wallet-portable-brc39-frame
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-existing-rows')
-        with:
-          pattern: mutation-wallet-current-brc38-import-existing-rows-*
-          path: .mutation-parts/wallet-current-brc38-import-existing-rows
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-history')
-        with:
-          pattern: mutation-wallet-current-brc38-import-history-*
-          path: .mutation-parts/wallet-current-brc38-import-history
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-merge-checkpoint-node')
-        with:
-          pattern: mutation-wallet-current-brc38-import-merge-checkpoint-node-*
-          path: .mutation-parts/wallet-current-brc38-import-merge-checkpoint-node
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-page')
-        with:
-          pattern: mutation-wallet-current-brc38-import-page-*
-          path: .mutation-parts/wallet-current-brc38-import-page
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-import-target-indexes')
-        with:
-          pattern: mutation-wallet-current-brc38-import-target-indexes-*
-          path: .mutation-parts/wallet-current-brc38-import-target-indexes
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-portable-rows')
-        with:
-          pattern: mutation-wallet-current-brc38-portable-rows-*
-          path: .mutation-parts/wallet-current-brc38-portable-rows
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-brc38-profile-physical-identity-node')
-        with:
-          pattern: mutation-wallet-current-brc38-profile-physical-identity-node-*
-          path: .mutation-parts/wallet-current-brc38-profile-physical-identity-node
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-knex-database-system')
-        with:
-          pattern: mutation-wallet-current-knex-database-system-*
-          path: .mutation-parts/wallet-current-knex-database-system
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-delta-frame')
-        with:
-          pattern: mutation-wallet-current-snapshot-journal-delta-frame-*
-          path: .mutation-parts/wallet-current-snapshot-journal-delta-frame
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-delta-page')
-        with:
-          pattern: mutation-wallet-current-snapshot-journal-delta-page-*
-          path: .mutation-parts/wallet-current-snapshot-journal-delta-page
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-destination-stage')
-        with:
-          pattern: mutation-wallet-current-snapshot-journal-destination-stage-*
-          path: .mutation-parts/wallet-current-snapshot-journal-destination-stage
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        if: contains(fromJSON(needs.prepare.outputs.partition-targets || '[]'), 'wallet-current-snapshot-journal-identity-retirements')
-        with:
-          pattern: mutation-wallet-current-snapshot-journal-identity-retirements-*
-          path: .mutation-parts/wallet-current-snapshot-journal-identity-retirements
+          pattern: mutation-*
+          path: .mutation-parts-raw
       - name: Require every selected canonical partition target gate
         if: needs.prepare.outputs.partition-targets != '[]' && needs.prepare.outputs.partition-targets != ''
         env:
           PARTITION_TARGETS: ${{ needs.prepare.outputs.partition-targets }}
+          MUTATION_MATRIX: ${{ needs.prepare.outputs.mutation-matrix }}
         run: |
+          # Stage each target's parts by their exact matrix artifact names, so a
+          # target whose ID prefixes another can never pick up foreign evidence.
           TARGET_LINES=$(jq -er '.[]' <<<"$PARTITION_TARGETS")
+          while IFS= read -r target; do
+            mkdir -p ".mutation-parts/$target"
+            while IFS= read -r partition; do
+              artifact=".mutation-parts-raw/mutation-$target-$partition"
+              if [ ! -d "$artifact" ]; then
+                echo "::error::Missing mutation partition evidence $target/$partition"
+                exit 1
+              fi
+              cp -R "$artifact" ".mutation-parts/$target/"
+            done < <(jq -er --arg target "$target" \
+              '.include[] | select(.target == $target and .partition != "whole") | .partition' \
+              <<<"$MUTATION_MATRIX")
+          done <<<"$TARGET_LINES"
           while IFS= read -r target; do
             node scripts/mutation-partition-evidence.mjs verify --mode diagnostic \
               --target "$target" --directory ".mutation-parts/$target" \
@@ -1870,14 +1761,26 @@ jobs:
       - name: Build Linux image
         if: matrix.run && matrix.component != 'uhrp-server-cloud-bucket/notifier'
         run: |
-          for attempt in 1 2 3; do
-            if docker build --tag "ts-stack-${{ strategy.job-index }}:ci" "infra/${{ matrix.component }}"; then
+          # Anonymous base-image pulls can be throttled (HTTP 429). Back off
+          # longer only for that; any other build failure keeps the short retry.
+          set -o pipefail
+          log="$RUNNER_TEMP/docker-build-${{ strategy.job-index }}.log"
+          for attempt in 1 2 3 4 5; do
+            if docker build --tag "ts-stack-${{ strategy.job-index }}:ci" "infra/${{ matrix.component }}" 2>&1 | tee "$log"; then
               exit 0
             fi
-            if [ "$attempt" -lt 3 ]; then
-              echo "::warning::Docker build attempt $attempt failed; retrying after $((attempt * 5)) seconds."
-              sleep $((attempt * 5))
+            if grep -qiE '429 Too Many Requests|toomanyrequests' "$log"; then
+              limit=5
+              delay=$((15 * (1 << (attempt - 1))))
+            else
+              limit=3
+              delay=$((attempt * 5))
             fi
+            if [ "$attempt" -ge "$limit" ]; then
+              exit 1
+            fi
+            echo "::warning::Docker build attempt $attempt failed; retrying after $delay seconds."
+            sleep "$delay"
           done
           exit 1
 

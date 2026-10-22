@@ -12,6 +12,8 @@ import { calculateMutationMetrics, evaluateMutationReport } from './mutation-tes
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const INPUTS = [
   'governance/mutation-testing/targets.mjs',
+  'governance/mutation-testing/stop-on-kill-environment.cjs',
+  'governance/mutation-testing/durations.json',
   'governance/mutation-testing/wallet-component-tests.json',
   'scripts/provision-wallet-native-browser.mjs',
   'scripts/wallet-native-browser.json',

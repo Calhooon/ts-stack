@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 import { selectedMutationPartition } from './mutation-partitions.mjs'
@@ -18,7 +18,15 @@ const CONTROL_PATH_PREFIXES = [
   '.github/workflows/mutation-tests.yml',
   'governance/mutation-testing/stryker.config.mjs'
 ]
-const CONTROL_PATHS = new Set(['package.json', 'pnpm-workspace.yaml', 'tsconfig.base.json'])
+const CONTROL_PATHS = new Set([
+  'package.json',
+  'pnpm-workspace.yaml',
+  'tsconfig.base.json',
+  'governance/mutation-testing/stop-on-kill-environment.cjs',
+  'governance/mutation-testing/durations.json',
+  'governance/mutation-testing/execution-partitions.json',
+  'scripts/mutation-partitions.mjs'
+])
 const NATIVE_BROWSER_CONTROLS = new Set([
   'scripts/provision-wallet-native-browser.mjs',
   'scripts/wallet-native-browser.json'
@@ -158,11 +166,18 @@ function changedPolicyTargets(base) {
   )
 }
 
+// A historical registry is evaluated from Git bytes, but its module-relative
+// metadata must retain the real registry URL rather than a data: URL. This
+// source is trusted repository code; no historical module is written to disk.
+export async function mutationTargetModule(source, root) {
+  const registryUrl = pathToFileURL(path.join(root, 'governance/mutation-testing/targets.mjs')).href
+  const located = source.replaceAll('import.meta.url', JSON.stringify(registryUrl))
+  return import(`data:text/javascript;base64,${Buffer.from(located).toString('base64')}`)
+}
+
 async function changedConfiguredTargets(base, currentTargets) {
   const source = gitShow(base, 'governance/mutation-testing/targets.mjs')
-  const module = await import(
-    `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
-  )
+  const module = await mutationTargetModule(source, REPOSITORY_ROOT)
   let baseTargets
   try {
     baseTargets = module.buildMutationTargets(REPOSITORY_ROOT)

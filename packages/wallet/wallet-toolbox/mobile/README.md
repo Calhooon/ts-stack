@@ -45,7 +45,7 @@ public entry points and conditional exports stay the same. The build includes
 only the used Noble Argon2id fallback and its dependencies, with the same pinned
 implementation and algorithm parameters. SDK imports select only used categories
 through the SDK's declared public exports. A private re-export module preserves
-the original SDK types, constructors and namespace objects; the marked primitive
+the original SDK types, constructors and namespace objects, including the SDK overlay-name validators, patterns and byte bound; the marked primitive
 curve setup stays eager. Real ESM and CommonJS imports check every re-export
 against the peer SDK. SDK and IndexedDB implementations remain external. Shared
 Promise/await forwarding reduces duplicated generated

@@ -148,10 +148,15 @@ export {
   LookupHTTPError,
   LookupResolver,
   LookupResourceLimitError,
+  MAX_OVERLAY_NAME_BYTES,
+  OVERLAY_LOOKUP_SERVICE_NAME_PATTERN,
+  OVERLAY_TOPIC_NAME_PATTERN,
   OverlayAdminTokenTemplate,
   SHIPBroadcaster,
   SHIPCast,
   TopicBroadcaster,
+  isOverlayLookupServiceName,
+  isOverlayTopicName,
   withDoubleSpendRetry
 } from '@bsv/sdk/overlay-tools'
 export {

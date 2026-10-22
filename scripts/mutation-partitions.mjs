@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
+import { buildMutationTargets } from '../governance/mutation-testing/targets.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const executionPlanPath = 'governance/mutation-testing/execution-partitions.json'
@@ -155,20 +156,388 @@ const plans = new Map([
   ]
 ])
 
+const upstreamPlans = new Map([
+  [
+    'sdk-auth-http',
+    {
+      fallback: 'core',
+      files: new Map([
+        ['src/auth/Peer.ts', 'peer'],
+        ['src/auth/clients/AuthFetch.ts', 'client'],
+        ['src/auth/transports/SimplifiedFetchTransport.ts', 'transport']
+      ]),
+      lines: new Map([
+        [
+          'src/auth/AuthMessageValidation.ts',
+          [
+            ['core', null],
+            ['core-snapshot', 'export function snapshotAuthMessage('],
+            ['core-policy', '  const isGeneral =']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'wallet-retained-snapshot',
+    {
+      fallback: 'lifecycle',
+      files: new Map([
+        ['src/storage/snapshot/KnexWalletReadSnapshot.ts', 'reader'],
+        ['src/storage/StorageKnex.ts', 'storage'],
+        ['src/storage/StorageProvider.ts', 'storage']
+      ])
+    }
+  ],
+  [
+    'brc52-envelope',
+    {
+      fallback: 'envelope-1',
+      lines: new Map([
+        [
+          'src/brc52/envelope.ts',
+          [
+            ['envelope-1', null],
+            ['envelope-2', 'function exactKeys('],
+            ['envelope-3', 'function strictSignature('],
+            ['envelope-4', 'function graph('],
+            ['envelope-5', 'export function validateBRC52Disclosure('],
+            ['envelope-6', 'export function parseBRC52Envelope(']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'brc52-status',
+    {
+      fallback: 'status-1',
+      lines: new Map([
+        [
+          'src/brc52/status.ts',
+          [
+            ['status-1', null],
+            ['status-2', 'function snapshotObservation(']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'brc52-disclosure',
+    {
+      fallback: 'disclosure-1',
+      lines: new Map([
+        [
+          'src/brc52/disclosure.ts',
+          [
+            ['disclosure-1', null],
+            ['disclosure-2', 'function validateReceipt(']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'air-gap-codec',
+    {
+      fallback: 'support',
+      files: new Map([['src/encoder.ts', 'encoder']]),
+      lines: new Map([
+        [
+          'src/decoder.ts',
+          [
+            ['decoder-1', null],
+            ['decoder-2', '  private enterSession(']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'mandala-encoding',
+    {
+      fallback: 'mandala',
+      files: new Map([
+        ['src/strictCbor.ts', 'cbor'],
+        ['src/Bsv21Binary.ts', 'bsv21']
+      ])
+    }
+  ],
+  [
+    'webrtpay-frames',
+    {
+      fallback: 'frames-1',
+      lines: new Map([
+        [
+          'src/channel/frames.ts',
+          [
+            ['frames-1', null],
+            ['frames-2', 'class StructureCounts {']
+          ]
+        ]
+      ])
+    }
+  ],
+  [
+    'webrtpay-codes',
+    {
+      fallback: 'codes',
+      files: new Map([['src/codec/sdp.ts', 'sdp']])
+    }
+  ]
+])
+
+function specificationLines(specification, lineCount) {
+  const range = /:(\d+)(?:-(\d+))?$/.exec(specification)
+  if (!range) return [1, lineCount]
+  return [Number(range[1]), Number(range[2] ?? range[1])]
+}
+
+// A line plan cuts one file at explicit declaration markers. Each marker must
+// start exactly one source line, so an edit that moves or duplicates it fails
+// closed instead of silently shifting mutants between execution parts.
+function lineSegments(target, file, cuts) {
+  if (typeof target.packageDirectory !== 'string')
+    throw new Error('Line-split mutation partition requires a package directory')
+  const lines = fs
+    .readFileSync(path.resolve(ROOT, target.packageDirectory, file), 'utf8')
+    .split('\n')
+  if (cuts.length < 2 || cuts[0][1] !== null)
+    throw new Error('Line-split mutation partition must start at the first source line')
+  const starts = cuts.map(([id, marker]) => {
+    if (marker === null) return { id, line: 1 }
+    const matches = lines.flatMap((line, index) => (line.startsWith(marker) ? [index + 1] : []))
+    if (matches.length !== 1)
+      throw new Error(`Mutation partition marker must start exactly one line in ${file}: ${marker}`)
+    return { id, line: matches[0] }
+  })
+  for (let index = 1; index < starts.length; index += 1)
+    if (starts[index].line <= starts[index - 1].line)
+      throw new Error(`Mutation partition markers are out of order in ${file}`)
+  return {
+    lineCount: lines.length,
+    segments: starts.map((start, index) => ({
+      id: start.id,
+      first: start.line,
+      last: index + 1 < starts.length ? starts[index + 1].line - 1 : lines.length
+    }))
+  }
+}
+
+// Keep each file's complete original range union across its execution parts.
+// File plans keep a whole file in one part; line plans intersect every original
+// range with contiguous segments that cover the file. New canonical files join
+// the target's fallback; a future helper cannot disappear.
+// Targets without an explicit plan split by file automatically once they are
+// slow. Mutant count does not predict time (tests dominate: 676 auth mutants
+// take under two minutes while 358 envelope mutants took fifteen), so the
+// estimate is the target's measured hosted seconds. A target never measured
+// uses a deliberately pessimistic code-line estimate: an unneeded split costs
+// one job's setup, a missed split holds the whole campaign.
+const AUTO_PART_SECONDS = 240
+const UNMEASURED_SECONDS_PER_CODE_LINE = 1
+let measuredSeconds
+function measuredTargetSeconds(targetId) {
+  measuredSeconds ??= JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'governance/mutation-testing/durations.json'), 'utf8')
+  ).seconds
+  const parts = Object.entries(measuredSeconds).filter(([key]) => key.startsWith(`${targetId}/`))
+  return parts.length === 0 ? undefined : parts.reduce((sum, [, value]) => sum + value, 0)
+}
+
+const DECLARATION_MODIFIERS = new Set(['export', 'default', 'declare', 'async', 'abstract'])
+const DECLARATION_KEYWORDS = new Set([
+  'function',
+  'function*',
+  'class',
+  'const',
+  'let',
+  'var',
+  'interface',
+  'type',
+  'enum'
+])
+
+// A top-level declaration starts at column zero with optional modifiers.
+function isTopLevelDeclaration(line) {
+  if (/^\s/.test(line)) return false
+  const words = line.split(/[\s(<{=:]+/)
+  let index = 0
+  while (DECLARATION_MODIFIERS.has(words[index])) index += 1
+  return DECLARATION_KEYWORDS.has(words[index])
+}
+
+function isCode(line) {
+  const text = line.trim()
+  return text !== '' && !text.startsWith('//') && !text.startsWith('*') && !text.startsWith('/*')
+}
+
+// Per-line weight of a file: 1 for a code line inside any of the target's
+// original ranges for that file, else 0.
+function fileLineWeights(target, file, specifications) {
+  const lines = fs
+    .readFileSync(path.resolve(ROOT, target.packageDirectory, file), 'utf8')
+    .split('\n')
+  const weights = Array.from({ length: lines.length }, () => 0)
+  for (const specification of specifications) {
+    const [first, last] = specificationLines(specification, lines.length)
+    for (let index = first - 1; index < Math.min(last, lines.length); index += 1)
+      if (isCode(lines[index])) weights[index] = 1
+  }
+  return { lines, weights }
+}
+
+// Cut a file into `pieces` contiguous segments at top-level declaration lines,
+// balancing code weight. A mutant cannot span two top-level statements, and a
+// cut line must be a unique line prefix so lineSegments can re-find it.
+function fileSegments(lines, weights, pieces) {
+  const before = [0]
+  for (const weight of weights) before.push(before.at(-1) + weight)
+  const total = before.at(-1)
+  const candidates = lines
+    .map((line, index) => index)
+    .filter(
+      index =>
+        index > 0 &&
+        isTopLevelDeclaration(lines[index]) &&
+        lines.filter(other => other.startsWith(lines[index])).length === 1
+    )
+  // For each boundary pick the candidate whose preceding weight is nearest its
+  // even share, keeping cuts strictly increasing.
+  const starts = [0]
+  for (let piece = 1; piece < pieces; piece += 1) {
+    const goal = (total * piece) / pieces
+    let best
+    for (const index of candidates) {
+      if (index <= starts.at(-1)) continue
+      if (best === undefined || Math.abs(before[index] - goal) < Math.abs(before[best] - goal))
+        best = index
+    }
+    if (best === undefined) break
+    starts.push(best)
+  }
+  return starts
+    .map((start, position) => {
+      const end = position + 1 < starts.length ? starts[position + 1] : lines.length
+      return { marker: position === 0 ? null : lines[start], weight: before[end] - before[start] }
+    })
+    .filter((segment, position) => position === 0 || segment.weight > 0)
+}
+
+function filesOf(target) {
+  const byFile = new Map()
+  for (const specification of target.mutate) {
+    const file = partitionFile(specification)
+    if (/[!*?{}[\]]/.test(file) || path.posix.isAbsolute(file) || file.split('/').includes('..'))
+      return undefined
+    byFile.set(file, [...(byFile.get(file) ?? []), specification])
+  }
+  return byFile
+}
+
+const sum = values => values.reduce((total, value) => total + value, 0)
+const unitOrder = unit => `${unit.file}\u0000${String(unit.position).padStart(6, '0')}`
+
+// Heaviest unit first into the lightest group; ties keep source order. Groups
+// are then numbered by their first unit so the plan is stable.
+function groupUnits(units, count) {
+  const groups = Array.from({ length: count }, () => ({ weight: 0, units: [] }))
+  const ordered = [...units].sort(
+    (left, right) => right.weight - left.weight || unitOrder(left).localeCompare(unitOrder(right))
+  )
+  for (const unit of ordered) {
+    const lightest = groups.reduce(
+      (best, group) => (group.weight < best.weight ? group : best),
+      groups[0]
+    )
+    lightest.units.push(unit)
+    lightest.weight += unit.weight
+  }
+  for (const group of groups)
+    group.units.sort((left, right) => unitOrder(left).localeCompare(unitOrder(right)))
+  return groups
+    .filter(group => group.units.length !== 0)
+    .sort((left, right) => unitOrder(left.units[0]).localeCompare(unitOrder(right.units[0])))
+}
+
+function planFromGroups(files, units, groups) {
+  const owner = new Map()
+  groups.forEach((group, index) => {
+    for (const unit of group.units) owner.set(`${unit.file}#${unit.position}`, `auto-${index + 1}`)
+  })
+  const plan = { fallback: 'auto-1', files: new Map(), lines: new Map() }
+  for (const file of files) {
+    const segments = units.filter(unit => unit.file === file)
+    if (segments.length === 1) plan.files.set(file, owner.get(`${file}#0`))
+    else
+      plan.lines.set(
+        file,
+        segments.map(segment => [owner.get(`${file}#${segment.position}`), segment.marker])
+      )
+  }
+  return plan
+}
+
+export function automaticPlan(targetId, target, measured = measuredTargetSeconds(targetId)) {
+  if (typeof target.packageDirectory !== 'string') return undefined
+  const byFile = filesOf(target)
+  if (!byFile) return undefined
+  const files = [...byFile].map(([file, specifications]) => ({
+    file,
+    ...fileLineWeights(target, file, specifications)
+  }))
+  const total = sum(files.map(entry => sum(entry.weights)))
+  if (total === 0) return undefined
+  const estimate = measured ?? total * UNMEASURED_SECONDS_PER_CODE_LINE
+  // A file whose share of the estimate exceeds one part is cut inside.
+  const units = files.flatMap(entry => {
+    const share = (estimate * sum(entry.weights)) / total
+    const pieces = Math.max(1, Math.ceil(share / AUTO_PART_SECONDS))
+    return fileSegments(entry.lines, entry.weights, pieces).map((segment, position) => ({
+      file: entry.file,
+      position,
+      ...segment
+    }))
+  })
+  const count = Math.min(units.length, Math.ceil(estimate / AUTO_PART_SECONDS))
+  if (count < 2) return undefined
+  return planFromGroups(byFile.keys(), units, groupUnits(units, count))
+}
+
 // Keep each file's complete original range union in exactly one execution part.
 // New canonical files join the target's fallback; a future helper cannot disappear.
-export function canonicalMutationPartitions(targetId, target) {
-  const plan = plans.get(targetId)
+export function canonicalMutationPartitions(targetId, target, scheduled = true) {
+  const plan = plans.get(targetId) ?? (scheduled ? scheduledPlan(targetId, target) : undefined)
   if (!plan) return [{ id: 'whole', target }]
+  return partitionsWithPlan(target, plan)
+}
+
+function partitionsWithPlan(target, plan) {
   const groups = new Map()
+  const add = (id, specification) => {
+    const mutate = groups.get(id) ?? []
+    mutate.push(specification)
+    groups.set(id, mutate)
+  }
+  const split = new Map()
   for (const specification of target.mutate) {
     const file = partitionFile(specification)
     if (/[!*?{}[\]]/.test(file) || path.posix.isAbsolute(file) || file.split('/').includes('..'))
       throw new Error('Mutation partition requires explicit canonical source paths')
-    const id = plan.files.get(file) ?? plan.fallback
-    const mutate = groups.get(id) ?? []
-    mutate.push(specification)
-    groups.set(id, mutate)
+    const cuts = plan.lines?.get(file)
+    if (!cuts) {
+      add(plan.files?.get(file) ?? plan.fallback, specification)
+      continue
+    }
+    if (!split.has(file)) split.set(file, lineSegments(target, file, cuts))
+    const { lineCount, segments } = split.get(file)
+    const [first, last] = specificationLines(specification, lineCount)
+    for (const segment of segments) {
+      const from = Math.max(first, segment.first)
+      const to = Math.min(last, segment.last)
+      if (from <= to) add(segment.id, `${file}:${from}-${to}`)
+    }
   }
   if (groups.size === 0) throw new Error('Empty canonical mutation source union')
   return [...groups].map(([id, mutate]) => ({ id, target: { ...target, mutate } }))
@@ -364,8 +733,8 @@ export function applyPartitionComponentTests(base, selection, readSource) {
   }
 }
 
-export function partitionMutationTarget(targetId, target) {
-  const original = canonicalMutationPartitions(targetId, target)
+function executionPartitions(targetId, target, scheduled) {
+  const original = canonicalMutationPartitions(targetId, target, scheduled)
   const selections = target.componentTestPartitions ?? {}
   if (
     typeof selections !== 'object' ||
@@ -403,6 +772,92 @@ export function partitionMutationTarget(targetId, target) {
   return parts
 }
 
+// Plan against the complete registry, never a PR's selected subset. Reviewed
+// file/span ownership is fixed first. Optional upstream scheduling refinements
+// are admitted only while the original matrix ceiling has room. A target that
+// does not fit still runs its complete original canonical source and tests.
+// This changes scheduling, not the quality denominator or execution limits.
+export function admitSchedulingPlans(baseRows, candidates, ceiling = 256) {
+  if (!Number.isSafeInteger(baseRows) || baseRows < 0 || baseRows > ceiling)
+    throw new Error('Required mutation execution topology exceeds the matrix ceiling')
+  const admitted = new Map()
+  let rows = baseRows
+  const seen = new Set()
+  for (const { targetId, plan, parts } of candidates) {
+    if (!Number.isSafeInteger(parts) || parts < 1 || seen.has(targetId))
+      throw new Error('Invalid optional mutation scheduling candidate')
+    seen.add(targetId)
+    if (rows + parts - 1 > ceiling) continue
+    admitted.set(targetId, plan)
+    rows += parts - 1
+  }
+  return admitted
+}
+// Scheduling can be regenerated while source hashes in the previous manifest
+// are stale. Count required topology here; actual execution still validates
+// every source hash and range in executionPartitions/refineMutationPartition.
+export function schedulingTopology(targets, units) {
+  if (!Array.isArray(units)) throw new Error('Missing reviewed scheduling units')
+  const required = new Map(
+    Object.entries(targets).map(([id, target]) => [
+      id,
+      canonicalMutationPartitions(id, target, false)
+    ])
+  )
+  let rows = [...required.values()].reduce((count, parts) => count + parts.length, 0)
+  const protectedTargets = new Set()
+  const seen = new Set()
+  for (const unit of units) {
+    const key = `${unit.target}/${unit.existingPartition}`
+    if (
+      seen.has(key) ||
+      !required.get(unit.target)?.some(part => part.id === unit.existingPartition) ||
+      !Array.isArray(unit.parts) ||
+      unit.parts.length === 0
+    )
+      throw new Error('Unknown or duplicate required scheduling unit')
+    seen.add(key)
+    protectedTargets.add(unit.target)
+    rows += unit.parts.length - 1
+  }
+  const candidates = []
+  for (const [id, target] of Object.entries(targets)) {
+    if (plans.has(id) || protectedTargets.has(id)) continue
+    const plan = upstreamPlans.get(id) ?? automaticPlan(id, target)
+    if (!plan) continue
+    candidates.push({ targetId: id, plan, parts: partitionsWithPlan(target, plan).length })
+  }
+  const admitted = admitSchedulingPlans(rows, candidates)
+  return {
+    admitted,
+    executionRows:
+      rows +
+      candidates.reduce(
+        (extra, candidate) => extra + (admitted.has(candidate.targetId) ? candidate.parts - 1 : 0),
+        0
+      )
+  }
+}
+let registryScheduling
+function scheduledPlan(targetId, target) {
+  if (registryScheduling === undefined) {
+    const targets = buildMutationTargets(ROOT)
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, executionPlanPath), 'utf8'))
+    registryScheduling = { targets, ...schedulingTopology(targets, manifest.units) }
+  }
+  const registered = registryScheduling.targets[targetId]
+  if (
+    registered &&
+    registered.packageDirectory === target.packageDirectory &&
+    isDeepStrictEqual(registered.mutate, target.mutate)
+  )
+    return registryScheduling.admitted.get(targetId)
+  return upstreamPlans.get(targetId) ?? automaticPlan(targetId, target)
+}
+export function partitionMutationTarget(targetId, target) {
+  return executionPartitions(targetId, target, true)
+}
+
 export function partitionedMutationTargets(selected, targets) {
   return [
     ...new Set(
@@ -434,5 +889,20 @@ export function mutationExecutionMatrix(selected, targets) {
           : {})
       }))
     })
+  }
+}
+
+// Longest-processing-time-first scheduling: GitHub starts matrix jobs in listed
+// order up to the concurrency limit, so list the slowest measured parts first
+// and the short ones fill the remaining slots. Order only changes when a part
+// starts, never which parts run. A part without a measurement (new or renamed)
+// sorts first, so it can never be left as an unplanned tail.
+export function longestFirst(matrix, seconds) {
+  const cost = row => seconds[`${row.target}/${row.partition}`] ?? Number.MAX_SAFE_INTEGER
+  return {
+    include: matrix.include
+      .map((row, index) => ({ row, index }))
+      .sort((left, right) => cost(right.row) - cost(left.row) || left.index - right.index)
+      .map(({ row }) => row)
   }
 }

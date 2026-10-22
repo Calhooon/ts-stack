@@ -22,6 +22,7 @@ import {
 
 import {
   calculateMutationMetrics,
+  mutationTargetModule,
   evaluateMutationReport,
   parseArguments,
   REPOSITORY_ROOT,
@@ -1007,4 +1008,23 @@ test('wallet mutation runners serialize the shared physical Worker and fixture l
     if (target.packageDirectory === 'packages/wallet/wallet-toolbox' && target.runnerOptions?.jest)
       assert.equal(target.runnerOptions.concurrency, 1)
   }
+})
+
+test('historical registry comparison preserves module-relative environment metadata', async () => {
+  const root = resolve(new URL('..', import.meta.url).pathname)
+  const source = readFileSync(resolve(root, 'governance/mutation-testing/targets.mjs'), 'utf8')
+  const historical = (await mutationTargetModule(source, root)).buildMutationTargets(root)
+  assert.deepEqual(historical, buildMutationTargets(root))
+})
+
+test('shared scheduling and active-mutant controls select the complete original registry', () => {
+  const root = resolve(new URL('..', import.meta.url).pathname)
+  const targets = buildMutationTargets(root)
+  for (const file of [
+    'governance/mutation-testing/stop-on-kill-environment.cjs',
+    'governance/mutation-testing/durations.json',
+    'governance/mutation-testing/execution-partitions.json',
+    'scripts/mutation-partitions.mjs'
+  ])
+    assert.deepEqual(selectAffectedMutationTargets(targets, [file]), Object.keys(targets))
 })
