@@ -3,7 +3,9 @@ import {
   exactMembers,
   jsonArray,
   jsonByteArray,
+  jsonHex,
   jsonObject,
+  jsonString,
   jsonUint32,
   parseStrictJson,
   parseStrictJsonBytes
@@ -78,5 +80,20 @@ describe('strict JSON', () => {
     expect(() => jsonByteArray([1, 2, 3], 'test', 2)).toThrow('1..2 bytes')
     expect(() => jsonByteArray([256], 'test', 2)).toThrow('integer bytes')
     expect(() => jsonByteArray([true], 'test', 2)).toThrow('integer bytes')
+  })
+
+  it('reads strings and lowercase even-length hex as bytes', () => {
+    expect(jsonString('', 'test')).toBe('')
+    expect(jsonString('abc', 'test')).toBe('abc')
+    for (const value of [1, null, true, [], {}, undefined]) {
+      expect(() => jsonString(value as never, 'test')).toThrow('BRC-207: test must be a string')
+    }
+    expect(jsonHex('', 'test', 2)).toEqual([])
+    expect(jsonHex('00ff7b', 'test', 3)).toEqual([0x00, 0xff, 0x7b])
+    expect(() => jsonHex('00ff7b', 'test', 2)).toThrow('at most 2 bytes')
+    for (const value of ['0', 'abc', 'AB', '0g', ' 00', '00\n']) {
+      expect(() => jsonHex(value, 'test', 8)).toThrow('lowercase even-length hex')
+    }
+    expect(() => jsonHex(7 as never, 'test', 8)).toThrow('must be a string')
   })
 })

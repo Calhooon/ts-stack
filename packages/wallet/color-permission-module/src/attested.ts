@@ -2,14 +2,24 @@
 // descriptor rules and handler. Evidence, coverage and frontier checks are applied by the module
 // for assets whose resolution carries `attested`.
 
-import { PublicKey } from '@bsv/sdk'
+import { PublicKey, Transaction } from '@bsv/sdk'
 import { isProfileId, StrictCborLink } from '@bsv/templates'
 import type { StrictCborMap, StrictCborValue } from '@bsv/templates'
-import { ATTESTED_PROFILE_ID } from './attestation.js'
-import { AttestationEvidenceError, ProfileParamsError } from './errors.js'
-import { validateIdentityKey } from './identifiers.js'
+import { ATTESTED_PROFILE_ID, parseAttestation } from './attestation.js'
+import { AttestationEvidenceError, ProfileDataError, ProfileParamsError } from './errors.js'
+import { ISSUE, parseAssetId, validateIdentityKey } from './identifiers.js'
+import {
+  exactMembers,
+  jsonArray,
+  jsonHex,
+  jsonObject,
+  jsonString,
+  type JsonObject,
+  type JsonValue
+} from './strictJson.js'
 import type {
   AttestedParams,
+  ColorAttestation,
   ProfileDescriptor,
   RequiredProfileHandler,
   TrustMode
@@ -263,4 +273,126 @@ export function assertCoverage(
     default:
       throw reject('unknown trust mode')
   }
+}
+
+/**
+ * One asset's attested evidence leaf, structurally parsed (0207:301-318). Nothing here is
+ * verified: attestation signatures, coverage and the token graph are checked by the frontier
+ * validator, and the deploy's `req` by asset resolution.
+ */
+export interface AttestedLeaf {
+  /** The deploy transaction; its txid is the asset id's txid. */
+  declarationTx: Transaction
+  /** The supplied history bodies in input order (claimed topological), with distinct txids. */
+  transactions: Transaction[]
+  /** Parsed, canonical attestations in input order, NOT yet verified; repeats are kept. */
+  attestations: ColorAttestation[]
+  /** txid ⇒ the BRC-22 off-chain bytes for this asset topic (`[]` for `""`). */
+  submissions: Map<string, number[]>
+}
+
+const LEAF_REQUIRED = ['declarationTx', 'transactions', 'attestations'] as const
+const LEAF_OPTIONAL = ['submissions'] as const
+const SUBMISSION_MEMBERS = ['txid', 'offChainValues'] as const
+const TXID = /^[0-9a-f]{64}$/
+
+/** Runs `check`, rethrowing any failure as an `AttestationEvidenceError`. */
+function evidence<T>(check: () => T): T {
+  try {
+    return check()
+  } catch (error) {
+    if ((error as Error | undefined)?.name === 'AttestationEvidenceError') throw error
+    throw new AttestationEvidenceError(String((error as Error | undefined)?.message ?? error))
+  }
+}
+
+/**
+ * Lowercase raw transaction hex that decodes to exactly one complete transaction: the decoded
+ * transaction must re-encode to the identical hex, so trailing or missing bytes fail.
+ */
+function rawTransaction(value: JsonValue | undefined, label: string): Transaction {
+  const hex = evidence(() => {
+    jsonHex(value, label, ATTESTED_MAX_RECEIPT_BYTES)
+    return value as string
+  })
+  let tx: Transaction
+  try {
+    tx = Transaction.fromHex(hex)
+  } catch {
+    throw reject(`${label} is not a raw transaction`)
+  }
+  if (tx.toHex() !== hex) throw reject(`${label} is not exactly one raw transaction`)
+  return tx
+}
+
+/** The `submissions` array: exact `{txid, offChainValues}` entries with unique canonical txids. */
+function parseSubmissions(value: JsonValue | undefined): Map<string, number[]> {
+  const submissions = new Map<string, number[]>()
+  for (const entry of evidence(() => jsonArray(value, 'attested submissions'))) {
+    const { txid, offChainValues } = evidence(() => {
+      const object: JsonObject = jsonObject(entry, 'attested submission')
+      exactMembers(object, SUBMISSION_MEMBERS, [], 'attested submission')
+      const txid = jsonString(object.txid, 'attested submission txid')
+      if (!TXID.test(txid)) throw reject('submission txid must be 64 lowercase hex')
+      const bytes = jsonHex(
+        object.offChainValues,
+        'attested submission offChainValues',
+        ATTESTED_MAX_RECEIPT_BYTES
+      )
+      return { txid, offChainValues: bytes }
+    })
+    if (submissions.has(txid)) throw reject(`duplicate submission for ${txid}`)
+    submissions.set(txid, offChainValues)
+  }
+  return submissions
+}
+
+/**
+ * Parses the attested `profileData` leaf for `assetId` exactly as carried (0207:301-318):
+ * `{declarationTx, transactions, attestations}` plus optional `submissions`. Hex is lowercase and
+ * each body decodes to exactly one transaction; `declarationTx` hashes to the asset id's txid;
+ * `transactions` have distinct txids; every attestation is canonical (not verified); submissions
+ * have unique canonical txids and lowercase even-length hex. `lifecycles` (BRC-177) is refused in
+ * 0.2.0 (D28). The asset key must be a canonical asset id: an `ISSUE` key (a module-built
+ * deploy) is refused with ProfileDataError. Any leaf defect throws AttestationEvidenceError.
+ */
+export function parseAttestedLeaf(value: JsonValue, assetId: string): AttestedLeaf {
+  if (assetId === ISSUE) {
+    throw new ProfileDataError('BRC-207: attested ISSUE leaves are not supported')
+  }
+  let assetTxid: string
+  try {
+    assetTxid = parseAssetId(assetId).txid
+  } catch (error) {
+    throw new ProfileDataError((error as Error).message)
+  }
+
+  const leaf = evidence(() => jsonObject(value, 'attested leaf'))
+  if (Object.hasOwn(leaf, 'lifecycles')) throw reject('lifecycles are not supported')
+  evidence(() => exactMembers(leaf, LEAF_REQUIRED, LEAF_OPTIONAL, 'attested leaf'))
+
+  const declarationTx = rawTransaction(leaf.declarationTx, 'declarationTx')
+  if (declarationTx.id('hex') !== assetTxid) {
+    throw reject('declarationTx does not match the asset id')
+  }
+
+  const transactions: Transaction[] = []
+  const txids = new Set<string>()
+  for (const hex of evidence(() => jsonArray(leaf.transactions, 'attested transactions'))) {
+    const tx = rawTransaction(hex, 'attested transaction')
+    const txid = tx.id('hex')
+    if (txids.has(txid)) throw reject(`duplicate transaction ${txid}`)
+    txids.add(txid)
+    transactions.push(tx)
+  }
+
+  const attestations = evidence(() =>
+    jsonArray(leaf.attestations, 'attested attestations').map(parseAttestation)
+  )
+
+  const submissions = Object.hasOwn(leaf, 'submissions')
+    ? parseSubmissions(leaf.submissions)
+    : new Map<string, number[]>()
+
+  return { declarationTx, transactions, attestations, submissions }
 }

@@ -7,6 +7,7 @@ import { ATTESTED_PROFILE_ID } from '../attestation.js'
 import {
   assertCoverage,
   createAttestedProfile,
+  parseAttestedLeaf,
   parseAttestedParams,
   qualifyingSigner,
   trustSnapshot,
@@ -21,7 +22,16 @@ import {
   type RequiredProfileHandler
 } from '../profiles.js'
 import { FakeProvider, FakeWallet } from './fixtures.js'
-import { C0, F_REQ_HEX, FakeStore, MANDALA_ISSUER_ID, TestModule } from './profileFixtures.js'
+import { parseStrictJson, type JsonValue } from '../strictJson.js'
+import {
+  A141A,
+  C0,
+  F_REQ_HEX,
+  FakeStore,
+  fixtureDeploy,
+  MANDALA_ISSUER_ID,
+  TestModule
+} from './profileFixtures.js'
 
 const K = C0.SIGNER
 const EVIDENCE = 'urn:example:evidence'
@@ -396,5 +406,172 @@ describe('trust coverage', () => {
     expect([P, Q, R].map(listed)).toEqual([true, true, false])
     expect(qualifyingSigner(any, undefined)(P)).toBe(false)
     expect(qualifyingSigner(all, [])(P)).toBe(false)
+  })
+})
+
+describe('attested leaf', () => {
+  const deploy = fixtureDeploy(A141A.M)
+  const assetId = deploy.assetId
+  const declarationTx = deploy.tx.toHex()
+  const first = fixtureDeploy(A141A.U).tx
+  const second = fixtureDeploy(A141A.V).tx
+  const firstHex = first.toHex()
+  const secondHex = second.toHex()
+  const tipTxid = 'cc'.repeat(32)
+  const attestation = {
+    txid: C0.TXID,
+    outputs: [...C0.OUTPUTS],
+    signer: C0.SIGNER,
+    signature: C0.HIGH_S
+  }
+  const valid = {
+    declarationTx,
+    transactions: [firstHex, secondHex],
+    attestations: [attestation],
+    submissions: [
+      { txid: first.id('hex'), offChainValues: '7b7d' },
+      { txid: tipTxid, offChainValues: '' }
+    ]
+  }
+  type Leaf = Record<string, unknown>
+  /** The leaf as the strict JSON parser returns it (prototype-free objects). */
+  const json = (leaf: unknown): JsonValue => parseStrictJson(JSON.stringify(leaf), 'leaf')
+  const variant = (edit: (leaf: Leaf) => void): JsonValue => {
+    const leaf = structuredClone(valid) as unknown as Leaf
+    edit(leaf)
+    return json(leaf)
+  }
+  const named = (fields: Record<string, string>): Error =>
+    expect.objectContaining(fields) as unknown as Error
+  const evidenceError = named({ name: 'AttestationEvidenceError' })
+
+  const variants: Record<string, JsonValue> = {
+    'unknown member': variant(leaf => {
+      leaf.extra = 1
+    }),
+    'lifecycles present (not supported by 0.2.0)': variant(leaf => {
+      leaf.lifecycles = []
+    }),
+    'declarationTx of another tx': variant(leaf => {
+      leaf.declarationTx = firstHex
+    }),
+    'declarationTx uppercase hex': variant(leaf => {
+      leaf.declarationTx = declarationTx.toUpperCase()
+    }),
+    'duplicate transaction body': variant(leaf => {
+      leaf.transactions = [firstHex, secondHex, firstHex]
+    }),
+    'transaction hex with trailing bytes': variant(leaf => {
+      leaf.transactions = [`${firstHex}00`]
+    }),
+    'attestation with an unknown member': variant(leaf => {
+      leaf.attestations = [{ ...attestation, note: 'x' }]
+    }),
+    'submissions duplicate txid': variant(leaf => {
+      leaf.submissions = [
+        { txid: tipTxid, offChainValues: '' },
+        { txid: tipTxid, offChainValues: '7b7d' }
+      ]
+    }),
+    'submissions odd-length hex': variant(leaf => {
+      leaf.submissions = [{ txid: tipTxid, offChainValues: '7b7' }]
+    }),
+    'submissions noncanonical txid': variant(leaf => {
+      leaf.submissions = [{ txid: tipTxid.toUpperCase(), offChainValues: '' }]
+    }),
+    'a missing required member': variant(leaf => {
+      delete leaf.attestations
+    }),
+    'a leaf that is no object': json([valid]),
+    'transactions that are no array': variant(leaf => {
+      leaf.transactions = firstHex
+    }),
+    'a truncated transaction': variant(leaf => {
+      leaf.transactions = [firstHex.slice(0, -2)]
+    }),
+    'a transaction that is no string': variant(leaf => {
+      leaf.transactions = [7]
+    }),
+    'declarationTx with trailing bytes': variant(leaf => {
+      leaf.declarationTx = `${declarationTx}00`
+    }),
+    'an attestation with a non-DER signature': variant(leaf => {
+      leaf.attestations = [{ ...attestation, signature: '3000' }]
+    }),
+    'submissions that are no array': variant(leaf => {
+      leaf.submissions = { txid: tipTxid, offChainValues: '' }
+    }),
+    'a submission with an unknown member': variant(leaf => {
+      leaf.submissions = [{ txid: tipTxid, offChainValues: '', topic: 'x' }]
+    }),
+    'a submission missing offChainValues': variant(leaf => {
+      leaf.submissions = [{ txid: tipTxid }]
+    }),
+    'a submission that is no object': variant(leaf => {
+      leaf.submissions = [tipTxid]
+    }),
+    'a submission uppercase hex': variant(leaf => {
+      leaf.submissions = [{ txid: tipTxid, offChainValues: '7B7D' }]
+    })
+  }
+
+  it('parses the exact carrier', () => {
+    const leaf = parseAttestedLeaf(json(valid), assetId)
+    expect(leaf.declarationTx).toBeInstanceOf(Transaction)
+    expect(leaf.declarationTx.id('hex')).toBe(deploy.tx.id('hex'))
+    expect(leaf.transactions.map(tx => tx.toHex())).toEqual([firstHex, secondHex])
+    expect(leaf.attestations).toEqual([attestation])
+    expect(leaf.submissions).toBeInstanceOf(Map)
+    expect([...leaf.submissions.entries()]).toEqual([
+      [first.id('hex'), [0x7b, 0x7d]],
+      [tipTxid, []]
+    ])
+  })
+
+  it('accepts a leaf with no submissions and empty arrays (an attested tip, D28)', () => {
+    const leaf = parseAttestedLeaf(
+      json({ declarationTx, transactions: [], attestations: [] }),
+      assetId
+    )
+    expect(leaf.transactions).toEqual([])
+    expect(leaf.attestations).toEqual([])
+    expect(leaf.submissions.size).toBe(0)
+  })
+
+  it('keeps every attestation, including repeats, unverified', () => {
+    const forged = { ...attestation, signature: C0.LOW_S }
+    const leaf = parseAttestedLeaf(
+      variant(l => {
+        l.attestations = [attestation, attestation, forged]
+      }),
+      assetId
+    )
+    expect(leaf.attestations).toEqual([attestation, attestation, forged])
+    expect(leaf.attestations[0]).not.toBe(leaf.attestations[1])
+  })
+
+  it.each(Object.keys(variants))('C36 rejects %s', name => {
+    expect(() => parseAttestedLeaf(variants[name], assetId)).toThrow(evidenceError)
+  })
+
+  it('rejects lifecycles with the pinned reason (D28)', () => {
+    expect(() =>
+      parseAttestedLeaf(variants['lifecycles present (not supported by 0.2.0)'], assetId)
+    ).toThrow(named({ name: 'AttestationEvidenceError', reason: 'lifecycles are not supported' }))
+  })
+
+  it('binds declarationTx to the asset txid, whatever the asset vout', () => {
+    const txid = deploy.tx.id('hex')
+    expect(parseAttestedLeaf(json(valid), `${txid}_3`).declarationTx.id('hex')).toBe(txid)
+    expect(() => parseAttestedLeaf(json(valid), `${'00'.repeat(32)}_0`)).toThrow(evidenceError)
+  })
+
+  it('rejects ISSUE as an asset key (module-built profile deploys are unsupported in 0.2.0)', () => {
+    const dataError = named({ name: 'ProfileDataError' })
+    expect(() => parseAttestedLeaf(json(valid), 'ISSUE')).toThrow(dataError)
+    expect(() => parseAttestedLeaf(json(valid), 'ISSUE')).toThrow(/^\[ProfileDataError\] /)
+    for (const key of [`${deploy.tx.id('hex')}.0`, assetId.toUpperCase(), `${assetId}0`, '']) {
+      expect(() => parseAttestedLeaf(json(valid), key)).toThrow(dataError)
+    }
   })
 })
