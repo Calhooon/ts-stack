@@ -77,8 +77,8 @@ import {
   readAnyTokenOutput,
   readJsonTokenOutput,
   readTokenOutput,
-  UnsupportedProfileError,
-  type TokenOutput
+  type TokenOutput,
+  type TokenReader
 } from './tokenOutputs.js'
 import type {
   ColorModuleStore,
@@ -86,7 +86,7 @@ import type {
   ColorPermissionModuleOptions,
   ColorTokenAccessHandler
 } from './types.js'
-import { ColorConsentDeclinedError } from './errors.js'
+import { ColorConsentDeclinedError, isNamedError } from './errors.js'
 import { validateProfileHandlers, type RequiredProfileHandler } from './profiles.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
@@ -549,30 +549,35 @@ function placeChange(
 
 /**
  * Reads a token in a transaction the wallet sends: BRC-162 first, then BRC-161 JSON, which the
- * module accounts for but never holds or creates.
+ * module accounts for but never holds or creates. `read` is the BRC-162 reader.
  */
 export function readSentToken(
   lockingScript: LockingScript,
-  outpoint: ReturnType<typeof parseOutpoint>
+  outpoint: ReturnType<typeof parseOutpoint>,
+  read: TokenReader = readTokenOutput
 ): TokenOutput | undefined {
-  return tryReadTokenOutput(lockingScript, outpoint) ?? readJsonTokenOutput(lockingScript, outpoint)
+  return (
+    tryReadTokenOutput(lockingScript, outpoint, read) ??
+    readJsonTokenOutput(lockingScript, outpoint)
+  )
 }
 
 /**
  * Token inputs of `tx` other than those in `except`, read from their source transactions. With
- * `json`, BRC-161 JSON inputs are read too.
+ * `json`, BRC-161 JSON inputs are read too. `read` is the BRC-162 reader.
  */
 export function tokenSources(
   tx: Transaction,
   managed: ReadonlySet<string>,
-  json = false
+  json = false,
+  read: TokenReader = readTokenOutput
 ): Array<SourceOutput & { assetId: string; token: TokenOutput }> {
-  const read = json ? readSentToken : tryReadTokenOutput
+  const readSource = json ? readSentToken : tryReadTokenOutput
   return tx.inputs.flatMap(input => {
     const outpoint = inputOutpoint(input)
     const source = input.sourceTransaction?.outputs[input.sourceOutputIndex]
     if (managed.has(outpoint) || source?.satoshis === undefined) return []
-    const token = read(source.lockingScript, parseOutpoint(outpoint))
+    const token = readSource(source.lockingScript, parseOutpoint(outpoint), read)
     if (token === undefined) return []
     return [
       {
@@ -592,14 +597,15 @@ export function tokenSources(
  */
 export function submissionAssets(
   tx: Transaction,
-  inputs: Transaction = tx
+  inputs: Transaction = tx,
+  read: TokenReader = readTokenOutput
 ): { assetIds: string[]; deploy: boolean } {
   const txid = tx.id('hex')
   const outputs = tx.outputs.map((output, vout) =>
-    readSentToken(output.lockingScript, { txid, vout })
+    readSentToken(output.lockingScript, { txid, vout }, read)
   )
   const assetIds = new Set([
-    ...tokenSources(inputs, new Set(), true).map(input => input.assetId),
+    ...tokenSources(inputs, new Set(), true, read).map(input => input.assetId),
     ...outputs.flatMap(token => (token === undefined || token.deploy ? [] : [token.assetId]))
   ])
   return { assetIds: [...assetIds], deploy: outputs[0]?.deploy === true }
@@ -652,23 +658,28 @@ export interface TransactionTokens {
 
 /**
  * Reads every input's source and every output; an input without its source fails. With `json`,
- * for a transaction the wallet sends, BRC-161 JSON inputs and outputs are read too.
+ * for a transaction the wallet sends, BRC-161 JSON inputs and outputs are read too. `read` is the
+ * BRC-162 reader.
  */
-export function transactionTokens(tx: Transaction, json = false): TransactionTokens {
+export function transactionTokens(
+  tx: Transaction,
+  json = false,
+  read: TokenReader = readTokenOutput
+): TransactionTokens {
   tx.inputs.forEach((input, index) => {
     if (input.sourceTransaction === undefined)
       throw new Error(`BRC-207: input ${index} has no source transaction to authenticate`)
   })
   const txid = tx.id('hex')
-  const consumed = tokenSources(tx, new Set(), json)
+  const consumed = tokenSources(tx, new Set(), json, read)
   const inputs = new Map<string, Holding>()
   for (const source of consumed) addToken(inputs, source.token)
   const outputs = new Map<string, Holding>()
   let deploy: TokenOutput | undefined
   tx.outputs.forEach((output, vout) => {
     const token = json
-      ? readAnyTokenOutput(output.lockingScript, { txid, vout })
-      : readTokenOutput(output.lockingScript, { txid, vout })
+      ? readAnyTokenOutput(output.lockingScript, { txid, vout }, read)
+      : read(output.lockingScript, { txid, vout })
     if (token?.deploy === true && token.encoding === 'brc161')
       throw new Error('BRC-207: a new issuance must use BRC-162')
     if (token?.deploy === true) deploy = token
@@ -787,16 +798,24 @@ function inventoryState(record: InventoryRecord): InventoryState {
 /**
  * A BRC-162 token output, or undefined for a script that is not one. A token-shaped script that
  * does not decode is an ordinary satoshi output; a valid output of an asset that requires
- * processing profiles is a token this wallet cannot evaluate, and fails (BRC-207 L92-95).
+ * processing profiles is a token this wallet cannot evaluate, and fails (BRC-207 L92-95), as
+ * does a malformed `req` or `ext` under the profile-aware reader (0207:88-91). Errors are
+ * matched by name, never `instanceof` (D22). `read` is the BRC-162 reader.
  */
 export function tryReadTokenOutput(
   lockingScript: LockingScript,
-  outpoint: ReturnType<typeof parseOutpoint>
+  outpoint: ReturnType<typeof parseOutpoint>,
+  read: TokenReader = readTokenOutput
 ): TokenOutput | undefined {
   try {
-    return readTokenOutput(lockingScript, outpoint)
+    return read(lockingScript, outpoint)
   } catch (error) {
-    if (error instanceof UnsupportedProfileError) throw error
+    if (
+      isNamedError(error, 'UnsupportedProfileError') ||
+      isNamedError(error, 'ProfileParamsError')
+    ) {
+      throw error
+    }
     return undefined
   }
 }

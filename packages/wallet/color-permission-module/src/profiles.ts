@@ -1,9 +1,11 @@
 import type { Transaction, WalletInterface } from '@bsv/sdk'
 import { isProfileId } from '@bsv/templates'
-import type { StrictCborValue } from '@bsv/templates'
+import type { OneColorAttributes, StrictCborValue } from '@bsv/templates'
 import type { Custody } from './ColorPermissionModule.js'
 import { COLOR_OPERATIONS, type ColorOperationName } from './ColorPlan.js'
+import { ProfileParamsError } from './errors.js'
 import type { JsonValue } from './strictJson.js'
+import { assertWellFormedProfileMaps, UnsupportedProfileError } from './tokenOutputs.js'
 import type { ColorOverlayProvider, ProfileData } from './types.js'
 
 /** A required-profile descriptor from a deploy's `req`: exactly `{params, version}`. */
@@ -232,4 +234,86 @@ export function validateProfileHandlers(
     registry.set(key, handler)
   }
   return registry
+}
+
+/** An asset's required profiles, resolved against the handler registry. */
+export interface ResolvedRequirements {
+  /** The deploy's `req`, in canonical order (empty when it declares none). */
+  req: ReadonlyMap<string, ProfileDescriptor>
+  /** One entry per `req` entry, in canonical `req` order. */
+  handlers: ReadonlyArray<{ handler: RequiredProfileHandler; descriptor: ProfileDescriptor }>
+}
+
+const NO_REQUIREMENTS: ReadonlyMap<string, ProfileDescriptor> = new Map()
+
+/**
+ * The support check for a deploy's payload attributes (0207:82-106, contract §2.2 obligation 2).
+ * An absent, empty or opaque payload declares an empty `req`; a malformed `req` or `ext` in a
+ * valid map fails. Every required id must be registered with its exact version (else
+ * UnsupportedProfileError, checked for every entry before any handler code runs, so nothing is
+ * partially applied); then each handler's `checkDescriptor` runs, then its own `ext` entry is
+ * checked (an entry with no `checkExt` hook fails; `ext` entries of profiles the asset does not
+ * require are advisory and ignored). At most one handler may define `submissionData` and at most
+ * one `admitReceipt`. Pure and synchronous.
+ */
+export function resolveRequirements(
+  attributes: OneColorAttributes | undefined,
+  handlers: ReadonlyMap<string, RequiredProfileHandler>
+): ResolvedRequirements {
+  if (attributes === undefined || attributes.payload !== 'map') {
+    return { req: NO_REQUIREMENTS, handlers: [] }
+  }
+  assertWellFormedProfileMaps(attributes)
+  if (attributes.req.status !== 'valid') return { req: NO_REQUIREMENTS, handlers: [] }
+  const req = attributes.req.value
+  const ext = attributes.ext.status === 'valid' ? attributes.ext.value : undefined
+
+  const resolved: Array<{ handler: RequiredProfileHandler; descriptor: ProfileDescriptor }> = []
+  for (const [id, descriptor] of req) {
+    const handler = handlers.get(id)
+    if (handler === undefined) throw new UnsupportedProfileError()
+    if (!handler.versions.includes(descriptor.version)) {
+      throw new UnsupportedProfileError(
+        'BRC-207: the required processing profile version is unsupported'
+      )
+    }
+    resolved.push({ handler, descriptor })
+  }
+  for (const { handler, descriptor } of resolved) handler.checkDescriptor(descriptor, req)
+  for (const { handler } of resolved) {
+    const own = ext?.has(handler.id) === true
+    if (handler.checkExt === undefined) {
+      if (own) throw new ProfileParamsError(`BRC-207: ${handler.id} defines no own ext entry`)
+    } else {
+      handler.checkExt(own ? ext!.get(handler.id) : undefined)
+    }
+  }
+  for (const hook of ['submissionData', 'admitReceipt'] as const) {
+    if (resolved.filter(({ handler }) => handler[hook] !== undefined).length > 1) {
+      throw new ProfileParamsError(`BRC-207: at most one required profile may define ${hook}`)
+    }
+  }
+  return { req, handlers: resolved }
+}
+
+/**
+ * The provider for every query and submit of an asset (contract §2.2 obligation 3): the distinct
+ * `provider()` results of its handlers, compared by identity. None gives `fallback`, one gives
+ * that provider, and two or more distinct objects fail with ProfileParamsError.
+ */
+export function routeProvider(
+  assetId: string,
+  resolved: ResolvedRequirements,
+  fallback: ColorOverlayProvider
+): ColorOverlayProvider {
+  const providers = new Set<ColorOverlayProvider>()
+  for (const { handler, descriptor } of resolved.handlers) {
+    if (handler.provider !== undefined) providers.add(handler.provider(assetId, descriptor))
+  }
+  if (providers.size > 1) {
+    throw new ProfileParamsError(
+      `BRC-207: the required profiles of ${assetId} name more than one provider`
+    )
+  }
+  return providers.size === 1 ? [...providers][0] : fallback
 }
