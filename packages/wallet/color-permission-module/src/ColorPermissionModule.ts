@@ -103,6 +103,7 @@ import {
   routeProvider,
   validateProfileHandlers,
   type ColorAttestation,
+  type ColorHandoffResult,
   type ProfileAssetContext,
   type ProfileDescriptor,
   type ProfileTxView,
@@ -382,6 +383,25 @@ function mergeTxRecords(stored: TxRecord, incoming: TxRecord): TxRecord {
     offChainValues: stored.offChainValues !== '' ? stored.offChainValues : incoming.offChainValues,
     attestations: distinctAttestations([...stored.attestations, ...incoming.attestations])
   }
+}
+
+/**
+ * What signAction keeps for `onResponse` of a profile action, by action reference: per profile
+ * asset its submission data, same-asset inputs and wallet-owned outputs, and the plan labels.
+ */
+interface PendingHandoff {
+  /** True for a plain-noSend hand-over (B2), which onResponse records and evidences. */
+  plain: boolean
+  /** The action's `p color plan` labels, as forwarded to the underlying createAction. */
+  labels: string[]
+  assets: Array<{
+    assetId: string
+    offChainValues: number[]
+    /** Same-asset token input outpoints, in input order. */
+    inputs: string[]
+    /** Wallet-owned token outputs of the asset: plan ownedOutputs and token change. */
+    outputs: number[]
+  }>
 }
 
 /** True when a custody selector names the output's asset: `ISSUE` exactly for its deploy. */
@@ -1070,6 +1090,8 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly selected = new Set<string>()
   /** Asset resolutions by asset id, in flight or done; a failed one is forgotten. */
   protected readonly supportedAssets = new Map<string, Promise<ResolvedAsset>>()
+  /** Profile actions signed here and not yet answered, by action reference. */
+  protected readonly pendingHandoffs = new Map<string, PendingHandoff>()
   protected identityKey?: Promise<string>
 
   constructor(options: ColorPermissionModuleOptions) {
@@ -1105,10 +1127,11 @@ export class ColorPermissionModule implements PermissionsModule {
     }
   }
 
-  /** Clears in-memory selections and asset checks. */
+  /** Clears in-memory selections, asset checks and pending hand-overs. */
   dispose(): void {
     this.selected.clear()
     this.supportedAssets.clear()
+    this.pendingHandoffs.clear()
     this.identityKey = undefined
   }
 
@@ -1182,13 +1205,146 @@ export class ColorPermissionModule implements PermissionsModule {
     context: { method: string; originator: string; action?: PermissionsModuleAction }
   ): Promise<unknown> {
     if (context.method === 'signAction' && context.action !== undefined) {
+      const pending = this.pendingHandoffs.get(context.action.reference)
+      this.pendingHandoffs.delete(context.action.reference)
       await this.fileDeploy(res as SignActionResult, context.action, context.originator)
       // A noSend action is a BRC-177 handoff or a plain-noSend hand-over (createAction refuses
       // any other): its receiver submits it.
       if (!context.action.noSend)
         await this.submitSigned(res as SignActionResult, context.action.transaction)
+      else if (pending?.plain === true) {
+        const colorHandoff = await this.recordHandoff(res as SignActionResult, pending)
+        return { ...(res as SignActionResult), colorHandoff }
+      }
     }
     return res
+  }
+
+  /**
+   * The receipt-ready evidence of an own plain-noSend hand-over, rebuilt from the store: the same
+   * object its signAction result carried as `colorHandoff`, for a resend after a lost ACK (C51).
+   * Undefined without profiles, for a txid that is not a stored hand-over, and for an aborted one.
+   */
+  async handoffEvidence(txid: string): Promise<ColorHandoffResult | undefined> {
+    if (this.profiles.size === 0) return undefined
+    const record = await this.colorStore!.getTx(txid)
+    if (record?.role !== 'handover' || record.state === 'aborted') return undefined
+    return await this.handoffResult(txid, record)
+  }
+
+  /**
+   * Records a signed plain-noSend hand-over durably, then returns its evidence (contract
+   * §2.2-8/9). The signed transaction must be the one the result names and spend the inputs it
+   * was planned with; nothing is written otherwise. The record keeps the exact AtomicBEEF the
+   * wallet returned, which settle later submits verbatim.
+   */
+  protected async recordHandoff(
+    result: SignActionResult,
+    pending: PendingHandoff
+  ): Promise<ColorHandoffResult> {
+    if (result?.tx === undefined) {
+      throw new Error('BRC-207: the signed hand-over returned no transaction')
+    }
+    const tx = parsed('the signed hand-over', () => Transaction.fromAtomicBEEF(result.tx!))
+    const txid = tx.id('hex')
+    if (result.txid !== txid) {
+      throw new Error('BRC-207: the signed hand-over does not match its txid')
+    }
+    const spent = new Set(tx.inputs.map(input => inputOutpoint(input)))
+    if (pending.assets.some(asset => asset.inputs.some(outpoint => !spent.has(outpoint)))) {
+      throw new Error('BRC-207: the signed hand-over does not spend its planned inputs')
+    }
+    const [asset] = pending.assets
+    const record: TxRecord = {
+      v: 1,
+      assetId: asset.assetId,
+      rawTx: tx.toHex(),
+      atomicBEEF: toHex(Array.from(result.tx)),
+      role: 'handover',
+      labels: pending.labels,
+      inputs: asset.inputs,
+      outputs: asset.outputs,
+      offChainValues: toHex(asset.offChainValues),
+      attestations: []
+    }
+    await this.putTxRecord(txid, record)
+    return await this.handoffResult(txid, (await this.colorStore!.getTx(txid)) ?? record)
+  }
+
+  /** A hand-over's `ColorHandoffResult`: the full attested leaf for an attested asset, else none. */
+  protected async handoffResult(txid: string, record: TxRecord): Promise<ColorHandoffResult> {
+    const resolved = await this.resolveAsset(record.assetId)
+    const profileData: ProfileData = {}
+    if (resolved.attested !== undefined) {
+      profileData[ATTESTED_PROFILE_ID] = {
+        [record.assetId]: await this.buildAttestedLeaf(record.assetId, txid)
+      }
+    }
+    return { version: 1, txid, profileData }
+  }
+
+  /**
+   * The attested leaf (contract §7.1) for a stored transaction of `assetId`: its declarationTx,
+   * the unattested ancestors behind its inputs (parents first, without the tip), the attestations
+   * of the anchors they reach, and a submission per unattested transaction including the tip.
+   */
+  protected async buildAttestedLeaf(assetId: string, tipTxid: string): Promise<JsonValue> {
+    const tip = await this.colorStore!.getTx(tipTxid)
+    if (tip?.assetId !== assetId) {
+      throw new AttestationEvidenceError(`evidence for ${tipTxid} is unavailable`)
+    }
+    const resolved = await this.resolveAsset(assetId)
+    const { records, attestations } = await this.attestedEvidence(assetId, tip.inputs)
+    return {
+      declarationTx: resolved.declarationTx!.toHex(),
+      transactions: records.map(([, record]) => record.rawTx),
+      attestations: attestations.map(({ txid, outputs, signer, signature }) => ({
+        txid,
+        outputs: [...outputs],
+        signer,
+        signature
+      })),
+      submissions: [
+        ...records.map(([txid, record]) => ({ txid, offChainValues: record.offChainValues })),
+        { txid: tipTxid, offChainValues: tip.offChainValues }
+      ]
+    }
+  }
+
+  /**
+   * Walks stored records back from `outpoints`, deduplicated and parents first. An outpoint that
+   * its record's attestations cover is an anchor; any other record is an unattested ancestor
+   * whose inputs are walked in turn. A missing record, one of another asset, or an aborted one
+   * (its outputs no longer exist) fails: there is no evidence for that input.
+   */
+  protected async attestedEvidence(
+    assetId: string,
+    outpoints: readonly string[]
+  ): Promise<{ records: Array<[string, TxRecord]>; attestations: ColorAttestation[] }> {
+    const store = this.colorStore!
+    const records: Array<[string, TxRecord]> = []
+    const anchors: ColorAttestation[] = []
+    const visited = new Set<string>()
+    const visit = async (outpoint: string): Promise<void> => {
+      const { txid, vout } = parseOutpoint(outpoint)
+      const record = await store.getTx(txid)
+      if (record === undefined || record.assetId !== assetId || record.state === 'aborted') {
+        throw new AttestationEvidenceError(`evidence for input ${outpoint} is unavailable`)
+      }
+      const covering = record.attestations.filter(
+        att => att.txid === txid && att.outputs.includes(vout)
+      )
+      if (covering.length > 0) {
+        anchors.push(...covering)
+        return
+      }
+      if (visited.has(txid)) return
+      visited.add(txid)
+      for (const input of record.inputs) await visit(input)
+      records.push([txid, record])
+    }
+    for (const outpoint of outpoints) await visit(outpoint)
+    return { records, attestations: distinctAttestations(anchors) }
   }
 
   /**
@@ -2068,6 +2224,10 @@ export class ColorPermissionModule implements PermissionsModule {
           'BRC-207: a plain noSend hand-over requires options.noSend and no BRC-177 p nosend expiry label'
         )
       }
+      // Its durable record and evidence are per transaction and asset.
+      if (plain.length > 1) {
+        throw new ProfileParamsError('BRC-207: a plain noSend hand-over moves exactly one asset')
+      }
     } else if (noSend && !handoff) {
       // As in BTMS, a token action completes with its overlay submission. The one deferred flow is
       // the BRC-177 handoff, whose receiver submits; a plain noSend action later sent with sendWith
@@ -2912,7 +3072,11 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * Checks the funded action against its plan, rechecks every token input's spendability, asks
    * the user to approve the final layout, and signs the inputs that spend this wallet's
-   * `p color` outputs.
+   * `p color` outputs. For an action moving profile assets, before anything is approved or
+   * signed: each required profile's `checkPlanData` runs again with the transaction, a
+   * plain-noSend hand-over's input evidence must be in the store, and the `submissionData` hook
+   * must give bytes. The wallet is then asked for the signed transaction, which `onResponse`
+   * records.
    */
   protected async signAction(
     args: SignActionArgs,
@@ -2929,6 +3093,10 @@ export class ColorPermissionModule implements PermissionsModule {
     assertTransactionOperations(plan, tokens)
     const managed = await this.actionInputs(tx, originator)
     const scopes = sighashScopes(plan, new Set(managed.map(input => input.outpoint)))
+    const pending =
+      this.profiles.size > 0
+        ? await this.profileSigning(plan, createArgs, tx, managed, originator)
+        : undefined
     await eachInOrder(new Set(tokens.consumed.map(input => input.assetId)), async assetId => {
       const assetInputs = tokens.consumed.filter(input => input.assetId === assetId)
       const admitted = await this.spendable(assetId, assetInputs)
@@ -2947,19 +3115,135 @@ export class ColorPermissionModule implements PermissionsModule {
         (await this.plainNoSend(plan)) || undefined
       )
     )
-    return {
-      ...args,
-      spends: {
-        ...args.spends,
-        ...(await this.signInputs(
-          tx,
-          managed,
-          scopes,
-          originator,
-          'BRC-207: the signable transaction omits a token input'
-        ))
-      }
+    const spends = {
+      ...args.spends,
+      ...(await this.signInputs(
+        tx,
+        managed,
+        scopes,
+        originator,
+        'BRC-207: the signable transaction omits a token input'
+      ))
     }
+    if (pending === undefined) return { ...args, spends }
+    // onResponse needs the signed transaction itself, never only its txid.
+    this.pendingHandoffs.set(args.reference, pending)
+    return { ...args, spends, options: { ...args.options, returnTXIDOnly: false } }
+  }
+
+  /**
+   * The signing-time checks of an action's profile assets, or undefined when it moves none:
+   * each asset's view of the final layout (`tx` set, change custody from the forwarded
+   * createAction outputs) goes to `checkPlanData` again; a plain-noSend hand-over must have
+   * stored evidence for every same-asset input; and the asset's `submissionData` hook, when a
+   * required profile defines one, must return bytes.
+   */
+  protected async profileSigning(
+    plan: ColorPlan,
+    createArgs: CreateActionArgs,
+    tx: Transaction,
+    managed: readonly ManagedInput[],
+    originator: string
+  ): Promise<PendingHandoff | undefined> {
+    const assets = [...(await this.resolvePlanAssets(plan)).values()].filter(
+      asset => asset.handlers.length > 0
+    )
+    if (assets.length === 0) return undefined
+    const plain = assets.some(asset => asset.sendPolicy === 'plain-nosend')
+    const requested = createArgs.outputs ?? []
+    const owned = new Set(plan.ownedOutputs.map(remittance => remittance.outputIndex))
+    const outputs: CreateActionOutput[] = tx.outputs.map(output => ({
+      lockingScript: output.lockingScript.toHex(),
+      satoshis: output.satoshis ?? 0,
+      outputDescription: ''
+    }))
+    // Token change is the module's own p color output; createAction admits no other into a
+    // p color basket outside plan.ownedOutputs. The manager leaves `p ` custody in plaintext.
+    const changeCustody = new Map<CreateActionOutput, Custody>()
+    requested.forEach((output, index) => {
+      if (owned.has(index) || output.basket?.startsWith(`${COLOR_BASKET_NAMESPACE} `) !== true)
+        return
+      if (output.customInstructions === undefined || outputs[index] === undefined) return
+      if (outputs[index].lockingScript !== output.lockingScript) {
+        throw new Error('BRC-207: the signable transaction does not match its token change')
+      }
+      const { assetId, derivationPrefix, derivationSuffix, senderIdentityKey } = parseCustody(
+        output.customInstructions,
+        undefined,
+        'token change customInstructions'
+      )
+      changeCustody.set(outputs[index], {
+        assetId,
+        derivationPrefix,
+        derivationSuffix,
+        senderIdentityKey
+      })
+    })
+    const beef = new Beef()
+    for (const input of tx.inputs) {
+      if (input.sourceTransaction !== undefined) beef.mergeRawTx(input.sourceTransaction.toBinary())
+    }
+    const inputs = tx.inputs.map(input => ({ outpoint: inputOutpoint(input) }) as CreateActionInput)
+    const managedByOutpoint = new Map(managed.map(input => [input.outpoint, input] as const))
+    const pending: PendingHandoff = {
+      plain,
+      labels: (createArgs.labels ?? []).filter(label => label.startsWith(COLOR_PLAN_LABEL_PREFIX)),
+      assets: []
+    }
+    await eachInOrder(assets, async asset => {
+      const layout = {
+        ...this.planLayout(asset.assetId, plan, inputs, outputs, {
+          managed: managedByOutpoint,
+          changeCustody,
+          beef
+        }),
+        tx
+      }
+      await this.checkPlanData(asset, plan, layout, originator)
+      const outpoints = layout.inputs.map(input => input.outpoint)
+      if (plain && asset.attested !== undefined) {
+        await this.attestedEvidence(asset.assetId, outpoints)
+      }
+      pending.assets.push({
+        assetId: asset.assetId,
+        offChainValues: await this.submissionData(asset, plan, layout, originator),
+        inputs: outpoints,
+        outputs: layout.outputs
+          .filter(output => output.custody !== undefined)
+          .map(output => output.outputIndex)
+      })
+    })
+    return pending
+  }
+
+  /**
+   * The asset's BRC-22 off-chain bytes from the one required profile that defines
+   * `submissionData` (contract §2.2), called before signing with the unsigned transaction;
+   * `[]` when none does. A defined hook must return a non-empty byte array.
+   */
+  protected async submissionData(
+    asset: ResolvedAsset,
+    plan: ColorPlan,
+    layout: {
+      inputs: ProfileTxView['inputs']
+      outputs: ProfileTxView['outputs']
+      tx: Transaction
+    },
+    originator: string
+  ): Promise<number[]> {
+    const entry = asset.handlers.find(({ handler }) => handler.submissionData !== undefined)
+    if (entry === undefined) return []
+    const bytes: unknown = await entry.handler.submissionData!(
+      await this.profileContext(asset, entry, originator),
+      this.txView(asset.assetId, plan, layout, entry.handler.id)
+    )
+    if (!Array.isArray(bytes) || bytes.length === 0) {
+      throw new ProfileDataError(`BRC-207: ${entry.handler.id} submissionData returned no bytes`)
+    }
+    if (!bytes.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+      throw new ProfileDataError(`BRC-207: ${entry.handler.id} submissionData returned non-bytes`)
+    }
+    return [...(bytes as number[])]
   }
 
   /**
