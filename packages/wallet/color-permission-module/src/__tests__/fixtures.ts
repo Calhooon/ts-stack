@@ -199,7 +199,9 @@ export class FakeWallet {
 export class FakeProvider {
   readonly current = new Map<string, { assetId: string; tx: Transaction; vout: number }>()
   readonly history = new Map<string, { assetId: string; tx: Transaction; vout: number }>()
-  readonly submissions: Array<{ topics: string[]; txid: string }> = []
+  readonly submissions: Array<{ topics: string[]; txid: string; offChainValues?: number[] }> = []
+  /** How often each provider method was called. */
+  readonly calls = { spendability: 0, admission: 0, submit: 0 }
   rejectSubmissions = false
 
   admit(assetId: string, tx: Transaction, vout: number): void {
@@ -216,19 +218,27 @@ export class FakeProvider {
     this.spent.add(outpoint)
   }
 
-  spendability = async (assetId: string, outpoints: string[]): Promise<LookupAnswer> =>
-    this.#answer(this.current, assetId, outpoints)
+  spendability = async (assetId: string, outpoints: string[]): Promise<LookupAnswer> => {
+    this.calls.spendability++
+    return this.#answer(this.current, assetId, outpoints)
+  }
 
-  admission = async (assetId: string, outpoints: string[]): Promise<LookupAnswer> =>
-    this.#answer(this.history, assetId, outpoints)
+  admission = async (assetId: string, outpoints: string[]): Promise<LookupAnswer> => {
+    this.calls.admission++
+    return this.#answer(this.history, assetId, outpoints)
+  }
 
   /** Seeds a deploy's asset overlay from the discovery topic, as a configured provider would. */
   seedDeploys = true
 
-  submit = async (topics: string[], beef: number[]): Promise<STEAK> => {
+  submit = async (topics: string[], beef: number[], offChainValues?: number[]): Promise<STEAK> => {
+    this.calls.submit++
     const tx = Transaction.fromAtomicBEEF(beef)
     const txid = tx.id('hex')
-    this.submissions.push({ topics, txid })
+    // offChainValues is recorded only when passed, so 0.1.0 submissions keep their exact shape.
+    this.submissions.push(
+      offChainValues === undefined ? { topics, txid } : { topics, txid, offChainValues }
+    )
     for (const input of tx.inputs)
       this.spend(`${input.sourceTransaction!.id('hex')}.${input.sourceOutputIndex}`)
     const steak: STEAK = {}

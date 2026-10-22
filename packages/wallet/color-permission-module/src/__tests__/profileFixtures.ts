@@ -1,9 +1,11 @@
 import { LockingScript, type PrivateKey, ProtoWallet, Transaction } from '@bsv/sdk'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import type { StrictCborValue } from '@bsv/templates'
+import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ProfileParamsError } from '../errors.js'
-import type { ColorAttestation, RequiredProfileHandler } from '../profiles.js'
-import type { ColorModuleStore } from '../types.js'
+import type { ColorAttestation, RequiredProfileHandler, ResolvedAsset } from '../profiles.js'
+import type { TokenOutput } from '../tokenOutputs.js'
+import type { ColorModuleStore, ColorOverlayProvider } from '../types.js'
 
 /** A Map-backed `ColorModuleStore` that logs every `set` key, in order. */
 export class FakeStore implements ColorModuleStore {
@@ -126,4 +128,22 @@ export function fixtureDeploy(hex: string): { tx: Transaction; assetId: string }
   const tx = new Transaction()
   tx.addOutput({ lockingScript: LockingScript.fromHex(hex), satoshis: 1000 })
   return { tx, assetId: `${tx.id('hex')}_0` }
+}
+
+/** Exposes the module's protected asset-resolution seams to tests. */
+export class TestModule extends ColorPermissionModule {
+  async resolveAssetForTest(
+    assetId: string,
+    evidence?: { declarationTx?: string }
+  ): Promise<ResolvedAsset> {
+    return await this.resolveAsset(assetId, evidence)
+  }
+
+  async providerForTest(assetId: string): Promise<ColorOverlayProvider> {
+    return await this.providerFor(assetId)
+  }
+
+  async assertConformingTokensForTest(tokens: Iterable<TokenOutput>): Promise<void> {
+    await this.assertConformingTokens(tokens)
+  }
 }

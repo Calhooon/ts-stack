@@ -151,6 +151,39 @@ export interface ColorSettleReport {
   results: ColorSettleResult[]
 }
 
+/** The attested profile's trust mode (0207:181-189). */
+export type TrustMode = 'any' | 'same' | 'all' | 'identity'
+
+/** The attested profile's parsed params. */
+export interface AttestedParams {
+  trustMode: TrustMode
+  identityKey?: string
+  evidenceProfile?: string
+}
+
+/** An authenticated asset with its resolved required profiles and routing. Module-internal. */
+export interface ResolvedAsset {
+  assetId: string
+  /** The authenticated deploy transaction; undefined on the no-profiles (0.1.0) path. */
+  declarationTx?: Transaction
+  /** The deploy's payload attributes; undefined on the 0.1.0 path and for a BRC-161 JSON deploy. */
+  attributes?: OneColorAttributes
+  /** The deploy's `req`, in canonical order (empty when it declares none). */
+  req: ReadonlyMap<string, ProfileDescriptor>
+  /** One entry per `req` entry, in canonical `req` order. */
+  handlers: ReadonlyArray<{ handler: RequiredProfileHandler; descriptor: ProfileDescriptor }>
+  /** The provider for every query and submit of this asset. */
+  provider: ColorOverlayProvider
+  /** Set when the attested profile is declared without `evidenceProfile`. */
+  attested?: AttestedParams
+  /** `plain-nosend` when any required profile declares it. */
+  sendPolicy?: 'plain-nosend'
+  /** The operations every handler that declares `operations` allows; undefined means all. */
+  operations?: ReadonlySet<ColorOperationName>
+  /** The largest receipt customInstructions, in UTF-8 bytes: the maximum over the handlers (each 1000 by default), 1000 with none. */
+  maxReceiptBytes: number
+}
+
 /** The largest receipt the module parses at all (0207:1442-1448). */
 const MAX_RECEIPT_BYTES = 16 * 1024 * 1024
 const MAX_UINT32 = 0xffffffff
@@ -266,7 +299,6 @@ export function resolveRequirements(
   assertWellFormedProfileMaps(attributes)
   if (attributes.req.status !== 'valid') return { req: NO_REQUIREMENTS, handlers: [] }
   const req = attributes.req.value
-  const ext = attributes.ext.status === 'valid' ? attributes.ext.value : undefined
 
   const resolved: Array<{ handler: RequiredProfileHandler; descriptor: ProfileDescriptor }> = []
   for (const [id, descriptor] of req) {
@@ -280,7 +312,29 @@ export function resolveRequirements(
     resolved.push({ handler, descriptor })
   }
   for (const { handler, descriptor } of resolved) handler.checkDescriptor(descriptor, req)
-  for (const { handler } of resolved) {
+  assertOwnExtEntries(resolved, attributes)
+  for (const hook of ['submissionData', 'admitReceipt'] as const) {
+    if (resolved.filter(({ handler }) => handler[hook] !== undefined).length > 1) {
+      throw new ProfileParamsError(`BRC-207: at most one required profile may define ${hook}`)
+    }
+  }
+  return { req, handlers: resolved }
+}
+
+/**
+ * Checks each required profile's own `ext` entry in `attributes` with its handler's `checkExt`
+ * (undefined when the entry is absent). A handler without `checkExt` requires the entry to be
+ * absent (ProfileParamsError). Entries of profiles that are not required are advisory and ignored.
+ */
+export function assertOwnExtEntries(
+  handlers: ReadonlyArray<{ handler: RequiredProfileHandler }>,
+  attributes: OneColorAttributes
+): void {
+  const ext =
+    attributes.payload === 'map' && attributes.ext.status === 'valid'
+      ? attributes.ext.value
+      : undefined
+  for (const { handler } of handlers) {
     const own = ext?.has(handler.id) === true
     if (handler.checkExt === undefined) {
       if (own) throw new ProfileParamsError(`BRC-207: ${handler.id} defines no own ext entry`)
@@ -288,12 +342,6 @@ export function resolveRequirements(
       handler.checkExt(own ? ext!.get(handler.id) : undefined)
     }
   }
-  for (const hook of ['submissionData', 'admitReceipt'] as const) {
-    if (resolved.filter(({ handler }) => handler[hook] !== undefined).length > 1) {
-      throw new ProfileParamsError(`BRC-207: at most one required profile may define ${hook}`)
-    }
-  }
-  return { req, handlers: resolved }
 }
 
 /**

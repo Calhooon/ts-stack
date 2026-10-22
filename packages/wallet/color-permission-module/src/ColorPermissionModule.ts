@@ -25,7 +25,7 @@ import {
 import { hash160, hash256 } from '@bsv/sdk/primitives/Hash'
 import Random from '@bsv/sdk/primitives/Random'
 import { toArray, toBase64, toHex } from '@bsv/sdk/primitives/utils'
-import { OneColor } from '@bsv/templates'
+import { OneColor, readOneColorAttributes, reqMatchesDeploy } from '@bsv/templates'
 import {
   encryptMetadata,
   maybeDecryptMetadata,
@@ -76,7 +76,9 @@ import {
   isDeployOutput,
   readAnyTokenOutput,
   readJsonTokenOutput,
+  readProfiledTokenOutput,
   readTokenOutput,
+  assertWellFormedProfileMaps,
   type TokenOutput,
   type TokenReader
 } from './tokenOutputs.js'
@@ -86,8 +88,17 @@ import type {
   ColorPermissionModuleOptions,
   ColorTokenAccessHandler
 } from './types.js'
-import { ColorConsentDeclinedError, isNamedError } from './errors.js'
-import { validateProfileHandlers, type RequiredProfileHandler } from './profiles.js'
+import { ColorConsentDeclinedError, isNamedError, ProfileParamsError } from './errors.js'
+import {
+  assertOwnExtEntries,
+  resolveRequirements,
+  routeProvider,
+  validateProfileHandlers,
+  type ProfileDescriptor,
+  type RequiredProfileHandler,
+  type ResolvedAsset
+} from './profiles.js'
+import { ColorStore } from './store.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
@@ -99,6 +110,21 @@ const SUBMIT_ATTEMPTS = 3
 const NOSEND_EXPIRY_LABEL_PREFIX = 'p nosend expiry '
 const STATE_TAG_PREFIX = 'color_state_'
 const UTF8_ENCODER = new TextEncoder()
+const NO_REQUIREMENTS: ReadonlyMap<string, ProfileDescriptor> = new Map()
+/** The attributes of a deploy that declares nothing, for a BRC-161 JSON deploy. */
+const ABSENT_ATTRIBUTES = readOneColorAttributes(undefined)
+const LOWER_HEX = /^(?:[0-9a-f]{2})+$/
+
+/** The transaction `hex` encodes, when it is lowercase canonical hex of a transaction with id `txid`. */
+function canonicalTransaction(hex: unknown, txid: string): Transaction | undefined {
+  if (typeof hex !== 'string' || !LOWER_HEX.test(hex)) return undefined
+  try {
+    const tx = Transaction.fromHex(hex)
+    return tx.id('hex') === txid && tx.toHex() === hex ? tx : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /** The derivation tuple a managed output's key was created with; `assetId` is `ISSUE` for a deploy. */
 export interface Custody {
@@ -867,11 +893,16 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly profiles: ReadonlyMap<string, RequiredProfileHandler>
   /** The host's durable store; never used when no profiles are registered. */
   protected readonly store?: ColorModuleStore
+  /** Typed records over `store`; constructed only when profiles are registered. */
+  protected readonly colorStore?: ColorStore
+  /** The BRC-162 reader: `readTokenOutput` without profiles, else the profile-aware reader. */
+  protected readonly read: TokenReader
   /** BRC-205 attribute for BRC-207's Discovery section: this module implements revision 5. */
   readonly capabilities: Readonly<Record<string, string>> = { 'brc207-color': '5' }
   /** Outputs a send in progress has selected, so a concurrent send does not select them too. */
   protected readonly selected = new Set<string>()
-  protected readonly supportedAssets = new Map<string, Promise<void>>()
+  /** Asset resolutions by asset id, in flight or done; a failed one is forgotten. */
+  protected readonly supportedAssets = new Map<string, Promise<ResolvedAsset>>()
   protected identityKey?: Promise<string>
 
   constructor(options: ColorPermissionModuleOptions) {
@@ -896,6 +927,12 @@ export class ColorPermissionModule implements PermissionsModule {
     this.provider = options.provider
     this.requestTokenAccess = options.requestTokenAccess
     this.store = options.store ?? undefined
+    if (this.profiles.size > 0) {
+      this.colorStore = new ColorStore(options.store!)
+      this.read = readProfiledTokenOutput
+    } else {
+      this.read = readTokenOutput
+    }
   }
 
   /** Clears in-memory selections and asset checks. */
@@ -1663,9 +1700,10 @@ export class ColorPermissionModule implements PermissionsModule {
       const atomic = beef.toBinaryAtomic(txid)
       const { assetIds, deploy } = submissionAssets(Transaction.fromAtomicBEEF(atomic))
       // A refused resubmission leaves the output unlisted; the spendability check decides.
-      await this.provider
-        .submit([...(deploy ? [DISCOVERY_TOPIC] : []), ...assetIds.map(colorTopic)], atomic)
-        .catch(() => undefined)
+      const groups = await this.routedTopics(assetIds, deploy).catch(() => [])
+      await eachInOrder(groups, async ({ provider, topics }) => {
+        await provider.submit(topics, atomic).catch(() => undefined)
+      })
     })
     return await this.spendable(assetId, outputs)
   }
@@ -1920,17 +1958,39 @@ export class ColorPermissionModule implements PermissionsModule {
    * resubmitted when it is next selected.
    */
   protected async submit(assetIds: string[], beef: AtomicBEEF, deploy = false): Promise<void> {
-    const topics = [...(deploy ? [DISCOVERY_TOPIC] : []), ...assetIds.map(colorTopic)]
-    let failure: unknown
-    for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
-      try {
-        await this.provider.submit(topics, Array.from(beef))
-        return
-      } catch (error) {
-        failure = error
+    await eachInOrder(await this.routedTopics(assetIds, deploy), async ({ provider, topics }) => {
+      let failure: unknown
+      for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
+        try {
+          await provider.submit(topics, Array.from(beef))
+          return
+        } catch (error) {
+          failure = error
+        }
       }
+      throw failure
+    })
+  }
+
+  /**
+   * A transaction's topics grouped by provider, in topic order: the discovery topic on the default
+   * provider, each asset topic on its asset's provider. Without profiles, or when every asset
+   * routes to the default provider, this is the single 0.1.0 call.
+   */
+  protected async routedTopics(
+    assetIds: readonly string[],
+    deploy: boolean
+  ): Promise<Array<{ provider: ColorOverlayProvider; topics: string[] }>> {
+    const groups = new Map<ColorOverlayProvider, string[]>()
+    if (deploy) groups.set(this.provider, [DISCOVERY_TOPIC])
+    for (const assetId of assetIds) {
+      const provider = await this.providerFor(assetId)
+      const topics = groups.get(provider)
+      if (topics === undefined) groups.set(provider, [colorTopic(assetId)])
+      else topics.push(colorTopic(assetId))
     }
-    throw failure
+    if (groups.size === 0) return [{ provider: this.provider, topics: [] }]
+    return [...groups].map(([provider, topics]) => ({ provider, topics }))
   }
 
   /* ----------------------------------------------------------------------
@@ -2094,11 +2154,13 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<ListOutputsResult> {
     // As in BTMS, a read reports wallet state alone: the basket's unreserved, unspent outputs.
-    // The overlay is consulted only when spending.
+    // The overlay is consulted only when spending. With profiles, the asset must resolve first,
+    // so an unsupported asset fails closed (A.142/A.143) before any output is read.
+    if (this.profiles.size > 0) await this.resolveAsset(assetId)
     const held = (await this.listBasket(assetBasket(assetId, role), originator, args))
       .map(output => {
         const source = this.sourceOutput(output)
-        return readTokenOutput(source.lockingScript, parseOutpoint(output.outpoint))
+        return this.read(source.lockingScript, parseOutpoint(output.outpoint))
       })
       .filter(token => token?.assetId === assetId && token.role === role)
     const total = held.reduce((sum, token) => sum + (role === 'value' ? token!.amount : 1n), 0n)
@@ -2230,28 +2292,232 @@ export class ColorPermissionModule implements PermissionsModule {
   }
 
   /**
-   * Authenticates the asset's deploy through the overlay and fails when it declares
-   * required processing profiles. The deploy bytes hash to the asset ID, so no SPV is needed.
+   * Authenticates the asset's deploy and fails when it declares required processing profiles this
+   * wallet does not support. Kept for subclassers: `resolveAsset` with the result discarded.
    */
   protected async assertSupportedAsset(assetId: string): Promise<void> {
-    let check = this.supportedAssets.get(assetId)
-    if (check === undefined) {
-      check = (async () => {
-        const { txid, vout } = parseAssetId(assetId)
-        const outpoint = outpointString(txid, vout)
-        const deploy = readOutputList(await this.provider.admission(assetId, [outpoint]), [
-          outpoint
-        ]).get(outpoint)
-        if (deploy === undefined)
-          throw new Error(`BRC-207: the overlay has no admitted deploy for ${assetId}`)
-        if (!isDeployOutput(deploy.lockingScript, { txid, vout })) {
-          throw new Error(`BRC-207: ${assetId} is not a token deploy`)
-        }
-      })()
-      this.supportedAssets.set(assetId, check)
-      check.catch(() => this.supportedAssets.delete(assetId))
+    await this.resolveAsset(assetId)
+  }
+
+  /**
+   * Authenticates an asset's deploy and resolves its required profiles and provider, memoized by
+   * asset id (a failure is forgotten). Without profiles this is the 0.1.0 check: one admission
+   * query to the provider, and a deploy that declares any `req` fails. With profiles, the deploy is
+   * taken from the first of (D23) the request's `declarationTx`, the `color.v1.` deploy cache, the
+   * default provider and each handler's `deployProviders()`, each checked by txid hash; it is then
+   * cached, and its `req` resolved against the registered handlers.
+   */
+  protected async resolveAsset(
+    assetId: string,
+    evidence?: { declarationTx?: string }
+  ): Promise<ResolvedAsset> {
+    if (this.profiles.size === 0) {
+      return await (this.supportedAssets.get(assetId) ??
+        this.memoize(assetId, this.resolveBaseline(assetId)))
     }
-    await check
+    const { txid, vout } = parseAssetId(assetId)
+    // Request evidence is checked even when the asset is already resolved, so a request with a
+    // mismatching body fails the same way whatever the cache holds.
+    let supplied: Transaction | undefined
+    if (evidence?.declarationTx !== undefined) {
+      supplied = canonicalTransaction(evidence.declarationTx, txid)
+      if (supplied === undefined) {
+        throw new Error('BRC-207: the supplied declarationTx does not match the asset')
+      }
+      this.deployToken(assetId, supplied, vout)
+    }
+    const pending = this.supportedAssets.get(assetId)
+    if (pending !== undefined) {
+      if (supplied === undefined) return await pending
+      try {
+        return await pending
+      } catch {
+        // The resolution in flight failed; this request carries its own deploy, so try again.
+      }
+    }
+    return await this.memoize(assetId, this.resolveProfiled(assetId, supplied))
+  }
+
+  /** Records a resolution in the memo, forgetting it if it fails. */
+  protected memoize(assetId: string, check: Promise<ResolvedAsset>): Promise<ResolvedAsset> {
+    this.supportedAssets.set(assetId, check)
+    check.catch(() => {
+      if (this.supportedAssets.get(assetId) === check) this.supportedAssets.delete(assetId)
+    })
+    return check
+  }
+
+  /** The 0.1.0 support check: the deploy from the provider, which must declare no `req`. */
+  protected async resolveBaseline(assetId: string): Promise<ResolvedAsset> {
+    const { txid, vout } = parseAssetId(assetId)
+    const outpoint = outpointString(txid, vout)
+    const deploy = readOutputList(await this.provider.admission(assetId, [outpoint]), [
+      outpoint
+    ]).get(outpoint)
+    if (deploy === undefined)
+      throw new Error(`BRC-207: the overlay has no admitted deploy for ${assetId}`)
+    if (!isDeployOutput(deploy.lockingScript, { txid, vout })) {
+      throw new Error(`BRC-207: ${assetId} is not a token deploy`)
+    }
+    return {
+      assetId,
+      req: NO_REQUIREMENTS,
+      handlers: [],
+      provider: this.provider,
+      maxReceiptBytes: MAX_RECEIPT_INSTRUCTION_BYTES
+    }
+  }
+
+  /** Resolution with profiles registered: find and verify the deploy, then its requirements. */
+  protected async resolveProfiled(
+    assetId: string,
+    supplied: Transaction | undefined
+  ): Promise<ResolvedAsset> {
+    const { txid, vout } = parseAssetId(assetId)
+    const cached = supplied === undefined ? await this.cachedDeploy(assetId, txid) : undefined
+    const declarationTx = supplied ?? cached ?? (await this.providedDeploy(assetId, txid, vout))
+    // Bytes that hash to the asset's txid are the asset's own: a non-deploy fails, never falls back.
+    const { attributes } = this.deployToken(assetId, declarationTx, vout)
+    if (cached === undefined) {
+      // The cache is keyed by hash and re-verified on read, so a failed write only costs a lookup.
+      await this.colorStore!.putDeploy(assetId, declarationTx.toHex()).catch(() => undefined)
+    }
+    const resolved = resolveRequirements(attributes, this.profiles)
+    const provider = routeProvider(assetId, resolved, this.provider)
+    const { handlers } = resolved
+    let operations: Set<ColorOperationName> | undefined
+    for (const { handler } of handlers) {
+      if (handler.operations === undefined) continue
+      const allowed = operations
+      operations = new Set(handler.operations.filter(op => allowed?.has(op) ?? true))
+    }
+    const sendPolicy = handlers.some(({ handler }) => handler.sendPolicy === 'plain-nosend')
+      ? 'plain-nosend'
+      : undefined
+    return {
+      assetId,
+      declarationTx,
+      ...(attributes === undefined ? {} : { attributes }),
+      req: resolved.req,
+      handlers,
+      provider,
+      ...(sendPolicy === undefined ? {} : { sendPolicy }),
+      ...(operations === undefined ? {} : { operations }),
+      maxReceiptBytes:
+        handlers.length === 0
+          ? MAX_RECEIPT_INSTRUCTION_BYTES
+          : Math.max(
+              ...handlers.map(
+                ({ handler }) => handler.maxReceiptBytes ?? MAX_RECEIPT_INSTRUCTION_BYTES
+              )
+            )
+    }
+  }
+
+  /**
+   * The deploy output of `tx` read with this module's reader, or a throw when it is not the
+   * asset's deploy. `tx` must already be known to have the asset's txid.
+   */
+  protected deployToken(assetId: string, tx: Transaction, vout: number): TokenOutput {
+    const output = tx.outputs[vout]
+    const token =
+      output === undefined
+        ? undefined
+        : readAnyTokenOutput(output.lockingScript, { txid: tx.id('hex'), vout }, this.read)
+    if (token?.deploy !== true || token.assetId !== assetId) {
+      throw new Error(`BRC-207: ${assetId} is not a token deploy`)
+    }
+    return token
+  }
+
+  /** The cached deploy when its bytes hash to the asset's txid; a mismatching entry is deleted. */
+  protected async cachedDeploy(assetId: string, txid: string): Promise<Transaction | undefined> {
+    let hex: string | undefined
+    try {
+      hex = await this.colorStore!.getDeploy(assetId)
+    } catch {
+      return undefined // An unreadable cache is a miss: every other source is verified by hash.
+    }
+    if (hex === undefined) return undefined
+    const tx = canonicalTransaction(hex, txid)
+    if (tx === undefined) await this.colorStore!.deleteDeploy(assetId).catch(() => undefined)
+    return tx
+  }
+
+  /**
+   * The deploy transaction from the default provider, then from each registered handler's
+   * `deployProviders()` in registration order (each distinct provider asked once). A provider
+   * failure moves on to the next; when none has the deploy, the first failure is reported, or that
+   * no overlay has it.
+   */
+  protected async providedDeploy(
+    assetId: string,
+    txid: string,
+    vout: number
+  ): Promise<Transaction> {
+    const outpoint = outpointString(txid, vout)
+    const asked = new Set<ColorOverlayProvider>()
+    let failure: { error: unknown } | undefined
+    const ask = async (provider: ColorOverlayProvider): Promise<Transaction | undefined> => {
+      if (asked.has(provider)) return undefined
+      asked.add(provider)
+      try {
+        // readOutputList derives each outpoint from the transaction's own id: a hash check.
+        return readOutputList(await provider.admission(assetId, [outpoint]), [outpoint]).get(
+          outpoint
+        )?.transaction
+      } catch (error) {
+        failure ??= { error }
+        return undefined
+      }
+    }
+    const found = await ask(this.provider)
+    if (found !== undefined) return found
+    for (const handler of this.profiles.values()) {
+      if (handler.deployProviders === undefined) continue
+      let providers: ColorOverlayProvider[]
+      try {
+        providers = [...handler.deployProviders()]
+      } catch (error) {
+        failure ??= { error }
+        continue
+      }
+      for (const provider of providers) {
+        const tx = await ask(provider)
+        if (tx !== undefined) return tx
+      }
+    }
+    if (failure !== undefined) throw failure.error
+    throw new Error(`BRC-207: the overlay has no admitted deploy for ${assetId}`)
+  }
+
+  /**
+   * Fails unless each token conforms to its asset's deploy: a successor's `req`, when present, must
+   * be byte-identical to the deploy's (0207:92-95, C03/C04), and each required profile's own `ext`
+   * entry must pass its handler's `checkExt` (or be absent without one). Tokens read without
+   * attributes (the 0.1.0 reader, BRC-161 JSON) are only resolved.
+   */
+  protected async assertConformingTokens(tokens: Iterable<TokenOutput>): Promise<void> {
+    const list = [...tokens]
+    const assets = new Map<string, ResolvedAsset>()
+    await eachInOrder(new Set(list.map(token => token.assetId)), async assetId => {
+      assets.set(assetId, await this.resolveAsset(assetId))
+    })
+    for (const token of list) {
+      if (token.attributes === undefined) continue
+      const asset = assets.get(token.assetId)!
+      assertWellFormedProfileMaps(token.attributes)
+      if (!reqMatchesDeploy(asset.attributes ?? ABSENT_ATTRIBUTES, token.attributes)) {
+        throw new ProfileParamsError('BRC-207: successor requirements differ from the deploy')
+      }
+      assertOwnExtEntries(asset.handlers, token.attributes)
+    }
+  }
+
+  /** The provider for every query and submit of an asset: the default one without profiles. */
+  protected async providerFor(assetId: string): Promise<ColorOverlayProvider> {
+    if (this.profiles.size === 0) return this.provider
+    return (await this.resolveAsset(assetId)).provider
   }
 
   /** The queried outputs the overlay reports admitted and unspent, matched to their source bytes. */
@@ -2260,7 +2526,8 @@ export class ColorPermissionModule implements PermissionsModule {
     outputs: readonly SourceOutput[]
   ): Promise<Set<string>> {
     const outpoints = outputs.map(output => output.outpoint)
-    const listed = readOutputList(await this.provider.spendability(assetId, outpoints), outpoints)
+    const provider = await this.providerFor(assetId)
+    const listed = readOutputList(await provider.spendability(assetId, outpoints), outpoints)
     for (const output of outputs) {
       const answer = listed.get(output.outpoint)
       if (
