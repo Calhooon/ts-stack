@@ -489,12 +489,14 @@ interface ExplicitInputs {
   inputs: CreateActionInput[]
   managed: ManagedInput[]
   holdings: Map<string, ExplicitHolding>
+  /** The tokens of the managed and readable foreign token inputs, as read. */
+  tokens: TokenOutput[]
 }
 
 /** The requested outputs' token totals per existing asset, the deploy, and the outputs that leave the wallet. */
 interface PlannedOutputs {
   holdings: Map<string, Holding>
-  /** The BRC-162 tokens of the requested outputs other than a deploy, as read. */
+  /** The tokens of the requested outputs other than a deploy (BRC-161 JSON included), as read. */
   tokens: TokenOutput[]
   deploy?: { operation: ColorOperationName }
   destinations: Array<{
@@ -1680,7 +1682,16 @@ export class ColorPermissionModule implements PermissionsModule {
         )
       )
     })
-    await this.assertConformingTokens([...consumed.map(input => input.token), ...outputTokens])
+    // BRC-161 JSON legs of the transaction's assets conform too: they supply no ext state.
+    const jsonLegs = [
+      ...tokenSources(tx, new Set(), true, this.read).map(input => input.token),
+      ...this.outputTokens(tx)
+    ].filter(token => token.encoding === 'brc161' && assets.has(token.assetId))
+    await this.assertConformingTokens([
+      ...consumed.map(input => input.token),
+      ...outputTokens,
+      ...jsonLegs
+    ])
 
     const checked: CheckedReceipt[] = []
     for (const receipt of located) {
@@ -2198,6 +2209,7 @@ export class ColorPermissionModule implements PermissionsModule {
     try {
       const explicit = await this.explicitInputs(args, originator, spend)
       this.reserve(reserved, explicit.managed)
+      if (profiled) await this.assertConformingTokens(explicit.tokens)
       const { inputs, changes } = await this.fund(
         reserved,
         plan,
@@ -2449,8 +2461,16 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<void> {
     await eachInOrder(asset.handlers, async entry => {
-      if (entry.handler.checkPlanData === undefined) return
       const view = this.txView(asset.assetId, plan, layout, entry.handler.id)
+      if (entry.handler.checkPlanData === undefined) {
+        // The module parses the attested leaf itself (resolvePlanAssets); any other leaf for a
+        // profile without the hook would be accepted unchecked (A.157).
+        const ownLeaf = entry.handler.id === ATTESTED_PROFILE_ID && asset.attested !== undefined
+        if (view.planLeaf !== undefined && !ownLeaf) {
+          throw new ProfileDataError(`BRC-207: ${entry.handler.id} accepts no plan profile data`)
+        }
+        return
+      }
       await entry.handler.checkPlanData(
         await this.profileContext(asset, entry, originator),
         view.planLeaf,
@@ -2484,7 +2504,12 @@ export class ColorPermissionModule implements PermissionsModule {
     spend: SpendContext = PUBLISHED_SPEND
   ): Promise<ExplicitInputs> {
     const inputs = args.inputs ?? []
-    const explicit: ExplicitInputs = { inputs: [...inputs], managed: [], holdings: new Map() }
+    const explicit: ExplicitInputs = {
+      inputs: [...inputs],
+      managed: [],
+      holdings: new Map(),
+      tokens: []
+    }
     if (inputs.length === 0) return explicit
     const outpoints = new Set(inputs.map(input => input.outpoint))
     if (outpoints.size !== inputs.length) throw new Error('BRC-207: duplicate explicit input')
@@ -2527,6 +2552,7 @@ export class ColorPermissionModule implements PermissionsModule {
     if (managed === undefined)
       throw new Error('BRC-207: an explicit p color input is not a managed token output')
     await this.assertSupportedAsset(managed.assetId)
+    explicit.tokens.push(this.read(managed.lockingScript, parseOutpoint(managed.outpoint))!)
     if (
       !(await this.spendable(managed.assetId, [managed], spend)).has(managed.outpoint) &&
       !(await this.resubmitHeld(managed.assetId, managed.role, [managed], originator)).has(
@@ -2554,6 +2580,7 @@ export class ColorPermissionModule implements PermissionsModule {
         : readAnyTokenOutput(source.lockingScript, parseOutpoint(outpoint), this.read)
     if (token === undefined) return
     await this.assertSupportedAsset(token.assetId)
+    explicit.tokens.push(token)
     if (!(await this.spendable(token.assetId, [source!])).has(outpoint))
       throw new Error('BRC-207: a foreign token input is not admitted and unspent in its overlay')
     const totals = holding(explicit.holdings, token.assetId, emptyExplicitHolding)
@@ -2610,7 +2637,10 @@ export class ColorPermissionModule implements PermissionsModule {
         throw new Error('BRC-207: a p color basket can only receive BRC-162 token outputs')
       }
       const json = readJsonTokenOutput(lockingScript, placeholder)
-      if (json !== undefined) this.jsonDestination(plan, index, output, json, planned)
+      if (json !== undefined) {
+        this.jsonDestination(plan, index, output, json, planned)
+        if (!json.deploy) planned.tokens.push(json)
+      }
       return output
     }
     // With profiles registered, a token output carries only the module's state tags.
@@ -3221,6 +3251,13 @@ export class ColorPermissionModule implements PermissionsModule {
       throw new Error("BRC-207: signAction needs the action's p color createAction arguments")
     const tx = action.transaction
     const tokens = transactionTokens(tx, true, this.read)
+    // Sources the wallet resolved after createAction and the final layout conform too.
+    if (this.profiles.size > 0) {
+      await this.assertConformingTokens([
+        ...tokens.consumed.map(input => input.token),
+        ...this.outputTokens(tx)
+      ])
+    }
     assertTransactionOperations(plan, tokens)
     const managed = await this.actionInputs(tx, originator)
     const scopes = sighashScopes(plan, new Set(managed.map(input => input.outpoint)))
@@ -3655,20 +3692,29 @@ export class ColorPermissionModule implements PermissionsModule {
     const tokens = transactionTokens(tx, true, this.read)
     const involved = new Set([token.assetId, ...tokens.inputs.keys(), ...tokens.outputs.keys()])
     await this.assertSupportedAssets(involved)
-    // A signature for an app-built transaction cannot carry submission data or keep a plain
-    // noSend hand-over's evidence, so assets whose profiles need either are refused.
+    // A signature for an app-built transaction cannot carry submission data, keep a plain
+    // noSend hand-over's evidence or run a profile's transition checks (it has no plan), so
+    // assets whose profiles need any of them are refused rather than handled as baseline. Every
+    // source and output must conform to its deploy (A.146, A.151) before anything is signed.
     if (this.profiles.size > 0) {
       await eachInOrder(involved, async assetId => {
         const asset = await this.resolveAsset(assetId)
         if (
           asset.sendPolicy !== undefined ||
-          asset.handlers.some(({ handler }) => handler.submissionData !== undefined)
+          asset.handlers.some(
+            ({ handler }) =>
+              handler.submissionData !== undefined || handler.checkPlanData !== undefined
+          )
         ) {
           throw new ProfileParamsError(
             `BRC-207: the required profiles of ${assetId} do not allow app-built signatures`
           )
         }
       })
+      await this.assertConformingTokens([
+        ...tokens.consumed.map(consumed => consumed.token),
+        ...this.outputTokens(tx)
+      ])
     }
     await Promise.all(
       ownedOutputs.map(async remittance => {
@@ -4182,8 +4228,10 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * Fails unless each token conforms to its asset's deploy: a successor's `req`, when present, must
    * be byte-identical to the deploy's (0207:92-95, C03/C04), and each required profile's own `ext`
-   * entry must pass its handler's `checkExt` (or be absent without one). Tokens read without
-   * attributes (the 0.1.0 reader, BRC-161 JSON) are only resolved.
+   * entry must pass its handler's `checkExt` (or be absent without one). A BRC-161 JSON token
+   * supplies no ext state, so each required profile's `checkExt` sees an absent entry (0207: a
+   * required profile may reject that absence); deploy requirements still apply to it. Other
+   * tokens read without attributes (the 0.1.0 reader) are only resolved.
    */
   protected async assertConformingTokens(tokens: Iterable<TokenOutput>): Promise<void> {
     const list = [...tokens]
@@ -4192,8 +4240,11 @@ export class ColorPermissionModule implements PermissionsModule {
       assets.set(assetId, await this.resolveAsset(assetId))
     })
     for (const token of list) {
-      if (token.attributes === undefined) continue
       const asset = assets.get(token.assetId)!
+      if (token.attributes === undefined) {
+        if (token.encoding === 'brc161') assertOwnExtEntries(asset.handlers, ABSENT_ATTRIBUTES)
+        continue
+      }
       assertWellFormedProfileMaps(token.attributes)
       if (!reqMatchesDeploy(asset.attributes ?? ABSENT_ATTRIBUTES, token.attributes)) {
         throw new ProfileParamsError('BRC-207: successor requirements differ from the deploy')
@@ -4242,6 +4293,15 @@ export class ColorPermissionModule implements PermissionsModule {
       } catch {
         return []
       }
+    })
+  }
+
+  /** The non-deploy token outputs of `tx` in either encoding, read with this module's reader. */
+  protected outputTokens(tx: Transaction): TokenOutput[] {
+    const txid = tx.id('hex')
+    return tx.outputs.flatMap((output, vout) => {
+      const token = readSentToken(output.lockingScript, { txid, vout }, this.read)
+      return token === undefined || token.deploy ? [] : [token]
     })
   }
 

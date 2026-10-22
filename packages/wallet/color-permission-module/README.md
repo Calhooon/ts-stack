@@ -105,7 +105,9 @@ attested profile is registered.
 - **App-built transactions**: `createSignature` with a `p color` protocol ID
   and a BRC-207 signature envelope in `data`. The whole transaction is
   evaluated as a send is: every input needs its source, every token input must
-  be admitted and unspent in its overlay, and the user approves the same facts
+  be admitted and unspent in its overlay, every source and output of a profile
+  asset must conform to its deploy (`req` and each profile's own `ext`), and the
+  user approves the same facts
   (`color_signature`: every asset leg, destinations, satoshi totals and fee,
   the signature released) before the module signs.
 - **Reads**: `listOutputs` with `p color assets`, `p color balance <assetTag>`
@@ -165,7 +167,7 @@ and `ReceiptAdmission` are exported types) defines:
 | `deployProviders`  | Asked in order for an unknown asset's deploy after the default provider                                                                                                                                                                                                          |
 | `sendPolicy`       | `'plain-nosend'`: every token `createAction` moving the asset must be `noSend` without a BRC-177 expiry label; token change stays in the transaction, tagged `color_offline`, and the module never submits the action                                                            |
 | `operations`       | The operations a holder may declare for the asset; absent means all                                                                                                                                                                                                              |
-| `checkPlanData`    | In `createAction` and again in `signAction`: checks the plan's `profileData` leaf for the asset (undefined when absent); throws `ProfileDataError`                                                                                                                               |
+| `checkPlanData`    | In `createAction` and again in `signAction`: checks the plan's `profileData` leaf for the asset (undefined when absent); throws `ProfileDataError`. A profile without it accepts no plan leaf                                                                                    |
 | `submissionData`   | In `signAction`, before signing: the non-empty `offChainValues` bytes submitted to `tm_color_<assetId>`; at most one handler per asset                                                                                                                                           |
 | `admitReceipt`     | For every receipt of the asset, after the base checks and attested-evidence parsing and before any credit; `admitted` settles it, `unavailable` (transport failure only) allows offline acceptance, a throw refuses it; at most one handler per asset, and only with attested v1 |
 | `checkReceiptData` | Validates a receipt `profileData` leaf for the profile; without it any such leaf is rejected with `ProfileDataError`                                                                                                                                                             |
@@ -173,6 +175,13 @@ and `ReceiptAdmission` are exported types) defines:
 
 Plan `profileData` may name only profiles in the asset's `req` and assets in
 `plan.assets` (`ProfileDataError` otherwise).
+
+Every token of a profile asset the module reads, as a source or an output, in
+`createAction` (requested outputs and explicit inputs), `signAction` (the final
+transaction), `createSignature` and receipts, must conform to the deploy: a
+repeated `req` must be byte-identical to the deploy's, and each required
+profile's `checkExt` must accept its own `ext` entry. A BRC-161 JSON leg
+supplies no `ext` state, so `checkExt` sees an absent entry and may reject it.
 
 ### Attested profile
 
@@ -292,9 +301,10 @@ The module fails explicitly, rather than falling back, on:
 - building a deploy that declares a non-empty `req`, and attested `ISSUE`
   leaves in plans and receipts: such deploys are built outside the module;
 - BRC-177 `lifecycles` in attested evidence;
-- `createSignature` for assets whose profiles define `sendPolicy` or
-  `submissionData`, since a released signature cannot carry submission data or
-  keep hand-over evidence;
+- `createSignature` for assets whose profiles define `sendPolicy`,
+  `submissionData` or `checkPlanData`, since a released signature cannot carry
+  submission data, keep hand-over evidence or pass through a plan whose
+  transition a profile checks;
 - satoshi change positions (`changePositions` with a null `assetId`): wallet-toolbox
   adds satoshi change while funding and does not position it.
 
