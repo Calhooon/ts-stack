@@ -1,4 +1,4 @@
-import { LockingScript, MerklePath, PrivateKey, type Transaction } from '@bsv/sdk'
+import { LockingScript, MerklePath, PrivateKey, Transaction } from '@bsv/sdk'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { OneColor } from '@bsv/templates'
 import { validateFrontier, type FrontierInput } from '../frontier.js'
@@ -515,6 +515,50 @@ describe('complete token frontier', () => {
     const B = await g.spend([{ tx: A, vout: 0 }], [1000n])
     const tip = await g.spend([{ tx: B, vout: 0 }], [1000n])
     rejects(frontier(g, tip, [await g.attest(K, A, [0])], { omit: [B] }), id(B))
+  })
+
+  it('a non-token change output does not count toward a transition', async () => {
+    const g = graph()
+    const deploy = g.deploy(1000n)
+    const A = await g.spend([{ tx: deploy.tx, vout: 0 }], [1000n])
+    const B = await g.spend([{ tx: A, vout: 0 }], ['plain', 1000n, 'plain'])
+    const tip = await g.spend([{ tx: B, vout: 1 }], [1000n])
+    expect(validateFrontier(frontier(g, tip, [await g.attest(K, A, [0])]))).toEqual({
+      anchors: [{ outpoint: at(A, 0), signers: [KEY] }],
+      pending: [id(B), id(tip)]
+    })
+    // Value still balances on the token outputs alone: C may not create more than it spends.
+    const C = await g.spend([{ tx: A, vout: 0 }], ['plain', 1001n])
+    const over = await g.spend([{ tx: C, vout: 1 }], [1001n])
+    rejects(frontier(g, over, [await g.attest(K, A, [0])]), 'value outputs exceed inputs')
+  })
+
+  it('a start output named twice yields one anchor', async () => {
+    const g = graph()
+    const deploy = g.deploy(1000n)
+    const tip = await g.spend([{ tx: deploy.tx, vout: 0 }], [1000n])
+    expect(
+      validateFrontier(frontier(g, tip, [await g.attest(K, tip, [0])], { outputs: [0, 0] }))
+    ).toEqual({ anchors: [{ outpoint: at(tip, 0), signers: [KEY] }], pending: [] })
+  })
+
+  it('an input that carries only its source transaction is resolved by that body’s txid', async () => {
+    const g = graph()
+    const deploy = g.deploy(1000n)
+    const A = await g.spend([{ tx: deploy.tx, vout: 0 }], [1000n])
+    const signed = await g.spend([{ tx: A, vout: 0 }], [1000n])
+    const tip = new Transaction(
+      signed.version,
+      signed.inputs.map(input => ({ ...input, sourceTXID: undefined })),
+      signed.outputs,
+      signed.lockTime
+    )
+    expect(tip.inputs[0].sourceTXID).toBeUndefined()
+    expect(id(tip)).toBe(id(signed))
+    expect(validateFrontier(frontier(g, tip, [await g.attest(K, A, [0])]))).toEqual({
+      anchors: [{ outpoint: at(A, 0), signers: [KEY] }],
+      pending: [id(tip)]
+    })
   })
 
   it('keeps OneColor outputs readable (fixture sanity)', () => {
