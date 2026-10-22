@@ -99,6 +99,8 @@ import {
   type ResolvedAsset
 } from './profiles.js'
 import { ColorStore } from './store.js'
+import { ATTESTED_PROFILE_ID } from './attestation.js'
+import { parseAttestedParams } from './attested.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
@@ -897,8 +899,11 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly colorStore?: ColorStore
   /** The BRC-162 reader: `readTokenOutput` without profiles, else the profile-aware reader. */
   protected readonly read: TokenReader
-  /** BRC-205 attribute for BRC-207's Discovery section: this module implements revision 5. */
-  readonly capabilities: Readonly<Record<string, string>> = { 'brc207-color': '5' }
+  /**
+   * BRC-205 attributes for BRC-207's Discovery section: this module implements revision 5, and
+   * `brc207-color-attested` 1 when the attested profile is registered (0207:1501-1506).
+   */
+  readonly capabilities: Readonly<Record<string, string>>
   /** Outputs a send in progress has selected, so a concurrent send does not select them too. */
   protected readonly selected = new Set<string>()
   /** Asset resolutions by asset id, in flight or done; a failed one is forgotten. */
@@ -927,6 +932,9 @@ export class ColorPermissionModule implements PermissionsModule {
     this.provider = options.provider
     this.requestTokenAccess = options.requestTokenAccess
     this.store = options.store ?? undefined
+    const capabilities: Record<string, string> = { 'brc207-color': '5' }
+    if (this.profiles.has(ATTESTED_PROFILE_ID)) capabilities['brc207-color-attested'] = '1'
+    this.capabilities = Object.freeze(capabilities)
     if (this.profiles.size > 0) {
       this.colorStore = new ColorStore(options.store!)
       this.read = readProfiledTokenOutput
@@ -2394,6 +2402,11 @@ export class ColorPermissionModule implements PermissionsModule {
     const sendPolicy = handlers.some(({ handler }) => handler.sendPolicy === 'plain-nosend')
       ? 'plain-nosend'
       : undefined
+    // The default attested construction applies unless `evidenceProfile` delegates it (0207:435).
+    const declared = handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)
+    const params =
+      declared === undefined ? undefined : parseAttestedParams(declared.descriptor.params)
+    const attested = params?.evidenceProfile === undefined ? params : undefined
     return {
       assetId,
       declarationTx,
@@ -2403,6 +2416,7 @@ export class ColorPermissionModule implements PermissionsModule {
       provider,
       ...(sendPolicy === undefined ? {} : { sendPolicy }),
       ...(operations === undefined ? {} : { operations }),
+      ...(attested === undefined ? {} : { attested }),
       maxReceiptBytes:
         handlers.length === 0
           ? MAX_RECEIPT_INSTRUCTION_BYTES
