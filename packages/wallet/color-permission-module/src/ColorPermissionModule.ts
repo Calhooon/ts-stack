@@ -105,6 +105,7 @@ import {
   type ColorAttestation,
   type ProfileAssetContext,
   type ProfileDescriptor,
+  type ProfileTxView,
   type ReceiptGraph,
   type RequiredProfileHandler,
   type ResolvedAsset
@@ -230,6 +231,14 @@ function tokenInputs(inputs: readonly ManagedInput[]): CreateActionInput[] {
 
 function custodyInstructions(custody: Custody): string {
   return JSON.stringify({ version: 1, ...custody })
+}
+
+/** The output without caller tags in the module's `color_` namespace (contract §2.2-6). */
+function withoutColorTags(output: CreateActionOutput): CreateActionOutput {
+  if (output.tags?.some(tag => tag.startsWith(COLOR_TAG_PREFIX)) !== true) return output
+  const tags = output.tags.filter(tag => !tag.startsWith(COLOR_TAG_PREFIX))
+  const { tags: _tags, ...rest } = output
+  return tags.length === 0 ? rest : { ...rest, tags }
 }
 
 /**
@@ -404,6 +413,8 @@ interface ExplicitInputs {
 /** The requested outputs' token totals per existing asset, the deploy, and the outputs that leave the wallet. */
 interface PlannedOutputs {
   holdings: Map<string, Holding>
+  /** The BRC-162 tokens of the requested outputs other than a deploy, as read. */
+  tokens: TokenOutput[]
   deploy?: { operation: ColorOperationName }
   destinations: Array<{
     outputIndex: number
@@ -412,6 +423,13 @@ interface PlannedOutputs {
     amount: string
     lockingScript: string
   }>
+}
+
+/** A token change output the module adds, with the custody its key was derived with. */
+interface TokenChange {
+  assetId: string
+  output: CreateActionOutput
+  custody: Custody
 }
 
 /** One existing asset's funding: its selected inputs, token change and resulting outputs. */
@@ -512,9 +530,12 @@ export function supplyChange(
 }
 
 /**
- * What the user approves for a funded action: every asset leg, with this wallet's and foreign
- * inputs, kept and outgoing outputs and the supply change; satoshi totals and fee; the
- * signatures the module releases; and the lock time.
+ * What the user approves for a funded action: whether it is a hand-over the recipient completes
+ * (`handoff`: a BRC-177 label, or `true` for a plain-noSend hand-over), the caller's
+ * `seekPermission`, every asset leg, with this wallet's and foreign inputs, kept and outgoing
+ * outputs and the supply change; satoshi totals and fee; the signatures the module releases; and
+ * the lock time. BRC-100 `CreateActionArgs` declare no `seekPermission`, so it is read as an
+ * untyped host extension and is `true` unless that member is `false` (contract §2.5).
  */
 export function actionConsent(
   plan: ColorPlan,
@@ -522,7 +543,8 @@ export function actionConsent(
   tx: Transaction,
   tokens: TransactionTokens,
   managed: readonly ManagedInput[],
-  scopes: ReadonlyMap<string, number>
+  scopes: ReadonlyMap<string, number>,
+  handoff?: boolean
 ): Record<string, unknown> {
   const requested = createArgs.outputs ?? []
   const kept = (index: number): boolean =>
@@ -530,7 +552,10 @@ export function actionConsent(
     plan.ownedOutputs.some(remittance => remittance.outputIndex === index)
   return {
     type: 'color_send',
-    handoff: (createArgs.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX)),
+    handoff:
+      handoff === true ||
+      (createArgs.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX)),
+    seekPermission: (createArgs as { seekPermission?: unknown }).seekPermission !== false,
     ...transactionConsent(
       tx,
       tokens,
@@ -638,37 +663,6 @@ export function transactionConsent(
     },
     signatures,
     lockTime: tx.lockTime
-  }
-}
-
-/** Plan and action features this module version does not implement. */
-function assertPlanSupported(plan: ColorPlan, args: CreateActionArgs): void {
-  // A plan's ownedOutputs, inputPositions and changePositions, and the facts the user approves,
-  // all name requested output indices; storage shuffles them when randomizeOutputs is true.
-  if (args.options?.randomizeOutputs !== false) {
-    throw new Error('BRC-207: a p color plan requires options.randomizeOutputs false')
-  }
-  if (Object.keys(plan.profileData ?? {}).length > 0) {
-    throw new Error('BRC-207: plan.profileData is not supported')
-  }
-  const handoff = (args.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX))
-  // A signed deploy is filed in its asset basket through internalizeAction, which would end a
-  // noSend transaction's lifecycle; the deploy is a broadcast action.
-  if (plan.assets.includes(ISSUE) && (args.options?.noSend === true || handoff)) {
-    throw new Error('BRC-207: a deploy cannot be a noSend action')
-  }
-  // As in BTMS, a token action completes with its overlay submission. The one deferred flow is
-  // the BRC-177 handoff, whose receiver submits; a plain noSend action later sent with sendWith
-  // would never reach the token overlay, as the manager gives modules no sendWith hook.
-  if (args.options?.noSend === true && !handoff) {
-    throw new Error('BRC-207: noSend token actions require a BRC-177 p nosend expiry label')
-  }
-  // Storage adds satoshi change while funding, after this module returns: it appends the requested
-  // outputs, then any storage commission output, then change, and reports neither position.
-  if (plan.changePositions.some(position => position.assetId === null)) {
-    throw new Error(
-      'BRC-207: satoshi change positions are not supported: the wallet does not position satoshi change'
-    )
   }
 }
 
@@ -1133,7 +1127,12 @@ export class ColorPermissionModule implements PermissionsModule {
       case 'listOutputs':
         return await this.listOutputs(req.args as ListOutputsArgs, req.originator, next)
       case 'relinquishOutput': {
-        const { basket, output } = req.args as { basket: string; output: string }
+        // RelinquishOutputArgs declare no seekPermission: it is read as a host extension.
+        const { basket, output, seekPermission } = req.args as {
+          basket: string
+          output: string
+          seekPermission?: unknown
+        }
         const target = parseAssetBasket(basket)
         if (target === undefined) {
           throw new Error('BRC-207: only per-asset baskets hold outputs that can be relinquished')
@@ -1142,7 +1141,8 @@ export class ColorPermissionModule implements PermissionsModule {
           type: 'color_relinquish',
           assetId: target.assetId,
           role: target.role,
-          outpoint: output
+          outpoint: output,
+          seekPermission: seekPermission !== false
         })
         return await next(req.args)
       }
@@ -1183,8 +1183,8 @@ export class ColorPermissionModule implements PermissionsModule {
   ): Promise<unknown> {
     if (context.method === 'signAction' && context.action !== undefined) {
       await this.fileDeploy(res as SignActionResult, context.action, context.originator)
-      // A noSend action is always a BRC-177 handoff (createAction refuses any other): its
-      // receiver submits it.
+      // A noSend action is a BRC-177 handoff or a plain-noSend hand-over (createAction refuses
+      // any other): its receiver submits it.
       if (!context.action.noSend)
         await this.submitSigned(res as SignActionResult, context.action.transaction)
     }
@@ -1897,7 +1897,14 @@ export class ColorPermissionModule implements PermissionsModule {
    * Send
    * ---------------------------------------------------------------------- */
 
-  /** Checks a planned token action and adds its selected token inputs and per-asset change. */
+  /**
+   * Checks a planned token action and adds its selected token inputs and per-asset change. With
+   * profiles registered, the plan's assets are resolved first (an attested plan leaf supplies its
+   * `declarationTx` as evidence), the plan is checked against their required profiles, the
+   * requested tokens must conform to their deploys, and after funding each required profile's
+   * `checkPlanData` sees its leaf and the asset's view of the layout. Any failure releases every
+   * input the action held.
+   */
   protected async createAction(
     args: CreateActionArgs,
     originator: string
@@ -1916,8 +1923,17 @@ export class ColorPermissionModule implements PermissionsModule {
     )
       throw new Error('BRC-207: unknown p color label')
     const handoff = labels.some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX))
-    assertPlanSupported(plan, args)
+    const profiled = this.profiles.size > 0
+    const resolved = profiled ? await this.resolvePlanAssets(plan) : new Map()
+    await this.assertPlanSupported(plan, args, resolved)
     const { planned, outputs } = await this.planOutputs(plan, args, originator)
+    if (profiled) await this.assertConformingTokens(planned.tokens)
+    // A plain-noSend asset's token change stays in the hand-over, offline until it settles.
+    const offline = new Set(
+      [...resolved.values()]
+        .filter(asset => asset.sendPolicy === 'plain-nosend')
+        .map(asset => asset.assetId)
+    )
     // The hold keeps concurrent sends in this module from choosing the same outputs while it plans.
     // It ends when this handler returns; storage then rejects a second action that tries to spend
     // an input already marked spent.
@@ -1931,17 +1947,254 @@ export class ColorPermissionModule implements PermissionsModule {
         planned,
         explicit,
         handoff,
-        originator
+        originator,
+        offline
       )
       sighashScopes(plan, new Set([...explicit.managed, ...inputs].map(input => input.outpoint)))
-      return {
-        ...args,
-        inputs: orderInputs(explicit.inputs, tokenInputs(inputs), plan.inputPositions),
-        outputs: placeChange(outputs, changes, plan.changePositions)
+      const ordered = orderInputs(explicit.inputs, tokenInputs(inputs), plan.inputPositions)
+      const placed = placeChange(outputs, changes, plan.changePositions)
+      if (profiled) {
+        const managed = new Map(
+          [...explicit.managed, ...inputs].map(input => [input.outpoint, input] as const)
+        )
+        const changeCustody = new Map(changes.map(change => [change.output, change.custody]))
+        const beef =
+          args.inputBEEF === undefined ? undefined : Beef.fromBinary(args.inputBEEF as number[])
+        await eachInOrder(resolved.values(), async asset => {
+          const layout = this.planLayout(asset.assetId, plan, ordered, placed, {
+            managed,
+            changeCustody,
+            beef
+          })
+          await this.checkPlanData(asset, plan, layout, originator)
+        })
       }
+      return { ...args, inputs: ordered, outputs: placed }
     } finally {
       for (const outpoint of reserved) this.selected.delete(outpoint)
     }
+  }
+
+  /**
+   * With profiles registered, the plan's existing assets, resolved (contract §2.2-4). Before any
+   * resolution every `profileData` asset key must name an existing asset of the plan (an `ISSUE`
+   * leaf is refused in 0.2.0, contract §2.2-3a), and each attested leaf is parsed structurally so
+   * its `declarationTx` resolves a never-seen asset with no connectivity (D23 source i).
+   */
+  protected async resolvePlanAssets(plan: ColorPlan): Promise<Map<string, ResolvedAsset>> {
+    const data = plan.profileData ?? {}
+    for (const byAsset of Object.values(data)) {
+      for (const assetKey of Object.keys(byAsset)) {
+        if (assetKey === ISSUE) {
+          throw new ProfileDataError('BRC-207: profile data for a new deploy is not supported')
+        }
+        if (!plan.assets.includes(assetKey)) {
+          throw new ProfileDataError('BRC-207: profile data names an asset the plan does not move')
+        }
+      }
+    }
+    const evidence = new Map<string, string>()
+    for (const [assetKey, value] of Object.entries(data[ATTESTED_PROFILE_ID] ?? {})) {
+      evidence.set(assetKey, parseAttestedLeaf(value, assetKey).declarationTx.toHex())
+    }
+    const resolved = new Map<string, ResolvedAsset>()
+    await eachInOrder(
+      plan.assets.filter(assetId => assetId !== ISSUE),
+      async assetId => {
+        const declarationTx = evidence.get(assetId)
+        resolved.set(
+          assetId,
+          await this.resolveAsset(
+            assetId,
+            declarationTx === undefined ? undefined : { declarationTx }
+          )
+        )
+      }
+    )
+    return resolved
+  }
+
+  /**
+   * Plan and action features this module version does not implement, and the send rules of the
+   * plan's resolved assets (`resolved` is empty without profiles, which keeps every 0.1.0 check
+   * and message). With profiles: `profileData` must name only profiles its asset requires
+   * (A.154); a `plain-nosend` asset (B2) needs `options.noSend`, no BRC-177 label and only
+   * `plain-nosend` assets beside it, and skips the BRC-177 requirement; and each asset's declared
+   * operations must be ones its required profiles allow.
+   */
+  protected async assertPlanSupported(
+    plan: ColorPlan,
+    args: CreateActionArgs,
+    resolved: ReadonlyMap<string, ResolvedAsset>
+  ): Promise<void> {
+    // A plan's ownedOutputs, inputPositions and changePositions, and the facts the user approves,
+    // all name requested output indices; storage shuffles them when randomizeOutputs is true.
+    if (args.options?.randomizeOutputs !== false) {
+      throw new Error('BRC-207: a p color plan requires options.randomizeOutputs false')
+    }
+    if (this.profiles.size === 0) {
+      if (Object.keys(plan.profileData ?? {}).length > 0) {
+        throw new Error('BRC-207: plan.profileData is not supported')
+      }
+    } else {
+      for (const [profileId, byAsset] of Object.entries(plan.profileData ?? {})) {
+        const assetKeys = Object.keys(byAsset)
+        const declaring = [...resolved.values()].filter(asset => asset.req.has(profileId))
+        if (
+          declaring.length === 0 ||
+          assetKeys.some(assetKey => resolved.get(assetKey)?.req.has(profileId) !== true)
+        ) {
+          throw new ProfileDataError('BRC-207: profile data names an undeclared profile')
+        }
+      }
+    }
+    const noSend = args.options?.noSend === true
+    const handoff = (args.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX))
+    // A signed deploy is filed in its asset basket through internalizeAction, which would end a
+    // noSend transaction's lifecycle; the deploy is a broadcast action.
+    if (plan.assets.includes(ISSUE) && (noSend || handoff)) {
+      throw new Error('BRC-207: a deploy cannot be a noSend action')
+    }
+    const plain = [...resolved.values()].filter(asset => asset.sendPolicy === 'plain-nosend')
+    if (plain.length > 0) {
+      // B2: the recipient submits a plain noSend hand-over; it never splits and is never sent here.
+      if (plain.length !== resolved.size) {
+        throw new ProfileParamsError(
+          'BRC-207: a plain noSend hand-over cannot move an asset without that send policy'
+        )
+      }
+      if (!noSend || handoff) {
+        throw new ProfileParamsError(
+          'BRC-207: a plain noSend hand-over requires options.noSend and no BRC-177 p nosend expiry label'
+        )
+      }
+    } else if (noSend && !handoff) {
+      // As in BTMS, a token action completes with its overlay submission. The one deferred flow is
+      // the BRC-177 handoff, whose receiver submits; a plain noSend action later sent with sendWith
+      // would never reach the token overlay, as the manager gives modules no sendWith hook.
+      throw new Error('BRC-207: noSend token actions require a BRC-177 p nosend expiry label')
+    }
+    for (const asset of resolved.values()) {
+      const allowed = asset.operations
+      if (allowed === undefined) continue
+      const refused = [...declaredOperations(plan, asset.assetId)].filter(op => !allowed.has(op))
+      if (refused.length > 0) {
+        throw new ProfileParamsError(
+          `BRC-207: the required profiles of ${asset.assetId} do not allow [${refused.join(', ')}]`
+        )
+      }
+    }
+    // Storage adds satoshi change while funding, after this module returns: it appends the requested
+    // outputs, then any storage commission output, then change, and reports neither position.
+    if (plan.changePositions.some(position => position.assetId === null)) {
+      throw new Error(
+        'BRC-207: satoshi change positions are not supported: the wallet does not position satoshi change'
+      )
+    }
+  }
+
+  /**
+   * One asset's inputs and outputs in a funded action's final layout, before the transaction
+   * exists: managed inputs with their custody, foreign token inputs read from `inputBEEF`, and
+   * token outputs with custody for the wallet's own (plan `ownedOutputs` and token change).
+   */
+  protected planLayout(
+    assetId: string,
+    plan: ColorPlan,
+    inputs: readonly CreateActionInput[],
+    outputs: readonly CreateActionOutput[],
+    sources: {
+      managed: ReadonlyMap<string, ManagedInput>
+      changeCustody: ReadonlyMap<CreateActionOutput, Custody>
+      beef?: Beef
+    }
+  ): { inputs: ProfileTxView['inputs']; outputs: ProfileTxView['outputs'] } {
+    const viewInputs = inputs.flatMap((input, inputIndex) => {
+      const managed = sources.managed.get(input.outpoint)
+      if (managed !== undefined) {
+        if (managed.assetId !== assetId) return []
+        const { outpoint, role, amount, custody } = managed
+        return [{ inputIndex, outpoint, role, amount, custody }]
+      }
+      const source = foreignSource(sources.beef, input.outpoint)
+      if (source === undefined) return []
+      const token = readAnyTokenOutput(
+        source.lockingScript,
+        parseOutpoint(input.outpoint),
+        this.read
+      )
+      if (token === undefined || token.deploy || token.assetId !== assetId) return []
+      return [{ inputIndex, outpoint: input.outpoint, role: token.role, amount: token.amount }]
+    })
+    const owned = new Map(plan.ownedOutputs.map(remittance => [remittance.outputIndex, remittance]))
+    const viewOutputs = outputs.flatMap((output, outputIndex) => {
+      const token = readSentToken(
+        LockingScript.fromHex(output.lockingScript),
+        { txid: '00'.repeat(32), vout: outputIndex },
+        this.read
+      )
+      if (token === undefined || token.deploy || token.assetId !== assetId) return []
+      const remittance = owned.get(outputIndex)
+      const custody =
+        remittance === undefined ? sources.changeCustody.get(output) : custodyOf(remittance)
+      return [
+        {
+          outputIndex,
+          role: token.role,
+          amount: token.amount,
+          ...(custody === undefined ? {} : { custody })
+        }
+      ]
+    })
+    return { inputs: viewInputs, outputs: viewOutputs }
+  }
+
+  /**
+   * A required profile's view of one asset in an action (contract §2.2): the layout, the
+   * transaction once it exists, and, for `profileId`, its plan leaf.
+   */
+  protected txView(
+    assetId: string,
+    plan: ColorPlan,
+    layout: {
+      inputs: ProfileTxView['inputs']
+      outputs: ProfileTxView['outputs']
+      tx?: Transaction
+    },
+    profileId?: string
+  ): ProfileTxView {
+    const byAsset = profileId === undefined ? undefined : plan.profileData?.[profileId]
+    const planLeaf =
+      byAsset !== undefined && Object.hasOwn(byAsset, assetId) ? byAsset[assetId] : undefined
+    return {
+      ...(layout.tx === undefined ? {} : { tx: layout.tx }),
+      assetId,
+      inputs: layout.inputs,
+      outputs: layout.outputs,
+      ...(planLeaf === undefined ? {} : { planLeaf })
+    }
+  }
+
+  /** Runs each required profile's `checkPlanData` for one asset with its leaf (A.157, A.159). */
+  protected async checkPlanData(
+    asset: ResolvedAsset,
+    plan: ColorPlan,
+    layout: {
+      inputs: ProfileTxView['inputs']
+      outputs: ProfileTxView['outputs']
+      tx?: Transaction
+    },
+    originator: string
+  ): Promise<void> {
+    await eachInOrder(asset.handlers, async entry => {
+      if (entry.handler.checkPlanData === undefined) return
+      const view = this.txView(asset.assetId, plan, layout, entry.handler.id)
+      await entry.handler.checkPlanData(
+        await this.profileContext(asset, entry, originator),
+        view.planLeaf,
+        view
+      )
+    })
   }
 
   protected reserve(reserved: Set<string>, inputs: ReadonlyArray<{ outpoint: string }>): void {
@@ -2062,7 +2315,7 @@ export class ColorPermissionModule implements PermissionsModule {
       }
     }
     const owned = new Map(plan.ownedOutputs.map(remittance => [remittance.outputIndex, remittance]))
-    const planned: PlannedOutputs = { holdings: new Map(), destinations: [] }
+    const planned: PlannedOutputs = { holdings: new Map(), tokens: [], destinations: [] }
     const outputs = await mapInOrder(
       requested,
       async (output, index) =>
@@ -2085,7 +2338,7 @@ export class ColorPermissionModule implements PermissionsModule {
       LockingScript.fromHex(output.lockingScript)
     )
     const placeholder = { txid: '00'.repeat(32), vout: index }
-    const token = readTokenOutput(lockingScript, placeholder)
+    const token = this.read(lockingScript, placeholder)
     if (token === undefined) {
       if (remittance !== undefined)
         throw new Error('BRC-207: plan.ownedOutputs names a non-token output')
@@ -2096,10 +2349,13 @@ export class ColorPermissionModule implements PermissionsModule {
       if (json !== undefined) this.jsonDestination(plan, index, output, json, planned)
       return output
     }
+    // With profiles registered, a token output carries only the module's state tags.
+    if (this.profiles.size > 0) output = withoutColorTags(output)
     if (token.deploy)
       return await this.deployOutput(args, output, token, remittance, planned, originator)
     if (!plan.assets.includes(token.assetId))
       throw new Error('BRC-207: an output asset is missing from plan.assets')
+    planned.tokens.push(token)
     const totals = holding(planned.holdings, token.assetId, emptyHolding)
     if (token.role === 'value') totals.value += token.amount
     else totals.authority += 1
@@ -2156,6 +2412,17 @@ export class ColorPermissionModule implements PermissionsModule {
     planned: PlannedOutputs,
     originator: string
   ): Promise<CreateActionOutput> {
+    // 0.2.0 limit (contract §2.2-3a): a deploy that requires processing profiles is lib-built.
+    const attributes = token.attributes
+    if (
+      attributes?.payload === 'map' &&
+      attributes.req.status === 'valid' &&
+      attributes.req.value.size > 0
+    ) {
+      throw new ProfileParamsError(
+        'BRC-207: a deploy that requires processing profiles must be built outside this module'
+      )
+    }
     if (output.basket !== undefined)
       throw new Error(
         "BRC-207: a deploy output's basket is assigned once its transaction is signed"
@@ -2216,10 +2483,11 @@ export class ColorPermissionModule implements PermissionsModule {
     planned: PlannedOutputs,
     explicit: ExplicitInputs,
     handoff: boolean,
-    originator: string
+    originator: string,
+    offline: ReadonlySet<string> = new Set()
   ): Promise<{
     inputs: ManagedInput[]
-    changes: Array<{ assetId: string; output: CreateActionOutput }>
+    changes: TokenChange[]
   }> {
     const assetIds = new Set([
       ...planned.holdings.keys(),
@@ -2249,7 +2517,8 @@ export class ColorPermissionModule implements PermissionsModule {
           asset,
           explicit.holdings.get(asset.assetId)?.value ?? 0n,
           handoff,
-          originator
+          originator,
+          offline.has(asset.assetId)
         )
     )
     return {
@@ -2259,18 +2528,20 @@ export class ColorPermissionModule implements PermissionsModule {
   }
 
   /**
-   * One funded asset's inputs and change: a handoff with change splits off an exact output instead,
-   * so the recipient receives no change; otherwise any change becomes a new managed output.
+   * One funded asset's inputs and change: a BRC-177 handoff with change splits off an exact output
+   * instead, so the recipient receives no change; otherwise any change becomes a new managed
+   * output, tagged `color_offline` when `offline` (a plain-noSend hand-over's change, B2).
    */
   protected async settleFunding(
     reserved: Set<string>,
     asset: AssetFunding,
     explicitValue: bigint,
     handoff: boolean,
-    originator: string
+    originator: string,
+    offline = false
   ): Promise<{
     inputs: ManagedInput[]
-    change: Array<{ assetId: string; output: CreateActionOutput }>
+    change: TokenChange[]
   }> {
     if (asset.change <= 0n) return { inputs: asset.selected, change: [] }
     if (handoff) {
@@ -2281,8 +2552,17 @@ export class ColorPermissionModule implements PermissionsModule {
         change: []
       }
     }
-    const { output } = await this.newManagedOutput(asset.assetId, asset.change, originator)
-    return { inputs: asset.selected, change: [{ assetId: asset.assetId, output }] }
+    const { output, custody } = await this.newManagedOutput(asset.assetId, asset.change, originator)
+    return {
+      inputs: asset.selected,
+      change: [
+        {
+          assetId: asset.assetId,
+          output: offline ? { ...output, tags: [COLOR_OFFLINE_TAG] } : output,
+          custody
+        }
+      ]
+    }
   }
 
   /**
@@ -2655,7 +2935,18 @@ export class ColorPermissionModule implements PermissionsModule {
       if (assetInputs.some(input => !admitted.has(input.outpoint)))
         throw new Error(`BRC-207: a ${assetId} input is no longer spendable`)
     })
-    await this.approve(originator, actionConsent(plan, createArgs, tx, tokens, managed, scopes))
+    await this.approve(
+      originator,
+      actionConsent(
+        plan,
+        createArgs,
+        tx,
+        tokens,
+        managed,
+        scopes,
+        (await this.plainNoSend(plan)) || undefined
+      )
+    )
     return {
       ...args,
       spends: {
@@ -2669,6 +2960,22 @@ export class ColorPermissionModule implements PermissionsModule {
         ))
       }
     }
+  }
+
+  /**
+   * True when the plan moves an asset whose required profiles declare `plain-nosend` (createAction
+   * admits such an asset only beside others like it). Always false without profiles.
+   */
+  protected async plainNoSend(plan: ColorPlan): Promise<boolean> {
+    if (this.profiles.size === 0) return false
+    let plain = false
+    await eachInOrder(
+      plan.assets.filter(assetId => assetId !== ISSUE),
+      async assetId => {
+        if ((await this.resolveAsset(assetId)).sendPolicy === 'plain-nosend') plain = true
+      }
+    )
+    return plain
   }
 
   /** The transaction's inputs that spend this wallet's `p color` outputs, with their stored custody. */
@@ -2813,11 +3120,23 @@ export class ColorPermissionModule implements PermissionsModule {
     // input authenticated from its source, every asset's legs and supply change derived, and
     // every token input admitted and unspent in its overlay.
     const tokens = transactionTokens(tx, true)
-    await this.assertSupportedAssets([
-      token.assetId,
-      ...tokens.inputs.keys(),
-      ...tokens.outputs.keys()
-    ])
+    const involved = new Set([token.assetId, ...tokens.inputs.keys(), ...tokens.outputs.keys()])
+    await this.assertSupportedAssets(involved)
+    // A signature for an app-built transaction cannot carry submission data or keep a plain
+    // noSend hand-over's evidence, so assets whose profiles need either are refused.
+    if (this.profiles.size > 0) {
+      await eachInOrder(involved, async assetId => {
+        const asset = await this.resolveAsset(assetId)
+        if (
+          asset.sendPolicy !== undefined ||
+          asset.handlers.some(({ handler }) => handler.submissionData !== undefined)
+        ) {
+          throw new ProfileParamsError(
+            `BRC-207: the required profiles of ${assetId} do not allow app-built signatures`
+          )
+        }
+      })
+    }
     await Promise.all(
       ownedOutputs.map(async remittance => {
         const output = tx.outputs[remittance.outputIndex]
@@ -2850,6 +3169,7 @@ export class ColorPermissionModule implements PermissionsModule {
     await this.approve(originator, {
       type: 'color_signature',
       inputIndex,
+      seekPermission: args.seekPermission !== false,
       ...transactionConsent(
         tx,
         tokens,
