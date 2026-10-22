@@ -3266,7 +3266,9 @@ export class ColorPermissionModule implements PermissionsModule {
         ? await this.profileSigning(plan, createArgs, tx, managed, originator)
         : undefined
     const spend: SpendContext = { offline: plainNoSendArgs(createArgs), originator }
-    await eachInOrder(new Set(tokens.consumed.map(input => input.assetId)), async assetId => {
+    const consumedAssets = new Set(tokens.consumed.map(input => input.assetId))
+    const trust = await this.trustVersions(consumedAssets)
+    await eachInOrder(consumedAssets, async assetId => {
       const assetInputs = tokens.consumed.filter(input => input.assetId === assetId)
       const admitted = await this.spendable(assetId, assetInputs, spend)
       if (assetInputs.some(input => !admitted.has(input.outpoint)))
@@ -3285,6 +3287,8 @@ export class ColorPermissionModule implements PermissionsModule {
         this.read
       )
     )
+    // The decision stands only on the trust it was made with (C16).
+    await this.assertTrustUnchanged(trust)
     const spends = {
       ...args.spends,
       ...(await this.signInputs(
@@ -3734,7 +3738,9 @@ export class ColorPermissionModule implements PermissionsModule {
     )
     const outpoint = outpointString(sourceTXID, input.sourceOutputIndex)
     const signed = { outpoint, lockingScript: source.lockingScript, satoshis: source.satoshis }
-    await eachInOrder(new Set(tokens.consumed.map(consumed => consumed.assetId)), async assetId => {
+    const consumedAssets = new Set(tokens.consumed.map(consumed => consumed.assetId))
+    const trust = await this.trustVersions(consumedAssets)
+    await eachInOrder(consumedAssets, async assetId => {
       const assetInputs = tokens.consumed.filter(consumed => consumed.assetId === assetId)
       const admitted = await this.spendable(assetId, assetInputs)
       if (!admitted.has(outpoint) && assetId === token.assetId)
@@ -3760,6 +3766,8 @@ export class ColorPermissionModule implements PermissionsModule {
         this.read
       )
     })
+    // The decision stands only on the trust it was made with (C16).
+    await this.assertTrustUnchanged(trust)
     return await next({
       protocolID: args.protocolID,
       keyID: args.keyID,
@@ -4393,8 +4401,12 @@ export class ColorPermissionModule implements PermissionsModule {
     if (settled.length > 0) {
       const listed = await this.reachableSpendable(assetId, settled)
       if (listed === undefined) {
-        // Unreachable overlay: proceed on the stored, verified attestation.
-        for (const output of settled) spendable.add(output.outpoint)
+        // Unreachable overlay: proceed on the stored, verified attestation while it still covers
+        // the output under the current trust (C17).
+        const records = new Map([...facts].map(([txid, fact]) => [txid, fact.record] as const))
+        for (const outpoint of await this.storedCoverage(resolved, settled, records)) {
+          spendable.add(outpoint)
+        }
       } else {
         for (const outpoint of listed) spendable.add(outpoint)
         const unlisted = settled.filter(output => !listed.has(output.outpoint))
@@ -4434,6 +4446,82 @@ export class ColorPermissionModule implements PermissionsModule {
       for (const outpoint of await this.liveSpendable(assetId, baseline)) spendable.add(outpoint)
     }
     return spendable
+  }
+
+  /**
+   * The settled outputs whose stored attestations still cover them (C17, 0207:231-233): in
+   * identity mode the settled record stands, since its key is fixed; in the list modes each
+   * output's verifying stored attestations must pass `assertCoverage` under the current trust
+   * snapshot. An unavailable trust list covers nothing.
+   */
+  protected async storedCoverage(
+    resolved: ResolvedAsset,
+    outputs: readonly SourceOutput[],
+    records: ReadonlyMap<string, TxRecord | undefined>
+  ): Promise<string[]> {
+    const params = resolved.attested!
+    if (params.trustMode === 'identity') return outputs.map(output => output.outpoint)
+    const { handler } = resolved.handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)!
+    let identityKeys: string[] | undefined
+    try {
+      identityKeys = (await trustSnapshot(handler, params))?.identityKeys
+    } catch {
+      return []
+    }
+    return outputs.flatMap(output => {
+      const { txid, vout } = parseOutpoint(output.outpoint)
+      const signers = (records.get(txid)?.attestations ?? [])
+        .filter(
+          att =>
+            att.txid === txid &&
+            att.outputs.includes(vout) &&
+            verifyAttestation(att, resolved.assetId)
+        )
+        .map(att => att.signer)
+      try {
+        assertCoverage(params, [{ outpoint: output.outpoint, signers }], identityKeys)
+        return [output.outpoint]
+      } catch {
+        return []
+      }
+    })
+  }
+
+  /**
+   * The current trust snapshot version of each attested list-mode asset among `assetIds` (`null`
+   * when the list is unavailable), captured with a spend decision and compared again before a
+   * signature is released (C16, 0207:229-230). Empty without profiles.
+   */
+  protected async trustVersions(assetIds: Iterable<string>): Promise<Map<string, string | null>> {
+    const versions = new Map<string, string | null>()
+    if (this.profiles.size === 0) return versions
+    await eachInOrder(new Set(assetIds), async assetId => {
+      const resolved = await this.resolveAsset(assetId)
+      const params = resolved.attested
+      if (params === undefined || params.trustMode === 'identity') return
+      const { handler } = resolved.handlers.find(
+        ({ handler }) => handler.id === ATTESTED_PROFILE_ID
+      )!
+      versions.set(
+        assetId,
+        await trustSnapshot(handler, params).then(
+          snapshot => snapshot?.snapshot ?? null,
+          () => null
+        )
+      )
+    })
+    return versions
+  }
+
+  /** Fails with `trust snapshot changed` when any version captured by `trustVersions` moved. */
+  protected async assertTrustUnchanged(
+    versions: ReadonlyMap<string, string | null>
+  ): Promise<void> {
+    if (versions.size === 0) return
+    const now = await this.trustVersions(versions.keys())
+    for (const [assetId, version] of versions) {
+      if (now.get(assetId) !== version) throw new AttestationEvidenceError('trust snapshot changed')
+    }
   }
 
   /**

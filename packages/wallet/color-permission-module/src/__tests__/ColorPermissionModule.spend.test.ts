@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it } from '@jest/globals'
+import { beforeEach, describe, expect, it, jest } from '@jest/globals'
 import {
+  LockingScript,
   PrivateKey,
   Transaction,
+  TransactionSignature,
+  UnlockingScript,
   type CreateActionArgs,
   type CreateActionResult,
   type InternalizeActionArgs,
@@ -16,7 +19,7 @@ import { createAttestedProfile } from '../attested.js'
 import { ColorPlan } from '../ColorPlan.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ColorProviderError } from '../errors.js'
-import { colorTopic } from '../identifiers.js'
+import { COLOR_KEY_ID, colorProtocolID, colorTopic } from '../identifiers.js'
 import type { RequiredProfileHandler } from '../profiles.js'
 import { ColorStore } from '../store.js'
 import {
@@ -144,6 +147,13 @@ function listNoSendPayload(): number[] {
       [ATTESTED_PROFILE_ID]: { params: { trustMode: 'any' }, version: 1 },
       [LIST_NOSEND_ID]: { params: null, version: 1 }
     }
+  })
+}
+
+/** The deploy payload of an attested `any`-mode asset. */
+function anyModePayload(): number[] {
+  return encodeStrictCbor({
+    req: { [ATTESTED_PROFILE_ID]: { params: { trustMode: 'any' }, version: 1 } }
   })
 }
 
@@ -478,6 +488,147 @@ describe('spending attested assets', () => {
 
     identityKeys = [new PrivateKey(7777).toPublicKey().toString()]
     await expect(plan(module, assetId, handOver)).rejects.toThrow(/insufficient spendable balance/)
+  })
+
+  it('C17 a settled list-mode output is not spent on its stored attestation once its signer is untrusted', async () => {
+    let identityKeys: string[] = [SIGNER]
+    const module = attestedModule(b, {
+      trustedIdentities: async () => ({ snapshot: `v${identityKeys.join()}`, identityKeys })
+    })
+    const { tx: deploy, assetId } = b.g.deploy(1000n, anyModePayload())
+    const { outpoint, R } = await receive(b, module, deploy, { attestTip: true })
+    expect(await module.isSettled(R)).toBe(true)
+    transportDown(b.ap)
+    // Still trusted: the overlay is unreachable, so the stored attestation decides.
+    expect((await plan(module, assetId)).inputs!.map(input => input.outpoint)).toEqual([outpoint])
+
+    identityKeys = [new PrivateKey(7777).toPublicKey().toString()]
+    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+  })
+
+  it('C17 a settled output in all mode needs every listed signer on its stored attestations', async () => {
+    const other = new PrivateKey(7777)
+    let identityKeys: string[] = [SIGNER]
+    const module = attestedModule(b, {
+      trustedIdentities: async () => ({ snapshot: `v${identityKeys.join()}`, identityKeys })
+    })
+    const { tx: deploy, assetId } = b.g.deploy(
+      1000n,
+      encodeStrictCbor({
+        req: { [ATTESTED_PROFILE_ID]: { params: { trustMode: 'all' }, version: 1 } }
+      })
+    )
+    const { outpoint } = await receive(b, module, deploy, { attestTip: true })
+    transportDown(b.ap)
+    expect((await plan(module, assetId)).inputs!.map(input => input.outpoint)).toEqual([outpoint])
+    // A second listed identity never signed this output.
+    identityKeys = [SIGNER, other.toPublicKey().toString()]
+    await expect(plan(module, assetId)).rejects.toThrow(/insufficient spendable balance/)
+  })
+
+  it('C16 signAction rechecks the trust snapshot after consent and releases no signature', async () => {
+    let identityKeys: string[] = [SIGNER]
+    const attested = createAttestedProfile({
+      trustedIdentities: async () => ({ snapshot: `v${identityKeys.join()}`, identityKeys })
+    })
+    const handOver = listNoSendProfile()
+    const signatures: unknown[] = []
+    const createSignature = b.wallet.createSignature.bind(b.wallet)
+    b.wallet.createSignature = async (...args: Parameters<FakeWallet['createSignature']>) => {
+      signatures.push(args[0])
+      return await createSignature(...args)
+    }
+    const module = new ColorPermissionModule({
+      wallet: b.wallet.asWallet(),
+      provider: b.ap,
+      requestTokenAccess: async (_app, message) => {
+        const request = JSON.parse(message) as Record<string, unknown>
+        b.prompts.push(request)
+        // The user withdraws trust in K while the send prompt is open.
+        if (request.type === 'color_send') {
+          identityKeys = [new PrivateKey(7777).toPublicKey().toString()]
+        }
+        return true
+      },
+      profiles: { [attested.id]: attested, [handOver.id]: handOver },
+      store: b.store
+    })
+    const { tx: deploy, assetId } = b.g.deploy(1000n, listNoSendPayload())
+    await receive(b, module, deploy)
+
+    await expect(prepare(b, module, assetId, { options: { noSend: true } })).rejects.toMatchObject({
+      name: 'AttestationEvidenceError',
+      reason: 'trust snapshot changed'
+    })
+    expect(b.prompts.map(prompt => prompt.type)).toContain('color_send')
+    expect(signatures).toEqual([])
+  })
+
+  it('C16 createSignature rechecks the trust snapshot after consent and releases no signature', async () => {
+    let identityKeys: string[] = [SIGNER]
+    const attested = createAttestedProfile({
+      trustedIdentities: async () => ({ snapshot: `v${identityKeys.join()}`, identityKeys })
+    })
+    const module = new ColorPermissionModule({
+      wallet: b.wallet.asWallet(),
+      provider: b.ap,
+      requestTokenAccess: async (_app, message) => {
+        const request = JSON.parse(message) as Record<string, unknown>
+        b.prompts.push(request)
+        if (request.type === 'color_signature') {
+          identityKeys = [new PrivateKey(7777).toPublicKey().toString()]
+        }
+        return true
+      },
+      profiles: { [attested.id]: attested },
+      store: b.store
+    })
+    const { tx: deploy, assetId } = b.g.deploy(1000n, anyModePayload())
+    const { tip, custody } = await receive(b, module, deploy, { attestTip: true })
+    b.ap.admit(assetId, tip, 0)
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTransaction: tip,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript()
+    })
+    tx.addOutput({
+      lockingScript: LockingScript.fromHex((await paymentOutput(assetId, 600n)).lockingScript),
+      satoshis: 1
+    })
+    const next = jest.fn(
+      async (forwarded: object) => await b.wallet.createSignature(forwarded as never)
+    )
+    await expect(
+      module.handleRequest(
+        {
+          method: 'createSignature',
+          args: {
+            protocolID: colorProtocolID(
+              assetId,
+              custody.derivationPrefix,
+              custody.derivationSuffix
+            ),
+            keyID: COLOR_KEY_ID,
+            counterparty: custody.senderIdentityKey,
+            data: toArray(
+              JSON.stringify({
+                version: 1,
+                tx: Array.from(tx.toAtomicBEEF()),
+                inputIndex: 0,
+                sighashType: TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID,
+                ownedOutputs: []
+              }),
+              'utf8'
+            )
+          },
+          originator: APP
+        },
+        next
+      )
+    ).rejects.toMatchObject({ name: 'AttestationEvidenceError', reason: 'trust snapshot changed' })
+    expect(b.prompts.map(prompt => prompt.type)).toContain('color_signature')
+    expect(next).not.toHaveBeenCalled()
   })
 
   it('a broadcast attested action submits offChainValues and records a returned attestation as settled', async () => {

@@ -221,6 +221,15 @@ validates the complete token frontier behind the received outputs back to
 outputs attested by a qualifying signer, then applies the trust mode. A leaf
 carrying `lifecycles` is rejected.
 
+Trust decisions use the current snapshot. The receipt, `signAction` and
+`createSignature` paths capture the snapshot version with their decision and
+check it again after consent, before anything is written or signed; a change
+fails with `AttestationEvidenceError` (`trust snapshot changed`), and the
+request can be retried against the new snapshot. A settled output whose overlay
+is unreachable is spent on its stored attestations only while they still cover
+it in the asset's trust mode under the current snapshot; in `identity` mode the
+fixed key decides.
+
 ### Offline state and settlement
 
 A receipt whose received outputs no qualifying attestation covers is credited
