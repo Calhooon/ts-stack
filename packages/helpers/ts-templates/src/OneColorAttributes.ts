@@ -3,6 +3,8 @@
 // read under the BRC-207 wallet rules (pinned 0207:82-93): absent and malformed are
 // distinct, and nothing is recovered from a payload that is not a strictly valid
 // DAG-CBOR map. Every function here is pure and total; none throws on any input.
+import type { ScriptChunk } from '@bsv/sdk/script'
+import { splitPayload } from './Bsv21Binary.js'
 import { StrictCborLink, tryDecodeStrictCbor } from './strictCbor.js'
 import type { StrictCborMap, StrictCborValue } from './strictCbor.js'
 
@@ -305,4 +307,15 @@ export function reqMatchesDeploy(deploy: OneColorAttributes, later: OneColorAttr
   const laterBytes = later.reqBytes
   if (!(deployBytes instanceof Uint8Array) || !(laterBytes instanceof Uint8Array)) return false
   return equalBytes(deployBytes, laterBytes)
+}
+
+/**
+ * 0162:101/105: true iff the remainder starts with a single push (`OP_0`, `OP_1NEGATE`,
+ * `OP_1`..`OP_16` or any data push, minimal or not) followed by `OP_DROP`. A token output
+ * whose remainder starts that way, written with no payload, would be decoded as carrying
+ * that push as its payload, so the encoder must write `OP_0 OP_DROP` first. Uses the
+ * decoder's own payload detector, so there is one definition of "push".
+ */
+export function needsEmptyPayloadMarker(remainder: readonly ScriptChunk[]): boolean {
+  return splitPayload([...remainder]).payload !== undefined
 }

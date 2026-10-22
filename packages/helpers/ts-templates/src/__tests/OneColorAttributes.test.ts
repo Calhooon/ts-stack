@@ -1,6 +1,12 @@
-import { LockingScript } from '@bsv/sdk/script'
+import { LockingScript, OP, P2PKH } from '@bsv/sdk'
+import type { ScriptChunk } from '@bsv/sdk'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
-import { isProfileId, readOneColorAttributes, reqMatchesDeploy } from '../OneColorAttributes.js'
+import {
+  isProfileId,
+  needsEmptyPayloadMarker,
+  readOneColorAttributes,
+  reqMatchesDeploy
+} from '../OneColorAttributes.js'
 import type { OneColorField } from '../OneColorAttributes.js'
 import { encodeStrictCbor, StrictCborLink } from '../strictCbor.js'
 import { OneColor } from '../OneColor.js'
@@ -558,5 +564,37 @@ describe('reqMatchesDeploy', () => {
     expect(reqMatchesDeploy(deploy, later)).toBe(true)
     expect(reqMatchesDeploy(deploy, later)).toBe(true)
     expect(toHex([...deploy.reqBytes!]) + toHex([...later.reqBytes!])).toBe(before)
+  })
+})
+
+describe('needsEmptyPayloadMarker', () => {
+  const D = { op: OP.OP_DROP }
+  const PKH = Array.from({ length: 20 }, (_, i) => i + 1)
+  it.each([
+    ['OP_0', [{ op: OP.OP_0 }, D]],
+    ['OP_1NEGATE', [{ op: OP.OP_1NEGATE }, D]],
+    ['OP_1', [{ op: OP.OP_1 }, D]],
+    ['OP_16', [{ op: OP.OP_16 }, D]],
+    ['direct push', [{ op: 2, data: [1, 2] }, D]],
+    ['non-minimal PUSHDATA1', [{ op: OP.OP_PUSHDATA1, data: [7] }, D, { op: OP.OP_TRUE }]]
+  ])('RF4: %s then OP_DROP needs the marker', (_, chunks) =>
+    expect(needsEmptyPayloadMarker(chunks as ScriptChunk[])).toBe(true)
+  )
+  it.each([
+    ['empty', []],
+    ['OP_DROP alone', [D]],
+    ['push alone', [{ op: OP.OP_5 }]],
+    ['push then 2DROP', [{ op: OP.OP_5 }, { op: OP.OP_2DROP }]],
+    ['OP_DUP then OP_DROP', [{ op: OP.OP_DUP }, D]],
+    ['P2PKH', new P2PKH().lock(PKH).chunks],
+    ['P2PK', [{ op: 33, data: Array(33).fill(2) }, { op: OP.OP_CHECKSIG }]]
+  ])('%s needs no marker', (_, chunks) =>
+    expect(needsEmptyPayloadMarker(chunks as ScriptChunk[])).toBe(false)
+  )
+  it('does not mutate the caller array', () => {
+    const chunks: ScriptChunk[] = [{ op: OP.OP_5 }, D]
+    const frozen = Object.freeze(chunks.map(c => Object.freeze({ ...c })))
+    expect(needsEmptyPayloadMarker(frozen)).toBe(true)
+    expect(frozen).toEqual(chunks)
   })
 })
