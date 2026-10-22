@@ -131,6 +131,7 @@ import {
   type AttestedLeaf
 } from './attested.js'
 import { validateFrontier } from './frontier.js'
+import { ordinal } from './ordinal.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
@@ -389,9 +390,10 @@ function distinctAttestations(attestations: readonly ColorAttestation[]): ColorA
  * off-chain values are kept unless empty.
  */
 function mergeTxRecords(stored: TxRecord, incoming: TxRecord): TxRecord {
-  const role = stored.role === 'ancestor' && incoming.role === 'receipt' ? 'receipt' : stored.role
-  const state =
-    role === 'receipt' ? (stored.role === 'receipt' ? stored.state : incoming.state) : stored.state
+  // An ancestor promoted to a receipt takes the receipt's state; any other record keeps its own.
+  const promoted = stored.role === 'ancestor' && incoming.role === 'receipt'
+  const role = promoted ? 'receipt' : stored.role
+  const state = promoted ? incoming.state : stored.state
   return {
     v: 1,
     assetId: stored.assetId,
@@ -1447,7 +1449,7 @@ export class ColorPermissionModule implements PermissionsModule {
     const visit = async (outpoint: string): Promise<void> => {
       const { txid, vout } = parseOutpoint(outpoint)
       const record = await store.getTx(txid)
-      if (record === undefined || record.assetId !== assetId || record.state === 'aborted') {
+      if (record?.assetId !== assetId || record.state === 'aborted') {
         throw new AttestationEvidenceError(`evidence for input ${outpoint} is unavailable`)
       }
       const covering = record.attestations.filter(
@@ -1887,7 +1889,7 @@ export class ColorPermissionModule implements PermissionsModule {
     const { assetId } = resolved
     const params = resolved.attested!
     const evidence = group.map(receipt => receipt.attested)
-    if (evidence.some(entry => entry === undefined)) {
+    if (evidence.includes(undefined)) {
       throw new AttestationEvidenceError('missing attested evidence')
     }
     if (evidence.some(entry => entry!.json !== evidence[0]!.json)) {
@@ -1976,14 +1978,14 @@ export class ColorPermissionModule implements PermissionsModule {
     } else if (tipAnchors.every(anchor => anchor !== undefined)) {
       const common = [...tipAnchors[0]!.signers]
         .filter(signer => tipAnchors.every(anchor => anchor!.signers.includes(signer)))
-        .sort()
+        .sort(ordinal)
       const signer =
         params.trustMode === 'identity'
           ? params.identityKey!
-          : (common[0] ?? [...tipAnchors[0]!.signers].sort()[0])
+          : (common[0] ?? [...tipAnchors[0]!.signers].sort(ordinal)[0])
       settled = { outputs: outputIndexes, signer }
     } else {
-      const signers = [...new Set(frontier.anchors.flatMap(anchor => anchor.signers))].sort()
+      const signers = [...new Set(frontier.anchors.flatMap(anchor => anchor.signers))].sort(ordinal)
       const amounts = new Map(
         group.map(receipt => [receipt.outputIndex, receipt.token.amount.toString()])
       )
@@ -2093,18 +2095,18 @@ export class ColorPermissionModule implements PermissionsModule {
       outpoint: outpointString(tip, vout),
       signers: [
         ...new Set(covering.filter(att => att.outputs.includes(vout)).map(att => att.signer))
-      ].sort()
+      ].sort(ordinal)
     }))
     if (anchors.some(anchor => anchor.signers.length === 0)) {
       throw new AttestationEvidenceError('admission does not cover the receipt outputs')
     }
     assertCoverage(resolved.attested!, anchors, snapshot?.identityKeys)
     const params = resolved.attested!
-    const common = anchors[0].signers.filter(signer =>
+    const common = anchors[0].signers.find(signer =>
       anchors.every(anchor => anchor.signers.includes(signer))
     )
     const signer =
-      params.trustMode === 'identity' ? params.identityKey! : (common[0] ?? anchors[0].signers[0])
+      params.trustMode === 'identity' ? params.identityKey! : (common ?? anchors[0].signers[0])
     return {
       attestations: distinctAttestations(attestations),
       settled: { outputs: [...outputIndexes], signer }
@@ -2166,7 +2168,7 @@ export class ColorPermissionModule implements PermissionsModule {
     if (outcomes.length === 0) return
     const store = this.colorStore!
     for (const outcome of outcomes) {
-      const tip = outcome.records[outcome.records.length - 1]
+      const tip = outcome.records.at(-1)!
       for (const [txid, record] of outcome.records) {
         if (txid === tipTxid) continue
         await this.putTxRecord(txid, record)
@@ -2183,7 +2185,7 @@ export class ColorPermissionModule implements PermissionsModule {
       )
       const stored = await store.settled(tipTxid)
       const merged = [...new Set([...(stored?.outputs ?? []), ...outputs])].sort((a, b) => a - b)
-      if (stored === undefined || stored.outputs.join(',') !== merged.join(',')) {
+      if (stored?.outputs.join(',') !== merged.join(',')) {
         await store.markSettled(tipTxid, {
           outputs: merged,
           signer: stored?.signer ?? outcomes[0].settled!.signer
@@ -3679,7 +3681,7 @@ export class ColorPermissionModule implements PermissionsModule {
         const merged = [...new Set([...(settled?.outputs ?? []), ...att.outputs])].sort(
           (a, b) => a - b
         )
-        if (settled === undefined || settled.outputs.join(',') !== merged.join(',')) {
+        if (settled?.outputs.join(',') !== merged.join(',')) {
           await store.markSettled(txid, { outputs: merged, signer: settled?.signer ?? att.signer })
         }
       } catch {

@@ -54,7 +54,7 @@ const fail = (reason: string): ProfileParamsError =>
 
 /** The member's text value, or undefined when absent; any other type fails. */
 function text(map: StrictCborMap, member: string): string | undefined {
-  if (!Object.prototype.hasOwnProperty.call(map, member)) return undefined
+  if (!Object.hasOwn(map, member)) return undefined
   const value = map[member]
   if (typeof value !== 'string') throw fail(`${member} must be text`)
   return value

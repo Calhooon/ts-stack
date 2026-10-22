@@ -1,5 +1,6 @@
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
 import { parseAttestation } from './attestation.js'
+import { ordinal } from './ordinal.js'
 import type { ColorAttestation } from './profiles.js'
 import type { JsonValue } from './strictJson.js'
 import type { ColorModuleStore } from './types.js'
@@ -48,8 +49,8 @@ export interface RefusedRecord {
 
 const TXID = /^[0-9a-f]{64}$/
 const HEX = /^(?:[0-9a-f]{2})*$/
-const ASSET_ID = /^[0-9a-f]{64}_(0|[1-9][0-9]{0,9})$/
-const OUTPOINT = /^[0-9a-f]{64}\.(0|[1-9][0-9]{0,9})$/
+const ASSET_ID = /^[0-9a-f]{64}_(0|[1-9]\d{0,9})$/
+const OUTPOINT = /^[0-9a-f]{64}\.(0|[1-9]\d{0,9})$/
 const SIGNER = /^0[23][0-9a-f]{64}$/
 /** The AtomicBEEF prefix `0x01010101` (the same bytes in either byte order). */
 const ATOMIC_PREFIX = '01010101'
@@ -185,7 +186,7 @@ export class ColorStore {
       .filter(key => key.startsWith(prefix))
       .map(key => key.slice(prefix.length))
       .filter(id => TXID.test(id))
-      .sort()
+      .sort(ordinal)
   }
 
   protected async readableIds(

@@ -236,7 +236,7 @@ export function validateFrontier(input: FrontierInput): FrontierResult {
   /** Depth-first, post-order over the open frames: parents finish before their children. */
   function run(): void {
     while (stack.length > 0) {
-      const frame = stack[stack.length - 1]
+      const frame = stack.at(-1)!
       if (frame.next < frame.tx.inputs.length) {
         const index = frame.next++
         const txInput = frame.tx.inputs[index]
