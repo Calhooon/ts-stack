@@ -32,9 +32,29 @@ export {
   assertNoRequiredProfiles,
   readAnyTokenOutput,
   readJsonTokenOutput,
+  readProfiledTokenOutput,
   readTokenOutput
 } from './tokenOutputs.js'
-export type { JsonOperation, TokenOutput } from './tokenOutputs.js'
+export type { JsonOperation, TokenOutput, TokenReader } from './tokenOutputs.js'
+export {
+  ATTESTATION_KEY_ID,
+  ATTESTATION_PROTOCOL_ID,
+  ATTESTED_PROFILE_ID,
+  COLOR_OFFLINE_TAG,
+  attestationFromSteak,
+  attestationMessage,
+  attestationSigningKey,
+  parseAttestation,
+  verifyAttestation
+} from './attestation.js'
+export { createAttestedProfile } from './attested.js'
+export {
+  AttestationEvidenceError,
+  ColorConsentDeclinedError,
+  ColorProviderError,
+  ProfileDataError,
+  ProfileParamsError
+} from './errors.js'
 export { ColorPlan, COLOR_PLAN_LABEL_PREFIX, COLOR_OPERATIONS } from './ColorPlan.js'
 export type { ColorOperation, ColorOperationName, ColorRemittance } from './ColorPlan.js'
 export {

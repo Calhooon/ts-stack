@@ -4,9 +4,9 @@ title: '@bsv/color-permission-module'
 kind: package
 domain: wallet
 npm: '@bsv/color-permission-module'
-version: '0.1.0'
-last_updated: '2026-10-19'
-last_verified: '2026-10-19'
+version: '0.2.0'
+last_updated: '2026-10-22'
+last_verified: '2026-10-22'
 review_cadence_days: 30
 status: experimental
 tags: ['permissions', 'brc207', 'brc162', 'tokens']
@@ -57,18 +57,35 @@ to approve.
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Send tokens                   | `createAction` with the BRC-162 recipient output, `p color plan` labels from `ColorPlan.toLabels` and `options.randomizeOutputs: false` (every plan requires it) |
 | Deploy, mint, burn, authority | The same call with the plan declaring the BRC-207 operations the transaction performs                                                                            |
-| Hand off under BRC-177        | The same call with a `p nosend expiry` label and `noSend` (the only `noSend` token action)                                                                       |
+| Hand off under BRC-177        | The same call with a `p nosend expiry` label and `noSend` (the only `noSend` token action without a plain-noSend profile)                                        |
 | Receive tokens                | `internalizeAction` with `basket insertion` into `p color <assetTag>` and the BRC-207 receipt instructions                                                       |
 | Sign an app-built transaction | `createSignature` with a `p color` protocol ID and a BRC-207 signature envelope                                                                                  |
 | Discover holdings             | `listOutputs` on `p color assets`                                                                                                                                |
 | Exact balance                 | `listOutputs` on `p color balance <assetTag>`; `totalOutputs` is a decimal string                                                                                |
+
+## Required profiles
+
+Hosts that support assets with BRC-207 required processing profiles pass
+`profiles` (handlers keyed by profile id) and a durable `store`
+(`ColorModuleStore`) to `createColorModule`. The built-in
+`createAttestedProfile()` handles `https://brc.dev/207/attested` v1: receipts
+carry attested frontier evidence, and outputs credited without a covering
+attestation are tagged `color_offline` after the user approves a
+`color_receive_offline` request. `settle()` submits offline receipts and own
+plain-noSend hand-overs, `isSettled(txid)` reports verified settlement, and
+`handoffEvidence(txid)` returns the `colorHandoff` evidence a hand-over's
+`signAction` result carried. Errors carry a `[ClassName] ` message prefix; a
+declined request throws `ColorConsentDeclinedError`. Without `profiles` the
+module behaves as 0.1.0, apart from `seekPermission` on every consent message and
+`ColorConsentDeclinedError` on a decline. See the package README for each
+handler hook.
 
 ## Limits
 
 This version reads BRC-161 JSON `transfer`, `mint` and `deploy+mint` outputs as
 value and `auth` and `deploy+auth` as authority, as inputs and as outputs to other
 parties, but never holds or creates them, rejects the BRC-161 `burn` operation, satoshi change positions (wallet-toolbox does not
-position satoshi change) and assets with required processing profiles, does not validate BRC-176 lineage (proof transport is not part of BRC-207), and does not yet record exposure for signatures
+position satoshi change) and assets whose required processing profiles no registered handler supports, does not validate BRC-176 lineage (proof transport is not part of BRC-207), and does not yet record exposure for signatures
 released through `createSignature`. BRC-207's non-final transaction rules are not
 implemented; such transactions follow the wallet's existing behavior. A send is approved in `signAction`, against
 the funded transaction; a `createSignature` request is approved against the whole

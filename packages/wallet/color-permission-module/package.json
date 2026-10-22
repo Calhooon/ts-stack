@@ -1,6 +1,6 @@
 {
   "name": "@bsv/color-permission-module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "sideEffects": false,
   "engines": {
     "node": ">=22"
@@ -31,7 +31,7 @@
     "clean": "rm -rf dist",
     "format:check": "pnpm --workspace-root exec prettier --check \"packages/wallet/color-permission-module/src/**/*.ts\" \"packages/wallet/color-permission-module/README.md\" \"packages/wallet/color-permission-module/*.{cjs,json,ts}\"",
     "lint": "oxlint src --deny-warnings",
-    "pack:check": "node ../../../scripts/check-package-artifact.mjs . --modes esm --exports ColorPermissionModule,ColorPlan,createColorModule",
+    "pack:check": "node ../../../scripts/check-package-artifact.mjs . --modes esm --exports ColorPermissionModule,ColorPlan,createColorModule,createAttestedProfile,verifyAttestation",
     "test": "jest",
     "test:browser": "pnpm build && node ../../../scripts/check-browser-package.mjs .",
     "test:coverage": "jest --coverage",
