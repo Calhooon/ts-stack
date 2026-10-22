@@ -1,6 +1,6 @@
 import { LockingScript } from '@bsv/sdk/script'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
-import { isProfileId, readOneColorAttributes } from '../OneColorAttributes.js'
+import { isProfileId, readOneColorAttributes, reqMatchesDeploy } from '../OneColorAttributes.js'
 import type { OneColorField } from '../OneColorAttributes.js'
 import { encodeStrictCbor, StrictCborLink } from '../strictCbor.js'
 import { OneColor } from '../OneColor.js'
@@ -480,5 +480,83 @@ describe('readOneColorAttributes: req and ext', () => {
     expect(a.payload).toBe('opaque')
     expect(a.req).toEqual(ABSENT)
     expect(a.reqBytes).toBeUndefined()
+  })
+})
+
+describe('reqMatchesDeploy', () => {
+  const R = readOneColorAttributes
+  const deploy = R(hex(FREQ_PAYLOAD))
+
+  it('later outputs that omit req inherit it (0162:188-190, A.145)', () => {
+    for (const later of [R(undefined), R([]), R([0x01]), R(cbor({ sym: 'X' }))])
+      expect(reqMatchesDeploy(deploy, later)).toBe(true)
+  })
+
+  it('a repeated req must be byte-identical', () => {
+    expect(reqMatchesDeploy(deploy, R([...hex('a163726571' + REQ_HEX)]))).toBe(true)
+    expect(reqMatchesDeploy(deploy, deploy)).toBe(true)
+    expect(reqMatchesDeploy(deploy, R(cbor({ req: {} })))).toBe(false) // A.146
+    const otherKey = {
+      [ATTESTED]: {
+        version: 1n,
+        params: { trustMode: 'identity', identityKey: K.replace(/^02/, '03') }
+      },
+      [MANDALA]: { version: 1n, params: { identityKey: K } }
+    }
+    expect(reqMatchesDeploy(deploy, R(cbor({ req: otherKey })))).toBe(false)
+  })
+
+  it('an absent deploy req is the empty map a0', () => {
+    for (const d of [R(cbor({ sym: 'X' })), R(undefined), R([]), R([0x01])]) {
+      expect(reqMatchesDeploy(d, R(cbor({ req: {} })))).toBe(true)
+      expect(reqMatchesDeploy(d, R(cbor({ req: { 'a:b': { version: 1n, params: null } } })))).toBe(
+        false
+      )
+    }
+  })
+
+  it('a malformed later req never matches', () => {
+    expect(reqMatchesDeploy(deploy, R(cbor({ req: null })))).toBe(false)
+    expect(reqMatchesDeploy(R(cbor({ sym: 'X' })), R(cbor({ req: null })))).toBe(false)
+  })
+
+  it('RF5: a malformed deploy req (fixture M) matches nothing, even an omitted req', () => {
+    const m = R(payloadOf(FIXTURE.M))
+    expect(m.req.status).toBe('malformed')
+    for (const later of [
+      R(undefined),
+      R([]),
+      R([0x01]),
+      R(cbor({ sym: 'X' })),
+      R(cbor({ req: {} })),
+      R(cbor({ req: null })),
+      m
+    ])
+      expect(reqMatchesDeploy(m, later)).toBe(false)
+  })
+
+  it('RF2-match: Float 1.0 and Int 1 in params are different requirements', () => {
+    const f = R(hex('a163726571 a163613a62a266706172616d73fb3ff00000000000006776657273696f6e01'))
+    const i = R(cbor({ req: { 'a:b': { params: 1n, version: 1n } } }))
+    expect(valid(f.req).get('a:b')).toEqual({ version: 1, params: 1 })
+    expect(valid(i.req).get('a:b')).toEqual({ version: 1, params: 1n })
+    expect(reqMatchesDeploy(f, i)).toBe(false)
+    expect(reqMatchesDeploy(i, f)).toBe(false)
+    expect(reqMatchesDeploy(f, f)).toBe(true)
+  })
+
+  it('is total: a hand-built valid req without reqBytes fails closed instead of throwing', () => {
+    const noBytes = { ...deploy, reqBytes: undefined }
+    expect(reqMatchesDeploy(deploy, noBytes)).toBe(false)
+    expect(reqMatchesDeploy(noBytes, deploy)).toBe(false)
+    expect(reqMatchesDeploy(noBytes, R(cbor({ sym: 'X' })))).toBe(true) // step 2 is unaffected
+  })
+
+  it('is pure: same inputs give the same answer and nothing is mutated', () => {
+    const later = R([...hex('a163726571' + REQ_HEX)])
+    const before = toHex([...deploy.reqBytes!]) + toHex([...later.reqBytes!])
+    expect(reqMatchesDeploy(deploy, later)).toBe(true)
+    expect(reqMatchesDeploy(deploy, later)).toBe(true)
+    expect(toHex([...deploy.reqBytes!]) + toHex([...later.reqBytes!])).toBe(before)
   })
 })

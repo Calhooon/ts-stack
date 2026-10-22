@@ -273,3 +273,36 @@ export function readOneColorAttributes(
   if (span === undefined) return { ...attributes, req: malformed('req span not found') }
   return { ...attributes, reqBytes: bytes.slice(span[0], span[1]) }
 }
+
+// The canonical DAG-CBOR encoding of the empty map: an absent deploy req counts as `a0`
+// (0162:188-191).
+const EMPTY_MAP = Uint8Array.of(0xa0)
+
+// Length first, then every byte; no early exit on content mismatch.
+const equalBytes = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
+  return diff === 0
+}
+
+/**
+ * Whether a later output's `req` is consistent with the deploy's (0162:188-191). Pure and total.
+ * Fixed fail-closed evaluation order (contract §1):
+ * 1. deploy req malformed => false, for every later output, including one that omits req;
+ * 2. later req absent (also a later payload that is absent, empty or opaque, 0207:85-87) => true;
+ * 3. later req malformed => false;
+ * 4. otherwise later.reqBytes must equal the deploy's req bytes byte for byte, where an absent
+ *    deploy req (any deploy payload kind) is the empty map `a0`. Comparing exact wire bytes keeps
+ *    an integral float (1.0) distinct from an integer (1).
+ * A `valid` req without its `reqBytes` (never produced by readOneColorAttributes) fails closed.
+ */
+export function reqMatchesDeploy(deploy: OneColorAttributes, later: OneColorAttributes): boolean {
+  if (deploy.req.status === 'malformed') return false
+  if (later.req.status === 'absent') return true
+  if (later.req.status === 'malformed') return false
+  const deployBytes = deploy.req.status === 'valid' ? deploy.reqBytes : EMPTY_MAP
+  const laterBytes = later.reqBytes
+  if (!(deployBytes instanceof Uint8Array) || !(laterBytes instanceof Uint8Array)) return false
+  return equalBytes(deployBytes, laterBytes)
+}
