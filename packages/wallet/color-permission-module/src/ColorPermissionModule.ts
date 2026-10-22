@@ -616,7 +616,8 @@ export function supplyChange(
  * `seekPermission`, every asset leg, with this wallet's and foreign inputs, kept and outgoing
  * outputs and the supply change; satoshi totals and fee; the signatures the module releases; and
  * the lock time. BRC-100 `CreateActionArgs` declare no `seekPermission`, so it is read as an
- * untyped host extension and is `true` unless that member is `false` (contract §2.5).
+ * untyped host extension and is `true` unless that member is `false` (contract §2.5). `read` is
+ * the BRC-162 reader.
  */
 export function actionConsent(
   plan: ColorPlan,
@@ -625,7 +626,8 @@ export function actionConsent(
   tokens: TransactionTokens,
   managed: readonly ManagedInput[],
   scopes: ReadonlyMap<string, number>,
-  handoff?: boolean
+  handoff?: boolean,
+  read: TokenReader = readTokenOutput
 ): Record<string, unknown> {
   const requested = createArgs.outputs ?? []
   const kept = (index: number): boolean =>
@@ -648,7 +650,8 @@ export function actionConsent(
         inputIndex: tx.inputs.findIndex(candidate => inputOutpoint(candidate) === input.outpoint),
         sighashType: scopes.get(input.outpoint) ?? DEFAULT_SIGHASH
       })),
-      plan.ownedOutputs.some(remittance => remittance.outputIndex === 0)
+      plan.ownedOutputs.some(remittance => remittance.outputIndex === 0),
+      read
     )
   }
 }
@@ -663,7 +666,7 @@ export interface ReleasedSignature {
  * The facts the user approves for any transaction this wallet signs token inputs of, whether the
  * wallet funded it or an app built it: every asset leg with this wallet's (`own`) and foreign
  * inputs, kept and outgoing outputs and the supply change; the destinations; satoshi totals and
- * fee; the signatures released; and the lock time.
+ * fee; the signatures released; and the lock time. `read` is the BRC-162 reader.
  */
 export function transactionConsent(
   tx: Transaction,
@@ -672,12 +675,13 @@ export function transactionConsent(
   kept: (vout: number) => boolean,
   destination: (vout: number) => boolean,
   signatures: ReleasedSignature[],
-  deployOwned: boolean
+  deployOwned: boolean,
+  read: TokenReader = readTokenOutput
 ): Record<string, unknown> {
   const txid = tx.id('hex')
   const outputs = tx.outputs.map((output, vout) => ({
     vout,
-    token: readSentToken(output.lockingScript, { txid, vout }),
+    token: readSentToken(output.lockingScript, { txid, vout }, read),
     satoshis: output.satoshis ?? 0
   }))
   const assets = [...new Set([...tokens.inputs.keys(), ...tokens.outputs.keys()])].map(assetId => {
@@ -1454,10 +1458,11 @@ export class ColorPermissionModule implements PermissionsModule {
     if (result?.tx === undefined) return
     const tx = Transaction.fromAtomicBEEF(result.tx)
     const txid = tx.id('hex')
-    const deploy = tryReadTokenOutput(tx.outputs[0]?.lockingScript ?? new LockingScript(), {
-      txid,
-      vout: 0
-    })
+    const deploy = tryReadTokenOutput(
+      tx.outputs[0]?.lockingScript ?? new LockingScript(),
+      { txid, vout: 0 },
+      this.read
+    )
     const owned = ColorPlan.fromLabels(action.createArgs?.labels)?.ownedOutputs.some(
       remittance => remittance.outputIndex === 0 && remittance.assetId === ISSUE
     )
@@ -2546,7 +2551,7 @@ export class ColorPermissionModule implements PermissionsModule {
     const token =
       source === undefined
         ? undefined
-        : readAnyTokenOutput(source.lockingScript, parseOutpoint(outpoint))
+        : readAnyTokenOutput(source.lockingScript, parseOutpoint(outpoint), this.read)
     if (token === undefined) return
     await this.assertSupportedAsset(token.assetId)
     if (!(await this.spendable(token.assetId, [source!])).has(outpoint))
@@ -3011,7 +3016,8 @@ export class ColorPermissionModule implements PermissionsModule {
     await eachInOrder(txids, async txid => {
       if (beef.findTxid(txid) === undefined) return
       const atomic = beef.toBinaryAtomic(txid)
-      const { assetIds, deploy } = submissionAssets(Transaction.fromAtomicBEEF(atomic))
+      const held = Transaction.fromAtomicBEEF(atomic)
+      const { assetIds, deploy } = submissionAssets(held, held, this.read)
       // A refused resubmission leaves the output unlisted; the spendability check decides.
       const groups = await this.routedTopics(assetIds, deploy).catch(() => [])
       await eachInOrder(groups, async ({ provider, topics }) => {
@@ -3066,7 +3072,7 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<ManagedInput | undefined> {
     const source = this.sourceOutput(output)
-    const token = readTokenOutput(source.lockingScript, parseOutpoint(output.outpoint))
+    const token = this.read(source.lockingScript, parseOutpoint(output.outpoint))
     if (token === undefined || output.customInstructions === undefined) return undefined
     return await this.custodyInput({ ...source, token }, output.customInstructions, originator)
   }
@@ -3214,7 +3220,7 @@ export class ColorPermissionModule implements PermissionsModule {
     if (createArgs === undefined || plan === undefined)
       throw new Error("BRC-207: signAction needs the action's p color createAction arguments")
     const tx = action.transaction
-    const tokens = transactionTokens(tx, true)
+    const tokens = transactionTokens(tx, true, this.read)
     assertTransactionOperations(plan, tokens)
     const managed = await this.actionInputs(tx, originator)
     const scopes = sighashScopes(plan, new Set(managed.map(input => input.outpoint)))
@@ -3238,7 +3244,8 @@ export class ColorPermissionModule implements PermissionsModule {
         tokens,
         managed,
         scopes,
-        (await this.plainNoSend(plan)) || undefined
+        (await this.plainNoSend(plan)) || undefined,
+        this.read
       )
     )
     const spends = {
@@ -3632,7 +3639,7 @@ export class ColorPermissionModule implements PermissionsModule {
       throw new Error('BRC-207: the envelope must carry the signed input source transaction')
     }
     const sourceTXID = sourceTransaction.id('hex')
-    const token = readTokenOutput(source.lockingScript, {
+    const token = this.read(source.lockingScript, {
       txid: sourceTXID,
       vout: input.sourceOutputIndex
     })
@@ -3645,7 +3652,7 @@ export class ColorPermissionModule implements PermissionsModule {
     // The signature commits to the whole transaction, so it is evaluated as a send is: every
     // input authenticated from its source, every asset's legs and supply change derived, and
     // every token input admitted and unspent in its overlay.
-    const tokens = transactionTokens(tx, true)
+    const tokens = transactionTokens(tx, true, this.read)
     const involved = new Set([token.assetId, ...tokens.inputs.keys(), ...tokens.outputs.keys()])
     await this.assertSupportedAssets(involved)
     // A signature for an app-built transaction cannot carry submission data or keep a plain
@@ -3669,7 +3676,7 @@ export class ColorPermissionModule implements PermissionsModule {
         const owned =
           output === undefined
             ? undefined
-            : readTokenOutput(output.lockingScript, {
+            : this.read(output.lockingScript, {
                 txid: '00'.repeat(32),
                 vout: remittance.outputIndex
               })
@@ -3703,7 +3710,8 @@ export class ColorPermissionModule implements PermissionsModule {
         kept,
         vout => !kept(vout),
         [{ outpoint, inputIndex, sighashType }],
-        kept(0)
+        kept(0),
+        this.read
       )
     })
     return await next({

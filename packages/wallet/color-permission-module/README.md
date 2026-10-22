@@ -253,6 +253,18 @@ member (`{version: 1, txid, profileData}`): receipt-ready evidence for the
 recipient. It is not part of BRC-100, survives JSON substrates and is lost on
 the binary one; `handoffEvidence` returns the same object.
 
+The hand-over record is written when the wallet's signed result reaches the
+module, before `signAction` returns to the app; the txid is not known earlier.
+A crash between the wallet signing and that write leaves a signed `nosend`
+action that the module has no record of: `handoffEvidence` returns
+`undefined`, `settle()` never sees it, the app never received a result, and an
+onward offline hand-over of its `color_offline` change fails for lack of
+evidence. The module never aborts such an action itself. The host recovers by
+finding the orphaned `nosend` action by its `p color plan` labels (or its own
+journal of the action reference) with `listActions` and calling the wallet's
+`abortAction` on it, which releases its inputs; the app then retries the
+hand-over.
+
 ### Errors
 
 `ProfileParamsError`, `ProfileDataError`, `AttestationEvidenceError` (with a

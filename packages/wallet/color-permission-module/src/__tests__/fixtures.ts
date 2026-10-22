@@ -33,7 +33,7 @@ import {
   DISCOVERY_TOPIC,
   ISSUE
 } from '../identifiers.js'
-import { readAnyTokenOutput } from '../tokenOutputs.js'
+import { readAnyTokenOutput, readProfiledTokenOutput } from '../tokenOutputs.js'
 
 interface StoredOutput {
   tx: Transaction
@@ -269,7 +269,10 @@ export class FakeWallet {
   }
 }
 
-/** An overlay provider that admits whatever token outputs it is given. */
+/**
+ * An overlay provider that admits whatever token outputs it is given. Like an overlay, it applies
+ * base validity only, so it reads outputs with the profile-aware reader.
+ */
 export class FakeProvider {
   readonly current = new Map<string, { assetId: string; tx: Transaction; vout: number }>()
   readonly history = new Map<string, { assetId: string; tx: Transaction; vout: number }>()
@@ -321,7 +324,8 @@ export class FakeProvider {
       const outputsToAdmit = this.rejectSubmissions
         ? []
         : tx.outputs.flatMap((output, vout) =>
-            readAnyTokenOutput(output.lockingScript, { txid, vout })?.assetId === assetId
+            readAnyTokenOutput(output.lockingScript, { txid, vout }, readProfiledTokenOutput)
+              ?.assetId === assetId
               ? [vout]
               : []
           )
@@ -411,7 +415,6 @@ export async function deployAsset(
   return { assetId, tx }
 }
 
-/** A transaction paying `amount` of an asset to `recipient`, keyed by `sender` as BRC-207 specifies. */
 /** A BRC-161 JSON deploy+mint at output `vout`, admitted to its asset's overlay. */
 export function legacyDeploy(provider: FakeProvider, vout: number): string {
   const push = (bytes: number[]): string =>
@@ -437,11 +440,16 @@ export function legacyDeploy(provider: FakeProvider, vout: number): string {
   return assetId
 }
 
+/**
+ * A transaction paying `amount` of an asset to `recipient`, keyed by `sender` as BRC-207 specifies,
+ * with `payload` as its output payload.
+ */
 export async function tokenPayment(
   sender: FakeWallet,
   recipient: FakeWallet,
   assetId: string,
-  amount: bigint
+  amount: bigint,
+  payload?: number[]
 ): Promise<{ tx: Transaction; customInstructions: string }> {
   const custody = {
     version: 1,
@@ -469,23 +477,32 @@ export async function tokenPayment(
     unlockingScript: new UnlockingScript()
   })
   tx.addOutput({
-    lockingScript: new OneColor().lock(assetId, amount, hash160(toArray(publicKey, 'hex'))),
+    lockingScript: new OneColor().lock(
+      assetId,
+      amount,
+      hash160(toArray(publicKey, 'hex')),
+      payload
+    ),
     satoshis: 1000
   })
   return { tx, customInstructions: JSON.stringify(custody) }
 }
 
-/** Gives `holder` admitted outputs of each amount (0 for an authority), as completed receipts. */
+/**
+ * Gives `holder` admitted outputs of each amount (0 for an authority), as completed receipts, each
+ * carrying `payload`.
+ */
 export async function holdTokens(
   holder: FakeWallet,
   provider: FakeProvider,
   assetId: string,
-  amounts: bigint[]
+  amounts: bigint[],
+  payload?: number[]
 ): Promise<Transaction[]> {
   const sender = new FakeWallet()
   const txs: Transaction[] = []
   for (const amount of amounts) {
-    const { tx, customInstructions } = await tokenPayment(sender, holder, assetId, amount)
+    const { tx, customInstructions } = await tokenPayment(sender, holder, assetId, amount, payload)
     provider.admit(assetId, tx, 0)
     holder.store(
       tx,
