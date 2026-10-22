@@ -86,27 +86,49 @@ import type {
   ColorModuleStore,
   ColorOverlayProvider,
   ColorPermissionModuleOptions,
-  ColorTokenAccessHandler
+  ColorTokenAccessHandler,
+  ProfileData
 } from './types.js'
-import { ColorConsentDeclinedError, isNamedError, ProfileParamsError } from './errors.js'
+import {
+  AttestationEvidenceError,
+  ColorConsentDeclinedError,
+  isNamedError,
+  ProfileDataError,
+  ProfileParamsError
+} from './errors.js'
 import {
   assertOwnExtEntries,
   resolveRequirements,
   routeProvider,
   validateProfileHandlers,
+  type ColorAttestation,
+  type ProfileAssetContext,
   type ProfileDescriptor,
+  type ReceiptGraph,
   type RequiredProfileHandler,
   type ResolvedAsset
 } from './profiles.js'
-import { ColorStore } from './store.js'
+import { ColorStore, type SettledRecord, type TxRecord } from './store.js'
 import { ATTESTED_PROFILE_ID, COLOR_OFFLINE_TAG } from './attestation.js'
-import { parseAttestedParams } from './attested.js'
+import {
+  assertCoverage,
+  parseAttestedLeaf,
+  parseAttestedParams,
+  qualifyingSigner,
+  trustSnapshot,
+  type AttestedLeaf
+} from './attested.js'
+import { validateFrontier } from './frontier.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
 const DEFAULT_SIGHASH = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
 const MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
 const MAX_RECEIPT_INSTRUCTION_BYTES = 1000
+/** The largest receipt customInstructions the module parses at all, each and in aggregate (0207:1442-1448). */
+const MAX_PARSED_RECEIPT_BYTES = 16_777_216
+/** Tags with this prefix are the module's; callers' are stripped from receipts when profiles are registered. */
+const COLOR_TAG_PREFIX = 'color_'
 const LIST_PAGE_LIMIT = 10_000
 const SUBMIT_ATTEMPTS = 3
 const NOSEND_EXPIRY_LABEL_PREFIX = 'p nosend expiry '
@@ -204,11 +226,29 @@ function custodyInstructions(custody: Custody): string {
   return JSON.stringify({ version: 1, ...custody })
 }
 
-/** Parses the receipt-format custody JSON stored in, or supplied as, an output's custom instructions. */
-function parseCustody(text: string, maxBytes: number | undefined, label: string): Custody {
+/**
+ * The UTF-8 length of `text`, or a throw when it exceeds `maxBytes`. A string longer than
+ * `maxBytes` UTF-16 units always exceeds it, so a huge string is refused before it is encoded.
+ */
+function boundedUtf8Length(text: string, maxBytes: number, label: string): number {
+  const length = text.length > maxBytes ? Infinity : UTF8_ENCODER.encode(text).length
+  if (length > maxBytes) throw new Error(`BRC-207: ${label} exceeds ${maxBytes} bytes`)
+  return length
+}
+
+/**
+ * Parses the receipt-format custody JSON stored in, or supplied as, an output's custom
+ * instructions. Non-empty `profileData` fails unless `allowProfileData`, which returns it
+ * structurally parsed for the caller to validate against the asset's requirements.
+ */
+function parseCustody(
+  text: string,
+  maxBytes: number | undefined,
+  label: string,
+  allowProfileData = false
+): Custody & { profileData?: ProfileData } {
+  if (maxBytes !== undefined) boundedUtf8Length(text, maxBytes, label)
   const bytes = UTF8_ENCODER.encode(text)
-  if (maxBytes !== undefined && bytes.length > maxBytes)
-    throw new Error(`BRC-207: ${label} exceeds ${maxBytes} bytes`)
   const object = jsonObject(parseStrictJsonBytes(bytes, label), label)
   exactMembers(
     object,
@@ -218,10 +258,12 @@ function parseCustody(text: string, maxBytes: number | undefined, label: string)
   )
   if (object.version !== 1) throw new Error(`BRC-207: ${label} version must be 1`)
   const profileData = parseProfileData(object.profileData, `${label}.profileData`)
-  if (profileData !== undefined && Object.keys(profileData).length > 0) {
+  const hasProfileData = profileData !== undefined && Object.keys(profileData).length > 0
+  if (hasProfileData && !allowProfileData) {
     throw new Error(`BRC-207: ${label}.profileData names a profile the asset does not require`)
   }
   return {
+    ...(hasProfileData ? { profileData } : {}),
     assetId: parseAssetSelector(object.assetId),
     derivationPrefix: validateRemittanceString(
       object.derivationPrefix,
@@ -232,6 +274,98 @@ function parseCustody(text: string, maxBytes: number | undefined, label: string)
       `${label}.derivationSuffix`
     ),
     senderIdentityKey: validateIdentityKey(object.senderIdentityKey, `${label}.senderIdentityKey`)
+  }
+}
+
+/** The `p color` basket insertions of an internalizeAction, in order. */
+function colorReceipts(
+  args: InternalizeActionArgs
+): Array<{ outputIndex: number; remittance: BasketInsertion }> {
+  return args.outputs.flatMap(output => {
+    const remittance = output.insertionRemittance
+    return output.protocol === 'basket insertion' &&
+      remittance?.basket.startsWith(`${COLOR_BASKET_NAMESPACE} `) === true
+      ? [{ outputIndex: output.outputIndex, remittance }]
+      : []
+  })
+}
+
+/** What one receipt forwards to the wallet, and what the module stores for it. */
+export interface ReceiptDecision {
+  outputIndex: number
+  /** The insertion forwarded to the wallet. */
+  insertion: BasketInsertion
+  /** Tx records to write, in order, before the wallet sees the receipt. */
+  records: Array<[string, TxRecord]>
+  /** Written after the records, only after a verified attestation covered the outputs. */
+  settled?: SettledRecord
+}
+
+/** A receipt on the profiled path, after its structural parse. */
+interface ProfiledReceipt {
+  outputIndex: number
+  remittance: BasketInsertion
+  /** The UTF-8 length of its customInstructions. */
+  bytes: number
+  custody: Custody & { profileData?: ProfileData }
+  /** The structurally parsed attested leaf for the custody's asset, with its JSON as carried. */
+  attested?: { json: string; leaf: AttestedLeaf }
+}
+
+/** A profiled receipt once its output and asset are known. */
+interface CheckedReceipt extends ProfiledReceipt {
+  token: TokenOutput
+  source: SourceOutput
+  resolved: ResolvedAsset
+}
+
+/** The outcome of one attested asset's receipts in one transaction. */
+interface AttestedOutcome {
+  assetId: string
+  outputIndexes: number[]
+  /** Records in write order: anchors, pending ancestors, then the tip. */
+  records: Array<[string, TxRecord]>
+  /** Set when every receipt output of the tip is covered by a qualifying attestation. */
+  settled?: SettledRecord
+  /** The deploy to cache with the records. */
+  declarationTx: Transaction
+  /** The trust snapshot the decision used, rechecked before anything is written. */
+  snapshot?: { handler: RequiredProfileHandler; value: string }
+}
+
+/** One attestation per (signer, txid, outputs), first kept, in order. */
+function distinctAttestations(attestations: readonly ColorAttestation[]): ColorAttestation[] {
+  const seen = new Set<string>()
+  return attestations.filter(att => {
+    const key = `${att.signer}:${att.txid}:${att.outputs.join(',')}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * A stored tx record merged with a new one for the same txid, so a retry or a later receipt never
+ * loses state: the stored bytes, role, state, labels and inputs are kept (an ancestor becomes a
+ * receipt once this wallet holds its outputs), outputs and attestations are unions, and stored
+ * off-chain values are kept unless empty.
+ */
+function mergeTxRecords(stored: TxRecord, incoming: TxRecord): TxRecord {
+  const role = stored.role === 'ancestor' && incoming.role === 'receipt' ? 'receipt' : stored.role
+  const state =
+    role === 'receipt' ? (stored.role === 'receipt' ? stored.state : incoming.state) : stored.state
+  return {
+    v: 1,
+    assetId: stored.assetId,
+    rawTx: stored.rawTx,
+    atomicBEEF: stored.atomicBEEF,
+    role,
+    ...(state === undefined ? {} : { state }),
+    ...(stored.labels === undefined ? {} : { labels: stored.labels }),
+    inputs: stored.inputs.length > 0 ? stored.inputs : incoming.inputs,
+    outputs: [...new Set([...stored.outputs, ...incoming.outputs])].sort((a, b) => a - b),
+    offChainValues: stored.offChainValues !== '' ? stored.offChainValues : incoming.offChainValues,
+    attestations: distinctAttestations([...stored.attestations, ...incoming.attestations])
   }
 }
 
@@ -1020,11 +1154,10 @@ export class ColorPermissionModule implements PermissionsModule {
         return {
           args: await this.signAction(req.args as SignActionArgs, req.action, req.originator)
         }
-      case 'internalizeAction': {
-        const args = req.args as InternalizeActionArgs
-        await this.internalizeAction(args, req.originator)
-        return { args }
-      }
+      case 'internalizeAction':
+        return {
+          args: await this.internalizeAction(req.args as InternalizeActionArgs, req.originator)
+        }
       case 'listActions': {
         const args = req.args as ListActionsArgs
         await this.authorizeRead(req.originator, {
@@ -1099,27 +1232,28 @@ export class ColorPermissionModule implements PermissionsModule {
    * Receive
    * ---------------------------------------------------------------------- */
 
-  /** Verifies every `p color` receipt; the caller must already have submitted the transaction. */
+  /**
+   * Verifies every `p color` receipt and returns the arguments to forward to the wallet. Without
+   * profiles the caller must already have submitted the transaction, and `args` is returned
+   * unchanged. With profiles, see `internalizeProfiled`.
+   */
   protected async internalizeAction(
     args: InternalizeActionArgs,
     originator: string
-  ): Promise<void> {
+  ): Promise<InternalizeActionArgs> {
     if ((args.labels ?? []).some(label => label.startsWith(`${COLOR_BASKET_NAMESPACE} `))) {
       throw new Error('BRC-207: p color labels have no meaning in internalizeAction')
     }
     const tx = parsed('the received transaction', () => Transaction.fromAtomicBEEF(args.tx))
-    const receipts = args.outputs.flatMap(output => {
-      const remittance = output.insertionRemittance
-      return output.protocol === 'basket insertion' &&
-        remittance?.basket.startsWith(`${COLOR_BASKET_NAMESPACE} `) === true
-        ? [{ outputIndex: output.outputIndex, remittance }]
-        : []
-    })
-    if (receipts.length === 0) return
+    const receipts = colorReceipts(args)
+    if (receipts.length === 0) return args
+    if (this.profiles.size > 0)
+      return await this.internalizeProfiled(args, tx, receipts, originator)
     await this.assertCompletedTransaction(tx)
     await eachInOrder(receipts, async ({ outputIndex, remittance }) => {
       await this.verifyReceipt(tx, outputIndex, remittance, originator)
     })
+    return args
   }
 
   /**
@@ -1140,13 +1274,16 @@ export class ColorPermissionModule implements PermissionsModule {
     })
   }
 
-  /** One receipt: its custody, its output's asset, owner and basket, and overlay admission. */
+  /**
+   * One receipt without profiles (0.1.0): its custody, its output's asset, owner and basket, and
+   * overlay admission. The decision forwards the insertion unchanged and stores nothing.
+   */
   protected async verifyReceipt(
     tx: Transaction,
     outputIndex: number,
     remittance: BasketInsertion,
     originator: string
-  ): Promise<void> {
+  ): Promise<ReceiptDecision> {
     const target = parseAssetBasket(remittance.basket)
     if (target === undefined)
       throw new Error('BRC-207: a receipt must name a per-asset value or authority basket')
@@ -1179,6 +1316,503 @@ export class ColorPermissionModule implements PermissionsModule {
         'BRC-207: the received output is not admitted and unspent in its asset overlay'
       )
     }
+    return { outputIndex, insertion: remittance, records: [] }
+  }
+
+  /**
+   * The receipt path with profiles registered (contract §2.2-5, 6 and 8). In order:
+   * 1. every receipt's customInstructions is bounded at 16 MiB, each and in aggregate;
+   * 2. before any asset is resolved, every receipt's custody is parsed and each attested leaf
+   *    structurally, collecting the declarationTx evidence;
+   * 3. every asset of the transaction is resolved with that evidence (so a never-seen asset
+   *    resolves with no connectivity), every input must unlock, every token must conform to its
+   *    deploy, and each receipt must fit its asset's `maxReceiptBytes`;
+   * 4. `profileData` must name only declared profiles and the receipt's own asset; a non-attested
+   *    leaf goes to its handler's `checkReceiptData`, or fails;
+   * 5. basket, role and ownership are checked;
+   * 6. an asset without the attested profile needs current spendability, as in 0.1.0; an attested
+   *    asset's receipts are decided by `attestedOutcome` (frontier, coverage, consent);
+   * 7. the trust snapshot is rechecked, then the records are written (anchors, ancestors, the
+   *    deploy, the tip), then any settled record;
+   * 8. the wallet gets the 5-member custody JSON, the caller's tags without `color_*`, and
+   *    `color_offline` for a receipt credited without a covering attestation.
+   */
+  protected async internalizeProfiled(
+    args: InternalizeActionArgs,
+    tx: Transaction,
+    receipts: ReadonlyArray<{ outputIndex: number; remittance: BasketInsertion }>,
+    originator: string
+  ): Promise<InternalizeActionArgs> {
+    const label = 'receipt customInstructions'
+    let total = 0
+    const sized = receipts.map(receipt => {
+      const text = receipt.remittance.customInstructions ?? ''
+      const bytes = boundedUtf8Length(text, MAX_PARSED_RECEIPT_BYTES, label)
+      total += bytes
+      return { ...receipt, text, bytes }
+    })
+    if (total > MAX_PARSED_RECEIPT_BYTES) {
+      throw new Error(
+        `BRC-207: receipt customInstructions exceed ${MAX_PARSED_RECEIPT_BYTES} bytes in aggregate`
+      )
+    }
+
+    const evidence = new Map<string, string>()
+    const profiled: ProfiledReceipt[] = sized.map(({ outputIndex, remittance, text, bytes }) => {
+      const custody = parseCustody(text, MAX_PARSED_RECEIPT_BYTES, label, true)
+      let attested: ProfiledReceipt['attested']
+      for (const [assetKey, value] of Object.entries(
+        custody.profileData?.[ATTESTED_PROFILE_ID] ?? {}
+      )) {
+        const leaf = parseAttestedLeaf(value, assetKey)
+        evidence.set(assetKey, leaf.declarationTx.toHex())
+        if (assetKey === custody.assetId) attested = { json: JSON.stringify(value), leaf }
+      }
+      return {
+        outputIndex,
+        remittance,
+        bytes,
+        custody,
+        ...(attested === undefined ? {} : { attested })
+      }
+    })
+
+    for (let index = 0; index < tx.inputs.length; index++) assertUnlocks(tx, index)
+    const txid = tx.id('hex')
+    const { consumed } = transactionTokens(tx, false, this.read)
+    // As in 0.1.0, a new deploy among the outputs is resolved only when it is itself a receipt.
+    const outputTokens = tx.outputs.flatMap((output, vout) => {
+      const token = this.read(output.lockingScript, { txid, vout })
+      return token === undefined || token.deploy ? [] : [token]
+    })
+    const located = profiled.map(receipt => {
+      const output = tx.outputs[receipt.outputIndex]
+      if (output?.satoshis === undefined)
+        throw new Error('BRC-207: the receipt names a missing output')
+      const token = tryReadTokenOutput(
+        output.lockingScript,
+        { txid, vout: receipt.outputIndex },
+        this.read
+      )
+      if (token === undefined)
+        throw new Error('BRC-207: the received output is not a BRC-162 token output')
+      const source: SourceOutput = {
+        outpoint: outpointString(txid, receipt.outputIndex),
+        lockingScript: output.lockingScript,
+        satoshis: output.satoshis
+      }
+      return { ...receipt, token, source }
+    })
+    const assets = new Map<string, ResolvedAsset>()
+    const involved = [
+      ...located.map(receipt => receipt.token.assetId),
+      ...consumed.map(input => input.assetId),
+      ...outputTokens.map(token => token.assetId)
+    ]
+    await eachInOrder(new Set(involved), async assetId => {
+      const declarationTx = evidence.get(assetId)
+      assets.set(
+        assetId,
+        await this.resolveAsset(
+          assetId,
+          declarationTx === undefined ? undefined : { declarationTx }
+        )
+      )
+    })
+    await this.assertConformingTokens([...consumed.map(input => input.token), ...outputTokens])
+
+    const checked: CheckedReceipt[] = []
+    for (const receipt of located) {
+      const resolved = assets.get(receipt.token.assetId)!
+      if (receipt.bytes > resolved.maxReceiptBytes) {
+        throw new Error(`BRC-207: ${label} exceeds ${resolved.maxReceiptBytes} bytes`)
+      }
+      checked.push({ ...receipt, resolved })
+    }
+    for (const receipt of checked) await this.checkReceiptProfileData(receipt, originator)
+    for (const receipt of checked) {
+      const target = parseAssetBasket(receipt.remittance.basket)
+      if (target === undefined)
+        throw new Error('BRC-207: a receipt must name a per-asset value or authority basket')
+      if (!selectsAsset(receipt.custody.assetId, receipt.token)) {
+        throw new Error('BRC-207: the receipt instructions name a different asset than the output')
+      }
+      if (target.assetId !== receipt.token.assetId || target.role !== receipt.token.role) {
+        throw new Error('BRC-207: the receipt basket does not match the received output')
+      }
+      await this.assertOwned(
+        receipt.token,
+        receipt.custody,
+        receipt.custody.senderIdentityKey,
+        originator
+      )
+    }
+
+    const groups = new Map<string, CheckedReceipt[]>()
+    for (const receipt of checked) {
+      const group = groups.get(receipt.token.assetId) ?? []
+      group.push(receipt)
+      groups.set(receipt.token.assetId, group)
+    }
+    const outcomes: AttestedOutcome[] = []
+    for (const [assetId, group] of groups) {
+      const resolved = group[0].resolved
+      if (resolved.attested === undefined) {
+        // An asset without the attested profile is credited only when currently admitted.
+        const admitted = await this.spendable(
+          assetId,
+          group.map(receipt => receipt.source)
+        )
+        if (group.some(receipt => !admitted.has(receipt.source.outpoint))) {
+          throw new Error(
+            'BRC-207: the received output is not admitted and unspent in its asset overlay'
+          )
+        }
+        continue
+      }
+      outcomes.push(await this.attestedOutcome(args, tx, group, resolved, originator))
+    }
+
+    // Nothing is written until every decision (and consent) is made and the trust snapshots
+    // still hold; the tip is written last, and a settled record only after it.
+    for (const { snapshot, resolved } of outcomes.map(outcome => ({
+      snapshot: outcome.snapshot,
+      resolved: assets.get(outcome.assetId)!
+    }))) {
+      if (snapshot === undefined) continue
+      const now = await trustSnapshot(snapshot.handler, resolved.attested!)
+      if (now?.snapshot !== snapshot.value)
+        throw new AttestationEvidenceError('trust snapshot changed')
+    }
+    await this.writeReceiptRecords(txid, outcomes)
+
+    const offline = new Set(
+      outcomes.filter(outcome => outcome.settled === undefined).map(outcome => outcome.assetId)
+    )
+    const forwarded = new Map(checked.map(receipt => [receipt.remittance, receipt] as const))
+    return {
+      ...args,
+      outputs: args.outputs.map(output => {
+        const receipt =
+          output.insertionRemittance === undefined
+            ? undefined
+            : forwarded.get(output.insertionRemittance)
+        if (receipt === undefined) return output
+        const { tags: callerTags, ...insertion } = receipt.remittance
+        const tags = (callerTags ?? []).filter(tag => !tag.startsWith(COLOR_TAG_PREFIX))
+        if (offline.has(receipt.token.assetId)) tags.push(COLOR_OFFLINE_TAG)
+        const { assetId, derivationPrefix, derivationSuffix, senderIdentityKey } = receipt.custody
+        return {
+          ...output,
+          insertionRemittance: {
+            ...insertion,
+            customInstructions: custodyInstructions({
+              assetId,
+              derivationPrefix,
+              derivationSuffix,
+              senderIdentityKey
+            }),
+            ...(tags.length === 0 ? {} : { tags })
+          }
+        }
+      })
+    }
+  }
+
+  /**
+   * A receipt's `profileData` (contract §2.2-4): every profile must be one the asset requires
+   * (A.154) and every asset key the receipt's own asset. The attested leaf of an attested asset is
+   * the module's; any other leaf goes to its handler's `checkReceiptData`, or fails.
+   */
+  protected async checkReceiptProfileData(
+    receipt: CheckedReceipt,
+    originator: string
+  ): Promise<void> {
+    const { resolved } = receipt
+    const data = receipt.custody.profileData ?? {}
+    for (const [profileId, byAsset] of Object.entries(data)) {
+      if (!resolved.req.has(profileId)) {
+        throw new ProfileDataError('BRC-207: profile data names an undeclared profile')
+      }
+      if (Object.keys(byAsset).some(assetKey => assetKey !== resolved.assetId)) {
+        throw new ProfileDataError(
+          'BRC-207: profile data names an asset the receipt does not carry'
+        )
+      }
+    }
+    for (const [profileId, byAsset] of Object.entries(data)) {
+      if (!Object.hasOwn(byAsset, resolved.assetId)) continue
+      if (profileId === ATTESTED_PROFILE_ID && resolved.attested !== undefined) continue
+      const entry = resolved.handlers.find(({ handler }) => handler.id === profileId)!
+      if (entry.handler.checkReceiptData === undefined) {
+        throw new ProfileDataError(`BRC-207: ${profileId} accepts no receipt profile data`)
+      }
+      await entry.handler.checkReceiptData(
+        await this.profileContext(resolved, entry, originator),
+        byAsset[resolved.assetId]
+      )
+    }
+  }
+
+  /** The context handed to a required profile's hooks for one resolved asset. */
+  protected async profileContext(
+    resolved: ResolvedAsset,
+    entry: { handler: RequiredProfileHandler; descriptor: ProfileDescriptor },
+    originator: string
+  ): Promise<ProfileAssetContext> {
+    return {
+      assetId: resolved.assetId,
+      profileId: entry.handler.id,
+      descriptor: entry.descriptor,
+      req: resolved.req,
+      declarationTx: resolved.declarationTx!,
+      wallet: this.wallet,
+      identityKey: await this.identity(),
+      originator
+    }
+  }
+
+  /**
+   * One attested asset's receipts in a transaction (0207:328-357, 0207:387-406): every receipt
+   * carries the same attested leaf; the complete frontier behind the receipt outputs validates;
+   * the anchors cover it in the asset's trust mode. Settled when a qualifying attestation covers
+   * every receipt output of the tip; otherwise the user approves `color_receive_offline`. Nothing
+   * is written here, and nothing is submitted.
+   */
+  protected async attestedOutcome(
+    args: InternalizeActionArgs,
+    tip: Transaction,
+    group: readonly CheckedReceipt[],
+    resolved: ResolvedAsset,
+    originator: string
+  ): Promise<AttestedOutcome> {
+    const { assetId } = resolved
+    const params = resolved.attested!
+    const evidence = group.map(receipt => receipt.attested)
+    if (evidence.some(entry => entry === undefined)) {
+      throw new AttestationEvidenceError('missing attested evidence')
+    }
+    if (evidence.some(entry => entry!.json !== evidence[0]!.json)) {
+      throw new AttestationEvidenceError('receipts of one asset carry different evidence')
+    }
+    const { leaf } = evidence[0]!
+    const handler = resolved.handlers.find(
+      ({ handler }) => handler.id === ATTESTED_PROFILE_ID
+    )!.handler
+    const snapshot = await trustSnapshot(handler, params)
+    const qualifies = qualifyingSigner(params, snapshot?.identityKeys)
+    const receiptBeef = parsed('the received transaction', () => Beef.fromBinary(args.tx))
+    const bodies = new Map<string, Transaction>()
+    for (const body of leaf.transactions) bodies.set(body.id('hex'), body)
+    for (const entry of receiptBeef.txs) {
+      if (entry.tx !== undefined) bodies.set(entry.txid, entry.tx)
+    }
+    const tipTxid = tip.id('hex')
+    const outputIndexes = [...new Set(group.map(receipt => receipt.outputIndex))].sort(
+      (a, b) => a - b
+    )
+    const frontier = validateFrontier({
+      assetId,
+      declarationTx: resolved.declarationTx!,
+      tip,
+      start: { outputs: outputIndexes },
+      bodies,
+      attestations: leaf.attestations,
+      qualifies
+    })
+    assertCoverage(params, frontier.anchors, snapshot?.identityKeys)
+
+    /** The exact AtomicBEEF settle submits for `txid`: the receipt's own bytes for the tip. */
+    const submitBytes = (txid: string): number[] => {
+      if (txid === tipTxid) return [...args.tx]
+      const entry = receiptBeef.findTxid(txid)
+      if (entry === undefined || entry.isTxidOnly) {
+        throw new AttestationEvidenceError(`no submit bytes for ${txid}`)
+      }
+      return receiptBeef.toBinaryAtomic(txid)
+    }
+    const offChainValues = (txid: string): number[] => leaf.submissions.get(txid) ?? []
+    const graph: ReceiptGraph = {
+      assetId,
+      tip: { txid: tipTxid, atomicBEEF: [...args.tx], offChainValues: offChainValues(tipTxid) },
+      outputIndexes,
+      pending: frontier.pending.map(txid => ({
+        txid,
+        atomicBEEF: submitBytes(txid),
+        offChainValues: offChainValues(txid)
+      })),
+      attestations: distinctAttestations(leaf.attestations)
+    }
+    // Task 11: a handler's admitReceipt is called here with `graph`, before the decision.
+
+    const anchorsByOutpoint = new Map(frontier.anchors.map(anchor => [anchor.outpoint, anchor]))
+    const tipAnchors = outputIndexes.map(vout => anchorsByOutpoint.get(`${tipTxid}.${vout}`))
+    let settled: SettledRecord | undefined
+    if (tipAnchors.every(anchor => anchor !== undefined)) {
+      const common = [...tipAnchors[0]!.signers]
+        .filter(signer => tipAnchors.every(anchor => anchor!.signers.includes(signer)))
+        .sort()
+      const signer =
+        params.trustMode === 'identity'
+          ? params.identityKey!
+          : (common[0] ?? [...tipAnchors[0]!.signers].sort()[0])
+      settled = { outputs: outputIndexes, signer }
+    } else {
+      const signers = [...new Set(frontier.anchors.flatMap(anchor => anchor.signers))].sort()
+      const amounts = new Map(
+        group.map(receipt => [receipt.outputIndex, receipt.token.amount.toString()])
+      )
+      await this.approve(originator, {
+        type: 'color_receive_offline',
+        assetId,
+        outputs: outputIndexes.map(outputIndex => ({
+          outputIndex,
+          amount: amounts.get(outputIndex)!
+        })),
+        unsettledTransactions: graph.pending.length,
+        ...(params.trustMode === 'identity' ? { signer: params.identityKey } : { signers }),
+        profiles: [...resolved.req.keys()],
+        seekPermission: args.seekPermission !== false
+      })
+    }
+
+    // Records: every anchor transaction with its attestations, the pending ancestors (parents
+    // first), then the tip. Each carries the exact AtomicBEEF settle and resubmit send.
+    const qualifying = graph.attestations.filter(att => qualifies(att.signer))
+    const record = (
+      txid: string,
+      role: TxRecord['role'],
+      atomicBEEF: number[],
+      outputs: number[]
+    ): TxRecord => {
+      const body = bodies.get(txid)!
+      return {
+        v: 1,
+        assetId,
+        rawTx: body.toHex(),
+        atomicBEEF: toHex(atomicBEEF),
+        role,
+        ...(role === 'receipt' ? { state: 'staged' as const } : {}),
+        inputs: this.assetInputs(body, bodies, assetId),
+        outputs,
+        offChainValues: toHex(offChainValues(txid)),
+        attestations: qualifying.filter(att => att.txid === txid)
+      }
+    }
+    const records: Array<[string, TxRecord]> = []
+    const anchorTxids = [
+      ...new Set(frontier.anchors.map(anchor => parseOutpoint(anchor.outpoint).txid))
+    ].filter(txid => txid !== tipTxid)
+    for (const txid of anchorTxids) {
+      records.push([
+        txid,
+        record(txid, 'ancestor', this.anchorBytes(receiptBeef, bodies, txid), [])
+      ])
+    }
+    for (const entry of graph.pending) {
+      if (entry.txid !== tipTxid) {
+        records.push([entry.txid, record(entry.txid, 'ancestor', entry.atomicBEEF, [])])
+      }
+    }
+    records.push([tipTxid, record(tipTxid, 'receipt', graph.tip.atomicBEEF, outputIndexes)])
+    return {
+      assetId,
+      outputIndexes,
+      records,
+      ...(settled === undefined ? {} : { settled }),
+      declarationTx: resolved.declarationTx!,
+      ...(snapshot === undefined ? {} : { snapshot: { handler, value: snapshot.snapshot } })
+    }
+  }
+
+  /**
+   * The AtomicBEEF stored for an anchor: the receipt's bytes for it when the receipt carries it
+   * (with its unmined ancestors and proofs), else the anchor's supplied body alone. An anchor is
+   * already attested and is never submitted from these bytes.
+   */
+  protected anchorBytes(
+    receiptBeef: Beef,
+    bodies: ReadonlyMap<string, Transaction>,
+    txid: string
+  ): number[] {
+    const entry = receiptBeef.findTxid(txid)
+    if (entry !== undefined && !entry.isTxidOnly) return receiptBeef.toBinaryAtomic(txid)
+    const beef = new Beef()
+    beef.mergeRawTx(bodies.get(txid)!.toBinary())
+    return beef.toBinaryAtomic(txid)
+  }
+
+  /** The outpoints of `tx`'s inputs that are tokens of `assetId`, as far as their bodies are known. */
+  protected assetInputs(
+    tx: Transaction,
+    bodies: ReadonlyMap<string, Transaction>,
+    assetId: string
+  ): string[] {
+    return tx.inputs.flatMap(input => {
+      const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
+      const source = txid === undefined ? undefined : bodies.get(txid)
+      const output = source?.outputs[input.sourceOutputIndex]
+      if (txid === undefined || output === undefined) return []
+      let token: TokenOutput | undefined
+      try {
+        token = readSentToken(
+          output.lockingScript,
+          { txid, vout: input.sourceOutputIndex },
+          this.read
+        )
+      } catch {
+        return []
+      }
+      return token?.assetId === assetId ? [outpointString(txid, input.sourceOutputIndex)] : []
+    })
+  }
+
+  /**
+   * Writes attested receipt evidence in crash-safe order: per asset its anchors and pending
+   * ancestors, the deploy, then the tip; after all of them, the tip's settled record when every
+   * attested asset of the receipt settled. A stored record is merged, never downgraded, and an
+   * existing settled record is never removed, so a retried receipt writes the same bytes.
+   */
+  protected async writeReceiptRecords(
+    tipTxid: string,
+    outcomes: readonly AttestedOutcome[]
+  ): Promise<void> {
+    if (outcomes.length === 0) return
+    const store = this.colorStore!
+    for (const outcome of outcomes) {
+      const tip = outcome.records[outcome.records.length - 1]
+      for (const [txid, record] of outcome.records) {
+        if (txid === tipTxid) continue
+        await this.putTxRecord(txid, record)
+      }
+      const deploy = outcome.declarationTx.toHex()
+      if ((await store.getDeploy(outcome.assetId).catch(() => undefined)) !== deploy) {
+        await store.putDeploy(outcome.assetId, deploy)
+      }
+      await this.putTxRecord(tip[0], tip[1])
+    }
+    if (outcomes.every(outcome => outcome.settled !== undefined)) {
+      const outputs = [...new Set(outcomes.flatMap(outcome => outcome.settled!.outputs))].sort(
+        (a, b) => a - b
+      )
+      const stored = await store.settled(tipTxid)
+      const merged = [...new Set([...(stored?.outputs ?? []), ...outputs])].sort((a, b) => a - b)
+      if (stored === undefined || stored.outputs.join(',') !== merged.join(',')) {
+        await store.markSettled(tipTxid, {
+          outputs: merged,
+          signer: stored?.signer ?? outcomes[0].settled!.signer
+        })
+      }
+    }
+  }
+
+  /** Writes `record`, merged with any readable stored record; an unchanged record is not rewritten. */
+  protected async putTxRecord(txid: string, record: TxRecord): Promise<void> {
+    const store = this.colorStore!
+    const stored = await store.getTx(txid)
+    const next = stored === undefined ? record : mergeTxRecords(stored, record)
+    if (stored !== undefined && JSON.stringify(stored) === JSON.stringify(next)) return
+    await store.putTx(txid, next)
   }
 
   /* ----------------------------------------------------------------------

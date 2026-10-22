@@ -1,11 +1,23 @@
-import { LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction } from '@bsv/sdk'
+import {
+  LockingScript,
+  P2PKH,
+  PrivateKey,
+  ProtoWallet,
+  Transaction,
+  type InternalizeActionArgs
+} from '@bsv/sdk'
+import { hash160 } from '@bsv/sdk/primitives/Hash'
 import { toArray, toHex } from '@bsv/sdk/primitives/utils'
-import { OneColor, type StrictCborValue } from '@bsv/templates'
+import { encodeStrictCbor, OneColor, type StrictCborValue } from '@bsv/templates'
+import { ATTESTED_PROFILE_ID } from '../attestation.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ProfileParamsError } from '../errors.js'
+import { assetBasket, COLOR_KEY_ID, colorProtocolID } from '../identifiers.js'
 import type { ColorAttestation, RequiredProfileHandler, ResolvedAsset } from '../profiles.js'
+import type { JsonValue } from '../strictJson.js'
 import type { TokenOutput } from '../tokenOutputs.js'
 import type { ColorModuleStore, ColorOverlayProvider } from '../types.js'
+import { remittanceString, type FakeWallet } from './fixtures.js'
 
 /** A Map-backed `ColorModuleStore` that logs every `set` key, in order. */
 export class FakeStore implements ColorModuleStore {
@@ -258,4 +270,136 @@ export function graph(owner: PrivateKey = new PrivateKey(4242)): GraphBuilder {
     },
     attest: async (signer, tx, vouts) => await signAttestation(signer, asset(), tx.id('hex'), vouts)
   }
+}
+
+/** The deploy payload `{req: {attested: {params, version: 1}}}` (attested v1 only). */
+export function attestedPayload(params: Record<string, string>): number[] {
+  return encodeStrictCbor({ req: { [ATTESTED_PROFILE_ID]: { params, version: 1 } } })
+}
+
+/**
+ * An attested-v1 asset deployed by the graph's owner with `amount` value units at output 0. `K`
+ * is the identity key of identity mode, or the full params map. With `admit`, the deploy is
+ * admitted to that provider.
+ */
+export function attestedAsset(
+  g: GraphBuilder,
+  K: string | Record<string, string>,
+  options: {
+    amount?: bigint
+    admit?: { admit: (assetId: string, tx: Transaction, vout: number) => void }
+  } = {}
+): { tx: Transaction; assetId: string } {
+  const params = typeof K === 'string' ? { trustMode: 'identity', identityKey: K } : K
+  const deploy = g.deploy(options.amount ?? 1000n, attestedPayload(params))
+  options.admit?.admit(deploy.assetId, deploy.tx, 0)
+  return deploy
+}
+
+export interface AttestedReceipt {
+  args: InternalizeActionArgs
+  /** The receipt transaction. */
+  tip: Transaction
+  /** The attested parent of the first unattested hop. */
+  anchor: Transaction
+  /** Unattested ancestors between the anchor and the tip, parents first. */
+  ancestors: Transaction[]
+  /** The attested leaf as carried. */
+  leaf: { [member: string]: JsonValue }
+  /** The custody members the wallet must receive (the 5-member JSON). */
+  custody: {
+    version: 1
+    assetId: string
+    derivationPrefix: string
+    derivationSuffix: string
+    senderIdentityKey: string
+  }
+}
+
+/**
+ * A complete attested receipt for `recipient`: deploy → anchor (attested by `signers` over both
+ * of its outputs) → `unattested` hops → tip paying `amount` at output 0 to the recipient's
+ * `p color` key, from the graph's owner as sender. With `attestTip`, the tip is attested by the
+ * signers too. The leaf carries the deploy, the unattested ancestors (parents first, no tip),
+ * every attestation and a submission per unattested tx and the tip (`tipOffChainValues`).
+ */
+export async function attestedReceipt(options: {
+  g: GraphBuilder
+  deploy: Transaction
+  recipient: FakeWallet
+  signers: PrivateKey[]
+  amount?: bigint
+  unattested?: number
+  attestTip?: boolean
+  tipOffChainValues?: string
+  tags?: string[]
+  seekPermission?: boolean
+  extraProfileData?: Record<string, Record<string, JsonValue>>
+}): Promise<AttestedReceipt> {
+  const { g, deploy, recipient, signers } = options
+  const assetId = `${deploy.id('hex')}_0`
+  const supply = OneColor.decode(deploy.outputs[0].lockingScript).amount
+  const amount = options.amount ?? 600n
+  const anchor = await g.spend([{ tx: deploy, vout: 0 }], [amount, supply - amount])
+  const attestations: ColorAttestation[] = []
+  for (const signer of signers) attestations.push(await g.attest(signer, anchor, [0, 1]))
+  const ancestors: Transaction[] = []
+  let previous = anchor
+  for (let hop = 0; hop < (options.unattested ?? 0); hop++) {
+    previous = await g.spend([{ tx: previous, vout: 0 }], [amount])
+    ancestors.push(previous)
+  }
+  const custody = {
+    version: 1 as const,
+    assetId,
+    derivationPrefix: remittanceString(),
+    derivationSuffix: remittanceString(),
+    senderIdentityKey: g.owner.toPublicKey().toString()
+  }
+  const { publicKey } = await new ProtoWallet(g.owner).getPublicKey({
+    protocolID: colorProtocolID(assetId, custody.derivationPrefix, custody.derivationSuffix),
+    keyID: COLOR_KEY_ID,
+    counterparty: recipient.identityKey
+  })
+  const tip = await g.spend(
+    [{ tx: previous, vout: 0 }],
+    [
+      {
+        lockingScript: new OneColor().lock(assetId, amount, hash160(toArray(publicKey, 'hex')))
+      }
+    ]
+  )
+  if (options.attestTip === true) {
+    for (const signer of signers) attestations.push(await g.attest(signer, tip, [0]))
+  }
+  const leaf: { [member: string]: JsonValue } = {
+    declarationTx: deploy.toHex(),
+    transactions: ancestors.map(tx => tx.toHex()),
+    attestations: attestations.map(att => ({ ...att })),
+    submissions: [
+      ...ancestors.map(tx => ({ txid: tx.id('hex'), offChainValues: '' })),
+      { txid: tip.id('hex'), offChainValues: options.tipOffChainValues ?? '' }
+    ]
+  }
+  const customInstructions = JSON.stringify({
+    ...custody,
+    profileData: { [ATTESTED_PROFILE_ID]: { [assetId]: leaf }, ...options.extraProfileData }
+  })
+  const args: InternalizeActionArgs = {
+    tx: tip.toAtomicBEEF(),
+    description: 'Receive tokens',
+    outputs: [
+      {
+        outputIndex: 0,
+        protocol: 'basket insertion',
+        insertionRemittance: {
+          basket: assetBasket(assetId, 'value'),
+          customInstructions,
+          ...(options.tags === undefined ? {} : { tags: options.tags })
+        }
+      }
+    ],
+    ...(options.seekPermission === undefined ? {} : { seekPermission: options.seekPermission })
+  }
+  return { args, tip, anchor, ancestors, leaf, custody }
 }
