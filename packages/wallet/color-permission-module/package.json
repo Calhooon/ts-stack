@@ -59,6 +59,7 @@
   "devDependencies": {
     "@bsv/sdk": "workspace:^",
     "@bsv/wallet-toolbox-client": "workspace:^",
+    "@bsv/wallet-toolbox-mobile": "workspace:^",
     "@jest/globals": "^30.5.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.6.1",
