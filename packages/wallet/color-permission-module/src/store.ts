@@ -239,45 +239,61 @@ function atomicHeader(txid: string): string {
 function txRecord(value: JsonValue | undefined, txid: string): TxRecord | undefined {
   if (!isObject(value)) return undefined
   if (!Object.keys(value).every(key => TX_MEMBERS.has(key))) return undefined
-  const { v, assetId, rawTx, atomicBEEF, role, state, labels, inputs, outputs } = value
+  if (!hasTxBytes(value, txid) || !hasTxMembers(value)) return undefined
+  const { assetId, rawTx, atomicBEEF, role, state, labels, inputs, outputs } = value
   const { offChainValues, attestations } = value
-  if (v !== 1) return undefined
-  if (typeof assetId !== 'string' || !ASSET_ID.test(assetId)) return undefined
-  if (typeof rawTx !== 'string' || rawTx === '' || !HEX.test(rawTx)) return undefined
-  if (
-    typeof atomicBEEF !== 'string' ||
-    !HEX.test(atomicBEEF) ||
-    !atomicBEEF.startsWith(atomicHeader(txid))
-  ) {
-    return undefined
+  const parsed = parsedAttestations(attestations)
+  if (parsed === undefined) return undefined
+  return {
+    v: 1,
+    assetId: assetId as string,
+    rawTx: rawTx as string,
+    atomicBEEF: atomicBEEF as string,
+    role: role as TxRecord['role'],
+    ...(state === undefined ? {} : { state: state as NonNullable<TxRecord['state']> }),
+    ...(labels === undefined ? {} : { labels: [...(labels as string[])] }),
+    inputs: [...(inputs as string[])],
+    outputs: [...(outputs as number[])],
+    offChainValues: offChainValues as string,
+    attestations: parsed
   }
-  if (typeof role !== 'string' || !ROLES.has(role)) return undefined
-  if (state !== undefined && (typeof state !== 'string' || !STATES.has(state))) return undefined
-  if (labels !== undefined && !isStringList(labels)) return undefined
-  if (!isStringList(inputs, OUTPOINT) || !isOutputList(outputs)) return undefined
-  if (typeof offChainValues !== 'string' || !HEX.test(offChainValues)) return undefined
-  if (!Array.isArray(attestations)) return undefined
+}
+
+/** The record's version, asset ID, raw transaction and AtomicBEEF (whose subject is `txid`). */
+function hasTxBytes(value: { [key: string]: JsonValue }, txid: string): boolean {
+  const { v, assetId, rawTx, atomicBEEF } = value
+  if (v !== 1) return false
+  if (typeof assetId !== 'string' || !ASSET_ID.test(assetId)) return false
+  if (typeof rawTx !== 'string' || rawTx === '' || !HEX.test(rawTx)) return false
+  return (
+    typeof atomicBEEF === 'string' &&
+    HEX.test(atomicBEEF) &&
+    atomicBEEF.startsWith(atomicHeader(txid))
+  )
+}
+
+/** The record's role, optional state and labels, inputs, outputs and off-chain values. */
+function hasTxMembers(value: { [key: string]: JsonValue }): boolean {
+  const { role, state, labels, inputs, outputs, offChainValues } = value
+  if (typeof role !== 'string' || !ROLES.has(role)) return false
+  if (state !== undefined && (typeof state !== 'string' || !STATES.has(state))) return false
+  if (labels !== undefined && !isStringList(labels)) return false
+  if (!isStringList(inputs, OUTPOINT) || !isOutputList(outputs)) return false
+  return typeof offChainValues === 'string' && HEX.test(offChainValues)
+}
+
+/** Every stored attestation parsed, or undefined when the list is not an array or one fails. */
+function parsedAttestations(value: JsonValue | undefined): ColorAttestation[] | undefined {
+  if (!Array.isArray(value)) return undefined
   const parsed: ColorAttestation[] = []
-  for (const attestation of attestations) {
+  for (const attestation of value) {
     try {
       parsed.push(parseAttestation(attestation))
     } catch {
       return undefined
     }
   }
-  return {
-    v: 1,
-    assetId,
-    rawTx,
-    atomicBEEF,
-    role: role as TxRecord['role'],
-    ...(state === undefined ? {} : { state: state as NonNullable<TxRecord['state']> }),
-    ...(labels === undefined ? {} : { labels: [...labels] }),
-    inputs: [...inputs],
-    outputs: [...outputs],
-    offChainValues,
-    attestations: parsed
-  }
+  return parsed
 }
 
 function settledRecord(value: JsonValue | undefined): SettledRecord | undefined {

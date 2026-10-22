@@ -119,23 +119,7 @@ export function validateFrontier(input: FrontierInput): FrontierResult {
     return token
   }
 
-  // Attestations: every one verifies; qualifying ones cover exact outputs of this asset.
-  const covered = new Map<string, Set<string>>()
-  for (const att of attestations) {
-    if (!verifyAttestation(att, assetId)) throw reject('invalid attestation')
-    const tx = bodies.get(att.txid)
-    if (tx === undefined) throw reject('attestation names an output that cannot be verified')
-    if (!qualifies(att.signer)) continue
-    for (const vout of att.outputs) {
-      if (assetToken(tx, att.txid, vout) === undefined) {
-        throw reject('attestation names an output that is not this asset')
-      }
-      const outpoint = `${att.txid}.${vout}`
-      const signers = covered.get(outpoint) ?? new Set<string>()
-      signers.add(att.signer)
-      covered.set(outpoint, signers)
-    }
-  }
+  const covered = coveredOutputs(attestations, assetId, bodies, qualifies, assetToken)
 
   const spentBy = new Map<string, string>()
   const spendsRecorded = new Set<string>()
@@ -273,6 +257,36 @@ export function validateFrontier(input: FrontierInput): FrontierResult {
   }
 
   return { anchors: [...anchors.values()], pending }
+}
+
+/**
+ * The qualifying signers of each covered outpoint (dot form). Every attestation must verify and
+ * name a supplied body; a qualifying one must cover only outputs that are this asset's tokens.
+ */
+function coveredOutputs(
+  attestations: readonly ColorAttestation[],
+  assetId: string,
+  bodies: ReadonlyMap<string, Transaction>,
+  qualifies: (signer: string) => boolean,
+  assetToken: (tx: Transaction, txid: string, vout: number) => TokenOutput | undefined
+): Map<string, Set<string>> {
+  const covered = new Map<string, Set<string>>()
+  for (const att of attestations) {
+    if (!verifyAttestation(att, assetId)) throw reject('invalid attestation')
+    const tx = bodies.get(att.txid)
+    if (tx === undefined) throw reject('attestation names an output that cannot be verified')
+    if (!qualifies(att.signer)) continue
+    for (const vout of att.outputs) {
+      if (assetToken(tx, att.txid, vout) === undefined) {
+        throw reject('attestation names an output that is not this asset')
+      }
+      const outpoint = `${att.txid}.${vout}`
+      const signers = covered.get(outpoint) ?? new Set<string>()
+      signers.add(att.signer)
+      covered.set(outpoint, signers)
+    }
+  }
+  return covered
 }
 
 /** An input's source txid: the stated one, else the attached source's. */

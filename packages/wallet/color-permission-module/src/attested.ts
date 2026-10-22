@@ -77,16 +77,7 @@ export function parseAttestedParams(params: StrictCborValue): AttestedParams {
   const evidenceProfile = text(params, 'evidenceProfile')
 
   if (evidenceProfile !== undefined) {
-    if (trustMode !== undefined || identityKey !== undefined) {
-      throw fail('trustMode and identityKey must be absent with evidenceProfile')
-    }
-    if (!isProfileId(evidenceProfile)) {
-      throw fail('evidenceProfile must be a processing-profile identifier')
-    }
-    if (evidenceProfile === ATTESTED_PROFILE_ID) {
-      throw fail('evidenceProfile must name a different profile')
-    }
-    return { trustMode: 'any', evidenceProfile }
+    return evidenceParams(evidenceProfile, trustMode, identityKey)
   }
 
   const mode = trustMode ?? 'any'
@@ -98,6 +89,30 @@ export function parseAttestedParams(params: StrictCborValue): AttestedParams {
     return { trustMode: mode as TrustMode }
   }
   if (identityKey === undefined) throw fail('trustMode identity requires identityKey')
+  assertCanonicalIdentityKey(identityKey)
+  return { trustMode: 'identity', identityKey }
+}
+
+/** Params naming an `evidenceProfile`: neither other member may be present. */
+function evidenceParams(
+  evidenceProfile: string,
+  trustMode: string | undefined,
+  identityKey: string | undefined
+): AttestedParams {
+  if (trustMode !== undefined || identityKey !== undefined) {
+    throw fail('trustMode and identityKey must be absent with evidenceProfile')
+  }
+  if (!isProfileId(evidenceProfile)) {
+    throw fail('evidenceProfile must be a processing-profile identifier')
+  }
+  if (evidenceProfile === ATTESTED_PROFILE_ID) {
+    throw fail('evidenceProfile must name a different profile')
+  }
+  return { trustMode: 'any', evidenceProfile }
+}
+
+/** Fails unless `identityKey` is a valid key in its one canonical compressed encoding. */
+function assertCanonicalIdentityKey(identityKey: string): void {
   try {
     validateIdentityKey(identityKey, 'identityKey')
   } catch (error) {
@@ -107,7 +122,6 @@ export function parseAttestedParams(params: StrictCborValue): AttestedParams {
   if (PublicKey.fromString(identityKey).toString() !== identityKey) {
     throw fail('identityKey is not a canonical compressed public key')
   }
-  return { trustMode: 'identity', identityKey }
 }
 
 /**
