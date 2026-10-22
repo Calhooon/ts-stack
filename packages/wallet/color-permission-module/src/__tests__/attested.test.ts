@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals'
-import { PrivateKey, Transaction } from '@bsv/sdk'
+import { LockingScript, PrivateKey, Transaction } from '@bsv/sdk'
 import { toArray } from '@bsv/sdk/primitives/utils'
 import { encodeStrictCbor, OneColor, readOneColorAttributes, StrictCborLink } from '@bsv/templates'
 import type { StrictCborValue } from '@bsv/templates'
@@ -560,9 +560,18 @@ describe('attested leaf', () => {
     ).toThrow(named({ name: 'AttestationEvidenceError', reason: 'lifecycles are not supported' }))
   })
 
-  it('binds declarationTx to the asset txid, whatever the asset vout', () => {
+  it('binds declarationTx to the asset id: its txid and an existing output', () => {
     const txid = deploy.tx.id('hex')
-    expect(parseAttestedLeaf(json(valid), `${txid}_3`).declarationTx.id('hex')).toBe(txid)
+    const twoOutputs = new Transaction()
+    for (const script of [A141A.M, A141A.U]) {
+      twoOutputs.addOutput({ lockingScript: LockingScript.fromHex(script), satoshis: 1000 })
+    }
+    const twoHex = twoOutputs.toHex()
+    const second = `${twoOutputs.id('hex')}_1`
+    expect(
+      parseAttestedLeaf(json({ ...valid, declarationTx: twoHex }), second).declarationTx.toHex()
+    ).toBe(twoHex)
+    expect(() => parseAttestedLeaf(json(valid), `${txid}_1`)).toThrow(evidenceError)
     expect(() => parseAttestedLeaf(json(valid), `${'00'.repeat(32)}_0`)).toThrow(evidenceError)
   })
 

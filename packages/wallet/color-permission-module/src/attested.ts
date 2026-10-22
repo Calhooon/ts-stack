@@ -295,6 +295,7 @@ const LEAF_REQUIRED = ['declarationTx', 'transactions', 'attestations'] as const
 const LEAF_OPTIONAL = ['submissions'] as const
 const SUBMISSION_MEMBERS = ['txid', 'offChainValues'] as const
 const TXID = /^[0-9a-f]{64}$/
+const LOWER_EVEN_HEX = /^(?:[0-9a-f]{2})*$/
 
 /** Runs `check`, rethrowing any failure as an `AttestationEvidenceError`. */
 function evidence<T>(check: () => T): T {
@@ -311,10 +312,10 @@ function evidence<T>(check: () => T): T {
  * transaction must re-encode to the identical hex, so trailing or missing bytes fail.
  */
 function rawTransaction(value: JsonValue | undefined, label: string): Transaction {
-  const hex = evidence(() => {
-    jsonHex(value, label, ATTESTED_MAX_RECEIPT_BYTES)
-    return value as string
-  })
+  const hex = evidence(() => jsonString(value, label))
+  if (hex.length > ATTESTED_MAX_RECEIPT_BYTES * 2 || !LOWER_EVEN_HEX.test(hex)) {
+    throw reject(`${label} must be lowercase even-length hex of at most 16 MiB`)
+  }
   let tx: Transaction
   try {
     tx = Transaction.fromHex(hex)
@@ -360,9 +361,9 @@ export function parseAttestedLeaf(value: JsonValue, assetId: string): AttestedLe
   if (assetId === ISSUE) {
     throw new ProfileDataError('BRC-207: attested ISSUE leaves are not supported')
   }
-  let assetTxid: string
+  let asset: { txid: string; vout: number }
   try {
-    assetTxid = parseAssetId(assetId).txid
+    asset = parseAssetId(assetId)
   } catch (error) {
     throw new ProfileDataError((error as Error).message)
   }
@@ -372,7 +373,7 @@ export function parseAttestedLeaf(value: JsonValue, assetId: string): AttestedLe
   evidence(() => exactMembers(leaf, LEAF_REQUIRED, LEAF_OPTIONAL, 'attested leaf'))
 
   const declarationTx = rawTransaction(leaf.declarationTx, 'declarationTx')
-  if (declarationTx.id('hex') !== assetTxid) {
+  if (declarationTx.id('hex') !== asset.txid || asset.vout >= declarationTx.outputs.length) {
     throw reject('declarationTx does not match the asset id')
   }
 
