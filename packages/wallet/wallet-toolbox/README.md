@@ -5795,6 +5795,17 @@ remain required. Normal delivery still refuses an absent or mismatched pin.
 Limits remain attached to their named resources; first-artifact evidence does
 not establish production sizing or justify tighter arbitrary caps.
 
+The root **Wallet native candidate contracts** workflow provides an isolated
+Linux x64 first-artifact worker. It runs on a manual dispatch or a push to
+`codex/native-bootstrap-qualification`; that auxiliary ref leaves a PR's long
+integration campaign running. `scripts/provision-wallet-native-tests.sh
+--bootstrap-only` retains the existing pinned compiler image, SQLite bytes,
+source recipe, resource bounds and all thirteen contracts. Its uploaded source
+identity and component receipt support review of a later static pin change.
+It exports no runtime executable and runs no mutation, release or deployment
+campaign. The ordinary no-argument provisioner and every integration, runtime,
+platform and final qualification gate remain required.
+
 ### Darwin root copy and ordinary-actor qualification
 
 The maintainer source route now separates root file preparation from ordinary

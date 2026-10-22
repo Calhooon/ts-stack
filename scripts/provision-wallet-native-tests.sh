@@ -2,6 +2,12 @@
 # Test delivery only. Requires a qualified Linux target, frozen install and ordinary
 # wallet build. The original qualification tool never changes runtime pins.
 set -euo pipefail
+bootstrap=false
+case $# in
+  0) ;;
+  1) [[ $1 == --bootstrap-only ]] || { echo 'Unknown native qualification mode' >&2; exit 1; }; bootstrap=true ;;
+  *) echo 'Unexpected native qualification arguments' >&2; exit 1 ;;
+esac
 if [[ $(uname -s) != Linux ]]; then
   echo 'Native tests require the qualified Linux worker' >&2
   exit 1
@@ -53,6 +59,16 @@ compiler_image=$(timeout --signal=TERM --kill-after=10s 600s \
 [[ $compiler_image == sha256:* ]]
 # Fail on any compiler/build mismatch. Source capture and all thirteen original
 # standalone native modes precede exclusive immutable executable delivery.
+tool=tools/Brc38NativeQualification.cjs
+arguments=(--sqlite-source /native-tests/sqlite3.c --destination /native-tests/native-contract)
+receipt=component-delivery.json
+if [[ $bootstrap == true ]]; then
+  # First-artifact evidence uses the SAME original contracts without installing
+  # or admitting an executable. Pin adoption remains a separate reviewed change.
+  tool=tools/Brc38NativeBootstrapQualification.cjs
+  arguments=(--sqlite-source /native-tests/sqlite3.c --output-parent /native-tests)
+  receipt=component-bootstrap.json
+fi
 timeout --signal=TERM --kill-after=10s 600s docker run --rm --init \
   --name "$container" --platform "$worker_platform" --network none --read-only \
   --memory 12g --cpus 4 --pids-limit 512 --user "$(id -u):$(id -g)" \
@@ -61,9 +77,12 @@ timeout --signal=TERM --kill-after=10s 600s docker run --rm --init \
   --mount "type=bind,source=$repo,target=/workspace,readonly" \
   --mount "type=bind,source=$private,target=/native-tests" \
   --workdir /workspace/packages/wallet/wallet-toolbox \
-  "$compiler_image" node --max-old-space-size=1536 tools/Brc38NativeQualification.cjs \
-    --sqlite-source /native-tests/sqlite3.c --destination /native-tests/native-contract \
-  > "$private/component-delivery.json"
+  "$compiler_image" node --max-old-space-size=1536 "$tool" "${arguments[@]}" \
+  > "$private/$receipt"
+if [[ $bootstrap == true ]]; then
+  printf 'Native component-only bootstrap receipt: %s\n' "$private/$receipt"
+  exit 0
+fi
 [[ -f $private/native-contract && ! -L $private/native-contract ]]
 printf 'TS_STACK_NATIVE_TEST_EXECUTABLE=%s\n' "$private/native-contract"
 if [[ -n ${GITHUB_ENV:-} ]]; then
