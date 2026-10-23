@@ -7,7 +7,7 @@ Node 26.9, Apple Silicon, `BENCH_SAMPLES=5`, same machine before and after:
 
 | Benchmark                                     | Before   | After      |
 | --------------------------------------------- | -------- | ---------- |
-| `PrivateKey.toPublicKey` (same key)           | 1.03 ms  | under 1 µs |
+| `PrivateKey.toPublicKey` (same key)           | 1.03 ms  | about 4 µs |
 | `Transaction.sign`, 200 P2PKH inputs, one key | 587 ms   | 345 ms     |
 | Heap growth verifying 2,000 distinct keys     | 6.19 MiB | none       |
 | `Transaction.toBEEF`, 1,000 txs / 4.2 MB      | 151 ms   | 10.8 ms    |
@@ -21,10 +21,11 @@ Node 26.9, Apple Silicon, `BENCH_SAMPLES=5`, same machine before and after:
   attacker-chosen keys could drive that growth. The generator's tables stay
   cached; other points use a 64-entry least-recently-used cache, since a table
   costs only one doubling and a few additions to build.
-- `PrivateKey.toPublicKey()` is cached against the key's current value
-  (`toBigInt()`), because P2PKH asks for it once per input. Results are
-  returned as independent objects, and an in-place change to the key
-  recomputes. Signature verification itself is unchanged (1.03 ms per op).
+- `PrivateKey.toPublicKey()` is cached, because P2PKH asks for it once per
+  input. The cache checks a SHA-256 fingerprint of the key's current value
+  (about 4 µs), so it never holds a copy of the secret and an in-place change
+  to the key recomputes. Results are returned as independent objects.
+  Signature verification itself is unchanged (1.03 ms per op).
 - Byte-to-`number[]` conversion uses a presized indexed loop, about ten times
   faster than `Array.from` or spreading. The legacy BEEF methods now serialize
   to contiguous bytes first and convert once. Output bytes are identical.

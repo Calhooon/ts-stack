@@ -6,7 +6,7 @@ import Curve from './Curve.js'
 import { sign, verify } from './ECDSA.js'
 import { sha256, sha256hmac, sha512hmac } from './Hash.js'
 import Random from './Random.js'
-import { fromBase58Check, toArray, toBase58Check } from './utils.js'
+import { fromBase58Check, toArray, toBase58Check, toHex } from './utils.js'
 import Polynomial, { MAX_SHAMIR_SHARES, PointInFiniteField } from './Polynomial.js'
 
 const MAX_BACKUP_SHARE_LENGTH = 256
@@ -127,11 +127,12 @@ export class KeyShares {
  * @extends {BigNumber}
  * @see {@link BigNumber} for more information on BigNumber.
  */
-// Public key per PrivateKey instance, with the scalar it was derived from.
-// A WeakMap keeps it off the BigNumber instance and frees it with the key.
+// Public key per PrivateKey instance, with a SHA-256 fingerprint of the scalar
+// it was derived from, so the cache never holds a copy of the secret. A
+// WeakMap keeps it off the BigNumber instance and frees it with the key.
 const PUBLIC_KEY_CACHE = new WeakMap<
   PrivateKey,
-  { scalar: bigint, x: BigNumber, y: BigNumber }
+  { fingerprint: string, x: BigNumber, y: BigNumber }
 >()
 
 export default class PrivateKey extends BigNumber {
@@ -313,15 +314,15 @@ export default class PrivateKey extends BigNumber {
    */
   toPublicKey(): PublicKey {
     // k·G is the cost of a whole signature and callers such as P2PKH ask for
-    // it once per input. Cache it against the scalar it was computed for: a
-    // PrivateKey is a mutable BigNumber, so any in-place change recomputes.
-    // Each call returns fresh coordinates, so a caller mutating the returned
-    // key cannot affect later calls.
-    const scalar = this.toBigInt()
+    // it once per input. Cache it against a fingerprint of the scalar it was
+    // computed for: a PrivateKey is a mutable BigNumber, so any in-place change
+    // recomputes. Each call returns fresh coordinates, so a caller mutating the
+    // returned key cannot affect later calls.
+    const fingerprint = toHex(sha256(this.toArray('be', 32)))
     let cached = PUBLIC_KEY_CACHE.get(this)
-    if (cached?.scalar !== scalar) {
+    if (cached?.fingerprint !== fingerprint) {
       const p = new Curve().g.mulCT(this)
-      cached = { scalar, x: p.x as BigNumber, y: p.y as BigNumber }
+      cached = { fingerprint, x: p.x as BigNumber, y: p.y as BigNumber }
       PUBLIC_KEY_CACHE.set(this, cached)
     }
     return new PublicKey(cached.x.clone(), cached.y.clone())
