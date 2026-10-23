@@ -941,77 +941,22 @@ export interface ValidBasketInsertion {
   tags: BasketStringUnder300Bytes[]
 }
 
-/** Ordinary `customInstructions` limit for a basket insertion, in UTF-8 bytes. */
-const BASKET_INSERTION_CUSTOM_INSTRUCTIONS_MAX_BYTES = 1000
-
-/**
- * `customInstructions` limit, in UTF-8 bytes, for a basket insertion into a
- * BRC-207 color basket (`p color <assetTag>`): 16 MiB, for each insertion and
- * for all of one call's color insertions together.
- */
-const COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES = 16_777_216
-
-/** The raw basket prefix that permission-module routing sends to the BRC-207 color module. */
-const COLOR_BASKET_PREFIX = 'p color '
-
-/** Options for validating internalizeAction arguments. */
-export interface InternalizeActionValidationOptions {
-  /**
-   * Apply the BRC-207 color receipt exception (0207:1442-1448): a basket
-   * insertion whose basket, exactly as given, starts with `p color ` may carry
-   * up to 16 MiB of `customInstructions`, and all such insertions of one call
-   * together at most 16 MiB. Set only where a receipt crosses on its way to the
-   * wallet's color permission module: the BRC-100 client (`WalletClient`) and
-   * transport validation (`validateWalletArgs`). Wallet implementations and
-   * storage leave it unset and keep the 1000-byte limit, since the module
-   * forwards only bounded custody instructions to them.
-   */
-  colorReceipts?: boolean
-}
-
-/** True when the color receipt exception applies to `basket` as given. */
-function isColorReceiptBasket(
-  basket: unknown,
-  options: InternalizeActionValidationOptions
-): boolean {
-  // Routing decides on the raw name, so no trimming or case folding here.
-  return (
-    options.colorReceipts === true &&
-    typeof basket === 'string' &&
-    basket.startsWith(COLOR_BASKET_PREFIX)
-  )
-}
-
 /**
  * Validate a BasketInsertion structure (basket, custom instructions, tags).
  *
- * `customInstructions` is limited to 1000 UTF-8 bytes. With
- * `options.colorReceipts`, a basket that starts with exactly `p color ` (the
- * raw name, as permission-module routing sees it) allows 16 MiB instead: see
- * `InternalizeActionValidationOptions`.
- *
  * @param args - BasketInsertion or undefined
- * @param options - whether the BRC-207 color receipt exception applies
  * @returns ValidBasketInsertion or undefined
  */
-export function validateBasketInsertion(
-  args?: BasketInsertion,
-  options: InternalizeActionValidationOptions = {}
-): ValidBasketInsertion | undefined {
+export function validateBasketInsertion(args?: BasketInsertion): ValidBasketInsertion | undefined {
   if (args === undefined) return undefined
   validateRecord(args, 'insertionRemittance')
-  const colorReceipt = isColorReceiptBasket(args.basket, options)
-  const basket = validateBasket(args.basket)
-  const maxCustomInstructionsBytes = colorReceipt
-    ? COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES
-    : BASKET_INSERTION_CUSTOM_INSTRUCTIONS_MAX_BYTES
   const v: ValidBasketInsertion = {
-    basket,
+    basket: validateBasket(args.basket),
     customInstructions: validateOptionalStringLength(
       args.customInstructions,
       'customInstructions',
       0,
-      maxCustomInstructionsBytes
+      1000
     ),
     tags: validateArray(args.tags, 'tags').map(t => validateTag(t))
   }
@@ -1029,13 +974,9 @@ export interface ValidInternalizeOutput {
  * Validate an InternalizeOutput entry.
  *
  * @param args - InternalizeOutput to validate
- * @param options - whether the BRC-207 color receipt exception applies
  * @returns ValidInternalizeOutput
  */
-export function validateInternalizeOutput(
-  args: InternalizeOutput,
-  options: InternalizeActionValidationOptions = {}
-): ValidInternalizeOutput {
+export function validateInternalizeOutput(args: InternalizeOutput): ValidInternalizeOutput {
   validateRecord(args, 'output')
   if (args.protocol !== 'basket insertion' && args.protocol !== 'wallet payment') {
     throw new WERR_INVALID_PARAMETER('protocol', "'basket insertion' or 'wallet payment'")
@@ -1051,7 +992,7 @@ export function validateInternalizeOutput(
     outputIndex: validatePositiveIntegerOrZero(args.outputIndex, 'outputIndex'),
     protocol: args.protocol,
     paymentRemittance: validateWalletPayment(args.paymentRemittance),
-    insertionRemittance: validateBasketInsertion(args.insertionRemittance, options)
+    insertionRemittance: validateBasketInsertion(args.insertionRemittance)
   }
   return v
 }
@@ -1118,34 +1059,10 @@ export function validateOriginator(s?: string): string | undefined {
 export function validateInternalizeActionArgs(
   args: InternalizeActionArgs
 ): ValidInternalizeActionArgs {
-  return validateInternalizeAction(args, {})
-}
-
-/**
- * Validate InternalizeActionArgs where a request crosses the BRC-100 client or
- * a transport on its way to a wallet: `validateInternalizeActionArgs` with the
- * BRC-207 color receipt exception (`InternalizeActionValidationOptions`), which
- * `WalletClient` and `validateWalletArgs` apply. Wallet implementations and
- * storage use `validateInternalizeActionArgs`.
- *
- * @param args - InternalizeActionArgs to validate
- * @returns ValidInternalizeActionArgs
- * @throws WERR_INVALID_PARAMETER when invalid
- */
-export function validateInternalizeActionRequestArgs(
-  args: InternalizeActionArgs
-): ValidInternalizeActionArgs {
-  return validateInternalizeAction(args, { colorReceipts: true })
-}
-
-function validateInternalizeAction(
-  args: InternalizeActionArgs,
-  options: InternalizeActionValidationOptions
-): ValidInternalizeActionArgs {
   validateRecord(args, 'args')
   const vargs: ValidInternalizeActionArgs = {
     tx: validateByteArray(args.tx, 'tx'),
-    outputs: validateArray(args.outputs, 'outputs').map(o => validateInternalizeOutput(o, options)),
+    outputs: validateArray(args.outputs, 'outputs').map(o => validateInternalizeOutput(o)),
     description: validateStringLength(args.description, 'description', 5, 2000),
     labels: validateArray(args.labels, 'labels').map(t => validateLabel(t)),
     seekPermission: defaultTrue(args.seekPermission, 'seekPermission')
@@ -1163,18 +1080,6 @@ function validateInternalizeAction(
     throw new WERR_INVALID_PARAMETER(
       'outputs',
       'at least one output to internalize from the transaction'
-    )
-  }
-  let colorReceiptBytes = 0
-  for (const output of args.outputs) {
-    const insertion = output.insertionRemittance
-    if (insertion === undefined || !isColorReceiptBasket(insertion.basket, options)) continue
-    colorReceiptBytes += utf8Bytes(insertion.customInstructions ?? '').length
-  }
-  if (colorReceiptBytes > COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES) {
-    throw new WERR_INVALID_PARAMETER(
-      'customInstructions',
-      `no more than ${COLOR_RECEIPT_CUSTOM_INSTRUCTIONS_MAX_BYTES} bytes in aggregate for p color receipts`
     )
   }
 

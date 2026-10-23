@@ -62,18 +62,6 @@ function fundedActionTransaction(
 }
 
 describe('wallet result trust boundary', () => {
-  it('keeps a colorHandoff member on a signAction result', () => {
-    const r = validateWalletResult(
-      'signAction',
-      {
-        txid: '00'.repeat(32),
-        colorHandoff: { version: 1, txid: '00'.repeat(32), profileData: {} }
-      },
-      { reference: 'x', spends: {}, options: { returnTXIDOnly: true } }
-    )
-    expect(r).toMatchObject({ colorHandoff: { version: 1, profileData: {} } })
-  })
-
   it.each([
     ['internalizeAction', { accepted: false }, 'accepted'],
     ['relinquishOutput', { relinquished: false }, 'relinquished'],
