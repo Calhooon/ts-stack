@@ -5,8 +5,8 @@ kind: package
 domain: wallet
 npm: '@bsv/color-permission-module'
 version: '0.2.0'
-last_updated: '2026-10-22'
-last_verified: '2026-10-22'
+last_updated: '2026-10-23'
+last_verified: '2026-10-23'
 review_cadence_days: 30
 status: experimental
 tags: ['permissions', 'brc207', 'brc162', 'tokens']
@@ -67,15 +67,14 @@ to approve.
 
 Hosts that support assets with BRC-207 required processing profiles pass
 `profiles` (handlers keyed by profile id) and a durable `store`
-(`ColorModuleStore`) to `createColorModule`. The built-in
-`createAttestedProfile()` handles `https://brc.dev/207/attested` v1: receipts
-carry attested frontier evidence, and outputs credited without a covering
-attestation are tagged `color_offline` after the user approves a
-`color_receive_offline` request. `settle()` submits offline receipts and own
-plain-noSend hand-overs, `isSettled(txid)` reports verified settlement, and
-`handoffEvidence(txid)` returns the `colorHandoff` evidence a hand-over's
-`signAction` result carried. Errors carry a `[ClassName] ` message prefix; a
-declined request throws `ColorConsentDeclinedError`. Without `profiles` the
+(`ColorModuleStore`) to `createColorModule`. The registry fails closed: every
+profile an asset requires must be registered, and handlers only restrict. A
+handler's `admitReceipt` decides each receipt of its asset as `settled` or
+`pending`; pending receipts and the change of a plain-noSend hand-over are tagged
+`color_offline` until the host calls the in-process `markSettled(txid)` after
+submitting them. Receipts carry BRC-207 custody instructions only; the module
+transports and validates no token history. Errors carry a `[ClassName] ` message
+prefix; a declined request throws `ColorConsentDeclinedError`. Without `profiles` the
 module behaves as 0.1.0, apart from `seekPermission` on every consent message and
 `ColorConsentDeclinedError` on a decline. See the package README for each
 handler hook.
@@ -88,8 +87,7 @@ parties, but never holds or creates them, rejects the BRC-161 `burn` operation, 
 position satoshi change) and assets whose required processing profiles no registered handler supports, does not validate BRC-176 lineage (proof transport is not part of BRC-207), and does not yet record exposure for signatures
 released through `createSignature`. With required profiles it also refuses
 `createSignature` for assets whose profiles define `sendPolicy`, `submissionData` or
-`checkPlanData`, a receipt transaction carrying more than one attested asset, and a
-plain-noSend hand-over signed with `options.noSend: false` or a `sendWith` batch. BRC-207's non-final transaction rules are not
+`checkPlanData`, any receipt `profileData`, and a plain-noSend hand-over signed with `options.noSend: false` or a `sendWith` batch. BRC-207's non-final transaction rules are not
 implemented; such transactions follow the wallet's existing behavior. A send is approved in `signAction`, against
 the funded transaction; a `createSignature` request is approved against the whole
 app-built transaction, after every token input is found admitted and unspent. A receipt relies on its overlay's admission of the received output
