@@ -125,8 +125,8 @@ export const GY_BIGINT = BigInt(
 const GENERATOR_WNAF_TABLES: Map<string, JacobianPointBI[]> = new Map()
 const WNAF_TABLE_CACHE: Map<string, JacobianPointBI[]> = new Map()
 export const WNAF_TABLE_CACHE_LIMIT = 64
-/** Internal: number of cached non-generator tables (for tests). */
-export const wnafTableCacheSize = (): number => WNAF_TABLE_CACHE.size
+/** Internal: cached non-generator table keys, oldest first (for tests). */
+export const wnafTableCacheKeys = (): string[] => [...WNAF_TABLE_CACHE.keys()]
 
 export interface JacobianPointBI {
   X: bigint

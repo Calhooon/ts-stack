@@ -3,6 +3,7 @@ import PrivateKey from '../../primitives/PrivateKey'
 import BRC42Private from './BRC42.private.vectors'
 import Curve from '../../primitives/Curve'
 import BigNumber from '../../primitives/BigNumber'
+import Point from '../../primitives/Point'
 
 describe('PrivateKey', () => {
   describe('BRC42 vectors', () => {
@@ -113,6 +114,24 @@ describe('PrivateKey public key cache', () => {
     const returned = key.toPublicKey()
     returned.x?.iaddn(1)
     expect(key.toPublicKey().toString()).toEqual(expected)
+  })
+
+  it('computes k·G once per key value', () => {
+    const mulCT = jest.spyOn(Point.prototype, 'mulCT')
+    try {
+      const key = PrivateKey.fromRandom()
+      mulCT.mockClear()
+      key.toPublicKey()
+      key.toPublicKey()
+      key.toPublicKey()
+      expect(mulCT).toHaveBeenCalledTimes(1)
+      key.iaddn(1)
+      key.toPublicKey()
+      key.toPublicKey()
+      expect(mulCT).toHaveBeenCalledTimes(2)
+    } finally {
+      mulCT.mockRestore()
+    }
   })
 
   it('recomputes after the key value changes in place', () => {
