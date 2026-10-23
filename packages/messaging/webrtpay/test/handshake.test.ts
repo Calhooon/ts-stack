@@ -471,7 +471,7 @@ describe('authenticate over loopback', () => {
     ).resolves.toEqual({ valid: true })
   })
 
-  it('rejects both sides with auth_failed when each expects a third key, before signing', async () => {
+  it('fails both sides when each expects a third key, before signing', async () => {
     const A = party()
     const B = party()
     const C = party()

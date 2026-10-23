@@ -134,6 +134,33 @@ describe('PrivateKey public key cache', () => {
     }
   })
 
+  it('returns the point at infinity for a zero key, as before caching', () => {
+    expect(new PrivateKey().toPublicKey().toString()).toEqual('00')
+    expect(new PrivateKey(0).toPublicKey().toString()).toEqual('00')
+  })
+
+  it('recomputes after an in-place sign change', () => {
+    const fresh = (k: PrivateKey): string => new Curve().g.mulCT(k).encode(true, 'hex') as string
+    const negated = new PrivateKey(7)
+    negated.toPublicKey()
+    negated.ineg()
+    expect(negated.toPublicKey().toString()).toEqual(fresh(negated))
+    const crossed = new PrivateKey(7)
+    crossed.toPublicKey()
+    crossed.isubn(14)
+    expect(crossed.toPublicKey().toString()).toEqual(fresh(crossed))
+  })
+
+  it('handles keys wider than 32 bytes', () => {
+    const fresh = (k: PrivateKey): string => new Curve().g.mulCT(k).encode(true, 'hex') as string
+    const wide = new PrivateKey('01' + 'ab'.repeat(32), 16, 'be', 'nocheck')
+    expect(wide.toPublicKey().toString()).toEqual(fresh(wide))
+    const grown = new PrivateKey('ff'.repeat(31), 16)
+    grown.toPublicKey()
+    grown.imul(grown)
+    expect(grown.toPublicKey().toString()).toEqual(fresh(grown))
+  })
+
   it('recomputes after the key value changes in place', () => {
     const key = new PrivateKey(7)
     const before = key.toPublicKey().toString()

@@ -130,10 +130,20 @@ export class KeyShares {
 // Public key per PrivateKey instance, with a SHA-256 fingerprint of the scalar
 // it was derived from, so the cache never holds a copy of the secret. A
 // WeakMap keeps it off the BigNumber instance and frees it with the key.
+// x and y are null for the point at infinity (a key that is zero mod n).
 const PUBLIC_KEY_CACHE = new WeakMap<
   PrivateKey,
-  { fingerprint: string, x: BigNumber, y: BigNumber }
+  { fingerprint: string, x: BigNumber | null, y: BigNumber | null }
 >()
+
+// Every bit of the value: its magnitude at full width (never fewer than 32
+// bytes, so normal keys hash a fixed-length input) and its sign, which
+// toArray drops but mulCT honours.
+const scalarFingerprint = (key: PrivateKey): string => {
+  const bytes = key.toArray('be', Math.max(32, key.byteLength()))
+  bytes.push(key.isNeg() ? 1 : 0)
+  return toHex(sha256(bytes))
+}
 
 export default class PrivateKey extends BigNumber {
   /**
@@ -318,14 +328,14 @@ export default class PrivateKey extends BigNumber {
     // computed for: a PrivateKey is a mutable BigNumber, so any in-place change
     // recomputes. Each call returns fresh coordinates, so a caller mutating the
     // returned key cannot affect later calls.
-    const fingerprint = toHex(sha256(this.toArray('be', 32)))
+    const fingerprint = scalarFingerprint(this)
     let cached = PUBLIC_KEY_CACHE.get(this)
     if (cached?.fingerprint !== fingerprint) {
       const p = new Curve().g.mulCT(this)
-      cached = { fingerprint, x: p.x as BigNumber, y: p.y as BigNumber }
+      cached = { fingerprint, x: p.x, y: p.y }
       PUBLIC_KEY_CACHE.set(this, cached)
     }
-    return new PublicKey(cached.x.clone(), cached.y.clone())
+    return new PublicKey(cached.x?.clone() ?? null, cached.y?.clone() ?? null)
   }
 
   /**
