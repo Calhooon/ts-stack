@@ -96,3 +96,30 @@ describe('PrivateKey', () => {
     })
   })
 })
+
+describe('PrivateKey public key cache', () => {
+  it('returns the same public key as a fresh computation on every call', () => {
+    const key = PrivateKey.fromRandom()
+    const expected = new Curve().g.mulCT(key)
+    const first = key.toPublicKey()
+    const second = key.toPublicKey()
+    expect(first.toString()).toEqual(second.toString())
+    expect(first.eq(expected)).toBe(true)
+  })
+
+  it('returns independent objects, so mutating one cannot affect later calls', () => {
+    const key = PrivateKey.fromRandom()
+    const expected = key.toPublicKey().toString()
+    const returned = key.toPublicKey()
+    returned.x?.iaddn(1)
+    expect(key.toPublicKey().toString()).toEqual(expected)
+  })
+
+  it('recomputes after the key value changes in place', () => {
+    const key = new PrivateKey(7)
+    const before = key.toPublicKey().toString()
+    key.iaddn(1)
+    expect(key.toPublicKey().toString()).not.toEqual(before)
+    expect(key.toPublicKey().toString()).toEqual(new PrivateKey(8).toPublicKey().toString())
+  })
+})

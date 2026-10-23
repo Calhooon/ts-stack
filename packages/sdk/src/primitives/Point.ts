@@ -117,8 +117,16 @@ export const GY_BIGINT = BigInt(
   '0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8'
 )
 
-// Cache for precomputed windowed tables keyed by 'window:x:y'
+// Precomputed windowed tables keyed by 'window:x:y'. The generator's tables
+// are kept for the life of the process. Every other point (each public key a
+// verifier sees) goes into a small least-recently-used cache: unbounded, it
+// grew by about 2.7 KiB per distinct key, and building a table costs only one
+// doubling and a few additions.
+const GENERATOR_WNAF_TABLES: Map<string, JacobianPointBI[]> = new Map()
 const WNAF_TABLE_CACHE: Map<string, JacobianPointBI[]> = new Map()
+export const WNAF_TABLE_CACHE_LIMIT = 64
+/** Internal: number of cached non-generator tables (for tests). */
+export const wnafTableCacheSize = (): number => WNAF_TABLE_CACHE.size
 
 export interface JacobianPointBI {
   X: bigint
@@ -178,8 +186,17 @@ export const jpNeg = (P: JacobianPointBI): JacobianPointBI => {
 
 const wnafTable = (window: number, P0: { x: bigint; y: bigint }): JacobianPointBI[] => {
   const key = `${window}:${P0.x.toString(16)}:${P0.y.toString(16)}`
-  const cached = WNAF_TABLE_CACHE.get(key)
-  if (cached !== undefined) return cached
+  const isGenerator = P0.x === GX_BIGINT && P0.y === GY_BIGINT
+  const cache = isGenerator ? GENERATOR_WNAF_TABLES : WNAF_TABLE_CACHE
+  const cached = cache.get(key)
+  if (cached !== undefined) {
+    if (!isGenerator) {
+      // Refresh recency: Map iteration order is insertion order.
+      WNAF_TABLE_CACHE.delete(key)
+      WNAF_TABLE_CACHE.set(key, cached)
+    }
+    return cached
+  }
 
   const table = Array.from<unknown, JacobianPointBI>({ length: 1 << (window - 1) }, () => ({
     X: BI_ZERO,
@@ -192,7 +209,11 @@ const wnafTable = (window: number, P0: { x: bigint; y: bigint }): JacobianPointB
   for (let i = 1; i < table.length; i++) {
     table[i] = jpAdd(table[i - 1], doubled)
   }
-  WNAF_TABLE_CACHE.set(key, table)
+  cache.set(key, table)
+  if (!isGenerator && WNAF_TABLE_CACHE.size > WNAF_TABLE_CACHE_LIMIT) {
+    const oldest = WNAF_TABLE_CACHE.keys().next().value
+    if (oldest !== undefined) WNAF_TABLE_CACHE.delete(oldest)
+  }
   return table
 }
 

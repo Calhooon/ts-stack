@@ -1,6 +1,7 @@
-import Point from '../../primitives/Point'
+import Point, { WNAF_TABLE_CACHE_LIMIT, wnafTableCacheSize } from '../../primitives/Point'
 import BigNumber from '../../primitives/BigNumber'
 import Curve from '../../primitives/Curve'
+import PrivateKey from '../../primitives/PrivateKey'
 
 const G_COMPRESSED = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
 
@@ -576,5 +577,20 @@ describe('Point – additional coverage', () => {
       expect(terminal).toEqual({ index: -1, doubles: 2 })
       expect(active).toEqual({ index: 0, doubles: 1 })
     })
+  })
+})
+
+describe('Point windowed table cache', () => {
+  it('stays bounded however many distinct points are multiplied', () => {
+    const scalar = new BigNumber(12345)
+    for (let i = 0; i < WNAF_TABLE_CACHE_LIMIT * 3; i++) {
+      const point = PrivateKey.fromRandom().toPublicKey()
+      const expected = point.mulCT(scalar)
+      expect(point.mul(scalar).eq(expected)).toBe(true)
+    }
+    expect(wnafTableCacheSize()).toBeLessThanOrEqual(WNAF_TABLE_CACHE_LIMIT)
+    // Generator multiplication is unaffected by eviction of other points.
+    const g = new Curve().g as Point
+    expect(g.mul(scalar).eq(g.mulCT(scalar))).toBe(true)
   })
 })

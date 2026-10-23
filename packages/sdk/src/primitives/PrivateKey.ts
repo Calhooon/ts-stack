@@ -127,6 +127,13 @@ export class KeyShares {
  * @extends {BigNumber}
  * @see {@link BigNumber} for more information on BigNumber.
  */
+// Public key per PrivateKey instance, with the scalar it was derived from.
+// A WeakMap keeps it off the BigNumber instance and frees it with the key.
+const PUBLIC_KEY_CACHE = new WeakMap<
+  PrivateKey,
+  { scalar: bigint, x: BigNumber, y: BigNumber }
+>()
+
 export default class PrivateKey extends BigNumber {
   /**
    * Generates a private key randomly.
@@ -305,9 +312,19 @@ export default class PrivateKey extends BigNumber {
    * const publicKey = privateKey.toPublicKey();
    */
   toPublicKey(): PublicKey {
-    const c = new Curve()
-    const p = c.g.mulCT(this)
-    return new PublicKey(p.x, p.y)
+    // k·G is the cost of a whole signature and callers such as P2PKH ask for
+    // it once per input. Cache it against the scalar it was computed for: a
+    // PrivateKey is a mutable BigNumber, so any in-place change recomputes.
+    // Each call returns fresh coordinates, so a caller mutating the returned
+    // key cannot affect later calls.
+    const scalar = this.toBigInt()
+    let cached = PUBLIC_KEY_CACHE.get(this)
+    if (cached?.scalar !== scalar) {
+      const p = new Curve().g.mulCT(this)
+      cached = { scalar, x: p.x as BigNumber, y: p.y as BigNumber }
+      PUBLIC_KEY_CACHE.set(this, cached)
+    }
+    return new PublicKey(cached.x.clone(), cached.y.clone())
   }
 
   /**
