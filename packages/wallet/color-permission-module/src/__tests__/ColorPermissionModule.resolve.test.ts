@@ -359,8 +359,13 @@ describe('asset resolution with profiles', () => {
         }
       ]
     }
-    await module.onRequest({ method: 'internalizeAction', args: receipt, originator: APP })
-    await wallet.internalizeAction(receipt)
+    const { args: forwarded } = await module.onRequest({
+      method: 'internalizeAction',
+      args: receipt,
+      originator: APP
+    })
+    // The wallet files what the module forwards: the receipt with its suffix tag.
+    await wallet.internalizeAction(forwarded as InternalizeActionArgs)
     expect(p2.calls.spendability).toBe(1)
 
     // A held output p2 does not list is resubmitted to p2, then the send is submitted to p2.

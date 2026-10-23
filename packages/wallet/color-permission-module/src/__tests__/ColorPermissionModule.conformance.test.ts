@@ -294,7 +294,9 @@ describe('profile asset conformance on every path', () => {
     it('checks a source the wallet resolved after createAction', async () => {
       await holdTokens(wallet, provider, assetId, [400n], REQ)
       const { outpoint } = await pool(BAD_EXT)
-      // No inputBEEF: createAction cannot read the source, so signAction must.
+      // No inputBEEF: createAction cannot read the source, so signAction must; the fake wallet
+      // resolves it from storage.
+      wallet.requireInputBEEF = false
       await expect(
         sign({
           labels: transferPlan({ inputPositions: [{ outpoint, index: 0 }] }),

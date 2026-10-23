@@ -25,6 +25,8 @@ import {
   COLOR_OFFLINE_TAG,
   colorProtocolID,
   colorTopic,
+  derivationSuffixTag,
+  isDerivationSuffixTag,
   ISSUE
 } from '../identifiers.js'
 import type { ProfileTxView, RequiredProfileHandler } from '../profiles.js'
@@ -35,6 +37,7 @@ import {
   FakeProvider,
   FakeWallet,
   holdTokens,
+  suffixTagOf,
   tokenPayment
 } from './fixtures.js'
 import {
@@ -279,13 +282,15 @@ describe('plain-noSend hand-over planning', () => {
     expect(args.inputs!.map(input => input.outpoint)).toEqual(held)
     expect(args.outputs).toHaveLength(2)
     expect(args.outputs![0]).toEqual(recipient)
+    // The change keeps its suffix tag, by which the module later lists its transaction.
+    const changeTags = [suffixTagOf(args.outputs![1].customInstructions!), COLOR_OFFLINE_TAG]
     expect(args.outputs![1]).toMatchObject({
       basket: assetBasket(assetId, 'value'),
-      tags: [COLOR_OFFLINE_TAG]
+      tags: changeTags
     })
     expect(OneColor.decode(LockingScript.fromHex(args.outputs![1].lockingScript)).amount).toBe(400n)
     const tx = Transaction.fromAtomicBEEF(result.tx!)
-    expect(b.wallet.outputs.get(`${tx.id('hex')}.1`)?.tags).toEqual([COLOR_OFFLINE_TAG])
+    expect(b.wallet.outputs.get(`${tx.id('hex')}.1`)?.tags).toEqual(changeTags)
     // Never submitted: not to the routed provider, not to the default one.
     expect(b.ap.submissions).toEqual([])
     expect(b.fallback.submissions).toEqual([])
@@ -318,7 +323,7 @@ describe('plain-noSend hand-over planning', () => {
       outputs: [await paymentOutput(assetId, 600n), mine],
       options: { noSend: true }
     })
-    expect(funded.outputs![1].tags).toEqual(['mine'])
+    expect(funded.outputs![1].tags).toEqual(['mine', derivationSuffixTag(custody.derivationSuffix)])
   })
 
   it('a plain-nosend action cannot mix with a baseline asset', async () => {
@@ -695,8 +700,10 @@ describe('signed hand-over', () => {
       }
     ])
     expect(b.fallback.submissions).toEqual([])
-    // Its change is an ordinary output: no color_offline tag.
-    expect(b.wallet.outputs.get(`${result.txid!}.1`)?.tags).toBeUndefined()
+    // Its change is an ordinary output: its suffix tag only, no color_offline tag.
+    const changeTags = b.wallet.outputs.get(`${result.txid!}.1`)?.tags ?? []
+    expect(changeTags).toHaveLength(1)
+    expect(isDerivationSuffixTag(changeTags[0])).toBe(true)
   })
 
   it('a plain hand-over never asks for submission data', async () => {

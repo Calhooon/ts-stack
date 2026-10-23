@@ -30,6 +30,7 @@ import {
   assetBasket,
   COLOR_KEY_ID,
   colorProtocolID,
+  derivationSuffixTag,
   DISCOVERY_TOPIC,
   ISSUE
 } from '../identifiers.js'
@@ -87,6 +88,20 @@ export class FakeWallet {
   sendWithStatus?: 'unproven' | 'sending' | 'failed'
   /** Thrown by `listActions` when set (a wallet outage). */
   listActionsError?: Error
+  /** Every listOutputs call, in order. */
+  readonly listOutputsCalls: ListOutputsArgs[] = []
+  /**
+   * When set, createAction requires every input's source transaction in `inputBEEF`, as
+   * wallet-toolbox does when it builds the signable transaction.
+   */
+  requireInputBEEF = true
+  /**
+   * Leaves outputs reserved by a pending action out of every listing, as wallet-toolbox's
+   * `auto` action-batch workspace does.
+   */
+  hideReserved = false
+  /** Edits the BEEF a listOutputs result returns, to model incomplete storage. */
+  editBEEF?: (beef: Beef) => Beef | undefined
   #nextReference = 0
 
   constructor(key = PrivateKey.fromRandom()) {
@@ -126,12 +141,20 @@ export class FakeWallet {
   }
 
   async listOutputs(args: ListOutputsArgs): Promise<ListOutputsResult> {
+    this.listOutputsCalls.push(args)
     const inventory = args.basket === toolbox.specOpBasketPrefixOutputs
     const records = [...this.outputs.entries()]
       .filter(([, output]) =>
         inventory
-          ? !output.spent && output.basket?.startsWith(`${args.tags?.[0]} `) === true
-          : !output.spent && output.reservedBy === undefined && output.basket === args.basket
+          ? !output.spent &&
+            output.basket?.startsWith(`${args.tags?.[0]} `) === true &&
+            !(this.hideReserved && output.reservedBy !== undefined)
+          : !output.spent &&
+            output.reservedBy === undefined &&
+            output.basket === args.basket &&
+            (args.tags === undefined ||
+              args.tags.length === 0 ||
+              args.tags.some(tag => output.tags?.includes(tag) === true))
       )
       .sort(([a], [b]) => (a < b ? -1 : 1))
     const offset = args.offset ?? 0
@@ -155,7 +178,8 @@ export class FakeWallet {
         }
       })
     }
-    if (args.include === 'entire transactions') result.BEEF = beef.toBinary()
+    if (args.include === 'entire transactions')
+      result.BEEF = (this.editBEEF === undefined ? beef : this.editBEEF(beef))?.toBinary()
     return result
   }
 
@@ -168,6 +192,14 @@ export class FakeWallet {
       for (const action of this.actions.values())
         if (sendWith.includes(action.txid) && status !== 'failed') action.status = status
       return { sendWithResults: sendWith.map(txid => ({ txid, status })) }
+    }
+    if (this.requireInputBEEF) {
+      const beef = args.inputBEEF === undefined ? new Beef() : Beef.fromBinary(args.inputBEEF)
+      for (const input of args.inputs ?? []) {
+        const found = beef.findTxid(input.outpoint.split('.')[0])
+        if (found === undefined || found.isTxidOnly)
+          throw new Error('Every signableTransaction input must have a sourceTransaction')
+      }
     }
     const tx = new Transaction()
     const reference = `reference-${this.#nextReference++}`
@@ -252,18 +284,23 @@ export class FakeWallet {
     }
   }
 
+  /**
+   * As the toolbox: an insertion for an output the wallet already holds is merged (basket and
+   * custody assigned, tags left as they are); one for a new output is stored with its tags.
+   */
   async internalizeAction(args: InternalizeActionArgs): Promise<{ accepted: true }> {
     const tx = Transaction.fromAtomicBEEF(args.tx)
     for (const output of args.outputs) {
       const remittance = output.insertionRemittance
-      if (remittance !== undefined)
-        this.store(
-          tx,
-          output.outputIndex,
-          remittance.basket,
-          remittance.customInstructions,
-          remittance.tags
-        )
+      if (remittance === undefined) continue
+      const held = this.outputs.get(`${tx.id('hex')}.${output.outputIndex}`)
+      this.store(
+        tx,
+        output.outputIndex,
+        remittance.basket,
+        remittance.customInstructions,
+        held === undefined ? remittance.tags : held.tags
+      )
     }
     return { accepted: true }
   }
@@ -410,7 +447,8 @@ export async function deployAsset(
     tx,
     0,
     assetBasket(assetId, amount === 0n ? 'authority' : 'value'),
-    JSON.stringify({ version: 1, assetId: ISSUE, ...custody })
+    JSON.stringify({ version: 1, assetId: ISSUE, ...custody }),
+    [derivationSuffixTag(custody.derivationSuffix)]
   )
   return { assetId, tx }
 }
@@ -488,27 +526,36 @@ export async function tokenPayment(
   return { tx, customInstructions: JSON.stringify(custody) }
 }
 
+/** The suffix tag of an output filed with the custody JSON `customInstructions`. */
+export function suffixTagOf(customInstructions: string): string {
+  const { derivationSuffix } = JSON.parse(customInstructions) as { derivationSuffix: string }
+  return derivationSuffixTag(derivationSuffix)
+}
+
 /**
  * Gives `holder` admitted outputs of each amount (0 for an authority), as completed receipts, each
- * carrying `payload`.
+ * carrying `payload`, filed with their suffix tag, or untagged as filed before suffix tags.
  */
 export async function holdTokens(
   holder: FakeWallet,
   provider: FakeProvider,
   assetId: string,
   amounts: bigint[],
-  payload?: number[]
+  payload?: number[],
+  tagged = true
 ): Promise<Transaction[]> {
   const sender = new FakeWallet()
   const txs: Transaction[] = []
   for (const amount of amounts) {
     const { tx, customInstructions } = await tokenPayment(sender, holder, assetId, amount, payload)
     provider.admit(assetId, tx, 0)
+    const { derivationSuffix } = JSON.parse(customInstructions) as { derivationSuffix: string }
     holder.store(
       tx,
       0,
       assetBasket(assetId, amount === 0n ? 'authority' : 'value'),
-      customInstructions
+      customInstructions,
+      tagged ? [derivationSuffixTag(derivationSuffix)] : undefined
     )
     txs.push(tx)
   }

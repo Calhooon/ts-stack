@@ -128,6 +128,8 @@ describe('spending a profile asset output that repeats the deploy req', () => {
   })
 
   it('an explicit managed input passes createAction and signAction', async () => {
+    // The app names this input without its BEEF; the fake wallet resolves it from storage.
+    wallet.requireInputBEEF = false
     const [held] = await holdTokens(wallet, provider, assetId, [300n], REQ)
     const outpoint = `${held.id('hex')}.0`
     const result = await send({

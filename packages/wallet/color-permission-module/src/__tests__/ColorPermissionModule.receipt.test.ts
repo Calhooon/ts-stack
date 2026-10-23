@@ -9,7 +9,14 @@ import type {
   RequiredProfileHandler
 } from '../profiles.js'
 import type { ColorPermissionModuleOptions } from '../types.js'
-import { createModule, deployAsset, FakeProvider, FakeWallet, tokenPayment } from './fixtures.js'
+import {
+  createModule,
+  deployAsset,
+  FakeProvider,
+  FakeWallet,
+  suffixTagOf,
+  tokenPayment
+} from './fixtures.js'
 import {
   A141A,
   exampleProfile,
@@ -99,23 +106,37 @@ describe('receipts with profiles registered', () => {
     walletCalls = 0
   })
 
-  it('profile-free receipts are unchanged', async () => {
+  it('profile-free receipts gain only their suffix tag', async () => {
     const { assetId } = await deployAsset(new FakeWallet(), provider, 1000n)
     const paid = await tokenPayment(new FakeWallet(), wallet, assetId, 25n)
     provider.admit(assetId, paid.tx, 0)
     const args = receiptArgs(paid, assetId, ['color_offline'])
+    const suffixTag = suffixTagOf(paid.customInstructions)
     const { args: forwarded } = await createModule(wallet, provider).onRequest({
       method: 'internalizeAction',
       args,
       originator: APP
     })
-    expect(forwarded).toBe(args)
+    expect(forwarded).toEqual({
+      ...args,
+      outputs: [
+        {
+          ...args.outputs[0],
+          insertionRemittance: {
+            ...args.outputs[0].insertionRemittance,
+            tags: ['color_offline', suffixTag]
+          }
+        }
+      ]
+    })
 
-    // With profiles registered, a profile-free asset forwards the 5-member custody without color_ tags.
+    // With profiles registered, a profile-free asset forwards the 5-member custody without color_
+    // tags, with its suffix tag.
     const viaProfiles = await receive(moduleWith(), args)
     expect(viaProfiles.outputs[0].insertionRemittance).toEqual({
       basket: assetBasket(assetId, 'value'),
-      customInstructions: paid.customInstructions
+      customInstructions: paid.customInstructions,
+      tags: [suffixTag]
     })
     expect(store.writes).toEqual([`color.v1.deploy.${assetId}`])
   })
@@ -127,7 +148,10 @@ describe('receipts with profiles registered', () => {
     provider.admit(assetId, paid.tx, 0)
     const args = receiptArgs(paid, assetId, tags)
     const forwarded = await receive(moduleWith(), args)
-    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(['mine'])
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual([
+      'mine',
+      suffixTagOf(paid.customInstructions)
+    ])
     expect(args.outputs[0].insertionRemittance?.tags).toEqual(tags)
   })
 
@@ -349,7 +373,10 @@ describe('admitReceipt', () => {
   it('settled: credits the receipt without color_offline and without the overlay check', async () => {
     const { assetId, txid, args } = await issuerReceipt(['mine'])
     const forwarded = await receive(issuerModule(), args)
-    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(['mine'])
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual([
+      'mine',
+      suffixTagOf(args.outputs[0].insertionRemittance!.customInstructions!)
+    ])
     expect(provider.calls.spendability).toBe(0)
     expect(provider.calls.submit).toBe(0)
     expect(wallet.outputs.has(`${txid}.0`)).toBe(true)
@@ -376,8 +403,13 @@ describe('admitReceipt', () => {
     answer = async () => ({ credit: 'pending' })
     const { txid, args } = await issuerReceipt(['color_state_reserved', 'mine'])
     const forwarded = await receive(issuerModule(), args)
-    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(['mine', 'color_offline'])
-    expect(wallet.outputs.get(`${txid}.0`)?.tags).toEqual(['mine', 'color_offline'])
+    const tags = [
+      'mine',
+      suffixTagOf(args.outputs[0].insertionRemittance!.customInstructions!),
+      'color_offline'
+    ]
+    expect(forwarded.outputs[0].insertionRemittance?.tags).toEqual(tags)
+    expect(wallet.outputs.get(`${txid}.0`)?.tags).toEqual(tags)
     expect(store.writes.filter(key => key.startsWith('color.v1.settled.'))).toEqual([])
   })
 
