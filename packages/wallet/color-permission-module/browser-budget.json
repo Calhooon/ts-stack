@@ -3,23 +3,18 @@
   "profile": "browser",
   "package": "@bsv/color-permission-module",
   "entry": ".",
-  "requiredExports": [
-    "ColorPermissionModule",
-    "ColorPlan",
-    "createColorModule",
-    "createAttestedProfile"
-  ],
+  "requiredExports": ["ColorPermissionModule", "ColorPlan", "createColorModule"],
   "prohibitedExports": [],
   "maximumBytes": {
     "vite": {
-      "raw": 1366239,
-      "gzip": 337964,
-      "brotli": 268521
+      "raw": 1314192,
+      "gzip": 325029,
+      "brotli": 257931
     },
     "esbuild": {
-      "raw": 1052391,
-      "gzip": 306833,
-      "brotli": 249563
+      "raw": 1014620,
+      "gzip": 295479,
+      "brotli": 239956
     }
   }
 }

@@ -16,34 +16,11 @@ export class ProfileParamsError extends Error {
   }
 }
 
-/** A plan's or receipt's `profileData` is invalid, or names an undeclared profile (A.154). */
+/** A plan's `profileData` or a profile hook's answer is invalid, or names an undeclared profile (A.154). */
 export class ProfileDataError extends Error {
   override readonly name = 'ProfileDataError'
   constructor(message: string) {
     super(prefixed('ProfileDataError', message))
-  }
-}
-
-/** Attested admission evidence (frontier, graph or signature) failed validation. */
-export class AttestationEvidenceError extends Error {
-  override readonly name = 'AttestationEvidenceError'
-  constructor(readonly reason: string) {
-    super(prefixed('AttestationEvidenceError', `BRC-207: attested evidence rejected (${reason})`))
-  }
-}
-
-/** Thrown by providers, and re-thrown by the module, for an overlay or transport failure. */
-export class ColorProviderError extends Error {
-  override readonly name = 'ColorProviderError'
-  constructor(
-    /** The overlay verdict code, or `ERR_UNAVAILABLE` for a transport failure. */
-    readonly code: string,
-    readonly retryable: boolean,
-    /** True when there is no typed verdict: network, timeout, 5xx or a typed `ERR_UNAVAILABLE`. */
-    readonly transport: boolean,
-    message: string
-  ) {
-    super(prefixed('ColorProviderError', message))
   }
 }
 

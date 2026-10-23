@@ -8,16 +8,13 @@ import {
   UnlockingScript,
   type CreateActionArgs,
   type CreateActionResult,
-  type InternalizeActionArgs,
   type SignActionArgs,
   type SignActionResult
 } from '@bsv/sdk'
 import { hash160 } from '@bsv/sdk/primitives/Hash'
-import { toArray, toHex } from '@bsv/sdk/primitives/utils'
+import { toArray } from '@bsv/sdk/primitives/utils'
 import { OneColor } from '@bsv/templates'
 import type { PermissionsModuleAction } from '@bsv/wallet-toolbox-client'
-import { ATTESTED_PROFILE_ID, COLOR_OFFLINE_TAG } from '../attestation.js'
-import { createAttestedProfile } from '../attested.js'
 import { ColorPlan, type ColorPlan as Plan } from '../ColorPlan.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ProfileDataError } from '../errors.js'
@@ -25,12 +22,12 @@ import {
   assetBasket,
   assetTag,
   COLOR_KEY_ID,
+  COLOR_OFFLINE_TAG,
   colorProtocolID,
   colorTopic,
   ISSUE
 } from '../identifiers.js'
-import type { ColorHandoffResult, ProfileTxView, RequiredProfileHandler } from '../profiles.js'
-import { ColorStore } from '../store.js'
+import type { ProfileTxView, RequiredProfileHandler } from '../profiles.js'
 import type { JsonValue } from '../strictJson.js'
 import {
   createModule,
@@ -41,31 +38,25 @@ import {
   tokenPayment
 } from './fixtures.js'
 import {
-  AttestingProvider,
-  attestedReceipt,
-  C0,
   FakeStore,
-  graph,
   ISSUER_LIKE_ID,
   issuerLikePayload,
   issuerLikeProfile,
-  signAttestation,
-  TestModule,
-  type GraphBuilder
+  TestModule
 } from './profileFixtures.js'
 
 const APP = 'app.example'
-const SIGNER = C0.SIGNER
-const K = new PrivateKey(C0.PRIV)
+const ISSUER = new FakeWallet()
+const SIGNER = ISSUER.identityKey
 const HANDOFF_LABEL = 'p nosend expiry seconds 30'
 
 /** The hand-over test bench: a holder wallet, the default and routed providers, and the store. */
 interface Bench {
   wallet: FakeWallet
   fallback: FakeProvider
-  ap: AttestingProvider
+  /** The issuer-like profile's routed provider. */
+  ap: FakeProvider
   store: FakeStore
-  g: GraphBuilder
   prompts: Array<Record<string, unknown>>
   /** Every createAction the underlying wallet saw, in order. */
   created: CreateActionArgs[]
@@ -82,17 +73,15 @@ function bench(): Bench {
   return {
     wallet,
     fallback: new FakeProvider(),
-    ap: new AttestingProvider(),
+    ap: new FakeProvider(),
     store: new FakeStore(),
-    g: graph(),
     prompts: [],
     created
   }
 }
 
-/** A module with the attested profile and the issuer-like profile (or `issuer`) registered. */
+/** A module with the issuer-like profile (or `issuer`) registered. */
 function issuerModule(b: Bench, issuer?: RequiredProfileHandler): TestModule {
-  const attested = createAttestedProfile()
   const handler = issuer ?? issuerLikeProfile({ K: SIGNER, provider: b.ap })
   return new TestModule({
     wallet: b.wallet.asWallet(),
@@ -101,43 +90,18 @@ function issuerModule(b: Bench, issuer?: RequiredProfileHandler): TestModule {
       b.prompts.push(JSON.parse(message) as Record<string, unknown>)
       return true
     },
-    profiles: { [attested.id]: attested, [handler.id]: handler },
+    profiles: { [handler.id]: handler },
     store: b.store
   })
 }
 
 /**
- * Stores hand-over evidence for held outputs: a credited receipt record per transaction whose
- * attestation by K covers output 0, and its settled record.
- */
-async function seedEvidence(b: Bench, assetId: string, txs: Transaction[]): Promise<void> {
-  const store = new ColorStore(b.store)
-  for (const tx of txs) {
-    const txid = tx.id('hex')
-    await store.putTx(txid, {
-      v: 1,
-      assetId,
-      rawTx: tx.toHex(),
-      atomicBEEF: toHex(tx.toAtomicBEEF()),
-      role: 'receipt',
-      state: 'credited',
-      inputs: [],
-      outputs: [0],
-      offChainValues: '',
-      attestations: [await signAttestation(K, assetId, txid, [0])]
-    })
-    await store.markSettled(txid, { outputs: [0], signer: SIGNER })
-  }
-}
-
-/**
  * An issuer-like asset whose deploy the default provider knows, and `amounts` held by the bench
- * wallet, admitted on the routed provider, with settled hand-over evidence in the store.
+ * wallet, admitted on the routed provider.
  */
 async function issuerAsset(b: Bench, amounts: bigint[] = [1000n]): Promise<string> {
-  const { tx, assetId } = b.g.deploy(2000n, issuerLikePayload(SIGNER))
-  b.fallback.admit(assetId, tx, 0)
-  await seedEvidence(b, assetId, await holdTokens(b.wallet, b.ap, assetId, amounts))
+  const { assetId } = await deployAsset(ISSUER, b.fallback, 2000n, issuerLikePayload(SIGNER))
+  await holdTokens(b.wallet, b.ap, assetId, amounts)
   return assetId
 }
 
@@ -299,7 +263,7 @@ describe('plain-noSend hand-over planning', () => {
     expect(selected(module).size).toBe(0)
   })
 
-  it('B2: no split, change stays in the tx, tagged color_offline', async () => {
+  it('no split, change stays in the tx, tagged color_offline', async () => {
     const assetId = await issuerAsset(b)
     const held = [...b.wallet.outputs.keys()]
     const module = issuerModule(b)
@@ -444,34 +408,6 @@ describe('plain-noSend hand-over planning', () => {
       })
     ).rejects.toMatchObject({ name: 'ProfileDataError' })
     expect(selected(module).size).toBe(0)
-  })
-
-  it('an attested plan leaf resolves a never-seen asset from its declarationTx', async () => {
-    const { tx: deploy, assetId } = b.g.deploy(2000n, issuerLikePayload(SIGNER))
-    await holdTokens(b.wallet, b.ap, assetId, [1000n])
-    const leaf = { declarationTx: deploy.toHex(), transactions: [], attestations: [] }
-    const funded = await plan(issuerModule(b), {
-      labels: planLabels(assetId, { profileData: { [ATTESTED_PROFILE_ID]: { [assetId]: leaf } } }),
-      outputs: [await paymentOutput(assetId, 600n)],
-      options: { noSend: true }
-    })
-    expect(funded.inputs).toHaveLength(1)
-    // No provider was asked for the deploy.
-    expect(b.fallback.calls.admission).toBe(0)
-    expect(b.ap.calls.admission).toBe(0)
-    // A leaf naming another deploy fails before anything is selected.
-    const other = b.g.deploy(5n, issuerLikePayload(SIGNER)).tx
-    await expect(
-      plan(issuerModule(b), {
-        labels: planLabels(assetId, {
-          profileData: {
-            [ATTESTED_PROFILE_ID]: { [assetId]: { ...leaf, declarationTx: other.toHex() } }
-          }
-        }),
-        outputs: [await paymentOutput(assetId, 600n)],
-        options: { noSend: true }
-      })
-    ).rejects.toMatchObject({ name: 'AttestationEvidenceError' })
   })
 
   it('the plan view carries a foreign token input without custody', async () => {
@@ -628,28 +564,30 @@ describe('plain-noSend hand-over planning', () => {
   })
 })
 
-type HandoffResult = SignActionResult & { colorHandoff?: ColorHandoffResult }
-
-/** The `p color balance` total of an asset, through the module's read view. */
-async function balanceOf(module: ColorPermissionModule, assetId: string): Promise<string> {
+/** A balance view of an asset through the module, optionally filtered by tags. */
+async function balanceOf(
+  module: ColorPermissionModule,
+  assetId: string,
+  tags?: string[]
+): Promise<string> {
   const result = (await module.handleRequest(
     {
       method: 'listOutputs',
       originator: APP,
-      args: { basket: `p color balance ${assetTag(assetId)}` }
+      args: {
+        basket: `p color balance ${assetTag(assetId)}`,
+        ...(tags === undefined ? {} : { tags })
+      }
     },
     async args => args
   )) as { totalOutputs: number | string }
   return String(result.totalOutputs)
 }
 
-/** The outpoints the `p color assets` view lists as available (spendable). */
-async function available(module: ColorPermissionModule): Promise<string[]> {
-  const result = (await module.handleRequest(
-    { method: 'listOutputs', originator: APP, args: { basket: 'p color assets' } },
-    async args => args
-  )) as { outputs: Array<{ outpoint: string; spendable: boolean }> }
-  return result.outputs.filter(output => output.spendable).map(output => output.outpoint)
+/** The issuer-like profile without its send policy: a published (broadcast) asset. */
+function publishedProfile(b: Bench): RequiredProfileHandler {
+  const { sendPolicy: _sendPolicy, ...handler } = issuerLikeProfile({ K: SIGNER, provider: b.ap })
+  return handler
 }
 
 describe('signed hand-over', () => {
@@ -658,39 +596,6 @@ describe('signed hand-over', () => {
   beforeEach(() => {
     b = bench()
   })
-
-  /**
-   * An issuer-like asset (supply 2000) received offline by the bench wallet: deploy → anchor
-   * (attested by K over both outputs) → tip paying `amount`, credited `color_offline` after the
-   * user's consent. The routed provider then lists the tip as spendable, since offline
-   * spendability is Task 15's, and fails every later submit, so a stray one is recorded.
-   */
-  async function offlineReceipt(amount = 1000n) {
-    const { tx: deploy, assetId } = b.g.deploy(2000n, issuerLikePayload(SIGNER))
-    b.fallback.admit(assetId, deploy, 0)
-    const receipt = await attestedReceipt({
-      g: b.g,
-      deploy,
-      recipient: b.wallet,
-      signers: [K],
-      amount,
-      tipOffChainValues: 'e0'
-    })
-    const unreachable = new AttestingProvider()
-    unreachable.failTransport()
-    const receiver = issuerModule(b, issuerLikeProfile({ K: SIGNER, provider: unreachable }))
-    const { args } = await receiver.onRequest({
-      method: 'internalizeAction',
-      args: receipt.args,
-      originator: APP
-    })
-    await b.wallet.internalizeAction(args as InternalizeActionArgs)
-    expect(b.prompts.map(prompt => prompt.type)).toEqual(['color_receive_offline'])
-    b.prompts.length = 0
-    b.ap.admit(assetId, receipt.tip, 0)
-    b.ap.failTransport()
-    return { ...receipt, assetId, deploy }
-  }
 
   it('re-runs checkPlanData at signAction with view.tx set', async () => {
     const assetId = await issuerAsset(b)
@@ -753,19 +658,18 @@ describe('signed hand-over', () => {
     expect(signAction).not.toHaveBeenCalled()
   })
 
-  it('requires non-empty submissionData before signing', async () => {
+  it('a published action requires non-empty submissionData before signing', async () => {
     const signAction = jest.spyOn(b.wallet, 'signAction')
     for (const bytes of [[], [256], 'ab' as unknown as number[]]) {
       const assetId = await issuerAsset(b)
       const handler: RequiredProfileHandler = {
-        ...issuerLikeProfile({ K: SIGNER, provider: b.ap }),
+        ...publishedProfile(b),
         submissionData: async () => bytes
       }
       await expect(
         send(b, issuerModule(b, handler), {
           labels: planLabels(assetId),
-          outputs: [await paymentOutput(assetId, 600n)],
-          options: { noSend: true }
+          outputs: [await paymentOutput(assetId, 600n)]
         })
       ).rejects.toMatchObject({
         name: 'ProfileDataError',
@@ -774,52 +678,43 @@ describe('signed hand-over', () => {
     }
     expect(signAction).not.toHaveBeenCalled()
     expect(b.prompts).toEqual([])
-    expect(b.store.writes.filter(key => key.startsWith('color.v1.tx.'))).toHaveLength(3)
   })
 
-  it('fails before signing when input evidence is unavailable', async () => {
-    const { assetId, tip } = await offlineReceipt()
-    b.store.clear()
-    const signAction = jest.spyOn(b.wallet, 'signAction')
-    await expect(
-      send(b, issuerModule(b), {
-        labels: planLabels(assetId),
-        outputs: [await paymentOutput(assetId, 600n)],
-        options: { noSend: true }
-      })
-    ).rejects.toMatchObject({
-      name: 'AttestationEvidenceError',
-      reason: `evidence for input ${tip.id('hex')}.0 is unavailable`
+  it('a published action submits its asset topic with the submission data', async () => {
+    const assetId = await issuerAsset(b)
+    const leaf = { note: 'carried' }
+    const result = await send(b, issuerModule(b, publishedProfile(b)), {
+      labels: planLabels(assetId, { profileData: { [ISSUER_LIKE_ID]: { [assetId]: leaf } } }),
+      outputs: [await paymentOutput(assetId, 600n)]
     })
-    expect(signAction).not.toHaveBeenCalled()
-    expect(b.prompts).toEqual([])
-    expect(b.ap.submitted).toEqual([])
+    expect(b.ap.submissions).toEqual([
+      {
+        topics: [colorTopic(assetId)],
+        txid: result.txid!,
+        offChainValues: toArray(JSON.stringify(leaf), 'utf8')
+      }
+    ])
+    expect(b.fallback.submissions).toEqual([])
+    // Its change is an ordinary output: no color_offline tag.
+    expect(b.wallet.outputs.get(`${result.txid!}.1`)?.tags).toBeUndefined()
   })
 
-  it('an aborted hand-over gives no evidence for its change', async () => {
-    const { assetId } = await offlineReceipt()
-    const module = issuerModule(b)
-    const first = await send(b, module, {
+  it('a plain hand-over never asks for submission data', async () => {
+    const assetId = await issuerAsset(b)
+    let asked = 0
+    const handler: RequiredProfileHandler = {
+      ...issuerLikeProfile({ K: SIGNER, provider: b.ap }),
+      submissionData: async () => {
+        asked++
+        return []
+      }
+    }
+    await send(b, issuerModule(b, handler), {
       labels: planLabels(assetId),
       outputs: [await paymentOutput(assetId, 600n)],
       options: { noSend: true }
     })
-    const firstTx = Transaction.fromAtomicBEEF(first.tx!)
-    const store = new ColorStore(b.store)
-    const record = (await store.getTx(first.txid!))!
-    await store.putTx(first.txid!, { ...record, state: 'aborted' })
-    b.ap.admit(assetId, firstTx, 1)
-    await expect(
-      send(b, module, {
-        labels: planLabels(assetId),
-        outputs: [await paymentOutput(assetId, 100n)],
-        options: { noSend: true }
-      })
-    ).rejects.toMatchObject({
-      name: 'AttestationEvidenceError',
-      reason: `evidence for input ${first.txid!}.1 is unavailable`
-    })
-    await expect(module.handoffEvidence(first.txid!)).resolves.toBeUndefined()
+    expect(asked).toBe(0)
   })
 
   it('forces returnTXIDOnly false', async () => {
@@ -869,191 +764,51 @@ describe('signed hand-over', () => {
     expect((plainArgs as SignActionArgs).options?.returnTXIDOnly).toBe(true)
   })
 
-  it('stores the hand-over durably and returns colorHandoff', async () => {
-    const receipt = await offlineReceipt()
-    const { assetId, tip, deploy } = receipt
-    const tipTxid = tip.id('hex')
-    const labels = planLabels(assetId)
-    const result = (await send(b, issuerModule(b), {
-      labels,
-      outputs: [await paymentOutput(assetId, 600n)],
-      options: { noSend: true }
-    })) as HandoffResult
-    const txid = result.txid!
-    const handover = Transaction.fromAtomicBEEF(result.tx!)
-    expect(handover.id('hex')).toBe(txid)
-    // The issuer-like profile's submission data: its plan leaf (absent) as JSON.
-    const submission = toHex(toArray('null', 'utf8'))
-    const leaf = {
-      declarationTx: deploy.toHex(),
-      transactions: [tip.toHex()],
-      attestations: receipt.leaf.attestations,
-      submissions: [
-        { txid: tipTxid, offChainValues: 'e0' },
-        { txid, offChainValues: submission }
-      ]
-    }
-    expect(result.colorHandoff).toEqual({
-      version: 1,
-      txid,
-      profileData: { [ATTESTED_PROFILE_ID]: { [assetId]: leaf } }
-    })
-    expect(Object.keys(result.colorHandoff!.profileData)).toEqual([ATTESTED_PROFILE_ID])
-    expect(
-      Object.keys(result.colorHandoff!.profileData[ATTESTED_PROFILE_ID][assetId] as object)
-    ).toEqual(['declarationTx', 'transactions', 'attestations', 'submissions'])
-    expect(await new ColorStore(b.store).getTx(txid)).toEqual({
-      v: 1,
-      assetId,
-      rawTx: handover.toHex(),
-      atomicBEEF: toHex(result.tx!),
-      role: 'handover',
-      labels,
-      inputs: [`${tipTxid}.0`],
-      outputs: [1],
-      offChainValues: submission,
-      attestations: []
-    })
-    // Never submitted at signAction, to either provider.
-    expect(b.ap.submitted).toEqual([])
-    expect(b.fallback.submissions).toEqual([])
-  })
-
-  it('handoffEvidence(txid) returns the same object after a lost ACK', async () => {
-    const { assetId, tip } = await offlineReceipt()
-    const result = (await send(b, issuerModule(b), {
-      labels: planLabels(assetId),
-      outputs: [await paymentOutput(assetId, 600n)],
-      options: { noSend: true }
-    })) as HandoffResult
-    // A restarted module rebuilds the same evidence from the store.
-    const restarted = issuerModule(b)
-    await expect(restarted.handoffEvidence(result.txid!)).resolves.toEqual(result.colorHandoff)
-    // A receipt or an unknown txid is not a hand-over.
-    await expect(restarted.handoffEvidence(tip.id('hex'))).resolves.toBeUndefined()
-    await expect(restarted.handoffEvidence('ab'.repeat(32))).resolves.toBeUndefined()
-    // Without profiles there is no evidence and no store.
-    await expect(
-      createModule(b.wallet, b.fallback).handoffEvidence(result.txid!)
-    ).resolves.toBeUndefined()
-  })
-
-  it('C41 an offline parent selected into a child is never double-counted', async () => {
-    const { assetId, tip } = await offlineReceipt()
+  it('the change stays pending until markSettled, and is spent only once its overlay lists it', async () => {
+    const assetId = await issuerAsset(b)
     const module = issuerModule(b)
-    const parent = `${tip.id('hex')}.0`
-    expect(await balanceOf(module, assetId)).toBe('1000')
-    expect(await available(module)).toEqual([parent])
     const result = await send(b, module, {
       labels: planLabels(assetId),
       outputs: [await paymentOutput(assetId, 600n)],
       options: { noSend: true }
     })
-    const change = `${result.txid!}.1`
+    const change = Transaction.fromAtomicBEEF(result.tx!)
     expect(await balanceOf(module, assetId)).toBe('400')
-    expect(await available(module)).toEqual([change])
-  })
-
-  it('a second hand-over spends offline change and forwards the whole unattested chain', async () => {
-    const receipt = await offlineReceipt()
-    const { assetId, tip } = receipt
-    const module = issuerModule(b)
-    const first = await send(b, module, {
+    expect(await balanceOf(module, assetId, [COLOR_OFFLINE_TAG])).toBe('400')
+    // The host has not submitted the hand-over yet: the overlay does not list the change.
+    await expect(
+      plan(module, {
+        labels: planLabels(assetId),
+        outputs: [await paymentOutput(assetId, 100n)],
+        options: { noSend: true }
+      })
+    ).rejects.toThrow('insufficient spendable balance')
+    expect(selected(module).size).toBe(0)
+    expect(b.ap.calls.submit).toBe(0)
+    // The host submits, the overlay admits the change, and the host records it settled.
+    b.ap.admit(assetId, change, 1)
+    await module.markSettled(result.txid!)
+    expect(await balanceOf(module, assetId, [COLOR_OFFLINE_TAG])).toBe('0')
+    const next = await send(b, module, {
       labels: planLabels(assetId),
-      outputs: [await paymentOutput(assetId, 600n)],
+      outputs: [await paymentOutput(assetId, 100n)],
       options: { noSend: true }
     })
-    const firstTx = Transaction.fromAtomicBEEF(first.tx!)
-    b.ap.admit(assetId, firstTx, 1)
-    const second = (await send(b, module, {
-      labels: planLabels(assetId),
-      outputs: [await paymentOutput(assetId, 150n)],
-      options: { noSend: true }
-    })) as HandoffResult
-    const leaf = second.colorHandoff!.profileData[ATTESTED_PROFILE_ID][assetId] as {
-      transactions: string[]
-      attestations: JsonValue[]
-      submissions: Array<{ txid: string; offChainValues: string }>
-    }
-    expect(leaf.transactions).toEqual([tip.toHex(), firstTx.toHex()])
-    expect(leaf.attestations).toEqual(receipt.leaf.attestations)
-    expect(leaf.submissions.map(entry => entry.txid)).toEqual([
-      tip.id('hex'),
-      first.txid!,
-      second.txid!
-    ])
-    expect(await new ColorStore(b.store).getTx(second.txid!)).toMatchObject({
-      role: 'handover',
-      inputs: [`${first.txid!}.1`],
-      outputs: [1]
-    })
-    expect(b.ap.submitted).toEqual([])
-  })
-
-  it('a recipient accepts the colorHandoff evidence', async () => {
-    const { assetId, tip } = await offlineReceipt()
-    const recipient = new FakeWallet()
-    const payment = await tokenPayment(b.wallet, recipient, assetId, 600n)
-    const result = (await send(b, issuerModule(b), {
-      labels: planLabels(assetId),
-      outputs: [
-        {
-          lockingScript: payment.tx.outputs[0].lockingScript.toHex(),
-          satoshis: 1,
-          outputDescription: 'Token payment'
-        }
-      ],
-      options: { noSend: true }
-    })) as HandoffResult
-    const overlay = new AttestingProvider()
-    const attested = createAttestedProfile()
-    const handler = issuerLikeProfile({ K: SIGNER, provider: overlay })
-    const receiver = new TestModule({
-      wallet: recipient.asWallet(),
-      provider: new FakeProvider(),
-      requestTokenAccess: async () => true,
-      profiles: { [attested.id]: attested, [handler.id]: handler },
-      store: new FakeStore()
-    })
-    const { args } = await receiver.onRequest({
-      method: 'internalizeAction',
-      args: {
-        tx: result.tx!,
-        description: 'Receive tokens',
-        outputs: [
-          {
-            outputIndex: 0,
-            protocol: 'basket insertion',
-            insertionRemittance: {
-              basket: assetBasket(assetId, 'value'),
-              customInstructions: JSON.stringify({
-                ...JSON.parse(payment.customInstructions),
-                profileData: result.colorHandoff!.profileData
-              })
-            }
-          }
-        ]
-      },
-      originator: APP
-    })
-    await recipient.internalizeAction(args as InternalizeActionArgs)
+    const spent = Transaction.fromAtomicBEEF(next.tx!).inputs[0]
     expect(
-      overlay.submitted.map(entry => Transaction.fromAtomicBEEF(entry.beef).id('hex'))
-    ).toEqual([tip.id('hex'), result.txid!])
-    expect(overlay.submitted.map(entry => toHex(entry.offChainValues ?? []))).toEqual([
-      'e0',
-      toHex(toArray('null', 'utf8'))
-    ])
-    expect(recipient.outputs.has(`${result.txid!}.0`)).toBe(true)
+      `${spent.sourceTXID ?? spent.sourceTransaction?.id('hex')}.${spent.sourceOutputIndex}`
+    ).toBe(`${result.txid!}.1`)
+    expect(await balanceOf(module, assetId)).toBe('300')
+    expect(await balanceOf(module, assetId, [COLOR_OFFLINE_TAG])).toBe('300')
   })
 
-  /** A plain-noSend hand-over of 600 from an offline receipt, up to the module's signAction. */
+  /** A plain-noSend hand-over of 600 of a held issuer-like asset, up to the module's signAction. */
   async function signHandover(signOptions?: SignActionArgs['options']) {
-    const receipt = await offlineReceipt()
+    const assetId = await issuerAsset(b)
     const module = issuerModule(b)
     const funded = await plan(module, {
-      labels: planLabels(receipt.assetId),
-      outputs: [await paymentOutput(receipt.assetId, 600n)],
+      labels: planLabels(assetId),
+      outputs: [await paymentOutput(assetId, 600n)],
       options: { noSend: true }
     })
     const signable = (await b.wallet.createAction(funded)).signableTransaction!
@@ -1073,7 +828,7 @@ describe('signed hand-over', () => {
       originator: APP,
       action
     })
-    return { receipt, module, action, signing }
+    return { module, action, signing }
   }
 
   it.each([
@@ -1098,71 +853,39 @@ describe('signed hand-over', () => {
     })
   })
 
-  it('records a plain hand-over and submits nothing, whatever noSend the host reports', async () => {
+  it('submits nothing and returns the wallet result unchanged, whatever noSend the host reports', async () => {
     const { module, action, signing } = await signHandover()
     const signArgs = (await signing).args as SignActionArgs
+    const signed = await b.wallet.signAction(signArgs)
     // A host that derives action.noSend from the app's signAction options alone.
-    const result = (await module.onResponse(await b.wallet.signAction(signArgs), {
+    const result = await module.onResponse(signed, {
       method: 'signAction',
       originator: APP,
       action: { ...action, noSend: false }
-    })) as HandoffResult
-    expect(result.colorHandoff).toMatchObject({ version: 1, txid: result.txid })
-    expect((await new ColorStore(b.store).getTx(result.txid!))?.role).toBe('handover')
-    expect(b.ap.submitted).toEqual([])
+    })
+    expect(result).toBe(signed)
+    expect(Object.keys(result as object)).not.toContain('colorHandoff')
+    expect(b.ap.submissions).toEqual([])
     expect(b.fallback.submissions).toEqual([])
+    expect(b.store.writes.filter(key => !key.startsWith('color.v1.deploy.'))).toEqual([])
   })
 
-  it('a plain noSend hand-over moves exactly one asset', async () => {
+  it('a plain hand-over may move several plain-nosend assets', async () => {
     const one = await issuerAsset(b)
     const two = await issuerAsset(b)
-    const module = issuerModule(b)
-    await expect(
-      plan(module, {
-        labels: planLabels(one, {
-          assets: [one, two],
-          operations: [
-            { assetId: one, operation: 'transfer' },
-            { assetId: two, operation: 'transfer' }
-          ]
-        }),
-        outputs: [await paymentOutput(one, 600n), await paymentOutput(two, 600n)],
-        options: { noSend: true }
-      })
-    ).rejects.toMatchObject({
-      name: 'ProfileParamsError',
-      message: expect.stringMatching(/exactly one asset/)
+    const result = await send(b, issuerModule(b), {
+      labels: planLabels(one, {
+        assets: [one, two],
+        operations: [
+          { assetId: one, operation: 'transfer' },
+          { assetId: two, operation: 'transfer' }
+        ]
+      }),
+      outputs: [await paymentOutput(one, 600n), await paymentOutput(two, 600n)],
+      options: { noSend: true }
     })
-    expect(selected(module).size).toBe(0)
-  })
-
-  it('rejects a signed result whose transaction does not match its txid', async () => {
-    const assetId = await issuerAsset(b)
-    const module = issuerModule(b)
-    const signAction = b.wallet.signAction.bind(b.wallet)
-    b.wallet.signAction = async (args: SignActionArgs): Promise<SignActionResult> => ({
-      ...(await signAction(args)),
-      txid: 'cd'.repeat(32)
-    })
-    await expect(
-      send(b, module, {
-        labels: planLabels(assetId),
-        outputs: [await paymentOutput(assetId, 600n)],
-        options: { noSend: true }
-      })
-    ).rejects.toThrow(/does not match/)
-    expect(b.store.writes.filter(key => key.startsWith('color.v1.tx.'))).toHaveLength(1)
-    b.wallet.signAction = async (args: SignActionArgs): Promise<SignActionResult> => {
-      const { tx: _tx, ...rest } = await signAction(args)
-      return rest
-    }
-    const again = await issuerAsset(b)
-    await expect(
-      send(b, module, {
-        labels: planLabels(again),
-        outputs: [await paymentOutput(again, 600n)],
-        options: { noSend: true }
-      })
-    ).rejects.toThrow(/no transaction/)
+    const tx = Transaction.fromAtomicBEEF(result.tx!)
+    expect(tx.outputs).toHaveLength(4)
+    expect(b.ap.submissions).toEqual([])
   })
 })

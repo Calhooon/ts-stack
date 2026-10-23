@@ -159,13 +159,9 @@ describe('profile registry construction', () => {
       { submissionData: true },
       { admitReceipt: [] },
       { checkExt: 'x' },
-      { checkReceiptData: null },
       { sendPolicy: 'broadcast' },
       { operations: 'transfer' },
-      { operations: ['transfer', 'teleport'] },
-      { maxReceiptBytes: 0 },
-      { maxReceiptBytes: 1.5 },
-      { maxReceiptBytes: 16 * 1024 * 1024 + 1 }
+      { operations: ['transfer', 'teleport'] }
     ]
     for (const member of malformed)
       expect(construct({ [ex.id]: { ...ex, ...member } })).toThrow(
@@ -181,7 +177,7 @@ describe('profile registry construction', () => {
           deployProviders: () => [provider],
           sendPolicy: 'plain-nosend',
           operations: ['transfer'],
-          maxReceiptBytes: 16 * 1024 * 1024
+          admitReceipt: async () => ({ credit: 'settled' })
         }
       })
     ).not.toThrow()
@@ -202,10 +198,19 @@ describe('profile registry construction', () => {
     ])
   })
 
-  it('keeps the 0.1.0 capabilities without profiles', () => {
+  it('advertises the same capabilities with or without profiles', () => {
     expect(createModule(new FakeWallet(), new FakeProvider()).capabilities).toEqual({
       'brc207-color': '4'
     })
+    expect(
+      new ColorPermissionModule({
+        wallet,
+        provider,
+        requestTokenAccess,
+        store,
+        profiles: { [ex.id]: ex }
+      }).capabilities
+    ).toEqual({ 'brc207-color': '4' })
   })
 
   it('exampleProfile checks its params and ext entry', () => {

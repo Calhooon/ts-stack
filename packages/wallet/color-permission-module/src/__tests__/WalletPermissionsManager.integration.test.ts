@@ -1,8 +1,7 @@
 import { describe, expect, it } from '@jest/globals'
-import { PrivateKey, Transaction } from '@bsv/sdk'
+import { Transaction } from '@bsv/sdk'
 import { OneColor } from '@bsv/templates'
 import { maybeDecryptMetadata, WalletPermissionsManager } from '@bsv/wallet-toolbox-client'
-import { createAttestedProfile } from '../attested.js'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { ColorPlan } from '../ColorPlan.js'
 import { assetBasket, assetTag } from '../identifiers.js'
@@ -15,7 +14,7 @@ import {
   tokenPayment,
   validInput
 } from './fixtures.js'
-import { attestedAsset, attestedReceipt, C0, FakeStore, graph } from './profileFixtures.js'
+import { FakeStore, issuerLikePayload, issuerLikeProfile } from './profileFixtures.js'
 
 const ADMIN = 'admin.example'
 const APP = 'app.example'
@@ -162,15 +161,20 @@ describe('color module registered on a WalletPermissionsManager', () => {
     ).resolves.toEqual({ totalOutputs: '300', outputs: [] })
   })
 
-  it('an attested receipt larger than 1000 bytes passes through WalletPermissionsManager', async () => {
+  it('a pending profile receipt passes through WalletPermissionsManager tagged color_offline', async () => {
     const wallet = new FakeWallet()
-    const attested = createAttestedProfile()
+    const issuer = new FakeWallet()
+    const provider = new FakeProvider()
     const store = new FakeStore()
+    const handler = issuerLikeProfile({
+      K: issuer.identityKey,
+      admit: async () => ({ credit: 'pending' })
+    })
     const color = new ColorPermissionModule({
       wallet: wallet.asWallet(),
-      provider: new FakeProvider(),
+      provider,
       requestTokenAccess: async () => true,
-      profiles: { [attested.id]: attested },
+      profiles: { [handler.id]: handler },
       store
     })
     const manager = new WalletPermissionsManager(wallet.asWallet(), ADMIN, {
@@ -178,27 +182,47 @@ describe('color module registered on a WalletPermissionsManager', () => {
       seekSpendingPermissions: false,
       encryptWalletMetadata: true
     })
-    const g = graph()
-    const { tx: deploy } = attestedAsset(g, C0.SIGNER)
-    const receipt = await attestedReceipt({
-      g,
-      deploy,
-      recipient: wallet,
-      signers: [new PrivateKey(C0.PRIV)],
-      attestTip: true,
-      tipOffChainValues: 'ab'.repeat(2048)
-    })
-    const instructions = receipt.args.outputs[0].insertionRemittance!.customInstructions!
-    expect(instructions.length).toBeGreaterThan(4096)
-
-    await expect(manager.internalizeAction(receipt.args, APP)).resolves.toMatchObject({
-      accepted: true
-    })
-    const stored = wallet.outputs.get(`${receipt.tip.id('hex')}.0`)?.customInstructions ?? ''
-    expect(stored.startsWith('{')).toBe(false)
-    expect(await maybeDecryptMetadata(wallet.asWallet(), stored)).toBe(
-      JSON.stringify(receipt.custody)
+    const { assetId } = await deployAsset(
+      issuer,
+      provider,
+      1_000n,
+      issuerLikePayload(issuer.identityKey)
     )
-    expect(store.writes).toContain(`color.v1.settled.${receipt.tip.id('hex')}`)
+    const { tx, customInstructions } = await tokenPayment(issuer, wallet, assetId, 300n)
+    await expect(
+      manager.internalizeAction(
+        {
+          tx: tx.toAtomicBEEF(),
+          description: 'Receive tokens',
+          outputs: [
+            {
+              outputIndex: 0,
+              protocol: 'basket insertion',
+              insertionRemittance: { basket: assetBasket(assetId, 'value'), customInstructions }
+            }
+          ]
+        },
+        APP
+      )
+    ).resolves.toMatchObject({ accepted: true })
+    const stored = wallet.outputs.get(`${tx.id('hex')}.0`)
+    expect(stored?.tags).toEqual(['color_offline'])
+    expect(stored?.customInstructions?.startsWith('{')).toBe(false)
+    expect(await maybeDecryptMetadata(wallet.asWallet(), stored?.customInstructions ?? '')).toBe(
+      customInstructions
+    )
+    await expect(
+      manager.listOutputs(
+        { basket: `p color balance ${assetTag(assetId)}`, tags: ['color_offline'] },
+        APP
+      )
+    ).resolves.toEqual({ totalOutputs: '300', outputs: [] })
+    await color.markSettled(tx.id('hex'))
+    await expect(
+      manager.listOutputs(
+        { basket: `p color balance ${assetTag(assetId)}`, tags: ['color_offline'] },
+        APP
+      )
+    ).resolves.toEqual({ totalOutputs: '0', outputs: [] })
   })
 })

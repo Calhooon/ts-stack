@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 import {
   LockingScript,
-  PrivateKey,
   Transaction,
   TransactionSignature,
   UnlockingScript,
@@ -10,9 +9,8 @@ import {
 } from '@bsv/sdk'
 import { toArray } from '@bsv/sdk/primitives/utils'
 import type { PermissionsModuleAction } from '@bsv/wallet-toolbox-client'
-import { createAttestedProfile } from '../attested.js'
 import { ColorPlan } from '../ColorPlan.js'
-import { ColorPermissionModule } from '../ColorPermissionModule.js'
+import type { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { assetBasket, COLOR_KEY_ID, colorProtocolID } from '../identifiers.js'
 import {
   createModule,
@@ -22,12 +20,10 @@ import {
   holdTokens,
   tokenPayment
 } from './fixtures.js'
-import { attestedAsset, attestedReceipt, C0, FakeStore, graph } from './profileFixtures.js'
 
 const APP = 'app.example'
 
-type ConsentType =
-  'color_send' | 'color_signature' | 'color_relinquish' | 'color_access' | 'color_receive_offline'
+type ConsentType = 'color_send' | 'color_signature' | 'color_relinquish' | 'color_access'
 
 /** A module whose host records every request and approves it. */
 function recording(
@@ -60,31 +56,6 @@ async function prompted(type: ConsentType, seek: boolean): Promise<Record<string
   const extension = seek ? {} : { seekPermission: false }
   const wallet = new FakeWallet()
   const provider = new FakeProvider()
-  if (type === 'color_receive_offline') {
-    const store = new FakeStore()
-    const { module, prompts } = recording(requestTokenAccess => {
-      const attested = createAttestedProfile()
-      return new ColorPermissionModule({
-        wallet: wallet.asWallet(),
-        provider,
-        requestTokenAccess,
-        profiles: { [attested.id]: attested },
-        store
-      })
-    })
-    const g = graph()
-    const { tx: deploy } = attestedAsset(g, C0.SIGNER, { admit: provider })
-    const receipt = await attestedReceipt({
-      g,
-      deploy,
-      recipient: wallet,
-      signers: [new PrivateKey(C0.PRIV)],
-      ...(seek ? {} : { seekPermission: false })
-    })
-    await module.onRequest({ method: 'internalizeAction', args: receipt.args, originator: APP })
-    return prompts.find(prompt => prompt.type === type)!
-  }
-
   const { module, prompts } = recording(requestTokenAccess =>
     createModule(wallet, provider, requestTokenAccess)
   )
@@ -193,20 +164,17 @@ async function prompted(type: ConsentType, seek: boolean): Promise<Record<string
 }
 
 describe('consent seekPermission', () => {
-  it.each<ConsentType>([
-    'color_send',
-    'color_signature',
-    'color_relinquish',
-    'color_access',
-    'color_receive_offline'
-  ])('%s carries seekPermission and honours false', async type => {
-    const asked = await prompted(type, true)
-    expect(asked).toBeDefined()
-    expect(typeof asked.seekPermission).toBe('boolean')
-    expect(asked.seekPermission).toBe(true)
-    const declined = await prompted(type, false)
-    expect(declined.seekPermission).toBe(false)
-  })
+  it.each<ConsentType>(['color_send', 'color_signature', 'color_relinquish', 'color_access'])(
+    '%s carries seekPermission and honours false',
+    async type => {
+      const asked = await prompted(type, true)
+      expect(asked).toBeDefined()
+      expect(typeof asked.seekPermission).toBe('boolean')
+      expect(asked.seekPermission).toBe(true)
+      const declined = await prompted(type, false)
+      expect(declined.seekPermission).toBe(false)
+    }
+  )
 
   it('places seekPermission after handoff in color_send and after inputIndex in color_signature', async () => {
     const send = await prompted('color_send', true)

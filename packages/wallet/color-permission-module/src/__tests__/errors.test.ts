@@ -3,9 +3,7 @@ import { Transaction, type CreateActionArgs, type CreateActionResult } from '@bs
 import type { PermissionsModuleAction } from '@bsv/wallet-toolbox-client'
 import { ColorPlan } from '../ColorPlan.js'
 import {
-  AttestationEvidenceError,
   ColorConsentDeclinedError,
-  ColorProviderError,
   isNamedError,
   ProfileDataError,
   ProfileParamsError
@@ -26,27 +24,18 @@ describe('module errors', () => {
   it('names every error class for cross-bundle matching', () => {
     expect(new ProfileParamsError('x').name).toBe('ProfileParamsError')
     expect(new ProfileDataError('x').name).toBe('ProfileDataError')
-    const evidence = new AttestationEvidenceError('duplicate spend')
-    expect(evidence.name).toBe('AttestationEvidenceError')
-    expect(evidence.reason).toBe('duplicate spend')
-    const provider = new ColorProviderError('ERR_UNAVAILABLE', true, true, 'down')
-    expect([provider.name, provider.code, provider.retryable, provider.transport]).toEqual([
-      'ColorProviderError',
-      'ERR_UNAVAILABLE',
-      true,
-      true
-    ])
-    expect(provider).toBeInstanceOf(Error)
-    expect(isNamedError(provider, 'ColorProviderError')).toBe(true)
-    expect(isNamedError({ name: 'ColorProviderError' }, 'ColorProviderError')).toBe(true)
+    const params = new ProfileParamsError('BRC-207: bad')
+    expect(params).toBeInstanceOf(Error)
+    expect(isNamedError(params, 'ProfileParamsError')).toBe(true)
+    expect(isNamedError({ name: 'ProfileParamsError' }, 'ProfileParamsError')).toBe(true)
     // An HTTP bridge that lost .name still carries the message prefix.
-    expect(isNamedError(new Error('[ColorProviderError] bridged'), 'ColorProviderError')).toBe(true)
-    expect(isNamedError(new Error('ColorProviderError bridged'), 'ColorProviderError')).toBe(false)
-    expect(isNamedError(provider, 'ProfileDataError')).toBe(false)
-    expect(isNamedError(undefined, 'ColorProviderError')).toBe(false)
-    expect(isNamedError(null, 'ColorProviderError')).toBe(false)
-    expect(isNamedError('[ColorProviderError] text', 'ColorProviderError')).toBe(false)
-    expect(isNamedError({ name: 1, message: 2 }, 'ColorProviderError')).toBe(false)
+    expect(isNamedError(new Error('[ProfileParamsError] bridged'), 'ProfileParamsError')).toBe(true)
+    expect(isNamedError(new Error('ProfileParamsError bridged'), 'ProfileParamsError')).toBe(false)
+    expect(isNamedError(params, 'ProfileDataError')).toBe(false)
+    expect(isNamedError(undefined, 'ProfileParamsError')).toBe(false)
+    expect(isNamedError(null, 'ProfileParamsError')).toBe(false)
+    expect(isNamedError('[ProfileParamsError] text', 'ProfileParamsError')).toBe(false)
+    expect(isNamedError({ name: 1, message: 2 }, 'ProfileParamsError')).toBe(false)
     expect(new UnsupportedProfileError().message).toBe(
       'BRC-207: the asset requires processing profiles this wallet does not support'
     )
@@ -63,20 +52,9 @@ describe('module errors', () => {
       '[ProfileParamsError] BRC-207: x'
     )
     expect(new ProfileDataError('BRC-207: x').message).toBe('[ProfileDataError] BRC-207: x')
-    expect(new AttestationEvidenceError('duplicate spend').message).toBe(
-      '[AttestationEvidenceError] BRC-207: attested evidence rejected (duplicate spend)'
+    expect(new ProfileDataError('[ProfileDataError] BRC-207: x').message).toBe(
+      '[ProfileDataError] BRC-207: x'
     )
-    expect(new ColorProviderError('ERR_UNAVAILABLE', true, true, 'down').message).toBe(
-      '[ColorProviderError] down'
-    )
-    expect(
-      new ColorProviderError(
-        'ERR_FROZEN',
-        true,
-        false,
-        '[ColorProviderError] mandala overlay refused (ERR_FROZEN, retryable): frozen'
-      ).message
-    ).toBe('[ColorProviderError] mandala overlay refused (ERR_FROZEN, retryable): frozen')
     const declined = new ColorConsentDeclinedError('color_send')
     expect([declined.name, declined.requestType, declined.message]).toEqual([
       'ColorConsentDeclinedError',

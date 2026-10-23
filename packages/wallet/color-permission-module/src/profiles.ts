@@ -6,7 +6,7 @@ import { COLOR_OPERATIONS, type ColorOperationName } from './ColorPlan.js'
 import { ProfileParamsError } from './errors.js'
 import type { JsonValue } from './strictJson.js'
 import { assertWellFormedProfileMaps, UnsupportedProfileError } from './tokenOutputs.js'
-import type { ColorOverlayProvider, ProfileData } from './types.js'
+import type { ColorOverlayProvider } from './types.js'
 
 /** A required-profile descriptor from a deploy's `req`: exactly `{params, version}`. */
 export interface ProfileDescriptor {
@@ -58,31 +58,26 @@ export interface ProfileTxView {
   planLeaf?: JsonValue
 }
 
-/** An admission attestation (0207:257-261), exact members. */
-export interface ColorAttestation {
-  txid: string
-  outputs: number[]
-  signer: string
-  signature: string
-}
-
-export interface ReceiptGraph {
+/** One received output of an asset whose required profile defines `admitReceipt`. */
+export interface ProfileReceipt {
   assetId: string
-  /** Always present, also when the tip is already attested. */
-  tip: { txid: string; atomicBEEF: number[]; offChainValues: number[] }
-  /** The receipt outputs of this asset in the tip. */
-  outputIndexes: number[]
-  /** Transactions not yet covered by a verified attestation, parents first, tip last, each with exact submit bytes. */
-  pending: Array<{ txid: string; atomicBEEF: number[]; offChainValues: number[] }>
-  /** Verified, deduplicated by (signer, txid, output). */
-  attestations: ColorAttestation[]
+  /** The received transaction's id. */
+  txid: string
+  /** The receipt output's index in `tx`. */
+  outputIndex: number
+  /** The received transaction, with the source transactions its BEEF carries. */
+  tx: Transaction
+  /** The internalizeAction `tx` bytes (AtomicBEEF), as the caller supplied them. */
+  beef: number[]
 }
 
-export type ReceiptAdmission =
-  /** Verified attestations covering `graph.outputIndexes` of the tip. */
-  | { status: 'admitted'; attestations: ColorAttestation[] }
-  /** Transport failure only; the module may then apply offline acceptance. */
-  | { status: 'unavailable' }
+/**
+ * An `admitReceipt` decision: `settled` credits the output as any admitted receipt; `pending`
+ * credits it tagged `color_offline` until the host calls `markSettled` for its transaction.
+ */
+export interface ReceiptAdmission {
+  credit: 'settled' | 'pending'
+}
 
 export interface RequiredProfileHandler {
   /** The profile URI. */
@@ -101,7 +96,8 @@ export interface RequiredProfileHandler {
   /**
    * `plain-nosend`: every token createAction moving this asset must have `options.noSend === true`
    * and must not carry a BRC-177 `p nosend expiry ` label; the module keeps token change inside the
-   * transaction (no split), tags that change `color_offline`, and never submits the action in onResponse.
+   * transaction (no split), tags that change `color_offline`, and never submits the action: the
+   * host does, then calls `markSettled`.
    */
   readonly sendPolicy?: 'plain-nosend'
   /** Operations a holder may declare for this asset through the module; absent means all. */
@@ -115,50 +111,14 @@ export interface RequiredProfileHandler {
   /** The offChainValues bytes for `tm_color_<assetId>`, called in signAction before signing. Must be non-empty. */
   submissionData?: (ctx: ProfileAssetContext, view: ProfileTxView) => Promise<number[]>
   /**
-   * Called for every receipt (attested tips included) before crediting, after the base receipt
-   * checks and attested-leaf parsing. A throw means no credit. Honoured only when the asset also
-   * declares attested v1 (otherwise ProfileParamsError at resolution).
+   * Decides every receipt of an asset requiring this profile, after the module's custody, basket,
+   * ownership and deploy-conformance checks, in place of the overlay spendability check. A throw
+   * credits nothing. The module never parses or stores evidence for it: the hook verifies whatever
+   * the host recorded or asks its own overlay.
    */
-  admitReceipt?: (ctx: ProfileAssetContext, graph: ReceiptGraph) => Promise<ReceiptAdmission>
+  admitReceipt?: (ctx: ProfileAssetContext, receipt: ProfileReceipt) => Promise<ReceiptAdmission>
   /** Validates this profile's own `ext` value (undefined when absent). Without it the entry must be absent (ProfileParamsError). */
   checkExt?: (value: StrictCborValue | undefined) => void
-  /** Validates a receipt `profileData` leaf for this profile. Without it any such leaf is rejected (ProfileDataError). */
-  checkReceiptData?: (ctx: ProfileAssetContext, leaf: JsonValue) => Promise<void>
-  /** Receipt customInstructions limit, in UTF-8 bytes, for assets requiring this profile (default 1000). */
-  readonly maxReceiptBytes?: number
-}
-
-/** The `colorHandoff` member of a signAction result, and the `handoffEvidence` result. */
-export interface ColorHandoffResult {
-  version: 1
-  txid: string
-  /** Receipt-ready profileData for the transaction's recipients. */
-  profileData: ProfileData
-}
-
-export interface ColorSettleResult {
-  txid: string
-  assetId: string
-  status: 'admitted' | 'retry' | 'refused'
-  /** The attested outputs, when admitted. */
-  outputs?: number[]
-  /** The overlay verdict, or `ERR_UNAVAILABLE`. */
-  code?: string
-  description?: string
-}
-
-export interface ColorSettleReport {
-  results: ColorSettleResult[]
-}
-
-/** The attested profile's trust mode (0207:181-189). */
-export type TrustMode = 'any' | 'same' | 'all' | 'identity'
-
-/** The attested profile's parsed params. */
-export interface AttestedParams {
-  trustMode: TrustMode
-  identityKey?: string
-  evidenceProfile?: string
 }
 
 /** An authenticated asset with its resolved required profiles and routing. Module-internal. */
@@ -174,18 +134,12 @@ export interface ResolvedAsset {
   handlers: ReadonlyArray<{ handler: RequiredProfileHandler; descriptor: ProfileDescriptor }>
   /** The provider for every query and submit of this asset. */
   provider: ColorOverlayProvider
-  /** Set when the attested profile is declared without `evidenceProfile`. */
-  attested?: AttestedParams
   /** `plain-nosend` when any required profile declares it. */
   sendPolicy?: 'plain-nosend'
   /** The operations every handler that declares `operations` allows; undefined means all. */
   operations?: ReadonlySet<ColorOperationName>
-  /** The largest receipt customInstructions, in UTF-8 bytes: the maximum over the handlers (each 1000 by default), 1000 with none. */
-  maxReceiptBytes: number
 }
 
-/** The largest receipt the module parses at all (0207:1442-1448). */
-const MAX_RECEIPT_BYTES = 16 * 1024 * 1024
 const MAX_UINT32 = 0xffffffff
 const OPTIONAL_HOOKS = [
   'provider',
@@ -193,8 +147,7 @@ const OPTIONAL_HOOKS = [
   'checkPlanData',
   'submissionData',
   'admitReceipt',
-  'checkExt',
-  'checkReceiptData'
+  'checkExt'
 ] as const
 
 function invalid(id: unknown, reason: string): TypeError {
@@ -231,17 +184,6 @@ function checkHandler(handler: RequiredProfileHandler): void {
       !operations.every(op => (COLOR_OPERATIONS as readonly string[]).includes(op)))
   ) {
     throw invalid(id, 'operations must list BRC-207 operation names')
-  }
-  const { maxReceiptBytes } = handler
-  if (
-    maxReceiptBytes !== undefined &&
-    !(
-      Number.isInteger(maxReceiptBytes) &&
-      maxReceiptBytes >= 1 &&
-      maxReceiptBytes <= MAX_RECEIPT_BYTES
-    )
-  ) {
-    throw invalid(id, 'maxReceiptBytes must be an integer in 1..16777216')
   }
 }
 

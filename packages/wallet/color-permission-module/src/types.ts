@@ -1,18 +1,9 @@
-import type { AdmittanceInstructions, LookupAnswer, WalletInterface } from '@bsv/sdk'
+import type { LookupAnswer, STEAK, WalletInterface } from '@bsv/sdk'
 import type { RequiredProfileHandler } from './profiles.js'
 import type { JsonValue } from './strictJson.js'
 
 /** BRC-207 `profileData`: profile id, then asset id (or `ISSUE`), then that profile's leaf. */
 export type ProfileData = Record<string, Record<string, JsonValue>>
-
-/** BRC-22 admittance with the BRC-175 attestation fields. */
-export type AttestedAdmittance = AdmittanceInstructions & {
-  /** Lowercase strict-DER hex, no sighash byte. */
-  admissionSignature?: string
-  /** The signer's root identity key (66 hex), not the derived child key. */
-  admissionIdentityKey?: string
-}
-export type AttestedSTEAK = Record<string, AttestedAdmittance>
 
 /**
  * The overlay services this module relies on. The wallet implementer decides which
@@ -25,11 +16,10 @@ export interface ColorOverlayProvider {
   admission: (assetId: string, outpoints: string[]) => Promise<LookupAnswer>
   /**
    * Submits a transaction to each topic (`tm_color_<assetId>`, or `tm_color` for a deploy), returning
-   * each topic's admittance, with attestation fields when the service provides them.
-   * `offChainValues` are the raw BRC-22 off-chain bytes; the module passes them only for assets
+   * each topic's admittance. `offChainValues` are the raw BRC-22 off-chain bytes; the module passes them only for assets
    * whose required profiles supply submission data, and calls with two arguments otherwise.
    */
-  submit: (topics: string[], beef: number[], offChainValues?: number[]) => Promise<AttestedSTEAK>
+  submit: (topics: string[], beef: number[], offChainValues?: number[]) => Promise<STEAK>
 }
 
 /**

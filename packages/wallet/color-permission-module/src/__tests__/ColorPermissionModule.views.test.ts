@@ -1,26 +1,15 @@
 import { beforeEach, describe, expect, it } from '@jest/globals'
-import { Beef, PrivateKey, Transaction, type ListOutputsResult } from '@bsv/sdk'
-import { toHex } from '@bsv/sdk/primitives/utils'
+import { Transaction, type ListOutputsResult } from '@bsv/sdk'
 import { OneColor } from '@bsv/templates'
 import { ColorPermissionModule } from '../ColorPermissionModule.js'
 import { assetBasket, assetTag } from '../identifiers.js'
 import type { RequiredProfileHandler } from '../profiles.js'
-import { ColorStore, type TxRecord } from '../store.js'
 import type { ColorModuleStore } from '../types.js'
 import { FakeProvider, FakeWallet, tokenPayment } from './fixtures.js'
-import {
-  A141A,
-  C0,
-  exampleProfile,
-  FakeStore,
-  fixtureDeploy,
-  signAttestation,
-  TestModule
-} from './profileFixtures.js'
+import { A141A, exampleProfile, FakeStore, fixtureDeploy, TestModule } from './profileFixtures.js'
 
 const APP = 'app.example'
 const next = async (args: unknown): Promise<unknown> => args
-const SIGNER = C0.SIGNER
 
 async function listing(
   module: ColorPermissionModule,
@@ -54,11 +43,10 @@ async function balanceOf(
   return String(result.totalOutputs)
 }
 
-describe('offline and restricted views', () => {
+describe('pending (color_offline) views and markSettled', () => {
   let wallet: FakeWallet
   let provider: FakeProvider
   let store: FakeStore
-  let colorStore: ColorStore
   let ex: RequiredProfileHandler
   let assetId: string
   let module: TestModule
@@ -89,7 +77,6 @@ describe('offline and restricted views', () => {
     wallet = new FakeWallet()
     provider = new FakeProvider()
     store = new FakeStore()
-    colorStore = new ColorStore(store)
     ex = exampleProfile()
     const deploy = fixtureDeploy(A141A.C)
     assetId = deploy.assetId
@@ -105,10 +92,10 @@ describe('offline and restricted views', () => {
     t60 = hold(60n, ['color_offline'])
     t25 = hold(25n)
     wallet.outputs.get(op(t25))!.reservedBy = 'reference-x'
-    await colorStore.markSettled(t40.id('hex'), { outputs: [0], signer: SIGNER })
+    await module.markSettled(t40.id('hex'))
   })
 
-  it('C40 an offline output is available with color_offline and counts in the balance', async () => {
+  it('a pending output is available with color_offline and counts in the balance', async () => {
     const listed = await views(module)
     expect(listed.get(op(t60))).toMatchObject({
       spendable: true,
@@ -127,26 +114,66 @@ describe('offline and restricted views', () => {
     ).resolves.toEqual({ totalOutputs: '100', outputs: [] })
   })
 
-  it('C54 a settled record removes color_offline from views', async () => {
-    await colorStore.markSettled(t60.id('hex'), { outputs: [0], signer: SIGNER })
+  it('markSettled removes color_offline from views, durably and once', async () => {
+    const txid = t60.id('hex')
+    const settledWrites = (): string[] =>
+      store.writes.filter(key => key === `color.v1.settled.${txid}`)
+    await module.markSettled(txid)
+    expect(settledWrites()).toHaveLength(1)
     expect((await views(module)).get(op(t60))?.tags).toEqual(['color_state_available'])
+    // Idempotent: a second call writes nothing.
+    await module.markSettled(txid)
+    expect(settledWrites()).toHaveLength(1)
+    // Durable: a new module instance over the same store sees it; the wallet is never touched.
+    const restarted = new TestModule({
+      wallet: wallet.asWallet(),
+      provider,
+      requestTokenAccess: async () => true,
+      profiles: { [ex.id]: ex },
+      store
+    })
+    expect((await views(restarted)).get(op(t60))?.tags).toEqual(['color_state_available'])
+    expect(wallet.outputs.get(op(t60))?.tags).toEqual(['color_offline'])
   })
 
-  it('C55 a refused record restricts the output and removes it from the balance', async () => {
-    await colorStore.markRefused(t60.id('hex'), { code: 'ERR_REFUSED', description: 'refused' })
-    const listed = await views(module)
-    expect(listed.get(op(t60))?.tags).toContain('color_state_restricted')
-    expect(listed.get(op(t60))?.spendable).toBe(false)
-    expect(await balanceOf(module, assetId)).toBe('40')
-    const candidates = await module.candidatesForTest(assetId, 'value', APP)
-    expect(candidates.map(candidate => candidate.outpoint)).toEqual([op(t40)])
-    // A restricted output is filtered on its state like any other.
-    const restricted = await views(module, { tags: ['color_state_restricted'] })
-    expect([...restricted.keys()]).toEqual([op(t60)])
+  it('markSettled takes only a lowercase hex txid', async () => {
+    const writes = store.writes.length
+    for (const txid of ['', 'xyz', 'AB'.repeat(32), '11'.repeat(31), 7 as unknown as string]) {
+      await expect(module.markSettled(txid)).rejects.toThrow(
+        'BRC-207: markSettled takes a lowercase hex txid'
+      )
+    }
+    expect(store.writes.length).toBe(writes)
+  })
+
+  it('markSettled does nothing without profiles', async () => {
+    const plain = new ColorPermissionModule({
+      wallet: wallet.asWallet(),
+      provider,
+      requestTokenAccess: async () => true,
+      store
+    })
+    const writes = store.writes.length
+    await expect(plain.markSettled(t60.id('hex'))).resolves.toBeUndefined()
+    await expect(plain.markSettled('xyz')).rejects.toThrow(TypeError)
+    expect(store.writes.length).toBe(writes)
+  })
+
+  it('markSettled is not reachable through the BRC-100 surface', async () => {
+    await expect(
+      module.handleRequest(
+        { method: 'markSettled', originator: APP, args: { txid: t60.id('hex') } },
+        next
+      )
+    ).rejects.toThrow('markSettled is not available in the p color namespace')
+    await expect(
+      module.onRequest({ method: 'markSettled', originator: APP, args: {} })
+    ).rejects.toThrow('markSettled is not available in the p color namespace')
+    expect((await views(module)).get(op(t60))?.tags).toContain('color_offline')
   })
 
   it('store loss keeps the coin offline', async () => {
-    await colorStore.markSettled(t60.id('hex'), { outputs: [0], signer: SIGNER })
+    await module.markSettled(t60.id('hex'))
     expect((await views(module)).get(op(t60))?.tags).not.toContain('color_offline')
     store.clear()
     expect((await views(module)).get(op(t60))?.tags).toContain('color_offline')
@@ -156,13 +183,15 @@ describe('offline and restricted views', () => {
   it('a torn settled record keeps the coin offline', async () => {
     await store.set(`color.v1.settled.${t60.id('hex')}`, '{"outputs":[0],"sig')
     expect((await views(module)).get(op(t60))?.tags).toContain('color_offline')
+    await store.set(`color.v1.settled.${t60.id('hex')}`, '')
+    expect((await views(module)).get(op(t60))?.tags).toContain('color_offline')
   })
 
   it('tag filters and balances use the view color_offline tag', async () => {
     const offline = await views(module, { tags: ['color_offline'] })
     expect([...offline.keys()]).toEqual([op(t60)])
     expect(await balanceOf(module, assetId, { tags: ['color_offline'] })).toBe('60')
-    await colorStore.markSettled(t60.id('hex'), { outputs: [0], signer: SIGNER })
+    await module.markSettled(t60.id('hex'))
     expect((await views(module, { tags: ['color_offline'] })).size).toBe(0)
     expect(await balanceOf(module, assetId, { tags: ['color_offline'] })).toBe('0')
     expect(
@@ -171,43 +200,6 @@ describe('offline and restricted views', () => {
         tagQueryMode: 'any'
       })
     ).toBe('100')
-  })
-
-  it('a tx record with a missing or mismatching atomicBEEF reads as absent', async () => {
-    const txid = t60.id('hex')
-    const atomicBEEF = toHex(beefOf(t60).toBinaryAtomic(txid))
-    const attestation = await signAttestation(new PrivateKey(C0.PRIV), assetId, txid, [0])
-    const valid: TxRecord = {
-      v: 1,
-      assetId,
-      rawTx: t60.toHex(),
-      atomicBEEF,
-      role: 'receipt',
-      state: 'staged',
-      inputs: [`${'ab'.repeat(32)}.1`],
-      outputs: [0],
-      offChainValues: '',
-      attestations: [attestation]
-    }
-    await colorStore.putTx(txid, { ...valid, atomicBEEF: '' })
-    await expect(colorStore.getTx(txid)).resolves.toBeUndefined()
-    const other = toHex(beefOf(t40).toBinaryAtomic(t40.id('hex')))
-    await colorStore.putTx(txid, { ...valid, atomicBEEF: other })
-    await expect(colorStore.getTx(txid)).resolves.toBeUndefined()
-    await colorStore.putTx(txid, { ...valid, atomicBEEF: atomicBEEF.toUpperCase() })
-    await expect(colorStore.getTx(txid)).resolves.toBeUndefined()
-    await colorStore.putTx(txid, { ...valid, atomicBEEF: atomicBEEF.slice(0, -1) })
-    await expect(colorStore.getTx(txid)).resolves.toBeUndefined()
-    await store.set(`color.v1.tx.${txid}`, '{"v":1,')
-    await expect(colorStore.getTx(txid)).resolves.toBeUndefined()
-    await colorStore.putTx(txid, valid)
-    const read = await colorStore.getTx(txid)
-    expect(read).toEqual(valid)
-    expect(read?.atomicBEEF).toBe(atomicBEEF)
-    expect(
-      Transaction.fromAtomicBEEF(Array.from(Buffer.from(read!.atomicBEEF, 'hex'))).id('hex')
-    ).toBe(txid)
-    await expect(colorStore.txids()).resolves.toEqual([txid])
   })
 
   it('views are unchanged without profiles', async () => {
@@ -280,69 +272,3 @@ describe('offline and restricted views', () => {
     expect(provider.calls.admission).toBe(admissions)
   })
 })
-
-describe('ColorStore records', () => {
-  let store: FakeStore
-  let colorStore: ColorStore
-  const T1 = '11'.repeat(32)
-  const T2 = '22'.repeat(32)
-
-  beforeEach(() => {
-    store = new FakeStore()
-    colorStore = new ColorStore(store)
-  })
-
-  it('round-trips settled and refused records under color.v1.', async () => {
-    await expect(colorStore.settled(T1)).resolves.toBeUndefined()
-    await colorStore.markSettled(T1, { outputs: [0, 2], signer: SIGNER })
-    await colorStore.markRefused(T2, { code: 'ERR_REFUSED', description: 'no' })
-    await expect(colorStore.settled(T1)).resolves.toEqual({ outputs: [0, 2], signer: SIGNER })
-    await expect(colorStore.refused(T2)).resolves.toEqual({
-      code: 'ERR_REFUSED',
-      description: 'no'
-    })
-    await expect(colorStore.refused(T1)).resolves.toBeUndefined()
-    expect([...(await colorStore.settledSet())]).toEqual([T1])
-    expect([...(await colorStore.refusedSet())]).toEqual([T2])
-    expect(store.writes).toEqual([`color.v1.settled.${T1}`, `color.v1.refused.${T2}`])
-  })
-
-  it('reads malformed settled and refused records as absent', async () => {
-    await store.set(`color.v1.settled.${T1}`, 'not json')
-    await store.set(`color.v1.settled.${T2}`, JSON.stringify({ outputs: [-1], signer: SIGNER }))
-    await store.set(`color.v1.refused.${T1}`, JSON.stringify({ code: 7, description: 'x' }))
-    await store.set('color.v1.settled.not-a-txid', JSON.stringify({ outputs: [0], signer: SIGNER }))
-    await expect(colorStore.settled(T1)).resolves.toBeUndefined()
-    await expect(colorStore.settled(T2)).resolves.toBeUndefined()
-    await expect(colorStore.refused(T1)).resolves.toBeUndefined()
-    expect((await colorStore.settledSet()).size).toBe(0)
-    expect((await colorStore.refusedSet()).size).toBe(0)
-  })
-
-  it('keeps intent and unsent sets', async () => {
-    await colorStore.addIntent(T2)
-    await colorStore.addIntent(T1)
-    await colorStore.addIntent(T1)
-    await colorStore.addUnsent(T1)
-    await expect(colorStore.intents()).resolves.toEqual([T1, T2])
-    await expect(colorStore.unsent()).resolves.toEqual([T1])
-    await colorStore.removeIntent(T1)
-    await colorStore.removeUnsent(T1)
-    await expect(colorStore.intents()).resolves.toEqual([T2])
-    await expect(colorStore.unsent()).resolves.toEqual([])
-    expect(store.writes.every(key => key.startsWith('color.v1.'))).toBe(true)
-  })
-
-  it('refuses a key for anything but a txid', async () => {
-    await expect(colorStore.getTx('xyz')).rejects.toThrow(TypeError)
-    await expect(
-      colorStore.markSettled('AB'.repeat(32), { outputs: [0], signer: SIGNER })
-    ).rejects.toThrow(TypeError)
-  })
-})
-
-function beefOf(tx: Transaction): Beef {
-  const beef = new Beef()
-  beef.mergeTransaction(tx)
-  return beef
-}

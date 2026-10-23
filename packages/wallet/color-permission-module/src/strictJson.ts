@@ -1,15 +1,12 @@
 // Strict JSON for BRC-207 metadata: RFC 8259 grammar, duplicate members rejected
 // at every level, unpaired surrogate escapes rejected, bounded nesting.
 
-import { toArray } from '@bsv/sdk/primitives/utils'
-
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject
 export interface JsonObject {
   [member: string]: JsonValue
 }
 
 const MAX_DEPTH = 64
-const LOWER_EVEN_HEX = /^(?:[0-9a-f]{2})*$/
 const UINT32_MAX = 0xffffffff
 // Stryker disable next-line StringLiteral: TextDecoder('') throws ERR_ENCODING_NOT_SUPPORTED at module load, so the mutant can only be a RuntimeError, never a behavior change a test could observe
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
@@ -232,24 +229,4 @@ export function jsonByteArray(
     }
   }
   return array as number[]
-}
-
-export function jsonString(value: JsonValue | undefined, label: string): string {
-  if (typeof value !== 'string') throw new Error(`BRC-207: ${label} must be a string`)
-  return value
-}
-
-/**
- * Lowercase even-length hex (empty allowed) decoded to bytes. The length bound is checked
- * before the text is scanned or copied.
- */
-export function jsonHex(value: JsonValue | undefined, label: string, maxBytes: number): number[] {
-  const text = jsonString(value, label)
-  if (text.length > maxBytes * 2) {
-    throw new Error(`BRC-207: ${label} must be at most ${maxBytes} bytes`)
-  }
-  if (!LOWER_EVEN_HEX.test(text)) {
-    throw new Error(`BRC-207: ${label} must be lowercase even-length hex`)
-  }
-  return toArray(text, 'hex')
 }

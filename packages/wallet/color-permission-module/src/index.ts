@@ -38,30 +38,13 @@ export {
   readTokenOutput
 } from './tokenOutputs.js'
 export type { JsonOperation, TokenOutput, TokenReader } from './tokenOutputs.js'
-export {
-  ATTESTATION_KEY_ID,
-  ATTESTATION_PROTOCOL_ID,
-  ATTESTED_PROFILE_ID,
-  COLOR_OFFLINE_TAG,
-  attestationFromSteak,
-  attestationMessage,
-  attestationSigningKey,
-  parseAttestation,
-  verifyAttestation
-} from './attestation.js'
-export { createAttestedProfile } from './attested.js'
-export {
-  AttestationEvidenceError,
-  ColorConsentDeclinedError,
-  ColorProviderError,
-  ProfileDataError,
-  ProfileParamsError
-} from './errors.js'
+export { ColorConsentDeclinedError, ProfileDataError, ProfileParamsError } from './errors.js'
 export { ColorPlan, COLOR_PLAN_LABEL_PREFIX, COLOR_OPERATIONS } from './ColorPlan.js'
 export type { ColorOperation, ColorOperationName, ColorRemittance } from './ColorPlan.js'
 export {
   ASSETS_SELECTOR,
   COLOR_KEY_ID,
+  COLOR_OFFLINE_TAG,
   ISSUE,
   assetBasket,
   assetTag,
@@ -73,8 +56,6 @@ export {
 } from './identifiers.js'
 export type { TokenRole } from './identifiers.js'
 export type {
-  AttestedAdmittance,
-  AttestedSTEAK,
   ColorModuleStore,
   ColorOverlayProvider,
   ColorPermissionModuleOptions,
@@ -82,15 +63,11 @@ export type {
   ProfileData
 } from './types.js'
 export type {
-  ColorAttestation,
-  ColorHandoffResult,
-  ColorSettleReport,
-  ColorSettleResult,
   ProfileAssetContext,
   ProfileDescriptor,
+  ProfileReceipt,
   ProfileTxView,
   ReceiptAdmission,
-  ReceiptGraph,
   RequiredProfileHandler
 } from './profiles.js'
 export type { JsonValue } from './strictJson.js'

@@ -126,12 +126,13 @@ describe('asset resolution with profiles', () => {
     })
   })
 
-  it('resolution order: request evidence, then store, then default provider, then deployProviders', async () => {
+  it('resolution order: store, then default provider, then deployProviders', async () => {
     const { tx, assetId } = fixtureDeploy(A141A.C)
     const txid = tx.id('hex')
 
-    // a: request evidence resolves with no provider call, and is cached.
-    const a = await moduleWith().resolveAssetForTest(assetId, { declarationTx: tx.toHex() })
+    // a: a cached deploy resolves with no provider call.
+    await store.set(deployKey(assetId), tx.toHex())
+    const a = await moduleWith().resolveAssetForTest(assetId)
     expect(provider.calls.admission).toBe(0)
     expect(a.declarationTx?.id('hex')).toBe(txid)
     expect([...a.req.keys()]).toEqual([REVISION])
@@ -218,32 +219,19 @@ describe('asset resolution with profiles', () => {
     expect(p2.calls.admission).toBe(2)
   })
 
-  it('each source is checked by txid hash', async () => {
+  it('a non-canonical cached deploy is a miss, checked by txid hash', async () => {
     const { tx, assetId } = fixtureDeploy(A141A.C)
-    const other = fixtureDeploy(A141A.D)
     provider.admit(assetId, tx, 0)
-    const module = moduleWith()
-    const mismatch = 'BRC-207: the supplied declarationTx does not match the asset'
-    await expect(
-      module.resolveAssetForTest(assetId, { declarationTx: other.tx.toHex() })
-    ).rejects.toThrow(mismatch)
-    // Unparseable or non-canonical bodies are mismatches too, and never fall back.
-    await expect(module.resolveAssetForTest(assetId, { declarationTx: 'zz' })).rejects.toThrow(
-      mismatch
-    )
-    await expect(
-      module.resolveAssetForTest(assetId, { declarationTx: tx.toHex().toUpperCase() })
-    ).rejects.toThrow(mismatch)
-    await expect(
-      module.resolveAssetForTest(assetId, { declarationTx: `${tx.toHex()}00` })
-    ).rejects.toThrow(mismatch)
-    expect(provider.calls.admission).toBe(0)
-    expect(store.writes).toEqual([])
-    // Mismatching evidence fails even once the asset is resolved.
-    await module.resolveAssetForTest(assetId)
-    await expect(
-      module.resolveAssetForTest(assetId, { declarationTx: other.tx.toHex() })
-    ).rejects.toThrow(mismatch)
+    for (const cached of [tx.toHex().toUpperCase(), `${tx.toHex()}00`, 'zz']) {
+      const shared = new FakeStore()
+      await shared.set(deployKey(assetId), cached)
+      const before = provider.calls.admission
+      await expect(
+        moduleWith({ store: shared }).resolveAssetForTest(assetId)
+      ).resolves.toMatchObject({ assetId })
+      expect(provider.calls.admission).toBe(before + 1)
+      expect(await shared.get(deployKey(assetId))).toBe(tx.toHex())
+    }
   })
 
   it('a body with the asset txid whose output is not a deploy fails without falling back', async () => {
@@ -257,9 +245,10 @@ describe('asset resolution with profiles', () => {
     const p2 = new FakeProvider()
     p2.admit(assetId, tx, 0)
     ex = { ...exampleProfile(), deployProviders: () => [p2] }
-    await expect(
-      moduleWith().resolveAssetForTest(assetId, { declarationTx: tx.toHex() })
-    ).rejects.toThrow(`BRC-207: ${assetId} is not a token deploy`)
+    await store.set(deployKey(assetId), tx.toHex())
+    await expect(moduleWith().resolveAssetForTest(assetId)).rejects.toThrow(
+      `BRC-207: ${assetId} is not a token deploy`
+    )
     expect(p2.calls.admission).toBe(0)
   })
 
@@ -310,29 +299,12 @@ describe('asset resolution with profiles', () => {
     expect(provider.calls.admission).toBe(3)
   })
 
-  it("a failed in-flight resolution is retried with a later request's evidence", async () => {
-    const { tx, assetId } = fixtureDeploy(A141A.C)
-    const module = moduleWith()
-    const without = module.resolveAssetForTest(assetId)
-    const withEvidence = module.resolveAssetForTest(assetId, { declarationTx: tx.toHex() })
-    await expect(without).rejects.toThrow(/no admitted deploy/)
-    await expect(withEvidence).resolves.toMatchObject({ assetId })
-  })
-
-  it('derives sendPolicy, operations and maxReceiptBytes from the handlers', async () => {
+  it('derives sendPolicy and operations from the handlers', async () => {
     const plain = fixtureDeploy(A141A.C)
-    const base = await moduleWith().resolveAssetForTest(plain.assetId, {
-      declarationTx: plain.tx.toHex()
-    })
+    provider.admit(plain.assetId, plain.tx, 0)
+    const base = await moduleWith().resolveAssetForTest(plain.assetId)
     expect(base.sendPolicy).toBeUndefined()
     expect(base.operations).toBeUndefined()
-    expect(base.maxReceiptBytes).toBe(1000)
-    ex = { ...exampleProfile(), maxReceiptBytes: 300 }
-    const lowered = await moduleWith({ store: new FakeStore() }).resolveAssetForTest(
-      plain.assetId,
-      { declarationTx: plain.tx.toHex() }
-    )
-    expect(lowered.maxReceiptBytes).toBe(300)
 
     const a = { ...exampleProfile(), id: 'urn:example:a', checkExt: undefined }
     const b = { ...exampleProfile(), id: 'urn:example:b', checkExt: undefined }
@@ -341,28 +313,23 @@ describe('asset resolution with profiles', () => {
       'urn:example:b': { params: null, version: 1 }
     }
     const both = payloadDeploy({ req })
+    provider.admit(both.assetId, both.tx, 0)
     const resolved = await moduleWith({
       profiles: {
-        [a.id]: {
-          ...a,
-          sendPolicy: 'plain-nosend',
-          operations: ['transfer', 'burn'],
-          maxReceiptBytes: 5000
-        },
+        [a.id]: { ...a, sendPolicy: 'plain-nosend', operations: ['transfer', 'burn'] },
         [b.id]: { ...b, operations: ['transfer', 'mint'] }
       }
-    }).resolveAssetForTest(both.assetId, { declarationTx: both.tx.toHex() })
+    }).resolveAssetForTest(both.assetId)
     expect(resolved.sendPolicy).toBe('plain-nosend')
     expect([...resolved.operations!]).toEqual(['transfer'])
-    expect(resolved.maxReceiptBytes).toBe(5000)
     expect(resolved.handlers.map(({ handler }) => handler.id)).toEqual([a.id, b.id])
 
-    const small = await moduleWith({
+    const unrestricted = await moduleWith({
       store: new FakeStore(),
-      profiles: { [a.id]: { ...a, maxReceiptBytes: 10 }, [b.id]: b }
-    }).resolveAssetForTest(both.assetId, { declarationTx: both.tx.toHex() })
-    expect(small.maxReceiptBytes).toBe(1000)
-    expect(small.operations).toBeUndefined()
+      profiles: { [a.id]: a, [b.id]: b }
+    }).resolveAssetForTest(both.assetId)
+    expect(unrestricted.sendPolicy).toBeUndefined()
+    expect(unrestricted.operations).toBeUndefined()
   })
 
   it('routes spendability, admission and submit through the single handler provider', async () => {
@@ -565,7 +532,7 @@ describe('asset resolution with profiles', () => {
 
     const resolved = await module.resolveAssetForTest(assetId)
     expect(provider.calls.admission).toBe(1)
-    expect(resolved).toMatchObject({ assetId, provider, maxReceiptBytes: 1000 })
+    expect(resolved).toEqual({ assetId, req: new Map(), handlers: [], provider })
     expect(resolved.req.size).toBe(0)
     expect(resolved.handlers).toEqual([])
     expect(resolved.declarationTx).toBeUndefined()

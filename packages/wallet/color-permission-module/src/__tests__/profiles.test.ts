@@ -224,9 +224,7 @@ describe('resolveRequirements (support check)', () => {
 
   it('rejects two handlers that both define submissionData or both define admitReceipt', () => {
     const submissionData = async (): Promise<number[]> => [1]
-    const admitReceipt = async (): Promise<{ status: 'unavailable' }> => ({
-      status: 'unavailable'
-    })
+    const admitReceipt = async (): Promise<{ credit: 'pending' }> => ({ credit: 'pending' })
     for (const hook of [{ submissionData }, { admitReceipt }]) {
       const both = new Map([
         [REVISION, { ...exampleProfile(), ...hook }],

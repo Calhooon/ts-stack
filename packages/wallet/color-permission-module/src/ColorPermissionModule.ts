@@ -48,6 +48,7 @@ import {
   assetBasket,
   COLOR_BASKET_NAMESPACE,
   COLOR_KEY_ID,
+  COLOR_OFFLINE_TAG,
   colorProtocolID,
   colorTopic,
   DISCOVERY_TOPIC,
@@ -70,8 +71,7 @@ import {
   jsonByteArray,
   jsonObject,
   jsonUint32,
-  parseStrictJsonBytes,
-  type JsonValue
+  parseStrictJsonBytes
 } from './strictJson.js'
 import {
   isDeployOutput,
@@ -84,15 +84,12 @@ import {
   type TokenReader
 } from './tokenOutputs.js'
 import type {
-  AttestedSTEAK,
   ColorModuleStore,
   ColorOverlayProvider,
   ColorPermissionModuleOptions,
-  ColorTokenAccessHandler,
-  ProfileData
+  ColorTokenAccessHandler
 } from './types.js'
 import {
-  AttestationEvidenceError,
   ColorConsentDeclinedError,
   isNamedError,
   ProfileDataError,
@@ -103,43 +100,21 @@ import {
   resolveRequirements,
   routeProvider,
   validateProfileHandlers,
-  type ColorAttestation,
-  type ColorHandoffResult,
-  type ColorSettleReport,
   type ProfileAssetContext,
   type ProfileDescriptor,
+  type ProfileReceipt,
   type ProfileTxView,
-  type ReceiptGraph,
+  type ReceiptAdmission,
   type RequiredProfileHandler,
   type ResolvedAsset
 } from './profiles.js'
-import { ColorStore, type SettledRecord, type TxRecord } from './store.js'
-import { ColorSettler, type ColorSettleRequest } from './settle.js'
-import {
-  ATTESTED_PROFILE_ID,
-  attestationFromSteak,
-  COLOR_OFFLINE_TAG,
-  parseAttestation,
-  verifyAttestation
-} from './attestation.js'
-import {
-  assertCoverage,
-  parseAttestedLeaf,
-  parseAttestedParams,
-  qualifyingSigner,
-  trustSnapshot,
-  type AttestedLeaf
-} from './attested.js'
-import { validateFrontier } from './frontier.js'
-import { ordinal } from './ordinal.js'
+import { ColorStore } from './store.js'
 
 const UNLOCKING_SCRIPT_LENGTH = 108
 const TOKEN_CARRIER_SATOSHIS = 1
 const DEFAULT_SIGHASH = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
 const MAX_ENVELOPE_BYTES = 16 * 1024 * 1024
 const MAX_RECEIPT_INSTRUCTION_BYTES = 1000
-/** The largest receipt customInstructions the module parses at all, each and in aggregate (0207:1442-1448). */
-const MAX_PARSED_RECEIPT_BYTES = 16_777_216
 /** Tags with this prefix are the module's; callers' are stripped from receipts when profiles are registered. */
 const COLOR_TAG_PREFIX = 'color_'
 const LIST_PAGE_LIMIT = 10_000
@@ -192,17 +167,7 @@ export interface ManagedInput extends SourceOutput {
   custody: Custody
 }
 
-/** `restricted` occurs only with profiles registered: a final overlay refusal (C55). */
-type InventoryState = 'available' | 'reserved' | 'restricted'
-
-/**
- * The settled and refused txids, loaded once per listing from the `color.v1.` store, and only
- * when profiles are registered.
- */
-interface SettlementState {
-  settled: ReadonlySet<string>
-  refused: ReadonlySet<string>
-}
+type InventoryState = 'available' | 'reserved'
 
 /** Runs an SDK parser on untrusted input, prefixing its failure as a BRC-207 error. */
 function parsed<T>(label: string, parse: () => T): T {
@@ -215,23 +180,6 @@ function parsed<T>(label: string, parse: () => T): T {
 
 function sumAmounts(inputs: ReadonlyArray<{ amount: bigint }>): bigint {
   return inputs.reduce((total, input) => total + input.amount, 0n)
-}
-
-/**
- * Fails with `known conflicting spend` when a stored transaction other than the consuming one
- * consumes an outpoint in `consumed` (pairs of a txid and the outpoints it consumes).
- */
-function assertNoKnownConflict(
-  spends: ReadonlyMap<string, ReadonlySet<string>>,
-  consumed: ReadonlyArray<readonly [string, readonly string[]]>
-): void {
-  for (const [txid, outpoints] of consumed) {
-    for (const outpoint of outpoints) {
-      if ([...(spends.get(outpoint) ?? [])].some(other => other !== txid)) {
-        throw new AttestationEvidenceError('known conflicting spend')
-      }
-    }
-  }
 }
 
 function inputOutpoint(input: Transaction['inputs'][number]): string {
@@ -266,28 +214,17 @@ function withoutColorTags(output: CreateActionOutput): CreateActionOutput {
 }
 
 /**
- * The UTF-8 length of `text`, or a throw when it exceeds `maxBytes`. A string longer than
- * `maxBytes` UTF-16 units always exceeds it, so a huge string is refused before it is encoded.
- */
-function boundedUtf8Length(text: string, maxBytes: number, label: string): number {
-  const length = text.length > maxBytes ? Infinity : UTF8_ENCODER.encode(text).length
-  if (length > maxBytes) throw new Error(`BRC-207: ${label} exceeds ${maxBytes} bytes`)
-  return length
-}
-
-/**
  * Parses the receipt-format custody JSON stored in, or supplied as, an output's custom
- * instructions. Non-empty `profileData` fails unless `allowProfileData`, which returns it
- * structurally parsed for the caller to validate against the asset's requirements.
+ * instructions. A receipt carries custody only: non-empty `profileData` fails, as in 0.1.0. A
+ * string longer than `maxBytes` UTF-16 units always exceeds it, so a huge string is refused
+ * before it is encoded.
  */
-function parseCustody(
-  text: string,
-  maxBytes: number | undefined,
-  label: string,
-  allowProfileData = false
-): Custody & { profileData?: ProfileData } {
-  if (maxBytes !== undefined) boundedUtf8Length(text, maxBytes, label)
+function parseCustody(text: string, maxBytes: number | undefined, label: string): Custody {
+  if (maxBytes !== undefined && text.length > maxBytes)
+    throw new Error(`BRC-207: ${label} exceeds ${maxBytes} bytes`)
   const bytes = UTF8_ENCODER.encode(text)
+  if (maxBytes !== undefined && bytes.length > maxBytes)
+    throw new Error(`BRC-207: ${label} exceeds ${maxBytes} bytes`)
   const object = jsonObject(parseStrictJsonBytes(bytes, label), label)
   exactMembers(
     object,
@@ -297,12 +234,10 @@ function parseCustody(
   )
   if (object.version !== 1) throw new Error(`BRC-207: ${label} version must be 1`)
   const profileData = parseProfileData(object.profileData, `${label}.profileData`)
-  const hasProfileData = profileData !== undefined && Object.keys(profileData).length > 0
-  if (hasProfileData && !allowProfileData) {
+  if (profileData !== undefined && Object.keys(profileData).length > 0) {
     throw new Error(`BRC-207: ${label}.profileData names a profile the asset does not require`)
   }
   return {
-    ...(hasProfileData ? { profileData } : {}),
     assetId: parseAssetSelector(object.assetId),
     derivationPrefix: validateRemittanceString(
       object.derivationPrefix,
@@ -329,104 +264,29 @@ function colorReceipts(
   })
 }
 
-/** What one receipt forwards to the wallet, and what the module stores for it. */
-export interface ReceiptDecision {
-  outputIndex: number
-  /** The insertion forwarded to the wallet. */
-  insertion: BasketInsertion
-  /** Tx records to write, in order, before the wallet sees the receipt. */
-  records: Array<[string, TxRecord]>
-  /** Written after the records, only after a verified attestation covered the outputs. */
-  settled?: SettledRecord
-}
-
-/** A receipt on the profiled path, after its structural parse. */
-interface ProfiledReceipt {
+/** A `p color` receipt with its parsed custody. */
+interface ParsedReceipt {
   outputIndex: number
   remittance: BasketInsertion
-  /** The UTF-8 length of its customInstructions. */
-  bytes: number
-  custody: Custody & { profileData?: ProfileData }
-  /** The structurally parsed attested leaf for the custody's asset, with its JSON as carried. */
-  attested?: { json: string; leaf: AttestedLeaf }
+  custody: Custody
 }
 
-/** A profiled receipt once its output and asset are known. */
-interface CheckedReceipt extends ProfiledReceipt {
+/** A parsed receipt once its output's token and source are known. */
+interface LocatedReceipt extends ParsedReceipt {
   token: TokenOutput
   source: SourceOutput
-  resolved: ResolvedAsset
-}
-
-/** The outcome of one attested asset's receipts in one transaction. */
-interface AttestedOutcome {
-  assetId: string
-  outputIndexes: number[]
-  /** Records in write order: anchors, pending ancestors, then the tip. */
-  records: Array<[string, TxRecord]>
-  /** Set when every receipt output of the tip is covered by a qualifying attestation. */
-  settled?: SettledRecord
-  /** The deploy to cache with the records. */
-  declarationTx: Transaction
-  /** The trust snapshot the decision used, rechecked before anything is written. */
-  snapshot?: { handler: RequiredProfileHandler; value: string }
-}
-
-/**
- * Each receipt's customInstructions measured (each and in aggregate at most
- * `MAX_PARSED_RECEIPT_BYTES`) and parsed as custody; every attested leaf's declaration
- * transaction is collected into `evidence` by asset, and the receipt's own asset leaf is kept.
- */
-function profiledReceipts(
-  receipts: ReadonlyArray<{ outputIndex: number; remittance: BasketInsertion }>,
-  label: string,
-  evidence: Map<string, string>
-): ProfiledReceipt[] {
-  let total = 0
-  const sized = receipts.map(receipt => {
-    const text = receipt.remittance.customInstructions ?? ''
-    const bytes = boundedUtf8Length(text, MAX_PARSED_RECEIPT_BYTES, label)
-    total += bytes
-    return { ...receipt, text, bytes }
-  })
-  if (total > MAX_PARSED_RECEIPT_BYTES) {
-    throw new Error(
-      `BRC-207: receipt customInstructions exceed ${MAX_PARSED_RECEIPT_BYTES} bytes in aggregate`
-    )
-  }
-  return sized.map(({ outputIndex, remittance, text, bytes }) => {
-    const custody = parseCustody(text, MAX_PARSED_RECEIPT_BYTES, label, true)
-    let attested: ProfiledReceipt['attested']
-    for (const [assetKey, value] of Object.entries(
-      custody.profileData?.[ATTESTED_PROFILE_ID] ?? {}
-    )) {
-      const leaf = parseAttestedLeaf(value, assetKey)
-      evidence.set(assetKey, leaf.declarationTx.toHex())
-      if (assetKey === custody.assetId) attested = { json: JSON.stringify(value), leaf }
-    }
-    return {
-      outputIndex,
-      remittance,
-      bytes,
-      custody,
-      ...(attested === undefined ? {} : { attested })
-    }
-  })
 }
 
 /**
  * The internalize arguments the wallet gets: each checked receipt's insertion carries the
  * 5-member custody JSON and the caller's tags without `color_*`, plus `color_offline` when its
- * asset was credited without a covering attestation; other outputs pass unchanged.
+ * output was admitted as `pending`; other outputs pass unchanged.
  */
 function forwardedReceipts(
   args: InternalizeActionArgs,
-  checked: readonly CheckedReceipt[],
-  outcomes: readonly AttestedOutcome[]
+  checked: readonly LocatedReceipt[],
+  pending: ReadonlySet<number>
 ): InternalizeActionArgs {
-  const offline = new Set(
-    outcomes.filter(outcome => outcome.settled === undefined).map(outcome => outcome.assetId)
-  )
   const forwarded = new Map(checked.map(receipt => [receipt.remittance, receipt] as const))
   return {
     ...args,
@@ -438,18 +298,12 @@ function forwardedReceipts(
       if (receipt === undefined) return output
       const { tags: callerTags, ...insertion } = receipt.remittance
       const tags = (callerTags ?? []).filter(tag => !tag.startsWith(COLOR_TAG_PREFIX))
-      if (offline.has(receipt.token.assetId)) tags.push(COLOR_OFFLINE_TAG)
-      const { assetId, derivationPrefix, derivationSuffix, senderIdentityKey } = receipt.custody
+      if (pending.has(receipt.outputIndex)) tags.push(COLOR_OFFLINE_TAG)
       return {
         ...output,
         insertionRemittance: {
           ...insertion,
-          customInstructions: custodyInstructions({
-            assetId,
-            derivationPrefix,
-            derivationSuffix,
-            senderIdentityKey
-          }),
+          customInstructions: custodyInstructions(receipt.custody),
           ...(tags.length === 0 ? {} : { tags })
         }
       }
@@ -457,42 +311,10 @@ function forwardedReceipts(
   }
 }
 
-/** The attested leaf every receipt of one asset carries; missing or differing evidence fails. */
-function sharedAttestedLeaf(group: readonly CheckedReceipt[]): AttestedLeaf {
-  const evidence = group.map(receipt => receipt.attested)
-  if (evidence.includes(undefined)) {
-    throw new AttestationEvidenceError('missing attested evidence')
-  }
-  if (evidence.some(entry => entry!.json !== evidence[0]!.json)) {
-    throw new AttestationEvidenceError('receipts of one asset carry different evidence')
-  }
-  return evidence[0]!.leaf
-}
-
-/**
- * The transaction bodies a receipt's frontier may use, by txid: the leaf's transactions, then
- * the receipt BEEF's (which replace them), then the deploy.
- */
-function receiptBodies(
-  leaf: AttestedLeaf,
-  receiptBeef: Beef,
-  declarationTx: Transaction
-): Map<string, Transaction> {
-  const bodies = new Map<string, Transaction>()
-  for (const body of leaf.transactions) bodies.set(body.id('hex'), body)
-  for (const entry of receiptBeef.txs) {
-    if (entry.tx !== undefined) bodies.set(entry.txid, entry.tx)
-  }
-  // The frontier knows the deploy from declarationTx alone, so an attested deploy can be an
-  // anchor that neither the leaf's transactions nor the receipt BEEF carry.
-  bodies.set(declarationTx.id('hex'), declarationTx)
-  return bodies
-}
-
 /**
  * The send rules of a plan's assets: a deploy is never a noSend action; a `plain-nosend` asset
- * (B2) needs `options.noSend`, no BRC-177 label and only `plain-nosend` assets beside it, exactly
- * one; any other noSend action needs the BRC-177 label.
+ * needs `options.noSend`, no BRC-177 label and only `plain-nosend` assets beside it; any other
+ * noSend action needs the BRC-177 label.
  */
 function assertSendPolicy(
   plan: ColorPlan,
@@ -508,7 +330,7 @@ function assertSendPolicy(
   }
   const plain = [...resolved.values()].filter(asset => asset.sendPolicy === 'plain-nosend')
   if (plain.length > 0) {
-    // B2: the recipient submits a plain noSend hand-over; it never splits and is never sent here.
+    // The host submits a plain noSend hand-over; it never splits and is never sent here.
     if (plain.length !== resolved.size) {
       throw new ProfileParamsError(
         'BRC-207: a plain noSend hand-over cannot move an asset without that send policy'
@@ -518,10 +340,6 @@ function assertSendPolicy(
       throw new ProfileParamsError(
         'BRC-207: a plain noSend hand-over requires options.noSend and no BRC-177 p nosend expiry label'
       )
-    }
-    // Its durable record and evidence are per transaction and asset.
-    if (plain.length > 1) {
-      throw new ProfileParamsError('BRC-207: a plain noSend hand-over moves exactly one asset')
     }
   } else if (noSend && !handoff) {
     // As in BTMS, a token action completes with its overlay submission. The one deferred flow is
@@ -548,160 +366,14 @@ function assertProfileOperations(
   }
 }
 
-/** What the store holds for one txid of an attested asset's outputs. */
-interface StoredFact {
-  refused: boolean
-  settled: boolean
-  record?: TxRecord
-  tx?: Transaction
-}
-
 /**
- * An attested asset's outputs by stored state: a refused transaction's are dropped; an output
- * the store does not hold as this asset's goes to the live `baseline` check; a held one is
- * `settled`, or `offline` (grouped by txid) while its transaction is unsettled.
+ * What signAction keeps for `onResponse` of an action moving profile assets, by action reference:
+ * whether it is a plain-noSend hand-over (never submitted here) and each asset's BRC-22 off-chain
+ * bytes for its topic.
  */
-function classifyStoredOutputs(
-  outputs: readonly SourceOutput[],
-  facts: ReadonlyMap<string, StoredFact>,
-  assetId: string
-): { settled: SourceOutput[]; offline: Map<string, SourceOutput[]>; baseline: SourceOutput[] } {
-  const settled: SourceOutput[] = []
-  const offline = new Map<string, SourceOutput[]>()
-  const baseline: SourceOutput[] = []
-  for (const output of outputs) {
-    const { txid, vout } = parseOutpoint(output.outpoint)
-    const fact = facts.get(txid)!
-    if (fact.refused) continue
-    if (!holdsStoredOutput(fact.record, fact.tx, assetId, vout, output)) {
-      baseline.push(output)
-    } else if (fact.settled) {
-      settled.push(output)
-    } else {
-      const group = offline.get(txid) ?? []
-      group.push(output)
-      offline.set(txid, group)
-    }
-  }
-  return { settled, offline, baseline }
-}
-
-/** One attestation per (signer, txid, outputs), first kept, in order. */
-function distinctAttestations(attestations: readonly ColorAttestation[]): ColorAttestation[] {
-  const seen = new Set<string>()
-  return attestations.filter(att => {
-    const key = `${att.signer}:${att.txid}:${att.outputs.join(',')}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-/**
- * A stored tx record merged with a new one for the same txid, so a retry or a later receipt never
- * loses state: the stored bytes, role, state, labels and inputs are kept (an ancestor becomes a
- * receipt once this wallet holds its outputs), outputs and attestations are unions, and stored
- * off-chain values are kept unless empty.
- */
-function mergeTxRecords(stored: TxRecord, incoming: TxRecord): TxRecord {
-  // An ancestor promoted to a receipt takes the receipt's state; any other record keeps its own.
-  const promoted = stored.role === 'ancestor' && incoming.role === 'receipt'
-  const role = promoted ? 'receipt' : stored.role
-  const state = promoted ? incoming.state : stored.state
-  return {
-    v: 1,
-    assetId: stored.assetId,
-    rawTx: stored.rawTx,
-    atomicBEEF: stored.atomicBEEF,
-    role,
-    ...(state === undefined ? {} : { state }),
-    ...(stored.labels === undefined ? {} : { labels: stored.labels }),
-    inputs: stored.inputs.length > 0 ? stored.inputs : incoming.inputs,
-    outputs: [...new Set([...stored.outputs, ...incoming.outputs])].sort((a, b) => a - b),
-    offChainValues: stored.offChainValues !== '' ? stored.offChainValues : incoming.offChainValues,
-    attestations: distinctAttestations([...stored.attestations, ...incoming.attestations])
-  }
-}
-
-/** A stored record's transaction when its raw bytes parse and hash to `txid`, else undefined. */
-function storedTransaction(record: TxRecord, txid: string): Transaction | undefined {
-  try {
-    const tx = Transaction.fromHex(record.rawTx)
-    return tx.id('hex') === txid ? tx : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * True when a stored record vouches for `output` as one of the wallet's own outputs of `assetId`:
- * a live (not aborted) receipt or hand-over record that lists the output as held, whose stored
- * transaction carries exactly this output's script and satoshis.
- */
-function holdsStoredOutput(
-  record: TxRecord | undefined,
-  tx: Transaction | undefined,
-  assetId: string,
-  vout: number,
-  output: SourceOutput
-): boolean {
-  if (record === undefined || tx === undefined) return false
-  if (record.assetId !== assetId || record.role === 'ancestor' || record.state === 'aborted') {
-    return false
-  }
-  if (!record.outputs.includes(vout)) return false
-  const stored = tx.outputs[vout]
-  return (
-    stored !== undefined &&
-    stored.satoshis === output.satoshis &&
-    stored.lockingScript.toHex() === output.lockingScript.toHex()
-  )
-}
-
-/**
- * What signAction keeps for `onResponse` of a profile action, by action reference: per profile
- * asset its submission data, same-asset inputs and wallet-owned outputs, and the plan labels.
- */
-/**
- * How `spendable` decides an attested asset's held, unsettled (offline) outputs. Only a plain-noSend
- * hand-over (`offline`) spends them with no overlay contact: its recipient submits their
- * ancestors first. Every other action is published by this wallet (or, for a BRC-177 handoff,
- * its split is), so their acceptance is established first (pinned brc-0207: parents first).
- */
-interface SpendContext {
-  offline: boolean
-  originator?: string
-}
-
-const PUBLISHED_SPEND: SpendContext = { offline: false }
-
-/** The 0.2.0 members of a `fund` call: assets whose change stays offline, and the spend context. */
-interface FundOptions {
-  offline?: ReadonlySet<string>
-  spend?: SpendContext
-}
-
-/** True for a plain-noSend hand-over's arguments: `options.noSend` and no BRC-177 label. */
-function plainNoSendArgs(args: Pick<CreateActionArgs, 'options' | 'labels'>): boolean {
-  return (
-    args.options?.noSend === true &&
-    !(args.labels ?? []).some(label => label.startsWith(NOSEND_EXPIRY_LABEL_PREFIX))
-  )
-}
-
-interface PendingHandoff {
-  /** True for a plain-noSend hand-over (B2), which onResponse records and evidences. */
+interface PendingSubmission {
   plain: boolean
-  /** The action's `p color plan` labels, as forwarded to the underlying createAction. */
-  labels: string[]
-  assets: Array<{
-    assetId: string
-    offChainValues: number[]
-    /** Same-asset token input outpoints, in input order. */
-    inputs: string[]
-    /** Wallet-owned token outputs of the asset: plan ownedOutputs and token change. */
-    outputs: number[]
-  }>
+  offChainValues: Map<string, number[]>
 }
 
 /** True when a custody selector names the output's asset: `ISSUE` exactly for its deploy. */
@@ -1311,26 +983,20 @@ function inventoryRecords(
   return records
 }
 
-/**
- * Restricted when the overlay finally refused the output's transaction, else reserved by a pending
- * action, else available. Wallet and store state only; the overlay is not consulted.
- */
-function inventoryState(record: InventoryRecord, status?: SettlementState): InventoryState {
-  if (status?.refused.has(parseOutpoint(record.output.outpoint).txid) === true) return 'restricted'
+/** Reserved by a pending action, else available. Wallet state only; the overlay is not consulted. */
+function inventoryState(record: InventoryRecord): InventoryState {
   return record.output.spendable ? 'available' : 'reserved'
 }
 
 /**
- * An output's stored tags without state tags. With profiles registered, the stored
- * `color_offline` tag is dropped once its transaction has a settled record (contract §2.2-6), so a
- * lost store shows the coin offline again (fail safe).
+ * An output's stored tags without state tags. With profiles registered (`settled` is then the
+ * set of txids `markSettled` recorded), the stored `color_offline` tag is dropped once its
+ * transaction is settled, so a lost store shows the coin offline again (fail safe).
  */
-function storedViewTags(output: WalletOutput, status?: SettlementState): string[] {
-  const settled =
-    status?.settled.has(parseOutpoint(output.outpoint).txid) === true
-      ? COLOR_OFFLINE_TAG
-      : undefined
-  return (output.tags ?? []).filter(tag => !tag.startsWith(STATE_TAG_PREFIX) && tag !== settled)
+function storedViewTags(output: WalletOutput, settled?: ReadonlySet<string>): string[] {
+  const hidden =
+    settled?.has(parseOutpoint(output.outpoint).txid) === true ? COLOR_OFFLINE_TAG : undefined
+  return (output.tags ?? []).filter(tag => !tag.startsWith(STATE_TAG_PREFIX) && tag !== hidden)
 }
 
 /**
@@ -1359,9 +1025,9 @@ export function tryReadTokenOutput(
 }
 
 /** A record with its stored tags and the computed state tag in place of any stored one. */
-function inventoryView(record: InventoryRecord, status?: SettlementState): InventoryView {
-  const state = inventoryState(record, status)
-  const tags = [...storedViewTags(record.output, status), `${STATE_TAG_PREFIX}${state}`]
+function inventoryView(record: InventoryRecord, settled?: ReadonlySet<string>): InventoryView {
+  const state = inventoryState(record)
+  const tags = [...storedViewTags(record.output, settled), `${STATE_TAG_PREFIX}${state}`]
   return { record, state, tags }
 }
 
@@ -1406,19 +1072,14 @@ export class ColorPermissionModule implements PermissionsModule {
   protected readonly colorStore?: ColorStore
   /** The BRC-162 reader: `readTokenOutput` without profiles, else the profile-aware reader. */
   protected readonly read: TokenReader
-  /**
-   * BRC-205 attributes for BRC-207's Discovery section: this module implements revision 4, and
-   * `brc207-color-attested` 1 when the attested profile is registered (0207:1501-1506).
-   */
+  /** BRC-205 attributes for BRC-207's Discovery section: this module implements revision 4. */
   readonly capabilities: Readonly<Record<string, string>>
   /** Outputs a send in progress has selected, so a concurrent send does not select them too. */
   protected readonly selected = new Set<string>()
   /** Asset resolutions by asset id, in flight or done; a failed one is forgotten. */
   protected readonly supportedAssets = new Map<string, Promise<ResolvedAsset>>()
   /** Profile actions signed here and not yet answered, by action reference. */
-  protected readonly pendingHandoffs = new Map<string, PendingHandoff>()
-  /** Single-flight settlement (contract §2.3); constructed only when profiles are registered. */
-  protected readonly settler?: ColorSettler
+  protected readonly pendingSubmissions = new Map<string, PendingSubmission>()
   protected identityKey?: Promise<string>
 
   constructor(options: ColorPermissionModuleOptions) {
@@ -1443,54 +1104,38 @@ export class ColorPermissionModule implements PermissionsModule {
     this.provider = options.provider
     this.requestTokenAccess = options.requestTokenAccess
     this.store = options.store ?? undefined
-    const capabilities: Record<string, string> = { 'brc207-color': '4' }
-    if (this.profiles.has(ATTESTED_PROFILE_ID)) capabilities['brc207-color-attested'] = '1'
-    this.capabilities = Object.freeze(capabilities)
+    this.capabilities = Object.freeze({ 'brc207-color': '4' })
     if (this.profiles.size > 0) {
       this.colorStore = new ColorStore(options.store!)
       this.read = readProfiledTokenOutput
-      this.settler = new ColorSettler({
-        store: this.colorStore,
-        resolve: async assetId => await this.resolveAsset(assetId),
-        qualifies: async assetId => await this.qualifiesFor(assetId),
-        wallet: this.wallet,
-        holds: async (outpoint, assetId) => await this.holds(outpoint, assetId),
-        tokenOutputs: (tx, assetId) => this.tokenVouts(tx, assetId)
-      })
     } else {
       this.read = readTokenOutput
     }
   }
 
-  /**
-   * Sync and idempotent: clears in-memory selections, asset checks, pending hand-overs and the
-   * settler's latches. An in-flight `settle()` resolves, but no new submit starts afterwards.
-   */
+  /** Sync and idempotent: clears in-memory selections, asset checks and pending submissions. */
   dispose(): void {
     this.selected.clear()
     this.supportedAssets.clear()
-    this.pendingHandoffs.clear()
+    this.pendingSubmissions.clear()
     this.identityKey = undefined
-    this.settler?.dispose()
   }
 
   /**
-   * Settles offline state against the overlay (contract §2.3): every offline-credited receipt,
-   * every own plain-noSend hand-over its overlay already admitted, and the hand-overs named in
-   * `txids` (whose intent is kept until they settle). Single-flight; overlay refusals are
-   * reported, never thrown. Without profiles there is nothing to settle.
+   * Host-only, in process: records that the overlay has accepted `txid`, so its outputs no longer
+   * show `color_offline` in the `p color` views. The host calls it once it has submitted a
+   * plain-noSend hand-over or a receipt that a required profile credited as `pending`, and the
+   * overlay admitted it. It is not a BRC-100 method, so no app can reach it. The record is written
+   * to the host's ColorModuleStore under `color.v1.settled.<txid>` and is written at most once;
+   * a lost store shows the outputs as offline again. Without profiles no output is ever pending,
+   * and the call does nothing.
    */
-  async settle(request?: ColorSettleRequest, originator?: string): Promise<ColorSettleReport> {
-    if (this.settler === undefined) return { results: [] }
-    return await this.settler.settle(request, originator)
-  }
-
-  /** True iff a verified attestation settled `txid` (its `color.v1.settled.` record exists). */
-  async isSettled(txid: string): Promise<boolean> {
-    if (this.colorStore === undefined || typeof txid !== 'string' || !TXID_PATTERN.test(txid)) {
-      return false
+  async markSettled(txid: string): Promise<void> {
+    if (typeof txid !== 'string' || !TXID_PATTERN.test(txid)) {
+      throw new TypeError('BRC-207: markSettled takes a lowercase hex txid')
     }
-    return (await this.colorStore.settled(txid)) !== undefined
+    if (this.colorStore === undefined) return
+    await this.colorStore.markSettled(txid)
   }
 
   /** Protocol- and basket-routed calls: key and signature operations and the read views. */
@@ -1563,148 +1208,20 @@ export class ColorPermissionModule implements PermissionsModule {
     context: { method: string; originator: string; action?: PermissionsModuleAction }
   ): Promise<unknown> {
     if (context.method === 'signAction' && context.action !== undefined) {
-      const pending = this.pendingHandoffs.get(context.action.reference)
-      this.pendingHandoffs.delete(context.action.reference)
+      const pending = this.pendingSubmissions.get(context.action.reference)
+      this.pendingSubmissions.delete(context.action.reference)
       await this.fileDeploy(res as SignActionResult, context.action, context.originator)
       // A plain-noSend hand-over is never sent here, whatever noSend the host derived for the
-      // action (signAction fixed its send mode): its recipient submits it, parents first.
-      if (pending?.plain === true) {
-        const colorHandoff = await this.recordHandoff(res as SignActionResult, pending)
-        return { ...(res as SignActionResult), colorHandoff }
-      }
-      // Any other noSend action is a BRC-177 handoff (createAction refuses the rest): its receiver
-      // submits it.
-      if (!context.action.noSend)
-        await this.submitSigned(res as SignActionResult, context.action.transaction, pending)
+      // action (signAction fixed its send mode): the host submits it. Any other noSend action is a
+      // BRC-177 handoff (createAction refuses the rest): its receiver submits it.
+      if (pending?.plain !== true && !context.action.noSend)
+        await this.submitSigned(
+          res as SignActionResult,
+          context.action.transaction,
+          pending?.offChainValues
+        )
     }
     return res
-  }
-
-  /**
-   * The receipt-ready evidence of an own plain-noSend hand-over, rebuilt from the store: the same
-   * object its signAction result carried as `colorHandoff`, for a resend after a lost ACK (C51).
-   * Undefined without profiles, for a txid that is not a stored hand-over, and for an aborted one.
-   */
-  async handoffEvidence(txid: string): Promise<ColorHandoffResult | undefined> {
-    if (this.profiles.size === 0) return undefined
-    const record = await this.colorStore!.getTx(txid)
-    if (record?.role !== 'handover' || record.state === 'aborted') return undefined
-    return await this.handoffResult(txid, record)
-  }
-
-  /**
-   * Records a signed plain-noSend hand-over durably, then returns its evidence (contract
-   * §2.2-8/9). The signed transaction must be the one the result names and spend the inputs it
-   * was planned with; nothing is written otherwise. The record keeps the exact AtomicBEEF the
-   * wallet returned, which settle later submits verbatim.
-   */
-  protected async recordHandoff(
-    result: SignActionResult,
-    pending: PendingHandoff
-  ): Promise<ColorHandoffResult> {
-    if (result?.tx === undefined) {
-      throw new Error('BRC-207: the signed hand-over returned no transaction')
-    }
-    const tx = parsed('the signed hand-over', () => Transaction.fromAtomicBEEF(result.tx!))
-    const txid = tx.id('hex')
-    if (result.txid !== txid) {
-      throw new Error('BRC-207: the signed hand-over does not match its txid')
-    }
-    const spent = new Set(tx.inputs.map(input => inputOutpoint(input)))
-    if (pending.assets.some(asset => asset.inputs.some(outpoint => !spent.has(outpoint)))) {
-      throw new Error('BRC-207: the signed hand-over does not spend its planned inputs')
-    }
-    const [asset] = pending.assets
-    const record: TxRecord = {
-      v: 1,
-      assetId: asset.assetId,
-      rawTx: tx.toHex(),
-      atomicBEEF: toHex(Array.from(result.tx)),
-      role: 'handover',
-      labels: pending.labels,
-      inputs: asset.inputs,
-      outputs: asset.outputs,
-      offChainValues: toHex(asset.offChainValues),
-      attestations: []
-    }
-    await this.putTxRecord(txid, record)
-    return await this.handoffResult(txid, (await this.colorStore!.getTx(txid)) ?? record)
-  }
-
-  /** A hand-over's `ColorHandoffResult`: the full attested leaf for an attested asset, else none. */
-  protected async handoffResult(txid: string, record: TxRecord): Promise<ColorHandoffResult> {
-    const resolved = await this.resolveAsset(record.assetId)
-    const profileData: ProfileData = {}
-    if (resolved.attested !== undefined) {
-      profileData[ATTESTED_PROFILE_ID] = {
-        [record.assetId]: await this.buildAttestedLeaf(record.assetId, txid)
-      }
-    }
-    return { version: 1, txid, profileData }
-  }
-
-  /**
-   * The attested leaf (contract §7.1) for a stored transaction of `assetId`: its declarationTx,
-   * the unattested ancestors behind its inputs (parents first, without the tip), the attestations
-   * of the anchors they reach, and a submission per unattested transaction including the tip.
-   */
-  protected async buildAttestedLeaf(assetId: string, tipTxid: string): Promise<JsonValue> {
-    const tip = await this.colorStore!.getTx(tipTxid)
-    if (tip?.assetId !== assetId) {
-      throw new AttestationEvidenceError(`evidence for ${tipTxid} is unavailable`)
-    }
-    const resolved = await this.resolveAsset(assetId)
-    const { records, attestations } = await this.attestedEvidence(assetId, tip.inputs)
-    return {
-      declarationTx: resolved.declarationTx!.toHex(),
-      transactions: records.map(([, record]) => record.rawTx),
-      attestations: attestations.map(({ txid, outputs, signer, signature }) => ({
-        txid,
-        outputs: [...outputs],
-        signer,
-        signature
-      })),
-      submissions: [
-        ...records.map(([txid, record]) => ({ txid, offChainValues: record.offChainValues })),
-        { txid: tipTxid, offChainValues: tip.offChainValues }
-      ]
-    }
-  }
-
-  /**
-   * Walks stored records back from `outpoints`, deduplicated and parents first. An outpoint that
-   * its record's attestations cover is an anchor; any other record is an unattested ancestor
-   * whose inputs are walked in turn. A missing record, one of another asset, or an aborted one
-   * (its outputs no longer exist) fails: there is no evidence for that input.
-   */
-  protected async attestedEvidence(
-    assetId: string,
-    outpoints: readonly string[]
-  ): Promise<{ records: Array<[string, TxRecord]>; attestations: ColorAttestation[] }> {
-    const store = this.colorStore!
-    const records: Array<[string, TxRecord]> = []
-    const anchors: ColorAttestation[] = []
-    const visited = new Set<string>()
-    const visit = async (outpoint: string): Promise<void> => {
-      const { txid, vout } = parseOutpoint(outpoint)
-      const record = await store.getTx(txid)
-      if (record?.assetId !== assetId || record.state === 'aborted') {
-        throw new AttestationEvidenceError(`evidence for input ${outpoint} is unavailable`)
-      }
-      const covering = record.attestations.filter(
-        att => att.txid === txid && att.outputs.includes(vout)
-      )
-      if (covering.length > 0) {
-        anchors.push(...covering)
-        return
-      }
-      if (visited.has(txid)) return
-      visited.add(txid)
-      await eachInOrder(record.inputs, visit)
-      records.push([txid, record])
-    }
-    await eachInOrder(outpoints, visit)
-    return { records, attestations: distinctAttestations(anchors) }
   }
 
   /**
@@ -1797,16 +1314,13 @@ export class ColorPermissionModule implements PermissionsModule {
     })
   }
 
-  /**
-   * One receipt without profiles (0.1.0): its custody, its output's asset, owner and basket, and
-   * overlay admission. The decision forwards the insertion unchanged and stores nothing.
-   */
+  /** One receipt without profiles (0.1.0): its custody, its output's asset, owner and basket, and overlay admission. */
   protected async verifyReceipt(
     tx: Transaction,
     outputIndex: number,
     remittance: BasketInsertion,
     originator: string
-  ): Promise<ReceiptDecision> {
+  ): Promise<void> {
     const target = parseAssetBasket(remittance.basket)
     if (target === undefined)
       throw new Error('BRC-207: a receipt must name a per-asset value or authority basket')
@@ -1839,26 +1353,21 @@ export class ColorPermissionModule implements PermissionsModule {
         'BRC-207: the received output is not admitted and unspent in its asset overlay'
       )
     }
-    return { outputIndex, insertion: remittance, records: [] }
   }
 
   /**
-   * The receipt path with profiles registered (contract §2.2-5, 6 and 8). In order:
-   * 1. every receipt's customInstructions is bounded at 16 MiB, each and in aggregate;
-   * 2. before any asset is resolved, every receipt's custody is parsed and each attested leaf
-   *    structurally, collecting the declarationTx evidence;
-   * 3. every asset of the transaction is resolved with that evidence (so a never-seen asset
-   *    resolves with no connectivity), every input must unlock, every token must conform to its
-   *    deploy, and each receipt must fit its asset's `maxReceiptBytes`;
-   * 4. `profileData` must name only declared profiles and the receipt's own asset; a non-attested
-   *    leaf goes to its handler's `checkReceiptData`, or fails;
-   * 5. basket, role and ownership are checked;
-   * 6. an asset without the attested profile needs current spendability, as in 0.1.0; an attested
-   *    asset's receipts are decided by `attestedOutcome` (frontier, coverage, consent);
-   * 7. the trust snapshot is rechecked, then the records are written (anchors, ancestors, the
-   *    deploy, the tip), then any settled record;
-   * 8. the wallet gets the 5-member custody JSON, the caller's tags without `color_*`, and
-   *    `color_offline` for a receipt credited without a covering attestation.
+   * The receipt path with profiles registered. In order:
+   * 1. every receipt's customInstructions is plain custody JSON of at most 1000 bytes; any
+   *    `profileData` fails, as in 0.1.0;
+   * 2. every input must unlock, every asset of the transaction resolves against the registered
+   *    profiles, and every token must conform to its deploy;
+   * 3. basket, role and ownership are checked;
+   * 4. per asset, in first-receipt order: when a required profile defines `admitReceipt`, it
+   *    decides each receipt (a throw credits nothing); otherwise the receipt must be currently
+   *    admitted and unspent in its overlay, as in 0.1.0;
+   * 5. the wallet gets the 5-member custody JSON, the caller's tags without `color_*`, and
+   *    `color_offline` for a receipt admitted as `pending`.
+   * Nothing is stored and nothing is submitted.
    */
   protected async internalizeProfiled(
     args: InternalizeActionArgs,
@@ -1866,10 +1375,14 @@ export class ColorPermissionModule implements PermissionsModule {
     receipts: ReadonlyArray<{ outputIndex: number; remittance: BasketInsertion }>,
     originator: string
   ): Promise<InternalizeActionArgs> {
-    const label = 'receipt customInstructions'
-    const evidence = new Map<string, string>()
-    const profiled = profiledReceipts(receipts, label, evidence)
-
+    const parsedReceipts = receipts.map(receipt => ({
+      ...receipt,
+      custody: parseCustody(
+        receipt.remittance.customInstructions ?? '',
+        MAX_RECEIPT_INSTRUCTION_BYTES,
+        'receipt customInstructions'
+      )
+    }))
     for (let index = 0; index < tx.inputs.length; index++) assertUnlocks(tx, index)
     const txid = tx.id('hex')
     const { consumed } = transactionTokens(tx, false, this.read)
@@ -1878,7 +1391,7 @@ export class ColorPermissionModule implements PermissionsModule {
       const token = this.read(output.lockingScript, { txid, vout })
       return token === undefined || token.deploy ? [] : [token]
     })
-    const located = this.locateReceipts(tx, txid, profiled)
+    const located = this.locateReceipts(tx, txid, parsedReceipts)
     const assets = new Map<string, ResolvedAsset>()
     const involved = [
       ...located.map(receipt => receipt.token.assetId),
@@ -1886,14 +1399,7 @@ export class ColorPermissionModule implements PermissionsModule {
       ...outputTokens.map(token => token.assetId)
     ]
     await eachInOrder(new Set(involved), async assetId => {
-      const declarationTx = evidence.get(assetId)
-      assets.set(
-        assetId,
-        await this.resolveAsset(
-          assetId,
-          declarationTx === undefined ? undefined : { declarationTx }
-        )
-      )
+      assets.set(assetId, await this.resolveAsset(assetId))
     })
     // BRC-161 JSON legs of the transaction's assets conform too: they supply no ext state.
     const jsonLegs = [
@@ -1905,30 +1411,24 @@ export class ColorPermissionModule implements PermissionsModule {
       ...outputTokens,
       ...jsonLegs
     ])
-
-    const checked = await this.checkReceipts(located, assets, label, originator)
-    const outcomes = await this.receiptOutcomes(args, tx, checked, originator)
-
-    // Nothing is written until every decision (and consent) is made and the trust snapshots
-    // still hold; the tip is written last, and a settled record only after it.
-    await eachInOrder(outcomes, async outcome => {
-      if (outcome.snapshot === undefined) return
-      const resolved = assets.get(outcome.assetId)!
-      const now = await trustSnapshot(outcome.snapshot.handler, resolved.attested!)
-      if (now?.snapshot !== outcome.snapshot.value)
-        throw new AttestationEvidenceError('trust snapshot changed')
+    const checked = located.map(receipt => ({
+      ...receipt,
+      resolved: assets.get(receipt.token.assetId)!
+    }))
+    await eachInOrder(checked, async receipt => {
+      await this.checkReceipt(receipt, originator)
     })
-    await this.writeReceiptRecords(txid, outcomes)
-    return forwardedReceipts(args, checked, outcomes)
+    const pending = await this.admitReceipts(args, tx, checked, originator)
+    return forwardedReceipts(args, checked, pending)
   }
 
-  /** Each profiled receipt's output, BRC-162 token and source; a missing or non-token output fails. */
+  /** Each receipt's output, BRC-162 token and source; a missing or non-token output fails. */
   protected locateReceipts(
     tx: Transaction,
     txid: string,
-    profiled: readonly ProfiledReceipt[]
-  ): Array<ProfiledReceipt & { token: TokenOutput; source: SourceOutput }> {
-    return profiled.map(receipt => {
+    receipts: ReadonlyArray<ParsedReceipt>
+  ): LocatedReceipt[] {
+    return receipts.map(receipt => {
       const output = tx.outputs[receipt.outputIndex]
       if (output?.satoshis === undefined)
         throw new Error('BRC-207: the receipt names a missing output')
@@ -1948,125 +1448,92 @@ export class ColorPermissionModule implements PermissionsModule {
     })
   }
 
-  /**
-   * The located receipts with their resolved assets, checked in passes, each in receipt order:
-   * every receipt's size against its asset's limit, then every receipt's profile data, then
-   * every receipt's basket, asset and ownership.
-   */
-  protected async checkReceipts(
-    located: ReadonlyArray<ProfiledReceipt & { token: TokenOutput; source: SourceOutput }>,
-    assets: ReadonlyMap<string, ResolvedAsset>,
-    label: string,
-    originator: string
-  ): Promise<CheckedReceipt[]> {
-    const checked: CheckedReceipt[] = located.map(receipt => {
-      const resolved = assets.get(receipt.token.assetId)!
-      if (receipt.bytes > resolved.maxReceiptBytes) {
-        throw new Error(`BRC-207: ${label} exceeds ${resolved.maxReceiptBytes} bytes`)
-      }
-      return { ...receipt, resolved }
-    })
-    await eachInOrder(checked, async receipt => {
-      await this.checkReceiptProfileData(receipt, originator)
-    })
-    await eachInOrder(checked, async receipt => {
-      const target = parseAssetBasket(receipt.remittance.basket)
-      if (target === undefined)
-        throw new Error('BRC-207: a receipt must name a per-asset value or authority basket')
-      if (!selectsAsset(receipt.custody.assetId, receipt.token)) {
-        throw new Error('BRC-207: the receipt instructions name a different asset than the output')
-      }
-      if (target.assetId !== receipt.token.assetId || target.role !== receipt.token.role) {
-        throw new Error('BRC-207: the receipt basket does not match the received output')
-      }
-      await this.assertOwned(
-        receipt.token,
-        receipt.custody,
-        receipt.custody.senderIdentityKey,
-        originator
-      )
-    })
-    return checked
+  /** One located receipt's basket, asset and ownership. */
+  protected async checkReceipt(receipt: LocatedReceipt, originator: string): Promise<void> {
+    const target = parseAssetBasket(receipt.remittance.basket)
+    if (target === undefined)
+      throw new Error('BRC-207: a receipt must name a per-asset value or authority basket')
+    if (!selectsAsset(receipt.custody.assetId, receipt.token)) {
+      throw new Error('BRC-207: the receipt instructions name a different asset than the output')
+    }
+    if (target.assetId !== receipt.token.assetId || target.role !== receipt.token.role) {
+      throw new Error('BRC-207: the receipt basket does not match the received output')
+    }
+    await this.assertOwned(
+      receipt.token,
+      receipt.custody,
+      receipt.custody.senderIdentityKey,
+      originator
+    )
   }
 
   /**
-   * The checked receipts decided per asset, in first-receipt order: an asset without the
-   * attested profile must be currently admitted (no outcome); an attested asset's receipts are
-   * decided by `attestedOutcome`. At most one attested asset per receipt transaction.
+   * The checked receipts admitted per asset, in first-receipt order, returning the output
+   * indexes credited as `pending`. An asset whose required profiles define `admitReceipt` has each
+   * of its receipts, in order, decided by that hook; any other asset's receipts must be currently
+   * admitted and unspent in its overlay.
    */
-  protected async receiptOutcomes(
+  protected async admitReceipts(
     args: InternalizeActionArgs,
     tx: Transaction,
-    checked: readonly CheckedReceipt[],
+    checked: ReadonlyArray<LocatedReceipt & { resolved: ResolvedAsset }>,
     originator: string
-  ): Promise<AttestedOutcome[]> {
-    const groups = new Map<string, CheckedReceipt[]>()
+  ): Promise<Set<number>> {
+    const groups = new Map<string, Array<LocatedReceipt & { resolved: ResolvedAsset }>>()
     for (const receipt of checked) {
       const group = groups.get(receipt.token.assetId) ?? []
       group.push(receipt)
       groups.set(receipt.token.assetId, group)
     }
-    // Evidence records are per transaction (contract §2.2-8), so one receipt transaction carries
-    // the receipts of at most one attested asset; a second would merge into the first's record.
-    if ([...groups.values()].filter(group => group[0].resolved.attested !== undefined).length > 1) {
-      throw new ProfileParamsError(
-        'BRC-207: a receipt transaction may carry one attested asset: its records are per transaction'
-      )
-    }
-    const outcomes: AttestedOutcome[] = []
+    const pending = new Set<number>()
     await eachInOrder(groups, async ([assetId, group]) => {
-      const resolved = group[0].resolved
-      if (resolved.attested !== undefined) {
-        outcomes.push(await this.attestedOutcome(args, tx, group, resolved, originator))
+      const { resolved } = group[0]
+      const entry = resolved.handlers.find(({ handler }) => handler.admitReceipt !== undefined)
+      if (entry === undefined) {
+        const admitted = await this.spendable(
+          assetId,
+          group.map(receipt => receipt.source)
+        )
+        if (group.some(receipt => !admitted.has(receipt.source.outpoint))) {
+          throw new Error(
+            'BRC-207: the received output is not admitted and unspent in its asset overlay'
+          )
+        }
         return
       }
-      // An asset without the attested profile is credited only when currently admitted.
-      const admitted = await this.spendable(
-        assetId,
-        group.map(receipt => receipt.source)
-      )
-      if (group.some(receipt => !admitted.has(receipt.source.outpoint))) {
-        throw new Error(
-          'BRC-207: the received output is not admitted and unspent in its asset overlay'
-        )
-      }
+      const ctx = await this.profileContext(resolved, entry, originator)
+      await eachInOrder(group, async receipt => {
+        const credit = await this.admitReceipt(entry.handler, ctx, {
+          assetId,
+          txid: tx.id('hex'),
+          outputIndex: receipt.outputIndex,
+          tx,
+          beef: [...args.tx]
+        })
+        if (credit === 'pending') pending.add(receipt.outputIndex)
+      })
     })
-    return outcomes
+    return pending
   }
 
   /**
-   * A receipt's `profileData` (contract §2.2-4): every profile must be one the asset requires
-   * (A.154) and every asset key the receipt's own asset. The attested leaf of an attested asset is
-   * the module's; any other leaf goes to its handler's `checkReceiptData`, or fails.
+   * Runs a required profile's `admitReceipt` for one receipt. A throw propagates, so nothing is
+   * credited; an answer other than `{ credit: 'settled' }` or `{ credit: 'pending' }` fails with
+   * ProfileDataError.
    */
-  protected async checkReceiptProfileData(
-    receipt: CheckedReceipt,
-    originator: string
-  ): Promise<void> {
-    const { resolved } = receipt
-    const data = receipt.custody.profileData ?? {}
-    for (const [profileId, byAsset] of Object.entries(data)) {
-      if (!resolved.req.has(profileId)) {
-        throw new ProfileDataError('BRC-207: profile data names an undeclared profile')
-      }
-      if (Object.keys(byAsset).some(assetKey => assetKey !== resolved.assetId)) {
-        throw new ProfileDataError(
-          'BRC-207: profile data names an asset the receipt does not carry'
-        )
-      }
+  protected async admitReceipt(
+    handler: RequiredProfileHandler,
+    ctx: ProfileAssetContext,
+    receipt: ProfileReceipt
+  ): Promise<ReceiptAdmission['credit']> {
+    // The answer comes from host code: read it defensively.
+    const answer = (await handler.admitReceipt!(ctx, receipt)) as
+      { credit?: unknown } | null | undefined
+    const credit = answer?.credit
+    if (credit !== 'settled' && credit !== 'pending') {
+      throw new ProfileDataError(`BRC-207: ${handler.id} admitReceipt gave no credit decision`)
     }
-    await eachInOrder(Object.entries(data), async ([profileId, byAsset]) => {
-      if (!Object.hasOwn(byAsset, resolved.assetId)) return
-      if (profileId === ATTESTED_PROFILE_ID && resolved.attested !== undefined) return
-      const entry = resolved.handlers.find(({ handler }) => handler.id === profileId)!
-      if (entry.handler.checkReceiptData === undefined) {
-        throw new ProfileDataError(`BRC-207: ${profileId} accepts no receipt profile data`)
-      }
-      await entry.handler.checkReceiptData(
-        await this.profileContext(resolved, entry, originator),
-        byAsset[resolved.assetId]
-      )
-    })
+    return credit
   }
 
   /** The context handed to a required profile's hooks for one resolved asset. */
@@ -2087,352 +1554,13 @@ export class ColorPermissionModule implements PermissionsModule {
     }
   }
 
-  /**
-   * One attested asset's receipts in a transaction (0207:328-357, 0207:387-406): every receipt
-   * carries the same attested leaf; the complete frontier behind the receipt outputs validates;
-   * the anchors cover it in the asset's trust mode. Settled when a qualifying attestation covers
-   * every receipt output of the tip; otherwise the user approves `color_receive_offline`. Nothing
-   * is written here, and nothing is submitted.
-   */
-  protected async attestedOutcome(
-    args: InternalizeActionArgs,
-    tip: Transaction,
-    group: readonly CheckedReceipt[],
-    resolved: ResolvedAsset,
-    originator: string
-  ): Promise<AttestedOutcome> {
-    const { assetId } = resolved
-    const params = resolved.attested!
-    const leaf = sharedAttestedLeaf(group)
-    const handler = resolved.handlers.find(
-      ({ handler }) => handler.id === ATTESTED_PROFILE_ID
-    )!.handler
-    const snapshot = await trustSnapshot(handler, params)
-    const qualifies = qualifyingSigner(params, snapshot?.identityKeys)
-    const receiptBeef = parsed('the received transaction', () => Beef.fromBinary(args.tx))
-    const bodies = receiptBodies(leaf, receiptBeef, resolved.declarationTx!)
-    const tipTxid = tip.id('hex')
-    const outputIndexes = [...new Set(group.map(receipt => receipt.outputIndex))].sort(
-      (a, b) => a - b
-    )
-    const frontier = validateFrontier({
-      assetId,
-      declarationTx: resolved.declarationTx!,
-      tip,
-      start: { outputs: outputIndexes },
-      bodies,
-      attestations: leaf.attestations,
-      qualifies
-    })
-    assertCoverage(params, frontier.anchors, snapshot?.identityKeys)
-
-    /** The exact AtomicBEEF settle submits for `txid`: the receipt's own bytes for the tip. */
-    const submitBytes = (txid: string): number[] => {
-      if (txid === tipTxid) return [...args.tx]
-      const entry = receiptBeef.findTxid(txid)
-      if (entry === undefined || entry.isTxidOnly) {
-        throw new AttestationEvidenceError(`no submit bytes for ${txid}`)
-      }
-      return receiptBeef.toBinaryAtomic(txid)
-    }
-    const offChainValues = (txid: string): number[] => leaf.submissions.get(txid) ?? []
-    const graph: ReceiptGraph = {
-      assetId,
-      tip: { txid: tipTxid, atomicBEEF: [...args.tx], offChainValues: offChainValues(tipTxid) },
-      outputIndexes,
-      pending: frontier.pending.map(txid => ({
-        txid,
-        atomicBEEF: submitBytes(txid),
-        offChainValues: offChainValues(txid)
-      })),
-      attestations: distinctAttestations(leaf.attestations)
-    }
-    const anchorTxids = [
-      ...new Set(frontier.anchors.map(anchor => parseOutpoint(anchor.outpoint).txid))
-    ].filter(txid => txid !== tipTxid)
-    // A stored record is merged, never replaced: one recorded for another asset would be corrupted.
-    await eachInOrder(new Set([...anchorTxids, ...frontier.pending, tipTxid]), async txid => {
-      const stored = await this.colorStore!.getTx(txid)
-      if (stored !== undefined && stored.assetId !== assetId) {
-        throw new ProfileParamsError(
-          `BRC-207: transaction ${txid} of this receipt is recorded for another asset`
-        )
-      }
-    })
-    // A known incompatible spend outside this graph defeats acceptance (0207:347-354, C28): an
-    // outpoint an unanchored graph transaction consumes must not be consumed by another stored
-    // transaction. Anchors are admitted by their overlay and are never such a conflict.
-    assertNoKnownConflict(
-      await this.storedSpends(),
-      frontier.pending.map(txid => [txid, bodies.get(txid)!.inputs.map(inputOutpoint)] as const)
-    )
-    // A profile that defines admitReceipt decides every receipt (contract §2.2, D7), also one
-    // whose tip the leaf already attests: it runs before the coverage decision and a throw
-    // propagates with nothing written.
-    const admitted = await this.admitReceipt(resolved, graph, qualifies, snapshot, originator)
-
-    const anchorsByOutpoint = new Map(frontier.anchors.map(anchor => [anchor.outpoint, anchor]))
-    const tipAnchors = outputIndexes.map(vout => anchorsByOutpoint.get(`${tipTxid}.${vout}`))
-    let settled: SettledRecord | undefined
-    if (admitted !== undefined) {
-      settled = admitted.settled
-    } else if (tipAnchors.every(anchor => anchor !== undefined)) {
-      const common = [...tipAnchors[0]!.signers]
-        .filter(signer => tipAnchors.every(anchor => anchor!.signers.includes(signer)))
-        .sort(ordinal)
-      const signer =
-        params.trustMode === 'identity'
-          ? params.identityKey!
-          : (common[0] ?? [...tipAnchors[0]!.signers].sort(ordinal)[0])
-      settled = { outputs: outputIndexes, signer }
-    } else {
-      const signers = [...new Set(frontier.anchors.flatMap(anchor => anchor.signers))].sort(ordinal)
-      const amounts = new Map(
-        group.map(receipt => [receipt.outputIndex, receipt.token.amount.toString()])
-      )
-      await this.approve(originator, {
-        type: 'color_receive_offline',
-        assetId,
-        outputs: outputIndexes.map(outputIndex => ({
-          outputIndex,
-          amount: amounts.get(outputIndex)!
-        })),
-        unsettledTransactions: graph.pending.length,
-        ...(params.trustMode === 'identity' ? { signer: params.identityKey } : { signers }),
-        profiles: [...resolved.req.keys()],
-        seekPermission: args.seekPermission !== false
-      })
-    }
-
-    // Records: every anchor transaction with its attestations, the pending ancestors (parents
-    // first), then the tip. Each carries the exact AtomicBEEF settle and resubmit send.
-    const qualifying = distinctAttestations([
-      ...graph.attestations.filter(att => qualifies(att.signer)),
-      ...(admitted?.attestations ?? [])
-    ])
-    const record = (
-      txid: string,
-      role: TxRecord['role'],
-      atomicBEEF: number[],
-      outputs: number[]
-    ): TxRecord => {
-      const body = bodies.get(txid)!
-      return {
-        v: 1,
-        assetId,
-        rawTx: body.toHex(),
-        atomicBEEF: toHex(atomicBEEF),
-        role,
-        ...(role === 'receipt' ? { state: 'staged' as const } : {}),
-        inputs: this.assetInputs(body, bodies, assetId),
-        outputs,
-        offChainValues: toHex(offChainValues(txid)),
-        attestations: qualifying.filter(att => att.txid === txid)
-      }
-    }
-    const records: Array<[string, TxRecord]> = []
-    for (const txid of anchorTxids) {
-      records.push([
-        txid,
-        record(txid, 'ancestor', this.anchorBytes(receiptBeef, bodies, txid), [])
-      ])
-    }
-    for (const entry of graph.pending) {
-      if (entry.txid !== tipTxid) {
-        records.push([entry.txid, record(entry.txid, 'ancestor', entry.atomicBEEF, [])])
-      }
-    }
-    records.push([tipTxid, record(tipTxid, 'receipt', graph.tip.atomicBEEF, outputIndexes)])
-    return {
-      assetId,
-      outputIndexes,
-      records,
-      ...(settled === undefined ? {} : { settled }),
-      declarationTx: resolved.declarationTx!,
-      ...(snapshot === undefined ? {} : { snapshot: { handler, value: snapshot.snapshot } })
-    }
-  }
-
-  /**
-   * Runs the asset's `admitReceipt` hook, when a required profile defines one (contract §2.2).
-   * `unavailable` (transport only) returns undefined, so the caller takes the attested offline
-   * decision. `admitted` must carry verifying statements (low-S or high-S, never normalized) by
-   * signers the asset trusts that cover every receipt output of the tip in the asset's trust
-   * mode; it returns them (those of graph txs only) and the tip's settled record. Any other
-   * answer fails, and a throw from the hook propagates: nothing has been written yet.
-   */
-  protected async admitReceipt(
-    resolved: ResolvedAsset,
-    graph: ReceiptGraph,
-    qualifies: (signer: string) => boolean,
-    snapshot: { identityKeys: string[] } | undefined,
-    originator: string
-  ): Promise<{ attestations: ColorAttestation[]; settled: SettledRecord } | undefined> {
-    const entry = resolved.handlers.find(({ handler }) => handler.admitReceipt !== undefined)
-    if (entry === undefined) return undefined
-    const admission = await entry.handler.admitReceipt!(
-      await this.profileContext(resolved, entry, originator),
-      graph
-    )
-    // The answer comes from host code: read it defensively.
-    const answer = admission as { status?: unknown; attestations?: unknown } | null | undefined
-    if (answer?.status === 'unavailable') return undefined
-    if (answer?.status !== 'admitted' || !Array.isArray(answer.attestations)) {
-      throw new ProfileDataError(`BRC-207: ${entry.handler.id} admitReceipt gave no admission`)
-    }
-    const { assetId, outputIndexes } = graph
-    const tip = graph.tip.txid
-    const known = new Set([tip, ...graph.pending.map(pending => pending.txid)])
-    const attestations: ColorAttestation[] = []
-    for (const value of answer.attestations as unknown[]) {
-      const att = parseAttestation(value as JsonValue)
-      if (!verifyAttestation(att, assetId)) {
-        throw new AttestationEvidenceError('admission attestation does not verify')
-      }
-      if (qualifies(att.signer) && known.has(att.txid)) attestations.push(att)
-    }
-    const covering = attestations.filter(att => att.txid === tip)
-    const anchors = outputIndexes.map(vout => ({
-      outpoint: outpointString(tip, vout),
-      signers: [
-        ...new Set(covering.filter(att => att.outputs.includes(vout)).map(att => att.signer))
-      ].sort(ordinal)
-    }))
-    if (anchors.some(anchor => anchor.signers.length === 0)) {
-      throw new AttestationEvidenceError('admission does not cover the receipt outputs')
-    }
-    assertCoverage(resolved.attested!, anchors, snapshot?.identityKeys)
-    const params = resolved.attested!
-    const common = anchors[0].signers.find(signer =>
-      anchors.every(anchor => anchor.signers.includes(signer))
-    )
-    const signer =
-      params.trustMode === 'identity' ? params.identityKey! : (common ?? anchors[0].signers[0])
-    return {
-      attestations: distinctAttestations(attestations),
-      settled: { outputs: [...outputIndexes], signer }
-    }
-  }
-
-  /**
-   * The AtomicBEEF stored for an anchor: the receipt's bytes for it when the receipt carries it
-   * (with its unmined ancestors and proofs), else the anchor's supplied body alone. An anchor is
-   * already attested and is never submitted from these bytes.
-   */
-  protected anchorBytes(
-    receiptBeef: Beef,
-    bodies: ReadonlyMap<string, Transaction>,
-    txid: string
-  ): number[] {
-    const entry = receiptBeef.findTxid(txid)
-    if (entry !== undefined && !entry.isTxidOnly) return receiptBeef.toBinaryAtomic(txid)
-    const beef = new Beef()
-    beef.mergeRawTx(bodies.get(txid)!.toBinary())
-    return beef.toBinaryAtomic(txid)
-  }
-
-  /** The outpoints of `tx`'s inputs that are tokens of `assetId`, as far as their bodies are known. */
-  protected assetInputs(
-    tx: Transaction,
-    bodies: ReadonlyMap<string, Transaction>,
-    assetId: string
-  ): string[] {
-    return tx.inputs.flatMap(input => {
-      const txid = input.sourceTXID ?? input.sourceTransaction?.id('hex')
-      const source = txid === undefined ? undefined : bodies.get(txid)
-      const output = source?.outputs[input.sourceOutputIndex]
-      if (txid === undefined || output === undefined) return []
-      let token: TokenOutput | undefined
-      try {
-        token = readSentToken(
-          output.lockingScript,
-          { txid, vout: input.sourceOutputIndex },
-          this.read
-        )
-      } catch {
-        return []
-      }
-      return token?.assetId === assetId ? [outpointString(txid, input.sourceOutputIndex)] : []
-    })
-  }
-
-  /**
-   * Writes attested receipt evidence in crash-safe order: per asset its anchors and pending
-   * ancestors, the deploy, then the tip; after all of them, the tip's settled record when every
-   * attested asset of the receipt settled. A stored record is merged, never downgraded, and an
-   * existing settled record is never removed, so a retried receipt writes the same bytes.
-   */
-  protected async writeReceiptRecords(
-    tipTxid: string,
-    outcomes: readonly AttestedOutcome[]
-  ): Promise<void> {
-    if (outcomes.length === 0) return
-    const store = this.colorStore!
-    await eachInOrder(outcomes, async outcome => {
-      const tip = outcome.records.at(-1)!
-      await eachInOrder(outcome.records, async ([txid, record]) => {
-        if (txid !== tipTxid) await this.putTxRecord(txid, record)
-      })
-      const deploy = outcome.declarationTx.toHex()
-      if ((await store.getDeploy(outcome.assetId).catch(() => undefined)) !== deploy) {
-        await store.putDeploy(outcome.assetId, deploy)
-      }
-      await this.putTxRecord(tip[0], tip[1])
-    })
-    if (outcomes.every(outcome => outcome.settled !== undefined)) {
-      const outputs = [...new Set(outcomes.flatMap(outcome => outcome.settled!.outputs))].sort(
-        (a, b) => a - b
-      )
-      const stored = await store.settled(tipTxid)
-      const merged = [...new Set([...(stored?.outputs ?? []), ...outputs])].sort((a, b) => a - b)
-      if (stored?.outputs.join(',') !== merged.join(',')) {
-        await store.markSettled(tipTxid, {
-          outputs: merged,
-          signer: stored?.signer ?? outcomes[0].settled!.signer
-        })
-      }
-    }
-  }
-
-  /**
-   * Every outpoint consumed by a stored transaction record, with the txids consuming it. An
-   * aborted hand-over (its inputs were released) and a finally refused transaction (its spend was
-   * never admitted) consume nothing. Records are few and per wallet, so they are scanned.
-   */
-  protected async storedSpends(): Promise<Map<string, Set<string>>> {
-    const store = this.colorStore!
-    const refused = await store.refusedSet()
-    const spends = new Map<string, Set<string>>()
-    await eachInOrder(await store.txids(), async txid => {
-      if (refused.has(txid)) return
-      const record = await store.getTx(txid)
-      if (record === undefined || record.state === 'aborted') return
-      for (const outpoint of record.inputs) {
-        const consumers = spends.get(outpoint) ?? new Set<string>()
-        consumers.add(txid)
-        spends.set(outpoint, consumers)
-      }
-    })
-    return spends
-  }
-
-  /** Writes `record`, merged with any readable stored record; an unchanged record is not rewritten. */
-  protected async putTxRecord(txid: string, record: TxRecord): Promise<void> {
-    const store = this.colorStore!
-    const stored = await store.getTx(txid)
-    const next = stored === undefined ? record : mergeTxRecords(stored, record)
-    if (stored !== undefined && JSON.stringify(stored) === JSON.stringify(next)) return
-    await store.putTx(txid, next)
-  }
-
   /* ----------------------------------------------------------------------
    * Send
    * ---------------------------------------------------------------------- */
 
   /**
    * Checks a planned token action and adds its selected token inputs and per-asset change. With
-   * profiles registered, the plan's assets are resolved first (an attested plan leaf supplies its
-   * `declarationTx` as evidence), the plan is checked against their required profiles, the
+   * profiles registered, the plan's assets are resolved first, the plan is checked against their required profiles, the
    * requested tokens must conform to their deploys, and after funding each required profile's
    * `checkPlanData` sees its leaf and the asset's view of the layout. Any failure releases every
    * input the action held.
@@ -2460,7 +1588,8 @@ export class ColorPermissionModule implements PermissionsModule {
     this.assertPlanSupported(plan, args, resolved)
     const { planned, outputs } = await this.planOutputs(plan, args, originator)
     if (profiled) await this.assertConformingTokens(planned.tokens)
-    // A plain-noSend asset's token change stays in the hand-over, offline until it settles.
+    // A plain-noSend asset's token change stays in the hand-over, `color_offline` until the host
+    // calls markSettled.
     const offline = new Set(
       [...resolved.values()]
         .filter(asset => asset.sendPolicy === 'plain-nosend')
@@ -2470,10 +1599,8 @@ export class ColorPermissionModule implements PermissionsModule {
     // It ends when this handler returns; storage then rejects a second action that tries to spend
     // an input already marked spent.
     const reserved = new Set<string>()
-    // Only a plain-noSend hand-over may spend offline (unsettled) attested outputs.
-    const spend: SpendContext = { offline: plainNoSendArgs(args), originator }
     try {
-      const explicit = await this.explicitInputs(args, originator, spend)
+      const explicit = await this.explicitInputs(args, originator)
       this.reserve(reserved, explicit.managed)
       if (profiled) await this.assertConformingTokens(explicit.tokens)
       const { inputs, changes } = await this.fund(
@@ -2483,7 +1610,7 @@ export class ColorPermissionModule implements PermissionsModule {
         explicit,
         handoff,
         originator,
-        { offline, spend }
+        offline
       )
       sighashScopes(plan, new Set([...explicit.managed, ...inputs].map(input => input.outpoint)))
       const ordered = orderInputs(explicit.inputs, tokenInputs(inputs), plan.inputPositions)
@@ -2511,10 +1638,9 @@ export class ColorPermissionModule implements PermissionsModule {
   }
 
   /**
-   * With profiles registered, the plan's existing assets, resolved (contract §2.2-4). Before any
-   * resolution every `profileData` asset key must name an existing asset of the plan (an `ISSUE`
-   * leaf is refused in 0.2.0, contract §2.2-3a), and each attested leaf is parsed structurally so
-   * its `declarationTx` resolves a never-seen asset with no connectivity (D23 source i).
+   * With profiles registered, the plan's existing assets, resolved. Before any resolution every
+   * `profileData` asset key must name an existing asset of the plan (an `ISSUE` leaf is refused
+   * in 0.2.0).
    */
   protected async resolvePlanAssets(plan: ColorPlan): Promise<Map<string, ResolvedAsset>> {
     const data = plan.profileData ?? {}
@@ -2528,22 +1654,11 @@ export class ColorPermissionModule implements PermissionsModule {
         }
       }
     }
-    const evidence = new Map<string, string>()
-    for (const [assetKey, value] of Object.entries(data[ATTESTED_PROFILE_ID] ?? {})) {
-      evidence.set(assetKey, parseAttestedLeaf(value, assetKey).declarationTx.toHex())
-    }
     const resolved = new Map<string, ResolvedAsset>()
     await eachInOrder(
       plan.assets.filter(assetId => assetId !== ISSUE),
       async assetId => {
-        const declarationTx = evidence.get(assetId)
-        resolved.set(
-          assetId,
-          await this.resolveAsset(
-            assetId,
-            declarationTx === undefined ? undefined : { declarationTx }
-          )
-        )
+        resolved.set(assetId, await this.resolveAsset(assetId))
       }
     )
     return resolved
@@ -2553,7 +1668,7 @@ export class ColorPermissionModule implements PermissionsModule {
    * Plan and action features this module version does not implement, and the send rules of the
    * plan's resolved assets (`resolved` is empty without profiles, which keeps every 0.1.0 check
    * and message). With profiles: `profileData` must name only profiles its asset requires
-   * (A.154); a `plain-nosend` asset (B2) needs `options.noSend`, no BRC-177 label and only
+   * (A.154); a `plain-nosend` asset needs `options.noSend`, no BRC-177 label and only
    * `plain-nosend` assets beside it, and skips the BRC-177 requirement; and each asset's declared
    * operations must be ones its required profiles allow.
    */
@@ -2701,10 +1816,8 @@ export class ColorPermissionModule implements PermissionsModule {
     await eachInOrder(asset.handlers, async entry => {
       const view = this.txView(asset.assetId, plan, layout, entry.handler.id)
       if (entry.handler.checkPlanData === undefined) {
-        // The module parses the attested leaf itself (resolvePlanAssets); any other leaf for a
-        // profile without the hook would be accepted unchecked (A.157).
-        const ownLeaf = entry.handler.id === ATTESTED_PROFILE_ID && asset.attested !== undefined
-        if (view.planLeaf !== undefined && !ownLeaf) {
+        // A leaf for a profile without the hook would be accepted unchecked (A.157).
+        if (view.planLeaf !== undefined) {
           throw new ProfileDataError(`BRC-207: ${entry.handler.id} accepts no plan profile data`)
         }
         return
@@ -2738,8 +1851,7 @@ export class ColorPermissionModule implements PermissionsModule {
    */
   protected async explicitInputs(
     args: CreateActionArgs,
-    originator: string,
-    spend: SpendContext = PUBLISHED_SPEND
+    originator: string
   ): Promise<ExplicitInputs> {
     const inputs = args.inputs ?? []
     const explicit: ExplicitInputs = {
@@ -2772,7 +1884,7 @@ export class ColorPermissionModule implements PermissionsModule {
     await eachInOrder(inputs, async input => {
       const output = own.get(input.outpoint)
       if (output === undefined) await this.foreignInput(explicit, beef, input.outpoint)
-      else await this.ownInput(explicit, output, originator, spend)
+      else await this.ownInput(explicit, output, originator)
     })
     return explicit
   }
@@ -2781,8 +1893,7 @@ export class ColorPermissionModule implements PermissionsModule {
   protected async ownInput(
     explicit: ExplicitInputs,
     output: WalletOutput,
-    originator: string,
-    spend: SpendContext = PUBLISHED_SPEND
+    originator: string
   ): Promise<void> {
     if (!output.spendable)
       throw new Error('BRC-207: an explicit p color input is reserved by another action')
@@ -2792,7 +1903,7 @@ export class ColorPermissionModule implements PermissionsModule {
     await this.assertSupportedAsset(managed.assetId)
     explicit.tokens.push(this.read(managed.lockingScript, parseOutpoint(managed.outpoint))!)
     if (
-      !(await this.spendable(managed.assetId, [managed], spend)).has(managed.outpoint) &&
+      !(await this.spendable(managed.assetId, [managed])).has(managed.outpoint) &&
       !(await this.resubmitHeld(managed.assetId, managed.role, [managed], originator)).has(
         managed.outpoint
       )
@@ -3022,8 +2133,7 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * Funds each asset the plan involves, checks its operations, splits for a handoff, and returns
    * the selected inputs and token change. The user approves the funded action at signAction.
-   * `options.offline` names the assets whose change stays offline (a plain-noSend hand-over's)
-   * and `options.spend` how inputs are checked; both default as in 0.1.0.
+   * `offline` names the assets whose change stays offline (a plain-noSend hand-over's).
    */
   protected async fund(
     reserved: Set<string>,
@@ -3032,12 +2142,11 @@ export class ColorPermissionModule implements PermissionsModule {
     explicit: ExplicitInputs,
     handoff: boolean,
     originator: string,
-    options: FundOptions = {}
+    offline: ReadonlySet<string> = new Set()
   ): Promise<{
     inputs: ManagedInput[]
     changes: TokenChange[]
   }> {
-    const { offline = new Set<string>(), spend = PUBLISHED_SPEND } = options
     const assetIds = new Set([
       ...planned.holdings.keys(),
       ...explicit.holdings.keys(),
@@ -3055,8 +2164,7 @@ export class ColorPermissionModule implements PermissionsModule {
         assetId,
         planned.holdings.get(assetId) ?? emptyHolding(),
         explicit.holdings.get(assetId) ?? emptyExplicitHolding(),
-        originator,
-        spend
+        originator
       )
     })
     const settled = await mapInOrder(
@@ -3080,7 +2188,7 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * One funded asset's inputs and change: a BRC-177 handoff with change splits off an exact output
    * instead, so the recipient receives no change; otherwise any change becomes a new managed
-   * output, tagged `color_offline` when `offline` (a plain-noSend hand-over's change, B2).
+   * output, tagged `color_offline` when `offline` (a plain-noSend hand-over's change).
    */
   protected async settleFunding(
     reserved: Set<string>,
@@ -3126,8 +2234,7 @@ export class ColorPermissionModule implements PermissionsModule {
     assetId: string,
     requested: Holding,
     explicit: ExplicitHolding,
-    originator: string,
-    spend: SpendContext = PUBLISHED_SPEND
+    originator: string
   ): Promise<AssetFunding> {
     const declared = declaredOperations(plan, assetId)
     const selected: ManagedInput[] = []
@@ -3139,8 +2246,7 @@ export class ColorPermissionModule implements PermissionsModule {
           assetId,
           'value',
           requested.value - explicit.value,
-          originator,
-          spend
+          originator
         ))
       )
     }
@@ -3156,8 +2262,7 @@ export class ColorPermissionModule implements PermissionsModule {
           assetId,
           'authority',
           BigInt(authorityCount),
-          originator,
-          spend
+          originator
         ))
       )
     }
@@ -3198,8 +2303,7 @@ export class ColorPermissionModule implements PermissionsModule {
     assetId: string,
     role: TokenRole,
     target: bigint,
-    originator: string,
-    spend: SpendContext = PUBLISHED_SPEND
+    originator: string
   ): Promise<ManagedInput[]> {
     const candidates = (await this.candidates(assetId, role, originator)).sort(byAmountDescending)
     const rejected = new Set<string>()
@@ -3209,15 +2313,7 @@ export class ColorPermissionModule implements PermissionsModule {
         throw new Error(
           `BRC-207: insufficient spendable ${role === 'value' ? 'balance' : 'authority'} of ${assetId}`
         )
-      const selected = await this.checkChosen(
-        reserved,
-        assetId,
-        role,
-        chosen,
-        rejected,
-        originator,
-        spend
-      )
+      const selected = await this.checkChosen(reserved, assetId, role, chosen, rejected, originator)
       if (selected !== undefined) return selected
     }
   }
@@ -3233,8 +2329,7 @@ export class ColorPermissionModule implements PermissionsModule {
     role: TokenRole,
     chosen: Candidate[],
     rejected: Set<string>,
-    originator: string,
-    spend: SpendContext = PUBLISHED_SPEND
+    originator: string
   ): Promise<ManagedInput[] | undefined> {
     // Chosen outputs are held while they are checked, so a concurrent action cannot choose them.
     this.reserve(reserved, chosen)
@@ -3249,7 +2344,7 @@ export class ColorPermissionModule implements PermissionsModule {
       return undefined
     }
     const selected = inputs as ManagedInput[]
-    const admitted = await this.spendable(assetId, selected, spend)
+    const admitted = await this.spendable(assetId, selected)
     const unlisted = selected.filter(input => !admitted.has(input.outpoint))
     const recovered = await this.resubmitHeld(assetId, role, unlisted, originator)
     const missing = unlisted.filter(input => !recovered.has(input.outpoint))
@@ -3263,13 +2358,10 @@ export class ColorPermissionModule implements PermissionsModule {
    * Resubmits the wallet's own copies of the transactions behind held outputs that the overlay
    * does not report, as BTMS does when it selects, and returns the outputs it then admits.
    *
-   * An attested asset's outputs are never resubmitted here: `spendable` already resubmitted each
-   * settled one through the settle path (exact stored bytes and off-chain values, per-txid
-   * latch), an offline one needs no overlay, and the wallet's copy carries no off-chain values
-   * (contract §2.2-7). Returning nothing keeps a selection from submitting a txid twice.
-   * After store loss, an attested output the overlay does not list is therefore not resubmitted
-   * at selection: it is recovered by the sender's resend or by `settle()`, and until then it is
-   * excluded (fail closed).
+   * Outputs of an asset whose required profiles declare a `sendPolicy` or `submissionData` are
+   * never resubmitted here: the host submits a plain-noSend hand-over, and the wallet's copy of a
+   * transaction carries no off-chain values. Until the overlay lists them they are excluded (fail
+   * closed).
    */
   protected async resubmitHeld(
     assetId: string,
@@ -3278,8 +2370,14 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<Set<string>> {
     if (outputs.length === 0) return new Set()
-    if (this.profiles.size > 0 && (await this.resolveAsset(assetId)).attested !== undefined) {
-      return new Set()
+    if (this.profiles.size > 0) {
+      const { sendPolicy, handlers } = await this.resolveAsset(assetId)
+      if (
+        sendPolicy !== undefined ||
+        handlers.some(({ handler }) => handler.submissionData !== undefined)
+      ) {
+        return new Set()
+      }
     }
     const txids = new Set(outputs.map(output => parseOutpoint(output.outpoint).txid))
     const beef = new Beef()
@@ -3318,12 +2416,9 @@ export class ColorPermissionModule implements PermissionsModule {
     originator: string
   ): Promise<Candidate[]> {
     const outputs = await this.listBasket(assetBasket(assetId, role), originator, {})
-    // A finally refused transaction's outputs are never selected (C55).
-    const refused = this.profiles.size > 0 ? await this.colorStore!.refusedSet() : undefined
     return outputs.flatMap(output => {
       if (this.selected.has(output.outpoint) || output.customInstructions === undefined) return []
       const outpoint = parseOutpoint(output.outpoint)
-      if (refused?.has(outpoint.txid) === true) return []
       const source = this.sourceOutput(output)
       const token = tryReadTokenOutput(source.lockingScript, outpoint, this.read)
       if (token?.assetId !== assetId || token.role !== role) return []
@@ -3488,10 +2583,9 @@ export class ColorPermissionModule implements PermissionsModule {
    * Checks the funded action against its plan, rechecks every token input's spendability, asks
    * the user to approve the final layout, and signs the inputs that spend this wallet's
    * `p color` outputs. For an action moving profile assets, before anything is approved or
-   * signed: each required profile's `checkPlanData` runs again with the transaction, a
-   * plain-noSend hand-over's input evidence must be in the store, and the `submissionData` hook
-   * must give bytes. The wallet is then asked for the signed transaction, which `onResponse`
-   * records.
+   * signed: each required profile's `checkPlanData` runs again with the transaction, and the
+   * `submissionData` hook must give bytes. The wallet is then asked for the signed transaction,
+   * which `onResponse` submits (a plain-noSend hand-over never).
    */
   protected async signAction(
     args: SignActionArgs,
@@ -3519,8 +2613,8 @@ export class ColorPermissionModule implements PermissionsModule {
       this.profiles.size > 0
         ? await this.profileSigning(plan, createArgs, tx, managed, originator)
         : undefined
-    // B2: a plain-noSend hand-over may spend unsettled parents, so it must never be broadcast or
-    // batched here; signAction options would otherwise override the createAction noSend.
+    // The host submits a plain-noSend hand-over, so it must never be broadcast or batched here;
+    // signAction options would otherwise override the createAction noSend.
     if (
       pending?.plain === true &&
       (args.options?.noSend === false || (args.options?.sendWith ?? []).length > 0)
@@ -3529,12 +2623,10 @@ export class ColorPermissionModule implements PermissionsModule {
         'BRC-207: a plain noSend hand-over is never sent by this wallet: signAction options.noSend cannot be false and sendWith must be empty'
       )
     }
-    const spend: SpendContext = { offline: plainNoSendArgs(createArgs), originator }
     const consumedAssets = new Set(tokens.consumed.map(input => input.assetId))
-    const trust = await this.trustVersions(consumedAssets)
     await eachInOrder(consumedAssets, async assetId => {
       const assetInputs = tokens.consumed.filter(input => input.assetId === assetId)
-      const admitted = await this.spendable(assetId, assetInputs, spend)
+      const admitted = await this.spendable(assetId, assetInputs)
       if (assetInputs.some(input => !admitted.has(input.outpoint)))
         throw new Error(`BRC-207: a ${assetId} input is no longer spendable`)
     })
@@ -3545,8 +2637,6 @@ export class ColorPermissionModule implements PermissionsModule {
         read: this.read
       })
     )
-    // The decision stands only on the trust it was made with (C16).
-    await this.assertTrustUnchanged(trust)
     const spends = {
       ...args.spends,
       ...(await this.signInputs(
@@ -3560,7 +2650,7 @@ export class ColorPermissionModule implements PermissionsModule {
     if (pending === undefined) return { ...args, spends }
     // onResponse needs the signed transaction itself, never only its txid; a plain hand-over's
     // send mode is fixed, as the toolbox fixes a BRC-177 protected action's.
-    this.pendingHandoffs.set(args.reference, pending)
+    this.pendingSubmissions.set(args.reference, pending)
     return {
       ...args,
       spends,
@@ -3575,9 +2665,9 @@ export class ColorPermissionModule implements PermissionsModule {
   /**
    * The signing-time checks of an action's profile assets, or undefined when it moves none:
    * each asset's view of the final layout (`tx` set, change custody from the forwarded
-   * createAction outputs) goes to `checkPlanData` again; a plain-noSend hand-over must have
-   * stored evidence for every same-asset input; and the asset's `submissionData` hook, when a
-   * required profile defines one, must return bytes.
+   * createAction outputs) goes to `checkPlanData` again; then, unless the action is a
+   * plain-noSend hand-over (which the host submits with its own off-chain values), the asset's
+   * `submissionData` hook, when a required profile defines one, must return bytes.
    */
   protected async profileSigning(
     plan: ColorPlan,
@@ -3585,7 +2675,7 @@ export class ColorPermissionModule implements PermissionsModule {
     tx: Transaction,
     managed: readonly ManagedInput[],
     originator: string
-  ): Promise<PendingHandoff | undefined> {
+  ): Promise<PendingSubmission | undefined> {
     const assets = [...(await this.resolvePlanAssets(plan)).values()].filter(
       asset => asset.handlers.length > 0
     )
@@ -3626,11 +2716,7 @@ export class ColorPermissionModule implements PermissionsModule {
     }
     const inputs = tx.inputs.map(input => ({ outpoint: inputOutpoint(input) }) as CreateActionInput)
     const managedByOutpoint = new Map(managed.map(input => [input.outpoint, input] as const))
-    const pending: PendingHandoff = {
-      plain,
-      labels: (createArgs.labels ?? []).filter(label => label.startsWith(COLOR_PLAN_LABEL_PREFIX)),
-      assets: []
-    }
+    const pending: PendingSubmission = { plain, offChainValues: new Map() }
     await eachInOrder(assets, async asset => {
       const layout = {
         ...this.planLayout(asset.assetId, plan, inputs, outputs, {
@@ -3641,18 +2727,11 @@ export class ColorPermissionModule implements PermissionsModule {
         tx
       }
       await this.checkPlanData(asset, plan, layout, originator)
-      const outpoints = layout.inputs.map(input => input.outpoint)
-      if (plain && asset.attested !== undefined) {
-        await this.attestedEvidence(asset.assetId, outpoints)
-      }
-      pending.assets.push({
-        assetId: asset.assetId,
-        offChainValues: await this.submissionData(asset, plan, layout, originator),
-        inputs: outpoints,
-        outputs: layout.outputs
-          .filter(output => output.custody !== undefined)
-          .map(output => output.outputIndex)
-      })
+      if (plain) return
+      pending.offChainValues.set(
+        asset.assetId,
+        await this.submissionData(asset, plan, layout, originator)
+      )
     })
     return pending
   }
@@ -3726,34 +2805,24 @@ export class ColorPermissionModule implements PermissionsModule {
 
   /**
    * Submits a signed token transaction to the topic of every asset among its inputs and outputs,
-   * and a deploy to the discovery topic. For a profile action (`pending` from signAction) each
-   * profile asset's submission data goes with its topic, and an attested asset whose returned
-   * attestation covers the wallet's own outputs is recorded settled (`recordSubmitted`).
+   * and a deploy to the discovery topic. For a profile action, `offChainValues` (from signAction)
+   * holds each profile asset's submission data, which goes with its topic.
    */
   protected async submitSigned(
     result: SignActionResult,
     template: Transaction,
-    pending?: PendingHandoff
+    offChainValues?: ReadonlyMap<string, number[]>
   ): Promise<void> {
     if (result?.tx === undefined) return
     const tx = Transaction.fromAtomicBEEF(result.tx)
     const { assetIds, deploy } = submissionAssets(tx, template, this.read)
     if (assetIds.length === 0 && !deploy) return
-    if (pending === undefined) {
-      await this.submit(assetIds, result.tx, deploy)
-      return
-    }
-    const offChainValues = new Map(
-      pending.assets.map(asset => [asset.assetId, asset.offChainValues] as const)
-    )
-    const steaks = await this.submit(assetIds, result.tx, deploy, offChainValues)
-    await this.recordSubmitted(tx, result.tx, steaks, pending)
+    await this.submit(assetIds, result.tx, deploy, offChainValues)
   }
 
   /**
    * Submits a transaction to each asset topic, and a deploy to the discovery topic, trying again
-   * up to `SUBMIT_ATTEMPTS` times before reporting the provider's failure, and returns every
-   * call's STEAK. As in BTMS, an accepted submission completes the action: every token input was
+   * up to `SUBMIT_ATTEMPTS` times before reporting the provider's failure. As in BTMS, an accepted submission completes the action: every token input was
    * overlay-checked and the plan verified before signing, so an output the overlay then does not
    * admit stays in its basket and is resubmitted when it is next selected.
    *
@@ -3767,12 +2836,11 @@ export class ColorPermissionModule implements PermissionsModule {
     beef: AtomicBEEF,
     deploy = false,
     offChainValues?: ReadonlyMap<string, number[]>
-  ): Promise<AttestedSTEAK[]> {
+  ): Promise<void> {
     const withBytes = new Map<string, number[]>()
     for (const [assetId, bytes] of offChainValues ?? []) {
       if (bytes.length > 0) withBytes.set(colorTopic(assetId), bytes)
     }
-    const steaks: AttestedSTEAK[] = []
     await eachInOrder(await this.routedTopics(assetIds, deploy), async ({ provider, topics }) => {
       const plain = topics.filter(topic => !withBytes.has(topic))
       const calls: Array<{ topics: string[]; offChainValues?: number[] }> = []
@@ -3785,11 +2853,9 @@ export class ColorPermissionModule implements PermissionsModule {
         let failure: unknown
         for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
           try {
-            steaks.push(
-              call.offChainValues === undefined
-                ? await provider.submit(call.topics, Array.from(beef))
-                : await provider.submit(call.topics, Array.from(beef), [...call.offChainValues])
-            )
+            await (call.offChainValues === undefined
+              ? provider.submit(call.topics, Array.from(beef))
+              : provider.submit(call.topics, Array.from(beef), [...call.offChainValues]))
             return
           } catch (error) {
             failure = error
@@ -3797,78 +2863,6 @@ export class ColorPermissionModule implements PermissionsModule {
         }
         throw failure
       })
-    })
-    return steaks
-  }
-
-  /**
-   * After a profile action was broadcast and submitted: for each attested asset with wallet-owned
-   * outputs, a returned `tm_color_<assetId>` attestation that verifies, qualifies and covers
-   * those outputs is stored with the transaction, its exact submitted AtomicBEEF and off-chain
-   * values, and only then the transaction is marked settled. Anything else records nothing: the
-   * outputs then take the live check, as a store-less wallet would. The action already completed,
-   * so a failure here is never reported.
-   */
-  protected async recordSubmitted(
-    tx: Transaction,
-    beef: AtomicBEEF,
-    steaks: readonly AttestedSTEAK[],
-    pending: PendingHandoff
-  ): Promise<void> {
-    const store = this.colorStore!
-    const txid = tx.id('hex')
-    await eachInOrder(pending.assets, async asset => {
-      try {
-        const { assetId, outputs } = asset
-        if (outputs.length === 0) return
-        if ((await this.resolveAsset(assetId)).attested === undefined) return
-        const qualifies = await this.qualifiesFor(assetId)
-        const topic = colorTopic(assetId)
-        const att = steaks
-          .map(steak => {
-            const entry = (
-              steak as Record<string, AttestedSTEAK[string] | undefined> | undefined
-            )?.[topic]
-            if (entry === undefined || entry === null) return undefined
-            try {
-              return attestationFromSteak(txid, topic, entry)
-            } catch {
-              return undefined
-            }
-          })
-          .find(
-            att =>
-              att !== undefined &&
-              verifyAttestation(att, assetId) &&
-              qualifies(att.signer) &&
-              outputs.every(vout => att.outputs.includes(vout))
-          )
-        if (att === undefined) return
-        // One record per transaction: a second asset of the same transaction is not recorded.
-        const existing = await store.getTx(txid)
-        if (existing !== undefined && existing.assetId !== assetId) return
-        await this.putTxRecord(txid, {
-          v: 1,
-          assetId,
-          rawTx: tx.toHex(),
-          atomicBEEF: toHex(Array.from(beef)),
-          role: 'receipt',
-          state: 'credited',
-          inputs: [...asset.inputs],
-          outputs: [...outputs],
-          offChainValues: toHex(asset.offChainValues),
-          attestations: [att]
-        })
-        const settled = await store.settled(txid)
-        const merged = [...new Set([...(settled?.outputs ?? []), ...att.outputs])].sort(
-          (a, b) => a - b
-        )
-        if (settled?.outputs.join(',') !== merged.join(',')) {
-          await store.markSettled(txid, { outputs: merged, signer: settled?.signer ?? att.signer })
-        }
-      } catch {
-        // Not recorded: the outputs fall back to the live check.
-      }
     })
   }
 
@@ -3965,7 +2959,7 @@ export class ColorPermissionModule implements PermissionsModule {
     const involved = new Set([token.assetId, ...tokens.inputs.keys(), ...tokens.outputs.keys()])
     await this.assertSupportedAssets(involved)
     // A signature for an app-built transaction cannot carry submission data, keep a plain
-    // noSend hand-over's evidence or run a profile's transition checks (it has no plan), so
+    // noSend hand-over off the wire or run a profile's transition checks (it has no plan), so
     // assets whose profiles need any of them are refused rather than handled as baseline. Every
     // source and output must conform to its deploy (A.146, A.151) before anything is signed.
     if (this.profiles.size > 0) {
@@ -4007,7 +3001,6 @@ export class ColorPermissionModule implements PermissionsModule {
     const outpoint = outpointString(sourceTXID, input.sourceOutputIndex)
     const signed = { outpoint, lockingScript: source.lockingScript, satoshis: source.satoshis }
     const consumedAssets = new Set(tokens.consumed.map(consumed => consumed.assetId))
-    const trust = await this.trustVersions(consumedAssets)
     await eachInOrder(consumedAssets, async assetId => {
       const assetInputs = tokens.consumed.filter(consumed => consumed.assetId === assetId)
       const admitted = await this.spendable(assetId, assetInputs)
@@ -4033,8 +3026,6 @@ export class ColorPermissionModule implements PermissionsModule {
         { deployOwned: kept(0), read: this.read }
       )
     })
-    // The decision stands only on the trust it was made with (C16).
-    await this.assertTrustUnchanged(trust)
     return await next({
       protocolID: args.protocolID,
       keyID: args.keyID,
@@ -4105,31 +3096,21 @@ export class ColorPermissionModule implements PermissionsModule {
   }
 
   /**
-   * With profiles registered, a basket's unreserved outputs as a balance sees them: refused
-   * transactions' outputs are left out (C55), and the caller's tag filter is applied to the view
-   * tags, so `color_offline` matches only outputs without a settled record (contract §2.2-6).
+   * With profiles registered, a basket's unreserved outputs as a balance sees them: the caller's
+   * tag filter is applied to the view tags, so `color_offline` matches only outputs whose
+   * transaction `markSettled` has not recorded.
    */
   protected async viewedBasket(
     basket: string,
     args: ListOutputsArgs,
     originator: string
   ): Promise<WalletOutput[]> {
-    const status = await this.settlementState()
+    const settled = await this.colorStore!.settledSet()
     const outputs = await this.listBasket(basket, originator, { includeTags: true })
     return outputs.filter(output => {
-      if (status.refused.has(parseOutpoint(output.outpoint).txid)) return false
-      const tags = [...storedViewTags(output, status), `${STATE_TAG_PREFIX}available`]
+      const tags = [...storedViewTags(output, settled), `${STATE_TAG_PREFIX}available`]
       return matchesTags(tags, args.tags ?? [], args.tagQueryMode)
     })
-  }
-
-  /** The settled and refused txids; called only when profiles are registered. */
-  protected async settlementState(): Promise<SettlementState> {
-    const [settled, refused] = await Promise.all([
-      this.colorStore!.settledSet(),
-      this.colorStore!.refusedSet()
-    ])
-    return { settled, refused }
   }
 
   /**
@@ -4173,13 +3154,13 @@ export class ColorPermissionModule implements PermissionsModule {
     const beef =
       entireTransactions && listed.BEEF !== undefined ? Beef.fromBinary(listed.BEEF) : undefined
     let records = inventoryRecords(listed.outputs, beef, this.read)
-    let status: SettlementState | undefined
+    let settled: ReadonlySet<string> | undefined
     if (this.profiles.size > 0) {
       records = await this.supportedRecords(records)
-      status = await this.settlementState()
+      settled = await this.colorStore!.settledSet()
     }
     const views = records
-      .map(record => inventoryView(record, status))
+      .map(record => inventoryView(record, settled))
       .filter(view => matchesTags(view.tags, args.tags ?? [], args.tagQueryMode))
     const limit = args.limit ?? 10
     const offset = args.offset ?? 0
@@ -4298,39 +3279,16 @@ export class ColorPermissionModule implements PermissionsModule {
    * Authenticates an asset's deploy and resolves its required profiles and provider, memoized by
    * asset id (a failure is forgotten). Without profiles this is the 0.1.0 check: one admission
    * query to the provider, and a deploy that declares any `req` fails. With profiles, the deploy is
-   * taken from the first of (D23) the request's `declarationTx`, the `color.v1.` deploy cache, the
-   * default provider and each handler's `deployProviders()`, each checked by txid hash; it is then
-   * cached, and its `req` resolved against the registered handlers.
+   * taken from the first of the `color.v1.` deploy cache, the default provider and each handler's
+   * `deployProviders()`, each checked by txid hash; it is then cached, and its `req` resolved
+   * against the registered handlers.
    */
-  protected async resolveAsset(
-    assetId: string,
-    evidence?: { declarationTx?: string }
-  ): Promise<ResolvedAsset> {
-    if (this.profiles.size === 0) {
-      return await (this.supportedAssets.get(assetId) ??
-        this.memoize(assetId, this.resolveBaseline(assetId)))
-    }
-    const { txid, vout } = parseAssetId(assetId)
-    // Request evidence is checked even when the asset is already resolved, so a request with a
-    // mismatching body fails the same way whatever the cache holds.
-    let supplied: Transaction | undefined
-    if (evidence?.declarationTx !== undefined) {
-      supplied = canonicalTransaction(evidence.declarationTx, txid)
-      if (supplied === undefined) {
-        throw new Error('BRC-207: the supplied declarationTx does not match the asset')
-      }
-      this.deployToken(assetId, supplied, vout)
-    }
-    const pending = this.supportedAssets.get(assetId)
-    if (pending !== undefined) {
-      if (supplied === undefined) return await pending
-      try {
-        return await pending
-      } catch {
-        // The resolution in flight failed; this request carries its own deploy, so try again.
-      }
-    }
-    return await this.memoize(assetId, this.resolveProfiled(assetId, supplied))
+  protected async resolveAsset(assetId: string): Promise<ResolvedAsset> {
+    const resolve =
+      this.profiles.size === 0
+        ? async (): Promise<ResolvedAsset> => await this.resolveBaseline(assetId)
+        : async (): Promise<ResolvedAsset> => await this.resolveProfiled(assetId)
+    return await (this.supportedAssets.get(assetId) ?? this.memoize(assetId, resolve()))
   }
 
   /** Records a resolution in the memo, forgetting it if it fails. */
@@ -4354,23 +3312,14 @@ export class ColorPermissionModule implements PermissionsModule {
     if (!isDeployOutput(deploy.lockingScript, { txid, vout })) {
       throw new Error(`BRC-207: ${assetId} is not a token deploy`)
     }
-    return {
-      assetId,
-      req: NO_REQUIREMENTS,
-      handlers: [],
-      provider: this.provider,
-      maxReceiptBytes: MAX_RECEIPT_INSTRUCTION_BYTES
-    }
+    return { assetId, req: NO_REQUIREMENTS, handlers: [], provider: this.provider }
   }
 
   /** Resolution with profiles registered: find and verify the deploy, then its requirements. */
-  protected async resolveProfiled(
-    assetId: string,
-    supplied: Transaction | undefined
-  ): Promise<ResolvedAsset> {
+  protected async resolveProfiled(assetId: string): Promise<ResolvedAsset> {
     const { txid, vout } = parseAssetId(assetId)
-    const cached = supplied === undefined ? await this.cachedDeploy(assetId, txid) : undefined
-    const declarationTx = supplied ?? cached ?? (await this.providedDeploy(assetId, txid, vout))
+    const cached = await this.cachedDeploy(assetId, txid)
+    const declarationTx = cached ?? (await this.providedDeploy(assetId, txid, vout))
     // Bytes that hash to the asset's txid are the asset's own: a non-deploy fails, never falls back.
     const { attributes } = this.deployToken(assetId, declarationTx, vout)
     if (cached === undefined) {
@@ -4389,19 +3338,6 @@ export class ColorPermissionModule implements PermissionsModule {
     const sendPolicy = handlers.some(({ handler }) => handler.sendPolicy === 'plain-nosend')
       ? 'plain-nosend'
       : undefined
-    // The default attested construction applies unless `evidenceProfile` delegates it (0207:435).
-    const declared = handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)
-    const params =
-      declared === undefined ? undefined : parseAttestedParams(declared.descriptor.params)
-    const attested = params?.evidenceProfile === undefined ? params : undefined
-    // Offline acceptance after an `unavailable` admission needs the default attested evidence
-    // policy, so a hook on an asset without it would silently never run (Decision 3).
-    if (
-      attested === undefined &&
-      handlers.some(({ handler }) => handler.admitReceipt !== undefined)
-    ) {
-      throw new ProfileParamsError('BRC-207: admitReceipt requires the attested profile')
-    }
     return {
       assetId,
       declarationTx,
@@ -4410,16 +3346,7 @@ export class ColorPermissionModule implements PermissionsModule {
       handlers,
       provider,
       ...(sendPolicy === undefined ? {} : { sendPolicy }),
-      ...(operations === undefined ? {} : { operations }),
-      ...(attested === undefined ? {} : { attested }),
-      maxReceiptBytes:
-        handlers.length === 0
-          ? MAX_RECEIPT_INSTRUCTION_BYTES
-          : Math.max(
-              ...handlers.map(
-                ({ handler }) => handler.maxReceiptBytes ?? MAX_RECEIPT_INSTRUCTION_BYTES
-              )
-            )
+      ...(operations === undefined ? {} : { operations })
     }
   }
 
@@ -4528,49 +3455,6 @@ export class ColorPermissionModule implements PermissionsModule {
     }
   }
 
-  /**
-   * Whether an attestation signer counts for an asset: its identity key in identity mode, else a
-   * member of the current trust snapshot. An asset without the default attested construction
-   * trusts no signer, so it never settles through `settle()`.
-   */
-  protected async qualifiesFor(assetId: string): Promise<(signer: string) => boolean> {
-    const resolved = await this.resolveAsset(assetId)
-    const params = resolved.attested
-    if (params === undefined) return () => false
-    const { handler } = resolved.handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)!
-    const snapshot = await trustSnapshot(handler, params)
-    return qualifyingSigner(params, snapshot?.identityKeys)
-  }
-
-  /** True when the asset's value or authority basket lists `outpoint` (all pages). */
-  protected async holds(outpoint: string, assetId: string): Promise<boolean> {
-    for (const role of ['value', 'authority'] as const) {
-      const basket = assetBasket(assetId, role)
-      for (let offset = 0; ;) {
-        const page = await this.wallet.listOutputs({ basket, limit: LIST_PAGE_LIMIT, offset })
-        if (page.outputs.some(output => output.outpoint === outpoint)) return true
-        offset += page.outputs.length
-        if (page.outputs.length < LIST_PAGE_LIMIT) break
-      }
-    }
-    return false
-  }
-
-  /** The vouts of `tx`'s token outputs of `assetId`, read with this module's reader. */
-  protected tokenVouts(tx: Transaction, assetId: string): number[] {
-    const txid = tx.id('hex')
-    return tx.outputs.flatMap((output, vout) => {
-      try {
-        return readAnyTokenOutput(output.lockingScript, { txid, vout }, this.read)?.assetId ===
-          assetId
-          ? [vout]
-          : []
-      } catch {
-        return []
-      }
-    })
-  }
-
   /** The non-deploy token outputs of `tx` in either encoding, read with this module's reader. */
   protected outputTokens(tx: Transaction): TokenOutput[] {
     const txid = tx.id('hex')
@@ -4587,294 +3471,11 @@ export class ColorPermissionModule implements PermissionsModule {
   }
 
   /**
-   * The queried outputs that may be spent. Without profiles, and for an asset without the default
-   * attested construction, these are the outputs the overlay reports admitted and unspent
-   * (`liveSpendable`). For an attested asset (contract §2.2-7) each output is decided in order:
-   * 1. an output of a finally refused transaction is never spendable (C55);
-   * 2. a held output of a settled transaction is checked live on the routed provider: a transport
-   *    failure proceeds on the stored attestation; an unlisted one is resubmitted through the
-   *    settle path (its exact stored bytes and off-chain values, under the per-txid latch), then
-   *    checked again, and excluded if still unlisted;
-   * 3. a held output with a stored record and no settlement: for a plain-noSend hand-over
-   *    (`spend.offline`), whose recipient submits its ancestors first, it is spendable offline,
-   *    with no overlay contact, when its stored evidence still holds (in identity mode the
-   *    evidence walk to its anchors, in the list modes the complete frontier against the current
-   *    trust snapshot, C17). For any other action, which this wallet publishes, the transaction
-   *    and its unsettled ancestors are first settled, parents first, through `settle()` (one
-   *    single-flight run), and the output then gets the baseline live check: it is spent only
-   *    once the overlay lists it, and an unreachable overlay fails the check (pinned brc-0207:
-   *    before publishing a child, establish acceptance of its required ancestors);
-   * 4. any other output gets the baseline live check.
+   * The queried outputs the overlay reports admitted and unspent, matched to their source bytes,
+   * asked of the asset's routed provider. A `color_offline` output is spendable only once its
+   * overlay lists it.
    */
   protected async spendable(
-    assetId: string,
-    outputs: readonly SourceOutput[],
-    spend: SpendContext = PUBLISHED_SPEND
-  ): Promise<Set<string>> {
-    if (this.profiles.size > 0 && outputs.length > 0) {
-      const resolved = await this.resolveAsset(assetId)
-      if (resolved.attested !== undefined)
-        return await this.attestedSpendable(resolved, outputs, spend)
-    }
-    return await this.liveSpendable(assetId, outputs)
-  }
-
-  /** The attested branch of `spendable` (steps 1-4 there). */
-  protected async attestedSpendable(
-    resolved: ResolvedAsset,
-    outputs: readonly SourceOutput[],
-    spend: SpendContext = PUBLISHED_SPEND
-  ): Promise<Set<string>> {
-    const { assetId } = resolved
-    const spendable = new Set<string>()
-    const facts = await this.storedFacts(
-      new Set(outputs.map(output => parseOutpoint(output.outpoint).txid))
-    )
-    const { settled, offline, baseline } = classifyStoredOutputs(outputs, facts, assetId)
-
-    if (settled.length > 0) {
-      for (const outpoint of await this.settledSpendable(resolved, settled, facts)) {
-        spendable.add(outpoint)
-      }
-    }
-
-    if (spend.offline) {
-      await eachInOrder(offline, async ([txid, group]) => {
-        if (await this.offlineEvidenceHolds(resolved, txid, group)) {
-          for (const output of group) spendable.add(output.outpoint)
-        } else {
-          baseline.push(...group)
-        }
-      })
-    } else if (offline.size > 0) {
-      // Parents first, under the settler's single flight and per-txid latch; the live check
-      // below decides, so a refused, unreachable or failed settlement spends nothing.
-      await this.settler!.settle(
-        { txids: [...offline.keys()], assetIds: [assetId] },
-        spend.originator
-      ).catch(() => undefined)
-      for (const group of offline.values()) baseline.push(...group)
-    }
-
-    if (baseline.length > 0) {
-      for (const outpoint of await this.liveSpendable(assetId, baseline)) spendable.add(outpoint)
-    }
-    return spendable
-  }
-
-  /** What the store holds for each txid, read in order: refused, else its record and settlement. */
-  protected async storedFacts(txids: ReadonlySet<string>): Promise<Map<string, StoredFact>> {
-    const store = this.colorStore!
-    const facts = new Map<string, StoredFact>()
-    await eachInOrder(txids, async txid => {
-      if ((await store.refused(txid)) !== undefined) {
-        facts.set(txid, { refused: true, settled: false })
-        return
-      }
-      const record = await store.getTx(txid)
-      const tx = record === undefined ? undefined : storedTransaction(record, txid)
-      facts.set(txid, {
-        refused: false,
-        settled: (await store.settled(txid)) !== undefined,
-        ...(record === undefined ? {} : { record }),
-        ...(tx === undefined ? {} : { tx })
-      })
-    })
-    return facts
-  }
-
-  /**
-   * The settled outputs the overlay still lists. Unlisted ones are resubmitted (in txid order)
-   * and checked again; an unreachable overlay falls back to the stored, verified attestations
-   * while they still cover the output under the current trust (C17).
-   */
-  protected async settledSpendable(
-    resolved: ResolvedAsset,
-    settled: readonly SourceOutput[],
-    facts: ReadonlyMap<string, StoredFact>
-  ): Promise<string[]> {
-    const listed = await this.reachableSpendable(resolved.assetId, settled)
-    if (listed === undefined) {
-      const records = new Map([...facts].map(([txid, fact]) => [txid, fact.record] as const))
-      return await this.storedCoverage(resolved, settled, records)
-    }
-    const spendable = [...listed]
-    const unlisted = settled.filter(output => !listed.has(output.outpoint))
-    if (unlisted.length > 0) {
-      await eachInOrder(
-        new Set(unlisted.map(output => parseOutpoint(output.outpoint).txid)),
-        async txid => {
-          // A failed resubmission leaves the output unlisted; the recheck decides.
-          await this.settler!.settleTx(txid).catch(() => undefined)
-        }
-      )
-      const rechecked = await this.reachableSpendable(resolved.assetId, unlisted)
-      spendable.push(...(rechecked ?? []))
-    }
-    return spendable
-  }
-
-  /**
-   * The settled outputs whose stored attestations still cover them (C17, 0207:231-233): in
-   * identity mode the settled record stands, since its key is fixed; in the list modes each
-   * output's verifying stored attestations must pass `assertCoverage` under the current trust
-   * snapshot. An unavailable trust list covers nothing.
-   */
-  protected async storedCoverage(
-    resolved: ResolvedAsset,
-    outputs: readonly SourceOutput[],
-    records: ReadonlyMap<string, TxRecord | undefined>
-  ): Promise<string[]> {
-    const params = resolved.attested!
-    if (params.trustMode === 'identity') return outputs.map(output => output.outpoint)
-    const { handler } = resolved.handlers.find(({ handler }) => handler.id === ATTESTED_PROFILE_ID)!
-    let identityKeys: string[] | undefined
-    try {
-      identityKeys = (await trustSnapshot(handler, params))?.identityKeys
-    } catch {
-      return []
-    }
-    return outputs.flatMap(output => {
-      const { txid, vout } = parseOutpoint(output.outpoint)
-      const signers = (records.get(txid)?.attestations ?? [])
-        .filter(
-          att =>
-            att.txid === txid &&
-            att.outputs.includes(vout) &&
-            verifyAttestation(att, resolved.assetId)
-        )
-        .map(att => att.signer)
-      try {
-        assertCoverage(params, [{ outpoint: output.outpoint, signers }], identityKeys)
-        return [output.outpoint]
-      } catch {
-        return []
-      }
-    })
-  }
-
-  /**
-   * The current trust snapshot version of each attested list-mode asset among `assetIds` (`null`
-   * when the list is unavailable), captured with a spend decision and compared again before a
-   * signature is released (C16, 0207:229-230). Empty without profiles.
-   */
-  protected async trustVersions(assetIds: Iterable<string>): Promise<Map<string, string | null>> {
-    const versions = new Map<string, string | null>()
-    if (this.profiles.size === 0) return versions
-    await eachInOrder(new Set(assetIds), async assetId => {
-      const resolved = await this.resolveAsset(assetId)
-      const params = resolved.attested
-      if (params === undefined || params.trustMode === 'identity') return
-      const { handler } = resolved.handlers.find(
-        ({ handler }) => handler.id === ATTESTED_PROFILE_ID
-      )!
-      versions.set(
-        assetId,
-        await trustSnapshot(handler, params).then(
-          snapshot => snapshot?.snapshot ?? null,
-          () => null
-        )
-      )
-    })
-    return versions
-  }
-
-  /** Fails with `trust snapshot changed` when any version captured by `trustVersions` moved. */
-  protected async assertTrustUnchanged(
-    versions: ReadonlyMap<string, string | null>
-  ): Promise<void> {
-    if (versions.size === 0) return
-    const now = await this.trustVersions(versions.keys())
-    for (const [assetId, version] of versions) {
-      if (now.get(assetId) !== version) throw new AttestationEvidenceError('trust snapshot changed')
-    }
-  }
-
-  /**
-   * `liveSpendable`, or undefined when the provider fails with a transport `ColorProviderError`
-   * (no typed verdict). Any other failure is thrown, as in the baseline check.
-   */
-  protected async reachableSpendable(
-    assetId: string,
-    outputs: readonly SourceOutput[]
-  ): Promise<Set<string> | undefined> {
-    try {
-      return await this.liveSpendable(assetId, outputs)
-    } catch (error) {
-      if (
-        isNamedError(error, 'ColorProviderError') &&
-        (error as { transport?: unknown }).transport === true
-      ) {
-        return undefined
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Whether the stored evidence behind held, unsettled outputs of `txid` still allows spending
-   * them offline: the store walk from them reaches attested anchors through stored records; in
-   * the list modes the complete frontier is validated again from the stored bytes and its anchors
-   * must cover it under the current trust snapshot. Never contacts an overlay; any failure is
-   * false.
-   */
-  protected async offlineEvidenceHolds(
-    resolved: ResolvedAsset,
-    txid: string,
-    outputs: readonly SourceOutput[]
-  ): Promise<boolean> {
-    const { assetId } = resolved
-    const params = resolved.attested!
-    try {
-      const evidence = await this.attestedEvidence(
-        assetId,
-        outputs.map(output => output.outpoint)
-      )
-      // A known conflicting spend restricts the evidence (C55): no other stored transaction may
-      // consume an input of an unattested record behind these outputs, or the outputs themselves.
-      assertNoKnownConflict(await this.storedSpends(), [
-        ...evidence.records.map(([recordTxid, record]) => [recordTxid, record.inputs] as const),
-        ['', outputs.map(output => output.outpoint)] as const
-      ])
-      // Identity mode trusts one fixed key, so the receipt-time validation still stands.
-      if (params.trustMode === 'identity') return true
-      const { handler } = resolved.handlers.find(
-        ({ handler }) => handler.id === ATTESTED_PROFILE_ID
-      )!
-      const snapshot = await trustSnapshot(handler, params)
-      const bodies = new Map<string, Transaction>()
-      const addBodies = (atomicBEEF: string): void => {
-        for (const entry of Beef.fromBinary(toArray(atomicBEEF, 'hex')).txs) {
-          if (entry.tx !== undefined) bodies.set(entry.txid, entry.tx)
-        }
-      }
-      for (const [, record] of evidence.records) addBodies(record.atomicBEEF)
-      await eachInOrder(new Set(evidence.attestations.map(att => att.txid)), async anchor => {
-        const record = await this.colorStore!.getTx(anchor)
-        if (record !== undefined) addBodies(record.atomicBEEF)
-      })
-      const declarationTx = resolved.declarationTx!
-      bodies.set(declarationTx.id('hex'), declarationTx)
-      const tip = bodies.get(txid)
-      if (tip === undefined) return false
-      const frontier = validateFrontier({
-        assetId,
-        declarationTx,
-        tip,
-        start: { outputs: outputs.map(output => parseOutpoint(output.outpoint).vout) },
-        bodies,
-        attestations: evidence.attestations,
-        qualifies: qualifyingSigner(params, snapshot?.identityKeys)
-      })
-      assertCoverage(params, frontier.anchors, snapshot?.identityKeys)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  /** The queried outputs the overlay reports admitted and unspent, matched to their source bytes. */
-  protected async liveSpendable(
     assetId: string,
     outputs: readonly SourceOutput[]
   ): Promise<Set<string>> {
