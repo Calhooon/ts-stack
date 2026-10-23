@@ -143,7 +143,7 @@ describe('pending (color_offline) views and markSettled', () => {
         'BRC-207: markSettled takes a lowercase hex txid'
       )
     }
-    expect(store.writes.length).toBe(writes)
+    expect(store.writes).toHaveLength(writes)
   })
 
   it('markSettled does nothing without profiles', async () => {
@@ -156,7 +156,7 @@ describe('pending (color_offline) views and markSettled', () => {
     const writes = store.writes.length
     await expect(plain.markSettled(t60.id('hex'))).resolves.toBeUndefined()
     await expect(plain.markSettled('xyz')).rejects.toThrow(TypeError)
-    expect(store.writes.length).toBe(writes)
+    expect(store.writes).toHaveLength(writes)
   })
 
   it('markSettled is not reachable through the BRC-100 surface', async () => {
