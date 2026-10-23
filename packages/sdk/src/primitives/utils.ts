@@ -84,7 +84,12 @@ export const toUint8Array = (msg: any, enc?: 'hex' | 'utf8' | 'base64'): Uint8Ar
  * Copies bytes into a plain number array. A presized indexed loop is about
  * ten times faster than Array.from or spreading for byte arrays.
  */
+const MAX_ARRAY_LENGTH = 2 ** 32 - 1
+
 const bytesToNumbers = (bytes: Uint8Array): number[] => {
+  // A JavaScript array holds at most 2^32 - 1 elements; Array.from threw the
+  // same RangeError beyond that.
+  if (bytes.length > MAX_ARRAY_LENGTH) throw new RangeError('Invalid array length')
   const out: number[] = []
   out.length = bytes.length
   for (let i = 0; i < bytes.length; i++) out[i] = bytes[i]

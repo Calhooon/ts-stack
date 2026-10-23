@@ -25,21 +25,25 @@ async function buildChain(depth, dataBytes) {
   const privateKey = new PrivateKey(1)
   const p2pkh = new P2PKH()
   const lockingScript = p2pkh.lock(privateKey.toPublicKey().toHash())
-  let current = new Transaction()
-  current.addOutput({ lockingScript, satoshis: 1_000_000 })
-  for (let i = 1; i < depth; i++) {
-    const next = new Transaction()
-    next.addInput({
-      sourceTransaction: current,
-      sourceOutputIndex: 0,
-      unlockingScriptTemplate: p2pkh.unlock(privateKey)
-    })
-    next.addOutput({ lockingScript, satoshis: 1_000_000 - i })
-    next.addOutput({ lockingScript: data, satoshis: 0 })
-    await next.sign()
-    current = next
-  }
-  return current
+  const root = new Transaction()
+  root.addOutput({ lockingScript, satoshis: 1_000_000 })
+  // Each transaction spends its parent, which must be signed first.
+  return Array.from({ length: depth - 1 }, (_, index) => index + 1).reduce(
+    async (parentPromise, i) => {
+      const parent = await parentPromise
+      const next = new Transaction()
+      next.addInput({
+        sourceTransaction: parent,
+        sourceOutputIndex: 0,
+        unlockingScriptTemplate: p2pkh.unlock(privateKey)
+      })
+      next.addOutput({ lockingScript, satoshis: 1_000_000 - i })
+      next.addOutput({ lockingScript: data, satoshis: 0 })
+      await next.sign()
+      return next
+    },
+    Promise.resolve(root)
+  )
 }
 
 async function main() {
